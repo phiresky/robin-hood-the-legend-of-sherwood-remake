@@ -1,12 +1,99 @@
 """Build a portable review gallery from existing, unmodified render sheets."""
 
 import argparse
+import errno
 import hashlib
 import html
 import json
+import os
 import re
 from pathlib import Path
 import shutil
+import tempfile
+
+
+def _sha(path):
+    with Path(path).open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def _atomic_copy(source, target, digest):
+    """Never truncate an inode that a frozen history entry may share."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_file() and _sha(target) == digest:
+        return
+    fd, temporary = tempfile.mkstemp(prefix='.' + target.name + '-', dir=target.parent)
+    os.close(fd)
+    temporary = Path(temporary)
+    try:
+        shutil.copyfile(source, temporary)
+        if _sha(temporary) != digest:
+            raise ValueError(f'Review resource changed while copying: {source}')
+        shutil.copymode(source, temporary)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _atomic_text(target, text):
+    fd, temporary = tempfile.mkstemp(prefix='.' + target.name + '-', dir=target.parent)
+    temporary = Path(temporary)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            stream.write(text)
+        temporary.chmod(target.stat().st_mode & 0o777 if target.exists() else 0o644)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _archive_previous(output):
+    previous = output / 'evidence.json'
+    if not previous.exists():
+        return
+    evidence = previous.read_bytes()
+    resources = {}
+    for item in json.loads(evidence)['items']:
+        for kind in ('images', 'reports', 'reference_images'):
+            for entry in item.get(kind, {}).values():
+                relative = Path(entry['file'])
+                if (relative.is_absolute() or '..' in relative.parts
+                        or not relative.parts or relative.parts[0] not in ('images', 'reports')):
+                    raise ValueError(f'Unsafe archived resource path: {relative}')
+                digest = entry['sha256']
+                if relative in resources and resources[relative] != digest:
+                    raise ValueError(f'Conflicting archived resource hashes: {relative}')
+                resources[relative] = digest
+    # Check every dependency before publishing an archive or changing the gallery.
+    for relative, digest in resources.items():
+        if _sha(output / relative) != digest:
+            raise ValueError(f'Frozen review resource changed: {relative}')
+    documents = {Path(name): _sha(output / name) for name in ('index.html', 'evidence.json')}
+    if documents[Path('evidence.json')] != hashlib.sha256(evidence).hexdigest():
+        raise ValueError('Review evidence changed while archiving')
+    archive = output / 'history' / hashlib.sha256(evidence).hexdigest()[:16]
+    if archive.exists():
+        for relative, digest in {**resources, Path('evidence.json'): documents[Path('evidence.json')]}.items():
+            if _sha(archive / relative) != digest:
+                raise ValueError(f'Archived review resource changed: {archive / relative}')
+        if not (archive / 'index.html').is_file():
+            raise FileNotFoundError(archive / 'index.html')
+        return
+    archive.parent.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='.archive-', dir=archive.parent) as temporary:
+        staging = Path(temporary)
+        for relative, digest in {**resources, **documents}.items():
+            source, target = output / relative, staging / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.link(source, target)
+            except OSError as error:
+                if error.errno not in (errno.EXDEV, errno.EPERM, errno.EOPNOTSUPP):
+                    raise
+                _atomic_copy(source, target, digest)
+            if _sha(target) != digest:
+                raise ValueError(f'Review resource changed while archiving: {source}')
+        os.rename(staging, archive)
 
 
 FEEDBACK_SCRIPT = r"""
@@ -168,17 +255,7 @@ def build(index_path, output, *, pending_only=False, map_name=None):
     ids = [item["id"] for item in items]
     if len(set(ids)) != len(ids):
         raise ValueError("Duplicate review identifiers")
-    previous = output / "evidence.json"
-    if previous.exists():
-        digest = hashlib.sha256(previous.read_bytes()).hexdigest()[:16]
-        archive = output / "history" / digest
-        if not archive.exists():
-            archive.mkdir(parents=True)
-            for name in ("index.html", "evidence.json"):
-                shutil.copyfile(output / name, archive / name)
-            shutil.copytree(output / "images", archive / "images")
-            if (output / "reports").exists():
-                shutil.copytree(output / "reports", archive / "reports")
+    _archive_previous(output)
     records, cards = [], []
     status_counts = data.get('status_counts', {})
     status_summary = ('<p>' + html.escape(', '.join(
@@ -216,7 +293,7 @@ def build(index_path, output, *, pending_only=False, map_name=None):
             relative = f'images/{asset_id}-artwork-{identifier}-{digest[:16]}.png'
             target = output / relative
             target.parent.mkdir(exist_ok=True)
-            shutil.copyfile(source, target)
+            _atomic_copy(source, target, digest)
             if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
                 raise RuntimeError('Artwork reference copy differs')
             reference_evidence[identifier] = {**reference, 'file': relative}
@@ -296,7 +373,7 @@ def build(index_path, output, *, pending_only=False, map_name=None):
             relative = f"images/{asset_id}-{key}-{digest[:16]}.png"
             target = output / relative
             target.parent.mkdir(exist_ok=True)
-            shutil.copyfile(source, target)
+            _atomic_copy(source, target, digest)
             digest = hashlib.sha256(source.read_bytes()).hexdigest()
             if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
                 raise RuntimeError(f"Review image copy differs: {source}")
@@ -347,7 +424,7 @@ def build(index_path, output, *, pending_only=False, map_name=None):
             relative = f"reports/{asset_id}-{key}-{digest[:16]}{source.suffix}"
             target = output / relative
             target.parent.mkdir(exist_ok=True)
-            shutil.copyfile(source, target)
+            _atomic_copy(source, target, digest)
             digest = hashlib.sha256(source.read_bytes()).hexdigest()
             if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
                 raise RuntimeError(f"Review report copy differs: {source}")
@@ -488,8 +565,8 @@ function filterGroupingAssets(){
 document.querySelector('#asset-search').addEventListener('input',filterGroupingAssets);
 document.querySelector('#readiness').addEventListener('change',filterGroupingAssets);
 </script></body>''')
-    (output / "index.html").write_text(document)
-    (output / "evidence.json").write_text(json.dumps({"source_index": str(index_path), "items": records,
+    _atomic_text(output / "index.html", document)
+    _atomic_text(output / "evidence.json", json.dumps({"source_index": str(index_path), "items": records,
                                                     "without_packets": missing}, indent=2)+"\n")
     print(json.dumps({"gallery": str(output / "index.html"), "candidates": len(items), "images": sum(len(r["images"]) for r in records)}))
 
