@@ -11,6 +11,15 @@ use robin_engine::player_command::PlayerId;
 /// is a transport drop. The client publishes `Disconnected` and reconnects.
 #[test]
 fn clean_host_stream_close_reconnects() {
+    host_stream_close(false);
+}
+
+#[test]
+fn committed_transition_keeps_ingress_alive_without_reconnecting() {
+    host_stream_close(true);
+}
+
+fn host_stream_close(commit_transition: bool) {
     use crate::multiplayer::InboundFramePolicy;
     use crate::multiplayer::framing::{read_frame, write_frame};
     use crate::multiplayer::identity::GAME_ALPN;
@@ -58,7 +67,7 @@ fn clean_host_stream_close_reconnects() {
                 session_id: robin_engine::multiplayer::MultiplayerSessionId([6; 32]),
             };
             let mut streams = Vec::new();
-            for attempt in 0..2 {
+            for attempt in 0..if commit_transition { 1 } else { 2 } {
                 let incoming = endpoint.accept().await.expect("client connection");
                 let conn = incoming.await.expect("client QUIC handshake");
                 let (mut send, mut recv) = conn.accept_bi().await.expect("client game stream");
@@ -73,6 +82,21 @@ fn clean_host_stream_close_reconnects() {
                     .await
                     .expect("write Welcome");
                 if attempt == 0 {
+                    if commit_transition {
+                        write_frame(
+                            &mut send,
+                            &NetMsg::CommitSnapshotTransition {
+                                id: robin_engine::multiplayer::SnapshotTransitionId {
+                                    session_id: robin_engine::multiplayer::MultiplayerSessionId(
+                                        [6; 32],
+                                    ),
+                                    sequence: 1,
+                                },
+                            },
+                        )
+                        .await
+                        .expect("write transition commit");
+                    }
                     // A clean FIN at a frame boundary while the connection stays open.
                     send.finish().expect("finish host stream");
                 }
@@ -110,7 +134,19 @@ fn clean_host_stream_close_reconnects() {
                 )
             });
         match &event {
-            NetEvent::Disconnected => disconnected = true,
+            NetEvent::CommitSnapshotTransition { .. } if commit_transition => {
+                // Longer than the reconnect backoff: no disconnect, retry, or
+                // closed ingress may race the game's consumption of this commit.
+                assert!(matches!(
+                    client_in_rx.recv_timeout(Duration::from_millis(1200)),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                ));
+                break;
+            }
+            NetEvent::Disconnected => {
+                assert!(!commit_transition, "a committed handoff must not reconnect");
+                disconnected = true;
+            }
             NetEvent::Reconnected => {
                 assert!(disconnected, "Reconnected before Disconnected");
                 break;

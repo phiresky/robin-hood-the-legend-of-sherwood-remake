@@ -6616,3 +6616,59 @@ fn quick_action_bow_rechecks_allocated_target_and_owner_state() {
     assert!(!quick_action_slot_is_valid(&engine, &assets, pc));
     assert_invalid_quick_action_fizzles_without_consuming(&mut engine, &assets, pc, titbit);
 }
+
+#[test]
+fn minimap_commands_only_change_the_issuing_players_display() {
+    use crate::player_command::{PlayerId, PlayerInput};
+    let (mut engine, assets, _) = setup_pc_engine(&[]);
+    let mut host_display = HostDisplayState::default();
+    let mut host_input = InputState::default();
+    let mut client_display = HostDisplayState::default();
+    let mut client_input = InputState::default();
+    host_input.controls.has_focus = true;
+    client_input.controls.has_focus = true;
+    engine.apply_commands(
+        &crate::sim_rng::test_context(),
+        &mut host_display,
+        &mut host_input,
+        &assets,
+        &[
+            PlayerInput {
+                player_id: PlayerId(1),
+                command: PlayerCommand::MinimapToggle,
+            },
+            PlayerInput {
+                player_id: PlayerId(1),
+                command: PlayerCommand::MinimapMouseDown {
+                    click_pt: crate::coordinates::ScreenPoint::new(10.0, 10.0),
+                    continuing_drag: true,
+                },
+            },
+        ],
+    );
+    for event in engine
+        .feedback
+        .pending_side_effects
+        .host_events
+        .iter()
+        .cloned()
+    {
+        client_display.apply_host_event_for_player(&mut client_input, event, PlayerId(1));
+    }
+    assert!(
+        !engine
+            .feedback
+            .pending_side_effects
+            .has_signal(crate::engine::HostSignal::ClearUiFocus)
+    );
+    assert!(engine.feedback.pending_side_effects.overlay.is_none());
+    for _ in 0..5 {
+        let tick = crate::engine::HostEvent::Minimap(crate::engine::MinimapHostEvent::Tick);
+        host_display.apply_host_event_for_player(&mut host_input, tick.clone(), PlayerId::HOST);
+        client_display.apply_host_event_for_player(&mut client_input, tick, PlayerId(1));
+    }
+    assert!(!host_display.minimap.is_displayed());
+    assert!(client_display.minimap.is_displayed());
+    assert!(host_input.controls.has_focus);
+    assert!(!client_input.controls.has_focus);
+}

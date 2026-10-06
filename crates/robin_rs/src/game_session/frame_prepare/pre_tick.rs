@@ -26,10 +26,10 @@ fn drain_pre_tick_network(
     if drain.rewrote_sim_state {
         frame.refresh_live_sound_boundary(&manager.engine, assets);
     }
-    if drain.rollback.is_some() {
-        // Late input invalidates the capture opened before local input/UI.
-        // Reconstruction returns to this same pre-tick frame; retain its
-        // queued commands/facts but capture their corrected starting state.
+    if drain.rewrote_sim_state && drain.adopted_frame.is_none() {
+        // Rollback and disconnect both invalidate the open history capture.
+        // A disconnect holds this same boundary until snapshot admission, but
+        // the held refresh can still produce paused history (e.g. UI effects).
         runtime.reopen_after_pre_tick_network_rollback(frame, &manager.engine);
     }
     *mp_clock_pause |= drain.pause_simulation;
@@ -437,6 +437,71 @@ pub(super) fn finalize_pre_tick(
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn second_drain_disconnect_retains_a_paused_history_boundary() {
+        use super::*;
+        use crate::game_session::replay_init::ReplayAndRollback;
+        use crate::game_session::runtime::FrameContract;
+        use crate::multiplayer::{NetChannels, NetEvent};
+        use crate::rewind::RewindBuffer;
+        use robin_engine::engine::{LevelAssets, SimulationFrameInput};
+        use robin_engine::engine_manager::EngineManager;
+        use robin_engine::player_command::PlayerId;
+        use std::sync::Arc;
+
+        let mut assets = LevelAssets::new();
+        let mut manager = EngineManager::new(
+            Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap(),
+        );
+        let mut assets = Arc::new(assets);
+        let mut timeline = TimelineRuntime::new(
+            ReplayAndRollback {
+                recording_control: Arc::<crate::replay_service::ReplayService>::default()
+                    .recording(),
+                recorder: None,
+                player: None,
+                rollback_checker: None,
+                rewind_buffer: RewindBuffer::new(),
+                start_paused: false,
+            },
+            FrameContract::Graphical,
+            false,
+            true,
+        );
+        let (channels, incoming, _outgoing, _, _) = NetChannels::new();
+        let mut host = Host::scratch(640.0, 480.0);
+        host.transport = crate::host::HostTransport::test_session(channels, PlayerId(1));
+        let mut frame = MissionFrame::new(17);
+        timeline.open_frame(&mut frame, &manager.engine);
+        incoming.send(NetEvent::Disconnected).unwrap();
+        let mut paused = false;
+        drain_pre_tick_network(
+            &mut timeline,
+            &mut host,
+            &mut manager,
+            &mut assets,
+            &mut frame,
+            &mut paused,
+            false,
+        )
+        .unwrap();
+        assert!(paused);
+        assert!(host.transport.reconnecting());
+        frame.adopt_authoritative_input(
+            SimulationFrameInput::no_hourglass().with_post_initialize(true),
+        );
+        frame.commit_timeline_after(timeline.current_frame());
+        timeline.commit_paused_history(&frame);
+        assert_eq!(timeline.frame_number(), 0);
+        assert!(timeline.history().buffer().commands_for(0).is_none());
+        // A second held refresh must preserve the first paused transaction.
+        timeline.open_frame(&mut MissionFrame::new(18), &manager.engine);
+        timeline
+            .history_mut()
+            .append_fixture(SimulationFrameInput::no_hourglass());
+        assert_eq!(timeline.history().buffer().paused_inputs_for(0).len(), 1);
+    }
+
     #[test]
     fn final_boundary_preserves_handoff_without_advancing_simulation() {
         use super::*;

@@ -787,44 +787,41 @@ impl EngineInner {
         match cmd {
             MinimapResize { base, corner_size } => {
                 let screen = Self::director_camera_view_size();
-                self.feedback
-                    .pending_side_effects
-                    .host_events
-                    .push(super::HostEvent::Minimap(super::MinimapHostEvent::Resize {
-                        base: *base,
-                        corner_size: *corner_size,
-                        screen_width: screen.x,
-                        screen_height: screen.y,
-                    }));
+                self.feedback.pending_side_effects.host_events.push(
+                    super::HostEvent::PlayerMinimap {
+                        player_id: crate::player_command::PlayerId(seat as u8),
+                        event: super::MinimapHostEvent::Resize {
+                            base: *base,
+                            corner_size: *corner_size,
+                            screen_width: screen.x,
+                            screen_height: screen.y,
+                        },
+                    },
+                );
             }
             MinimapMouseDown {
                 click_pt,
                 continuing_drag,
             } => {
                 let screen = Self::director_camera_view_size();
-                self.feedback
-                    .pending_side_effects
-                    .host_events
-                    .push(super::HostEvent::Minimap(
-                        super::MinimapHostEvent::MouseDown {
+                self.feedback.pending_side_effects.host_events.push(
+                    super::HostEvent::PlayerMinimap {
+                        player_id: crate::player_command::PlayerId(seat as u8),
+                        event: super::MinimapHostEvent::MouseDown {
                             click_pt: *click_pt,
                             screen_width: screen.x,
                             screen_height: screen.y,
                         },
-                    ));
+                    },
+                );
                 // The host resolves this before dispatch. Do not infer an
                 // engine message from rollback-local minimap scratch.
                 if *continuing_drag {
-                    self.forward_message(
-                        tcx,
-                        crate::messenger::Message::new(crate::messenger::MessageType::Simple(
-                            crate::messenger::SimpleMessage::UiHasFocus,
-                        )),
+                    self.feedback.pending_side_effects.host_events.push(
+                        super::HostEvent::ClearPlayerInputFocus {
+                            player_id: crate::player_command::PlayerId(seat as u8),
+                        },
                     );
-                    self.feedback
-                        .pending_side_effects
-                        .host_events
-                        .push(super::HostEvent::ClearInputFocus);
                 }
             }
             MinimapMouseMove {
@@ -833,42 +830,37 @@ impl EngineInner {
                 continuing_drag,
             } => {
                 let screen = Self::director_camera_view_size();
-                self.feedback
-                    .pending_side_effects
-                    .host_events
-                    .push(super::HostEvent::Minimap(
-                        super::MinimapHostEvent::MouseMove {
+                self.feedback.pending_side_effects.host_events.push(
+                    super::HostEvent::PlayerMinimap {
+                        player_id: crate::player_command::PlayerId(seat as u8),
+                        event: super::MinimapHostEvent::MouseMove {
                             mouse_pt: *mouse_pt,
                             left_mouse_down: *left_mouse_down,
                             screen_width: screen.x,
                             screen_height: screen.y,
                         },
-                    ));
+                    },
+                );
                 if *continuing_drag {
                     // Continuing-drag focus is command-derived. The host
                     // presentation mutation above may legitimately differ
                     // on a rollback scratch display.
-                    self.forward_message(
-                        tcx,
-                        crate::messenger::Message::new(crate::messenger::MessageType::Simple(
-                            crate::messenger::SimpleMessage::UiHasFocus,
-                        )),
+                    self.feedback.pending_side_effects.host_events.push(
+                        super::HostEvent::ClearPlayerInputFocus {
+                            player_id: crate::player_command::PlayerId(seat as u8),
+                        },
                     );
-                    self.feedback
-                        .pending_side_effects
-                        .host_events
-                        .push(super::HostEvent::ClearInputFocus);
                 }
             }
             MinimapMouseUp { on_minimap } => {
-                self.feedback
-                    .pending_side_effects
-                    .host_events
-                    .push(super::HostEvent::Minimap(
-                        super::MinimapHostEvent::MouseUp {
+                self.feedback.pending_side_effects.host_events.push(
+                    super::HostEvent::PlayerMinimap {
+                        player_id: crate::player_command::PlayerId(seat as u8),
+                        event: super::MinimapHostEvent::MouseUp {
                             on_minimap: *on_minimap,
                         },
-                    ));
+                    },
+                );
             }
             CenterCameraOnPoint { point } => {
                 let level_size = self.feedback.cutscene_camera.level_size;
@@ -894,22 +886,24 @@ impl EngineInner {
                 // Unconditional close animation start (no
                 // transition_counter guard) so a right-click during the
                 // opening animation immediately reverses to closing.
-                self.feedback
-                    .pending_side_effects
-                    .host_events
-                    .push(super::HostEvent::Minimap(
-                        super::MinimapHostEvent::RightClick,
-                    ));
+                self.feedback.pending_side_effects.host_events.push(
+                    super::HostEvent::PlayerMinimap {
+                        player_id: crate::player_command::PlayerId(seat as u8),
+                        event: super::MinimapHostEvent::RightClick,
+                    },
+                );
             }
             MinimapToggle => {
                 // Open if hidden, close if shown.  Both arms set the
                 // counters unconditionally so an in-flight transition
                 // reverses immediately, and the close arm also flips
                 // the UI state to Selected.
-                self.feedback
-                    .pending_side_effects
-                    .host_events
-                    .push(super::HostEvent::Minimap(super::MinimapHostEvent::Toggle));
+                self.feedback.pending_side_effects.host_events.push(
+                    super::HostEvent::PlayerMinimap {
+                        player_id: crate::player_command::PlayerId(seat as u8),
+                        event: super::MinimapHostEvent::Toggle,
+                    },
+                );
             }
 
             // ── Display / UI setters ────────────────────────────

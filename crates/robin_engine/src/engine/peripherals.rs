@@ -138,9 +138,30 @@ impl HostDisplayState {
     }
 
     /// Apply one ordered presentation event emitted by the engine frame.
+    #[cfg(test)]
     pub fn apply_host_event(&mut self, input: &mut super::InputState, event: super::HostEvent) {
+        self.apply_host_event_for_player(input, event, crate::player_command::PlayerId::HOST);
+    }
+
+    /// Apply shared presentation events and this player's input-driven events.
+    pub fn apply_host_event_for_player(
+        &mut self,
+        input: &mut super::InputState,
+        event: super::HostEvent,
+        local_seat: crate::player_command::PlayerId,
+    ) {
         use super::{HostEvent, MacroUiHostEvent, MinimapHostEvent};
         match event {
+            HostEvent::PlayerMinimap { player_id, event } => {
+                if player_id == local_seat {
+                    self.apply_host_event_for_player(input, HostEvent::Minimap(event), local_seat);
+                }
+            }
+            HostEvent::ClearPlayerInputFocus { player_id } => {
+                if player_id == local_seat {
+                    input.controls.has_focus = false;
+                }
+            }
             HostEvent::SetRightMouseDown { down } => input.controls.right_mouse_down = down,
             HostEvent::ClearInputFocus => input.controls.has_focus = false,
             HostEvent::CancelMultiSelection {

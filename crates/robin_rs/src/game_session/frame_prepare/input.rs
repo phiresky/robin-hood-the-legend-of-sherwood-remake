@@ -413,7 +413,13 @@ pub(super) async fn collect_input_and_menus(
     let hud = &mut frontend.hud;
     let presentation = &mut frontend.presentation;
 
-    if let Some(transition) = host.transport.take_committed_snapshot_transition() {
+    let terminal_ready = !ui.terminal_flow_active()
+        || ui
+            .terminal_debriefing
+            .as_ref()
+            .is_some_and(|state| state.awaiting_snapshot());
+    if terminal_ready && let Some(transition) = host.transport.take_committed_snapshot_transition()
+    {
         let exit_code = transport::apply_committed_transition(
             transition,
             &mut manager.engine,

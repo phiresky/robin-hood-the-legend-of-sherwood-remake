@@ -581,11 +581,23 @@ pub enum OverlayChange {
 )]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HostEvent {
-    SetRightMouseDown { down: bool },
+    SetRightMouseDown {
+        down: bool,
+    },
     ClearInputFocus,
-    CancelMultiSelection { suppress_next_double: bool },
+    CancelMultiSelection {
+        suppress_next_double: bool,
+    },
     Minimap(MinimapHostEvent),
     MacroUi(MacroUiHostEvent),
+    /// Input-driven minimap changes belong to the seat that issued them.
+    PlayerMinimap {
+        player_id: crate::player_command::PlayerId,
+        event: MinimapHostEvent,
+    },
+    ClearPlayerInputFocus {
+        player_id: crate::player_command::PlayerId,
+    },
 }
 
 #[derive(

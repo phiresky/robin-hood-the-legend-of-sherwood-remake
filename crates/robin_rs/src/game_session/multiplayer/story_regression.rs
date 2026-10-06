@@ -559,3 +559,72 @@ fn modal_session_reconnect_recovers_lost_ack_and_next_scroll() {
     client.click();
     assert_settled(&mut host, &mut client, &mut link, &expected);
 }
+
+#[test]
+fn completed_mission_snapshot_commits_the_hosts_campaign_before_rebuilding() {
+    use crate::host::{PendingSnapshotTransition, PendingSnapshotTransitionPayload};
+    use robin_engine::game_operation::GameCode;
+    use robin_engine::multiplayer::SnapshotTransitionPayload;
+    for exit_code in [GameCode::LevelSucceeded, GameCode::LevelFailed] {
+        let mut host = Peer::new(PlayerId::HOST);
+        let mut client = Peer::new(PlayerId(1));
+        let bytes = host.manager.engine.encode_native_snapshot();
+        let id = host
+            .net()
+            .begin_campaign_exit_transition(exit_code, bytes.clone())
+            .unwrap();
+        host.host
+            .transport
+            .prepare_snapshot_transition(PendingSnapshotTransition::new(
+                id,
+                PendingSnapshotTransitionPayload::CampaignExit {
+                    exit_code,
+                    engine: None,
+                },
+            ));
+        client
+            .incoming
+            .send(NetEvent::PrepareSnapshotTransition {
+                id,
+                payload: SnapshotTransitionPayload::CampaignExit {
+                    exit_code,
+                    engine_bytes: bytes.clone(),
+                },
+            })
+            .unwrap();
+        client.drain();
+        assert!(
+            matches!(client.outgoing.try_recv().unwrap(), NetOutbound::SnapshotTransitionReady { id: ready } if ready == id)
+        );
+        client
+            .incoming
+            .send(NetEvent::CommitSnapshotTransition { id })
+            .unwrap();
+        client.drain();
+        let transition = client
+            .host
+            .transport
+            .take_committed_snapshot_transition()
+            .unwrap();
+        match transition.into_payload() {
+            PendingSnapshotTransitionPayload::CampaignExit {
+                exit_code: actual,
+                engine: Some(engine),
+            } => {
+                assert_eq!(actual, exit_code);
+                assert_eq!(engine.encode_native_snapshot(), bytes);
+            }
+            _ => panic!("unexpected committed mission completion"),
+        }
+        // Consuming a commit retires the old transport; it must not resume
+        // gameplay or hand out the committed payload a second time.
+        assert!(
+            client
+                .host
+                .transport
+                .take_committed_snapshot_transition()
+                .is_none()
+        );
+        assert!(client.host.transport.reconnecting());
+    }
+}
