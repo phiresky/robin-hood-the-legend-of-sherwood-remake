@@ -149,10 +149,15 @@ substantial unresolved visual limitation, not full asset parity.
 Physical climb navigation now includes walls. Landing checks allow the outside
 point and seam to occupy adjacent terrain triangles while still rejecting
 missing support and hole interiors. Native wall movement retains explicit world
-endpoints instead of offsetting only its screen-space approach. The staged
-Lincoln inner gatehouse passes sixteen complete-profile climbing routes across
-four rotations and two elevations; its asset correction remains unpublished
-pending full-scene checks. Ordinary and crenellated wall barriers pass traversal,
+endpoints instead of offsetting only its screen-space approach. The Lincoln inner
+gatehouse and its independently walkable plateau are now published as drafts.
+Two copies pass 32 complete-profile climbing routes across four rotations and
+two elevations; all 32 missing/raised plateau cases reject. Full Lincoln retains
+16 stair routes, eight climbs and eleven controls. Steep wall landing checks
+account for coordinate-rounding error while still rejecting actual height gaps.
+The plateau retains substantial mesh warnings: sampled gaps reach 118.199 units
+over its coarse footprint and 2.969 units at the edited gatehouse seam. Ordinary
+and crenellated wall barriers pass traversal,
 copy isolation, closure and reopening checks. These are headless movement tests,
 not rendered animation certification.
 
@@ -526,7 +531,7 @@ posture and membership effects. Compiler checks require a landing to support
 both the outside point and seam before enabling physical traversal. Unsupported
 definitions retain projected navigation with a warning when their landing
 heights or coverage still disagree.
-The expanded local-anchor audit finds 1/8 ladder definitions and 9/9 wall
+The expanded local-anchor audit finds 1/8 ladder definitions and 8/9 wall
 definitions with unsupported floor anchors. Those counts do not check landing
 height compatibility or certify placed routes. Physical wall compilation and
 runtime traversal are supported, but these wall asset contacts remain unfinished.

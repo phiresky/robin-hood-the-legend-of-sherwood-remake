@@ -9288,3 +9288,46 @@ All ten saved scenes reopen. Full published York in
 Audit `lift-anchor-support-pdxfth` reports 0/53 unsupported stair definitions,
 1/8 ladders and 9/9 walls. Local anchor support is not full placement, animation,
 rendering or gameplay certification.
+
+### Lincoln gatehouse and independent plateau contact (2026-10-06)
+
+`stage-lincoln-gatehouse-contact.mjs` authors a candidate from the staged
+gatehouse and current asset definitions. It gives the separate inner-bailey
+plateau its own walkable top, preserves its collision flags, light order and
+material ownership, and retains its movement exclusions both below and on top.
+Two plateau edge vertices move 1.725819 and 2.501154 units to the climbing seam.
+The compiler receives only these asset definitions and current placements.
+
+Candidate `lincoln-gatehouse-contact-qMf4we` passes all sixteen full-Lincoln
+stair routes, eight climbs and eleven apply/reset controls. The isolated actual
+asset pair in `lincoln-inner-gatehouse-neighbour-placements-n2ALGE` contains two
+copies at four rotations and two elevations, without terrain borrowed from the
+source scene. All 32 missing/raised neighbour cases reject. Initially four of
+32 climbing routes failed on the second copy at 37 degrees: its upper landing
+was rejected for a 0.001143-unit height difference caused by f32 edge rounding.
+
+Landing binding now propagates coordinate rounding through the floor gradients
+when checking a shared edge. The new small native fixture reproduces that case
+and still rejects a 0.02-unit height gap. All 32 actor routes now pass. Eleven
+landing-binding tests, all 22 stair-navigation tests, and 47 regular compiled
+navigation tests pass (14 opt-in audits skipped). Full Lincoln is rechecked with
+the corrected runtime. An overly broad `exported_` test invocation also selected
+six unrelated scenery/probe audits without their required fixtures; that combined
+invocation is not recorded as a passing suite. Its relevant stair, climbing,
+copied-control and reopening checks pass.
+
+Mesh review finds 1,617/2,412 supported samples over the plateau's coarse floor,
+maximum uncovered distance 118.198667 and height residual 0.145244 units. Its
+edited gatehouse seam has 11/41 exact hits and maximum gap 2.968993 units. These
+limitations are explicit draft warnings; headless navigation is not a visual
+certification. The gatehouse flight retains its earlier 0.133-unit sampled
+edge-gap warning and unverified rendered integration.
+
+`lincoln-gatehouse-reviewed-Kp16J1` adds those warnings without changing geometry.
+Published both definitions with backup `lincoln-gatehouse-publication-20261006`.
+Audit `lift-anchor-support-ugbdci` reports 0/53 unsupported stair definitions,
+1/8 ladders and 8/9 walls. All eight fresh published placements in
+`lincoln-inner-gatehouse-neighbour-placements-GBLRT1` and full Lincoln in
+`lincoln-gatehouse-published-9tYt5l` exactly match the native-tested geometry.
+All ten scenes reopen. The game build, Rust formatting and patch whitespace
+checks pass.

@@ -26,6 +26,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn steep_wall_landing_accepts_coordinate_roundoff_but_not_a_height_gap() {
+        #[derive(Serialize, Deserialize)]
+        struct Fixture {
+            definition: robin_level_data::physical_stair::PhysicalStairNavigation,
+            motion: crate::level_data::RawMotionArea,
+            plane: [f64; 3],
+        }
+        let fixture: Fixture = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/steep-wall-landing-roundoff.json"
+        )))
+        .unwrap();
+        for gap in [0.0, 0.02] {
+            let mut bound = BoundPhysicalStair {
+                floor: None,
+                definition: fixture.definition.clone(),
+                layer: 3,
+                area: 0,
+                obstacle_states: vec![],
+                landings: vec![],
+            };
+            let mut motion = fixture.motion.clone();
+            let mut plane = fixture.plane;
+            plane[2] += gap;
+            for point in &mut motion.precise_polygon {
+                point[1] -= gap;
+            }
+            bound.definition.doors[1].middle[2] += gap as f32;
+            bound.definition.doors[1].outside[2] += gap as f32;
+            let result = bound.bind_landing(1, &motion, 2, 0, 205, plane, None);
+            if gap == 0.0 {
+                result.unwrap();
+                assert_eq!(bound.landings.len(), 1);
+            } else {
+                assert!(result.is_err(), "a real height gap must not be normalized");
+            }
+        }
+    }
+
+    #[test]
     fn attached_landing_wall_does_not_preserve_a_rounding_strip_at_the_door() {
         #[derive(Serialize, Deserialize)]
         struct Fixture {
@@ -861,6 +901,18 @@ impl BoundPhysicalStair {
         };
         let [sa, sb, sc] = self.plane_at([physical.middle[0], physical.middle[1]])?;
         let difference = |x: f64, y: f64| (sa - a) * x + (sb - b) * y + sc - c;
+        // Runtime stair edges round each coordinate independently to f32.
+        // Propagate only that coordinate error through the two floor gradients;
+        // steep climbs otherwise lose valid landings at larger map positions.
+        let height_tolerance = |point: geo::Coord<f64>| {
+            let half_ulp = |value: f64| {
+                let rounded = value as f32;
+                (f64::from(rounded.next_up()) - f64::from(rounded))
+                    .max(f64::from(rounded) - f64::from(rounded.next_down()))
+                    * 0.5
+            };
+            ((sa - a).abs() * half_ulp(point.x) + (sb - b).abs() * half_ulp(point.y)).max(0.001)
+        };
         let outside_side = difference(
             f64::from(physical.outside[0]),
             f64::from(physical.outside[1]),
@@ -979,7 +1031,7 @@ impl BoundPhysicalStair {
                     ])]);
                     if [intersection.start, intersection.end]
                         .iter()
-                        .any(|p| difference(p.x, p.y).abs() > 0.001)
+                        .any(|p| difference(p.x, p.y).abs() > height_tolerance(*p))
                     {
                         for collision in &permanent_collision {
                             contacts = collision.clip(&contacts, true);
@@ -988,7 +1040,7 @@ impl BoundPhysicalStair {
                     for intersection in contacts.iter().flat_map(|line| line.lines()) {
                         for p in [intersection.start, intersection.end] {
                             let difference = (sa - a) * p.x + (sb - b) * p.y + sc - c;
-                            if difference.abs() > 0.001 {
+                            if difference.abs() > height_tolerance(p) {
                                 return Err(format!(
                                     "landing and stair heights disagree along their shared edge at ({}, {}): difference {}",
                                     p.x, p.y, difference,

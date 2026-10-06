@@ -81,7 +81,7 @@
       "model": "3d-assets/lincoln/lincoln-castle-hill-inner-bailey-plateau/model.glb",
       "model_sha256": "a682cc4227506a78df3b7ff3bf9ac7a2429bb326ab522d1a78c5d7cb4c6e4d31",
       "descriptor": "3d-assets/lincoln/lincoln-castle-hill-inner-bailey-plateau/asset.json",
-      "descriptor_sha256": "930ed0626e0f12568715c58caf01c646b020d1f7ecb2c3e4c12a702ef8d44446",
+      "descriptor_sha256": "d199f88e475144bd5bfdb2811c53e86b4632b8b143614db51bf2ee3e2e28b768",
       "id": "lincoln-castle-hill-inner-bailey-plateau"
     },
     {
@@ -385,7 +385,7 @@
       "model": "3d-assets/lincoln/lincoln-inner-gatehouse/model.glb",
       "model_sha256": "105f281bd4e927efe5c8442e4c6602fb68a55c8b184e0e1332f0fa05da923462",
       "descriptor": "3d-assets/lincoln/lincoln-inner-gatehouse/asset.json",
-      "descriptor_sha256": "85ecd6839d6df5f964f6c157f5aa8ee9ef61067332020f205f1a2b043cc80c90",
+      "descriptor_sha256": "c4ead77956211a162e22151eb3703e19e83c9d8bab582ef034efeb0080d3b585",
       "id": "lincoln-inner-gatehouse"
     },
     {

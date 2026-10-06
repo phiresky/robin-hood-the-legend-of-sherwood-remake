@@ -17,10 +17,15 @@ assert.ok(
 const physicalTerrace = mode === "--physical-terrace";
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 const stair = selectedStair ?? edits[0].asset;
-const map = stair.startsWith("york-") ? "york" : "nottingham";
+const map = stair.startsWith("york-")
+  ? "york"
+  : stair.startsWith("lincoln-")
+    ? "lincoln"
+    : "nottingham";
 const source = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const neighbours = {
+  "lincoln-inner-gatehouse": ["lincoln-castle-hill-inner-bailey-plateau"],
   "york-stone-river-bridge-and-approach-stairs": [
     "york-east-bridge-raised-terrace",
     "york-southeast-riverside-raised-terrace",
@@ -67,10 +72,12 @@ const ids = [...new Set(stairs.flatMap((id) => [id, ...neighbours[id]]))];
 const originGroup = source.groups.find((group) => group.id === stair);
 const westLane = stair === "york-west-lane-access-steps";
 const riverBridge = stair === "york-stone-river-bridge-and-approach-stairs";
+const gatehouse = stair === "lincoln-inner-gatehouse";
 const sourceOrigin =
   ["york-north-garden-wall-and-stair", "york-precinct-east-wall-stair"].includes(stair) ||
   westLane ||
-  riverBridge
+  riverBridge ||
+  gatehouse
     ? [originGroup.transform.dx, originGroup.transform.dy]
     : [1500, 1500];
 for (const id of ids) {
@@ -123,12 +130,17 @@ const riverside =
 const terrainHeight =
   southernRiverside || westLane ? 50.001003 : stoneRiverside ? 0 : riverside ? 90.00101 : 0;
 const precinct = stair === "york-precinct-east-wall-stair";
-const size =
-  northWall || riverside || market || outerWall || precinct || westLane || riverBridge
+const size = gatehouse
+  ? [8000, 8000]
+  : northWall || riverside || market || outerWall || precinct || westLane || riverBridge
     ? [7000, 6500]
     : [5000, 4500];
-const centers =
-  northWall || riverside || market || outerWall || precinct || westLane || riverBridge
+const centers = gatehouse
+  ? [
+      [2500, 2500],
+      [5500, 5500],
+    ]
+  : northWall || riverside || market || outerWall || precinct || westLane || riverBridge
     ? [
         [2200, 2500],
         [4500, 3500],
