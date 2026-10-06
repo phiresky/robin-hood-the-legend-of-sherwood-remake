@@ -547,9 +547,9 @@
     },
     {
       "model": "3d-assets/york/york-market-southeast-tall-narrow-house/model.glb",
-      "model_sha256": "b0a5cea7b6fbc096efee3da5e28fc385d198c49920514068ad172ffd0bc20040",
+      "model_sha256": "5454d302bac87dbd705e855234c6d9e80e43cfff77b80e7e0f18ab8764265460",
       "descriptor": "3d-assets/york/york-market-southeast-tall-narrow-house/asset.json",
-      "descriptor_sha256": "cad1dca85a8f941bbae440fa570d5fd729a84e208a82c42d8b3d4362194380c3",
+      "descriptor_sha256": "1f4434bf16b08c0f41591c2bfb51edc36faca7412c6a6d6177d2a274363fa6f7",
       "id": "york-market-southeast-tall-narrow-house"
     },
     {
@@ -1492,9 +1492,9 @@
     },
     {
       "model": "3d-assets/york/york-southwest-square-west-house/model.glb",
-      "model_sha256": "e20554954f091107f052c33ea9a8e83b522c9b617a88a2cb242f0c3e1e85c41f",
+      "model_sha256": "028e73ec1ebdd68d2c193a26ead02400957eb5ac3b5f90eeb6637e9477e55229",
       "descriptor": "3d-assets/york/york-southwest-square-west-house/asset.json",
-      "descriptor_sha256": "1f5ed26aca10040f532ee2fa8fd151313928713da483806eb1c11b0c8024b697",
+      "descriptor_sha256": "1a2906936c1f08207b3a7484eb019cab8cc5cedcb09c798450e4fff1d09c841a",
       "id": "york-southwest-square-west-house"
     },
     {
@@ -3510,7 +3510,7 @@
       "transform": {
         "dx": 1796,
         "dy": 492.70215882554857,
-        "dz": 0.00007018875844902709,
+        "dz": 7.018875844902709e-05,
         "rot_deg": 0
       },
       "assets": [
@@ -3549,7 +3549,7 @@
       "transform": {
         "dx": 1835,
         "dy": 304.56908770240545,
-        "dz": 0.00004433892075628578,
+        "dz": 4.433892075628578e-05,
         "rot_deg": 0
       },
       "assets": [
@@ -3744,7 +3744,7 @@
       "transform": {
         "dx": 604,
         "dy": 344.71943824697865,
-        "dz": 0.000035515482248795254,
+        "dz": 3.5515482248795254e-05,
         "rot_deg": 0
       },
       "assets": [
@@ -3770,7 +3770,7 @@
       "transform": {
         "dx": 773,
         "dy": 590.7837294415774,
-        "dz": 0.00009480262313891086,
+        "dz": 9.480262313891086e-05,
         "rot_deg": 0
       },
       "assets": [
