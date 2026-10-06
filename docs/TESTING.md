@@ -312,6 +312,13 @@ finish, so its receiving plane can temporarily belong to the adjoining sector.
 This is an initial-state stair test, not coverage of ladders, walls, all character
 profiles, live sprite resources or mission behavior.
 
+To repeat stair traversal with a complete character animation profile, set
+`ROBIN_CLIMB_RHS` as below and run
+`exported_stairs_support_complete_sprite_actor_routes`. Its separate
+`actor-stair-sprite-route-report.json` records `complete_sprite: true` and checks
+the same complete routes with the supplied animation data. This still does not
+render the character or verify visual compositing.
+
 Climbing routes use a complete character animation profile instead of synthetic
 walking frames. Only that explicitly supplied RHS file is mounted; source-level
 files and mission scripts are unavailable. Navigation comes from the compiled

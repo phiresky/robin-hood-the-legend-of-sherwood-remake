@@ -9127,8 +9127,14 @@ passes all six controls but still fails 36 of 130 full-York routes. Three lower
 entrances miss the slightly angled physical terrace boundary.
 Candidate `west-lane-stair-contacts-9A7SvO` additionally aligns both the floor and
 explicit receiving volume on `york-southeast-riverside-raised-terrace`, moving
-two corners by 0.107700 and 0.085600 units. Compilation and all six control
-apply/reset checks pass; native routes remain pending at this checkpoint.
+two corners by 0.107700 and 0.085600 units. All 130 full-York native stair routes
+and six control apply/reset checks pass.
+The new `exported_stairs_support_complete_sprite_actor_routes` audit also passes
+all 130 routes using RobinTown's complete animation profile (73 seconds), with
+`complete_sprite: true` in `actor-stair-sprite-route-report.json`. It uses the
+same arrival, sector/layer and receiver checks and remains a simulation test,
+not rendered compositing verification. Engine test compilation, game build and
+Rust formatting checks pass.
 Mesh review `west-lane-physical-receivers-99PUdW` finds 1,327/1,635 lower-terrace
 hits, maximum edge gap 0.149704 and height residual 0.032518 units. The stair and
 upper terrace retain their earlier sampled gaps. All 205 ground backdrop samples
@@ -9138,7 +9144,7 @@ at four rotations and two elevations and rejects 64 missing/raised neighbours;
 its native traversal audit is pending.
 Actual-neighbour fixture
 `york-west-lane-access-steps-neighbour-placements-NVq5B7` exports sixteen copies
-and rejects 48 missing/raised receivers or terrain; its first 336 native routes
+and rejects 48 missing/raised receivers or terrain; its first 448 native routes
 pass. All 896 routes must complete before publication.
 
 Bridge candidate `local-stair-seams-4oe3PY` retains both flights and all eleven
@@ -9150,5 +9156,11 @@ maximum gaps are 0.068722 and 0.282337 units. Combined full-York candidate
 `york-multi-entrance-contacts-O4gMqo` contains both stair candidates and the two
 receiving corrections; it predates the lower physical-terrace correction.
 Replacement `york-multi-entrance-contacts-dvaYCq` combines all five edited assets;
-its compilation and native verification remain pending. Nothing in this
+compilation and six control checks pass, with native stair routes still pending.
+The bridge's actual-neighbour fixture
+`york-stone-river-bridge-and-approach-stairs-neighbour-placements-k2Zlar` compiles
+sixteen copies with both terraces and authored terrain and rejects 80 invalid
+neighbour/terrain cases. Removing terrain preserves the other flight in each
+copy, whose approaches belong to the physical terraces. Its native routes remain
+pending. Nothing in this
 section is published or claimed as full-scene parity.

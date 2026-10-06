@@ -21,6 +21,10 @@ const map = stair.startsWith("york-") ? "york" : "nottingham";
 const source = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const neighbours = {
+  "york-stone-river-bridge-and-approach-stairs": [
+    "york-east-bridge-raised-terrace",
+    "york-southeast-riverside-raised-terrace",
+  ],
   "york-west-lane-access-steps": [
     "york-east-bridge-raised-terrace",
     ...(physicalTerrace ? ["york-southeast-riverside-raised-terrace"] : []),
@@ -59,8 +63,11 @@ assert.ok(neighbours[stair], "Unknown reviewed stair assembly");
 const ids = [stair, ...neighbours[stair]];
 const originGroup = source.groups.find((group) => group.id === stair);
 const westLane = stair === "york-west-lane-access-steps";
+const riverBridge = stair === "york-stone-river-bridge-and-approach-stairs";
 const sourceOrigin =
-  ["york-north-garden-wall-and-stair", "york-precinct-east-wall-stair"].includes(stair) || westLane
+  ["york-north-garden-wall-and-stair", "york-precinct-east-wall-stair"].includes(stair) ||
+  westLane ||
+  riverBridge
     ? [originGroup.transform.dx, originGroup.transform.dy]
     : [1500, 1500];
 for (const id of ids) {
@@ -70,14 +77,24 @@ for (const id of ids) {
   if (mode === "--published") assert.deepEqual(assets.get(id).gameplay, edit.gameplay);
   else assets.get(id).gameplay = edit.gameplay;
 }
-const liftCount = assembleLiftSegments(
+const assembled = assembleLiftSegments(
   assets.get(stair).gameplay.lifts.map((lift) => ({
     id: lift.id,
     type: lift.type,
     direction: Math.atan2(lift.direction[1], lift.direction[0]),
     joins: lift.joins ?? [],
   })),
-).lifts.length;
+);
+const liftCount = assembled.lifts.length;
+const entranceCounts = assembled.lifts.map((assembledLift) =>
+  assets
+    .get(stair)
+    .gameplay.lifts.reduce(
+      (count, lift) =>
+        count + (assembled.identities.get(lift.id) === assembledLift.id ? lift.doors.length : 0),
+      0,
+    ),
+);
 const northWall = stair === "nottingham-north-wall-stair";
 const market = stair === "york-market-southwest-connecting-stairs";
 const outerWall = [
@@ -94,11 +111,11 @@ const terrainHeight =
   southernRiverside || westLane ? 50.001003 : stoneRiverside ? 0 : riverside ? 90.00101 : 0;
 const precinct = stair === "york-precinct-east-wall-stair";
 const size =
-  northWall || riverside || market || outerWall || precinct || westLane
+  northWall || riverside || market || outerWall || precinct || westLane || riverBridge
     ? [7000, 6500]
     : [5000, 4500];
 const centers =
-  northWall || riverside || market || outerWall || precinct || westLane
+  northWall || riverside || market || outerWall || precinct || westLane || riverBridge
     ? [
         [2200, 2500],
         [4500, 3500],
@@ -125,6 +142,7 @@ for (const height of [0, 40])
       (riverside && !physicalTerrace) ||
       market ||
       outerWall ||
+      riverBridge ||
       (westLane && !physicalTerrace)
         ? { terrain: createTerrainGrid([0, 0, ...size], 1000, height + terrainHeight) }
         : {}),
@@ -170,11 +188,24 @@ for (const height of [0, 40])
       compiled.warnings.join("\n"),
     );
     assert.ok(compiled.descriptor.asset_geometry.lifts.every((l) => l.physical_navigation));
+    assert.deepEqual(
+      compiled.descriptor.asset_geometry.lifts
+        .map((lift) => lift.doors.length)
+        .sort((a, b) => a - b),
+      centers.flatMap(() => entranceCounts).sort((a, b) => a - b),
+      "Every copied flight must retain all authored entrances",
+    );
     const file = `courtyard-west-stair-${height}-${rotation}.level.json`;
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
     results.push({ file, map: file, warnings: compiled.warnings });
-    if ((riverside && !physicalTerrace) || market || outerWall || (westLane && !physicalTerrace))
+    if (
+      (riverside && !physicalTerrace) ||
+      market ||
+      outerWall ||
+      riverBridge ||
+      (westLane && !physicalTerrace)
+    )
       for (const kind of ["missing", "raised"]) {
         const changed = structuredClone(document);
         if (kind === "missing") delete changed.terrain;
@@ -183,7 +214,8 @@ for (const height of [0, 40])
         const invalid = compile(changed);
         assert.equal(
           invalid.descriptor.asset_geometry.lifts?.length ?? 0,
-          0,
+          // Each bridge copy retains its other flight between physical terraces.
+          riverBridge ? 2 : 0,
           `${file}: ${kind} terrain retained an unsupported stair`,
         );
         rejected.push({ file, group: "$terrain", kind, warnings: invalid.warnings });

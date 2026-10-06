@@ -130,9 +130,13 @@ stone-bridge flights retain eleven entrances and pass 800 such routes. West-lane
 full-scene testing exposed 54 failing handoffs. Correcting the lower ground edge
 and separate upper terrace reduces this to 36: three lower entrances still miss
 the slightly angled physical terrace edge. A further staged correction aligns
-that receiving asset's floor and volume together. Full-scene and
-actual-neighbour checks must pass before publication. These candidates do not
+that receiving asset's floor and volume together, restoring all 130 full-York
+routes and six controls. Moved actual-neighbour checks and the combined bridge
+candidate still need verification before publication. These candidates do not
 reduce the published unsupported-anchor counts below.
+The corrected west-lane full-York export also passes all 130 stair routes with
+a complete Robin animation profile. This verifies animation-driven movement,
+sector/layer arrival and receiving support, but does not render the character.
 
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is

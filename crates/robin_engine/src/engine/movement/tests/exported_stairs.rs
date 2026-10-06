@@ -497,6 +497,17 @@ fn exported_stairs_support_complete_actor_routes() {
 
 #[test]
 #[ignore = "requires ROBIN_ASSET_MAP_DIAGNOSTICS and ROBIN_CLIMB_RHS"]
+fn exported_stairs_support_complete_sprite_actor_routes() {
+    let sprite = complete_climb_sprite();
+    audit_exported_lifts(
+        &[crate::sector::LiftType::Stairs],
+        Some(&sprite),
+        "actor-stair-sprite-route-report.json",
+    );
+}
+
+#[test]
+#[ignore = "requires ROBIN_ASSET_MAP_DIAGNOSTICS and ROBIN_CLIMB_RHS"]
 fn exported_climbs_support_complete_actor_routes() {
     let sprite = complete_climb_sprite();
     audit_exported_lifts(
