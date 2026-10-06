@@ -183,6 +183,14 @@ ladder while retaining the upper one. Full Derby retains 4/4 climbing routes,
 descriptors match the tested candidates, and all ten scenes reopen. Both ladders
 retain explicit mesh/rendering warnings: uncovered sampled feet and heads remain
 visible at reviewed rotations. These checks do not certify rendered integration.
+The Lincoln courtyard shed now publishes a sloped ladder/roof intersection and
+an approach point farther onto the existing roof. Its new-drop ground height is
+the lower entrance, rather than the buried foundation. All sixteen moved/elevated
+complete-animation routes pass, and eight raised-ground entrances reject.
+Full Lincoln retains all eight climb routes and eleven control checks, but its
+existing ground contact still forces this ladder to use projected navigation.
+The roof approach differs from the mesh by up to 0.196 units, and the ladder mesh
+remains incomplete; the draft explicitly retains these visual and contact gaps.
 The east hall's upper stair now has published floor/landing seam corrections and
 passes 48 directed routes across four rotations and two elevations. Full Derby
 passes 28/28 stair routes and all five control checks with this correction.

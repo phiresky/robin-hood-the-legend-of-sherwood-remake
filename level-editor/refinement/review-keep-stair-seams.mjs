@@ -145,6 +145,37 @@ for (const edit of edits) {
         };
       });
     const landingEdgeReviews = [];
+    const approachReviews = lift.doors.flatMap((door) => {
+      const oldDoor = descriptor.gameplay.lifts
+        .find((item) => item.id === lift.id)
+        ?.doors.find((item) => item.id === door.id);
+      if (!oldDoor || oldDoor.outside.every((value, i) => value === door.outside[i])) return [];
+      const samples = Array.from({ length: 41 }, (_, i) => {
+        const point = door.middle.map((v, axis) => v + ((door.outside[axis] - v) * i) / 40);
+        const hits = [triangles, ...neighbours.map((part) => part.triangles)]
+          .flat()
+          .map((triangle) => meshHeight(point, triangle))
+          .filter((z) => z !== undefined);
+        return {
+          point,
+          nearestMeshHeightError: hits.length
+            ? Math.min(...hits.map((z) => Math.abs(z - point[2])))
+            : null,
+        };
+      });
+      return [
+        {
+          door: door.id,
+          before: oldDoor.outside,
+          after: door.outside,
+          supported: samples.filter(
+            (sample) =>
+              sample.nearestMeshHeightError !== null && sample.nearestMeshHeightError < 0.1,
+          ).length,
+          samples,
+        },
+      ];
+    });
     for (const landing of edit.gameplay.surfaces) {
       const previous = descriptor.gameplay.surfaces.find((surface) => surface.id === landing.id);
       const heights = Array.isArray(landing.height) ? landing.height : [landing.height];
@@ -356,6 +387,7 @@ for (const edit of edits) {
       nearFloorTriangles: floorTriangles.length,
       treadProfiles,
       landingEdgeReviews,
+      approachReviews,
       maximumFloorXYShift:
         before.polygon.length === after.polygon.length
           ? Math.max(

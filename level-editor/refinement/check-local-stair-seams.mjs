@@ -60,6 +60,11 @@ for (const height of [0, 40])
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
     const geometry = compiled.descriptor.asset_geometry;
+    assert.equal(
+      geometry.lifts?.length ?? 0,
+      descriptor.gameplay.lifts.length,
+      `${file}: expected every authored lift; ${compiled.warnings.join("\n")}`,
+    );
     results.push({
       file,
       map: file,
@@ -102,5 +107,9 @@ await fs.writeFile(
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/external-gap-checks.json`, JSON.stringify(gaps));
 console.log(
-  JSON.stringify({ output, placements: results.map(({ warnings, ...result }) => result) }, null, 2),
+  JSON.stringify(
+    { output, placements: results.map(({ warnings: _warnings, ...result }) => result) },
+    null,
+    2,
+  ),
 );

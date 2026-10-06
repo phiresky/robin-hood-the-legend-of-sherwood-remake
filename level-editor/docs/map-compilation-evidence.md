@@ -4,6 +4,41 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Sloped Lincoln shed ladder landing (2026-10-06)
+
+The seam authoring tool now optionally intersects the lift and landing planes,
+preserving inclined roofs. Explicit options bound midpoint adjustments, set a
+reviewed placement ground height and extend selected outside approaches within
+their existing landing. The placement checker rejects omitted authored lifts
+with compiler diagnostics. Mesh review also samples changed outside approaches.
+The flat-landing northwest-tower candidates from the old and updated authoring
+tools (`local-stair-seams-5MYmXZ` / `local-stair-seams-PnjJ0b`) match within
+1e-9. Focused authoring-tool lint and formatting checks pass.
+
+Initial candidate `local-stair-seams-2k6T3r` passes 14/16 complete-animation
+routes (`local-stair-placements-Uc4NmR`). At 180 degrees the projected roof
+cannot fit the actor footprint at the old outside point; source extraction
+relocates the actor and the approach path fails before climbing. Extending the
+approach twelve world-XY units onto the same roof fixes the tested placements.
+The roof boundary and slope remain unchanged. Its new-drop ground height is
+220.001, matching the lower entrance instead of the buried foundation.
+
+Candidate `local-stair-seams-S1xOGI` and placements `local-stair-placements-sRGViM`
+pass 16/16 routes at four rotations and two elevations. Eight raised-ground
+negative cases reject. Mesh review finds 555/897 ladder floor hits, a maximum
+0.886-unit floor-vertex shift, and incomplete visible ladder coverage. All 41
+approach samples have mesh hits, but their height discrepancy reaches 0.196
+units; none meets the review's stricter 0.1-unit support threshold.
+
+Final stage `local-stair-seams-snSpAF` adds the explicit mesh/contact warning.
+Publication backup `lincoln-shed-ladder-publication-20261006` refreshes Lincoln's
+pin. Fresh published placements `local-stair-placements-R4oeQe` also pass 16/16
+complete-animation routes. All ten saved scenes reopen. Full Lincoln candidate
+`lincoln-shed-ladder-level-Siixgq` passes eight climb routes and eleven control
+apply/reset checks. Its lower ground contact still does not reach the precise
+seam, so this existing placement retains projected navigation with a warning.
+That contact and complete rendered integration remain unresolved.
+
 ## Published Derby postern ladders (2026-10-06)
 
 Stage `local-stair-seams-0fxVDU` corrects both southwest-postern ladder floors,
