@@ -8976,3 +8976,39 @@ and two elevations, rejects 32 missing/raised synthetic landings, and passes all
 Mesh review finds 538/540 sampled hits on the lower flight (maximum edge gap
 0.094 units) and 714/811 on the upper flight (maximum gap 2.562 units). The upper
 extension needs further mesh-based correction; the candidate remains unpublished.
+
+### Garden stair fitted contacts and draft publication (2026-10-06)
+
+The revised authoring tool fits the upper flight through the lower flight's
+shared edge and its own upper landing midpoint, preserving distinct slopes.
+The maximum height adjustment is 0.074860 units; upper landing contacts and
+receiving-plane metadata move with the floor. `york-garden-joined-seam-okKnUB`
+has 528/528 lower-flight mesh hits and 802/803 upper-flight hits, with maximum
+edge gap 0.014669 and sampled height residual 0.079796 units. The added authoring
+guard's `york-garden-joined-seam-6eKmZO` produces identical edits.
+
+`external-stair-landings-vOq0f4` passes all 32 native routes and rejects 32
+missing/raised synthetic receivers. Actual asset copies on editor-authored
+terrain in `york-north-garden-wall-and-stair-neighbour-placements-P6vk5D` pass
+another 32 routes and reject sixteen missing/raised-terrain cases. The neighbour
+checker now counts assembled lifts and centers the garden fixture to avoid
+cropping its rotated copies.
+
+The initial full York candidate passed 128/130 routes and six controls. Both
+failures were at the lower terrain contact. `york-garden-ground-contact-o2aXay`
+aligns the terrain-owned edge from `[3049,292]`–`[3078,278]` to
+`[3048.743717,291.454435]`–`[3077.888822,277.763327]`. All 205 backdrop samples
+are covered; this is not physical mesh evidence. Full York then passes all
+130 routes and all six control apply/reset checks.
+
+Published the stair and terrain with backup
+`york-garden-stair-publication-20261006`; only York's scene pins change. All ten
+scenes reopen. Eight fresh published placement exports in
+`york-north-garden-wall-and-stair-neighbour-placements-DvRcCK` match the tested
+geometry. The fresh `lift-anchor-support-sYwn9A` audit leaves 7/53 stair,
+1/8 ladder and 9/9 wall definitions with unsupported local anchors. Rendered
+contact and broader placement/state coverage remain open.
+
+Fresh full-York export `york-garden-published-ewoJkC` also matches the native-tested
+candidate geometry exactly. Authoring scripts pass syntax checks and the owned
+changes pass whitespace validation.

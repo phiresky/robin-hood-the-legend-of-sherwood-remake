@@ -85,11 +85,16 @@ changes, independently clips collision, and remaps controls after cropping.
 Joined and copied/rotated compiler checks pass, along with independent controls
 and single-flight cropping. Native tests consume compiler-generated joined-floor
 data and pass four complete routes plus four closed-barrier rejections across
-apply/reset cycles. A staged garden shared-edge correction exports sixteen
-rotated/elevated copies, passes all 32 native actor routes and rejects 32
-missing/raised landing cases. Its upper
-flight extends up to 2.562 units beyond the sampled mesh, so mesh refinement and
-full-scene verification remain open; this candidate is unpublished.
+apply/reset cycles. The garden stair and its terrain-owned contact are now
+published as drafts. Fitting the upper flight through the shared lower edge and
+upper landing midpoint changes its height by at most 0.075 units and reduces
+the earlier 2.562-unit mesh overhang to 0.015 units. Mesh sampling finds support
+at 1,330/1,331 points; sampled height residuals stay below 0.080 units. Synthetic
+landings and authored-terrain placements pass 64 native actor routes and reject
+48 missing/raised landing cases. Correcting the separate terrain contact restores
+all 130 full-York stair routes and six controls. All ten scenes reopen, and eight
+fresh published placement exports and full York match the tested geometry. The terrain provides
+backdrop coverage; rendered contact remains unverified.
 
 Latest runtime checks retain exact landing contours through binding and foot
 support instead of reducing them to single precision. The southwest turret is
@@ -249,9 +254,10 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 9 of 53 authored stair
+A library-wide local-anchor audit finds unsupported anchors in 7 of 53 authored stair
 definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 0/12,
-Sherwood 1/1 and York 8/16. All audited floors are planar. This checks local
+Sherwood 1/1 and York 6/16. Individual audited flight floors are planar; joined
+stairs may contain several planes. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
 

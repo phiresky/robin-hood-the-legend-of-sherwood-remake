@@ -14,6 +14,16 @@ const [stage] = process.argv.slice(2);
 assert.ok(stage);
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 const contacts = {
+  "york-north-garden-wall-and-stair": {
+    lift: "building-049-lift",
+    surface: "ground-section-4-0",
+    label: "North garden",
+    prefix: "york-garden-ground-contact",
+    before: [
+      [3049, 292],
+      [3078, 278],
+    ],
+  },
   "york-outer-southeast-wall-stair": {
     lift: "building-234-lift",
     label: "Southeast",
@@ -53,7 +63,9 @@ const plane = heightPlane(
 assert.equal(lift.doors[0].outside[2] + group.transform.dz, 0);
 const descriptor = assets.get("york-terrain");
 const gameplay = structuredClone(descriptor.gameplay);
-const surface = gameplay.surfaces.find((surface) => surface.id === "ground-section-2-0");
+const surface = gameplay.surfaces.find(
+  (surface) => surface.id === (contact.surface ?? "ground-section-2-0"),
+);
 assert.ok(surface.height.every((height) => height === 0));
 const before = contact.before;
 const indices = before.map((p) => surface.polygon.findIndex((q) => p.every((v, i) => v === q[i])));

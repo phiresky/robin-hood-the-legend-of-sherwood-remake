@@ -16,7 +16,7 @@
       "model": "3d-assets/york/york-terrain/model.glb",
       "model_sha256": "a54d425c2a44a2836e9e1c615a6a5daf92e631c57b53452e0de56e4e877d3965",
       "descriptor": "3d-assets/york/york-terrain/asset.json",
-      "descriptor_sha256": "de95370bc6e71dadcb2ecc1139b955eda55cd7aa0953ea9a5235682f2e280bfc"
+      "descriptor_sha256": "2da043d212d6cf53d7888299db73734789df3fa7db37e1b0d76f1457933b9877"
     }
   ],
   "assetSources": [
@@ -717,7 +717,7 @@
       "model": "3d-assets/york/york-north-garden-wall-and-stair/model.glb",
       "model_sha256": "cfa370436b4929f0d54fde04770f398450d6d9f220eef187b02cf9206367c574",
       "descriptor": "3d-assets/york/york-north-garden-wall-and-stair/asset.json",
-      "descriptor_sha256": "d1646fd276ad59491e4bc02cf378650c6d9e8e6b35860250e910d7f398eb554f",
+      "descriptor_sha256": "dab69903b75fb1794d77ab9c6adb95f282a79a4e5f42d8289343d6229b43d254",
       "id": "york-north-garden-wall-and-stair"
     },
     {

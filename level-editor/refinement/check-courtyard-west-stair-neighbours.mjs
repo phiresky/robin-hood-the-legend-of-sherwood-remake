@@ -4,6 +4,7 @@ import { readStoredMap, pinnedDescriptors } from "../pipeline/src/stored-map.ts"
 import { groupCentroid } from "../shared/src/level3d.ts";
 import { compileMap } from "../app/src/map-compile.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
+import { assembleLiftSegments } from "../shared/src/assemble-lift-segments.ts";
 
 const [stage, mode, selectedStair] = process.argv.slice(2);
 assert.ok(
@@ -20,6 +21,7 @@ const map = stair.startsWith("york-") ? "york" : "nottingham";
 const source = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", source.assetSources, source.sceneAssets);
 const neighbours = {
+  "york-north-garden-wall-and-stair": [],
   "york-outer-east-upper-wall-stair": ["york-outer-east-upper-curtain-wall"],
   "york-outer-southeast-wall-stair": [],
   "york-market-southwest-connecting-stairs": ["york-west-town-raised-terrain"],
@@ -50,6 +52,11 @@ const neighbours = {
 };
 assert.ok(neighbours[stair], "Unknown reviewed stair assembly");
 const ids = [stair, ...neighbours[stair]];
+const originGroup = source.groups.find((group) => group.id === stair);
+const sourceOrigin =
+  stair === "york-north-garden-wall-and-stair"
+    ? [originGroup.transform.dx, originGroup.transform.dy]
+    : [1500, 1500];
 for (const id of ids) {
   const edit = edits.find((e) => e.asset === id);
   assert.ok(assets.has(id));
@@ -57,12 +64,21 @@ for (const id of ids) {
   if (mode === "--published") assert.deepEqual(assets.get(id).gameplay, edit.gameplay);
   else assets.get(id).gameplay = edit.gameplay;
 }
-const liftCount = assets.get(stair).gameplay.lifts.length;
+const liftCount = assembleLiftSegments(
+  assets.get(stair).gameplay.lifts.map((lift) => ({
+    id: lift.id,
+    type: lift.type,
+    direction: Math.atan2(lift.direction[1], lift.direction[0]),
+    joins: lift.joins ?? [],
+  })),
+).lifts.length;
 const northWall = stair === "nottingham-north-wall-stair";
 const market = stair === "york-market-southwest-connecting-stairs";
-const outerWall = ["york-outer-southeast-wall-stair", "york-outer-east-upper-wall-stair"].includes(
-  stair,
-);
+const outerWall = [
+  "york-outer-southeast-wall-stair",
+  "york-outer-east-upper-wall-stair",
+  "york-north-garden-wall-and-stair",
+].includes(stair);
 const southernRiverside = stair === "york-east-riverside-southern-wall-stair";
 const stoneRiverside = stair === "york-riverbank-stone-landing-steps";
 assert.ok(!physicalTerrace || southernRiverside);
@@ -114,7 +130,10 @@ for (const height of [0, 40])
         const objects = source.objects.filter((o) => o.group === id);
         const pivot = groupCentroid(objects),
           rotatedPivot = rotate(pivot);
-        const origin = rotate([group.transform.dx - 1500, group.transform.dy - 1500]);
+        const origin = rotate([
+          group.transform.dx - sourceOrigin[0],
+          group.transform.dy - sourceOrigin[1],
+        ]);
         group.id = `copy${copy}/${id}`;
         group.transform = {
           dx: center[0] + origin[0] - pivot[0] + rotatedPivot[0],
