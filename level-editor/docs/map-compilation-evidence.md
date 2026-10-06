@@ -28,6 +28,17 @@ Sherwood scene pin. Fresh published placements (`local-stair-placements-9nrX10`)
 pass 16/16 climbs. The local-anchor audit (`lift-anchor-support-bqd3G8`) now flags
 3/8 ladders, 38/53 stairs and 9/9 walls. This is gameplay progress, not rendered
 parity certification. Focused authoring-tool lint and formatting pass.
+Fresh batch `saved-map-exports-pURUNj` reopens and compiles all ten saved scenes,
+passes all 84 climb routes and all 71 control apply/reset checks. Published
+Sherwood matches the tested full-scene candidate after excluding its revised
+draft warning.
+
+The next west-treehouse candidate (`local-stair-seams-X4sFNf`) corrects an outer
+platform edge, not the platform hole. Its reviewed candidate bounds allow a
+4.2-unit midpoint adjustment and a five-unit landing-edge adjustment. All sixteen
+moved routes still fail (`local-stair-placements-cpAsE5`); the upper seam also has
+incomplete mesh coverage, with a 3.381-unit maximum sampled discrepancy. This
+candidate is unpublished and does not affect the passing saved-scene batch.
 
 ## Exact ordinary landing boundaries (2026-10-06)
 
