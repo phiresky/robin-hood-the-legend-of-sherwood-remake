@@ -866,7 +866,26 @@ impl BoundPhysicalStair {
                     })
             })
         }) else {
-            return Err("landing receiver does not reach its physical door".into());
+            let gaps = support
+                .iter()
+                .map(|patch| {
+                    [physical.middle, physical.outside].map(|point| {
+                        let point = [f64::from(point[0]), f64::from(point[1])];
+                        if patch.intersects(&Point::new(point[0], point[1])) {
+                            0.
+                        } else {
+                            patch
+                                .exterior()
+                                .lines()
+                                .map(|edge| point_edge_distance(point, edge))
+                                .fold(f64::INFINITY, f64::min)
+                        }
+                    })
+                })
+                .collect::<Vec<_>>();
+            return Err(format!(
+                "landing receiver does not reach its physical door; patch distances to middle/outside: {gaps:?}"
+            ));
         };
         let collisions = motion
             .obstacles

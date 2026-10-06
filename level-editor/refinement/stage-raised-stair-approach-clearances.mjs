@@ -40,9 +40,25 @@ const surface = gameplay.surfaces.find((s) => s.id === lift.surface);
 const plane = heightPlane(surface.polygon.map((p, i) => [...p, surface.height[i]]));
 const z = door.outside[2];
 for (const floor of gameplay.surfaces) {
-  if (floor.id !== lift.surface) continue;
   const receiver = floor.projectionMaterials;
   if (!receiver) continue;
+  if (floor.id !== lift.surface) {
+    floor.preserveMovementBoundary = true;
+    floor.navigationRegion = `${floor.id}-landing`;
+    const previous = descriptor.gameplay.surfaces.find((s) => s.id === floor.id);
+    assert.ok(previous && !floor.holes?.length && !previous.holes?.length);
+    const extension = fixedPolygonBoolean("difference", [floor.polygon], [[previous.polygon]]);
+    const joined = fixedPolygonBoolean(
+      "union",
+      [receiver.footprint.map((p) => p.slice(0, 2))],
+      extension.map((p) => p),
+    );
+    assert.equal(joined.length, 1);
+    assert.equal(joined[0].length, 1);
+    const landingPlane = heightPlane(floor.polygon.map((p, i) => [...p, floor.height[i]]));
+    receiver.footprint = joined[0][0].slice(0, -1).map((p) => [...p, planeHeight(landingPlane, p)]);
+    continue;
+  }
   receiver.footprint = floor.polygon.map((p, i) => [...p, floor.height[i]]);
   let best = 0;
   for (let i = 1; i < receiver.footprint.length - 1; i++) {

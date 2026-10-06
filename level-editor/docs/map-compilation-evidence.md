@@ -8524,3 +8524,29 @@ Independent authored-terrain fixture
 routes, with upper-landing failures at 37 and 90 degrees; all sixteen
 missing/raised terrain cases reject. These receiver contacts remain unresolved
 and none of the southern riverside candidates is published.
+
+Further receiver checks distinguish two problems. Candidate
+`york-terrace-receiver-SBTlub` corrects the terrace receiver edge with a maximum
+mesh discrepancy of 0.149703 units (62/205 exact hits). In
+`york-terrace-connected-YbERSp` both landing bindings now succeed, but the two
+southern-stair routes still fail: a ground-plane collision contour remains across
+the lower doorway. Engine binding errors now report each patch's distances to
+the middle/outside anchors; all nine landing-binding unit tests pass.
+
+The physical-floor alternative `york-terrace-receiver-KnFwcm` gives the terrace
+its own height-50 walking region and volume-owned collision, without editing
+the background terrain. `york-physical-terrace-00P595` restores the southern stair
+but omits the riverbank wooden stair's lower entrance. Its 128 passing routes
+are therefore a regression from 130, not a passing full-map result. The wooden
+stair/terrace contact needs review before this alternative can be published.
+
+Upper receiver extension alone (`raised-stair-approach-Wdtowj`, placement fixture
+`york-east-riverside-southern-wall-stair-neighbour-placements-1fjsJs`) retains
+16/32 passing routes. Failed bindings measure gaps of about 0.016 and 0.027 units
+at 37/90 degrees; their exported landing boundaries have lost subpixel contours.
+Preserving an explicit upper navigation region (`raised-stair-approach-RDo7AX`,
+fixture `york-east-riverside-southern-wall-stair-neighbour-placements-DCfCkk`)
+passes the first four routes, then native loading rejects the 37-degree export:
+`invalid rounded precise motion obstacle: SelfIntersection(Exterior)`.
+All candidates remain unpublished. The rounded-obstacle defect and the separate
+wooden-stair contact are the next validation targets.
