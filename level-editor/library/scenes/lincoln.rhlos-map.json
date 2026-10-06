@@ -293,14 +293,14 @@
       "model": "3d-assets/lincoln/lincoln-hall-approach-ramp/model.glb",
       "model_sha256": "6164fc10b8b49c03317946784f54e82f453c837511a07248ba7cf1d087157c27",
       "descriptor": "3d-assets/lincoln/lincoln-hall-approach-ramp/asset.json",
-      "descriptor_sha256": "0e419e80a3dce70015ed6c33569d1196acc234d37da5e9264a50b90b28fe57c4",
+      "descriptor_sha256": "afe22066a6477a558d0e811b988766679ea7b7cb42b796fd86c30a46480b3bf6",
       "id": "lincoln-hall-approach-ramp"
     },
     {
       "model": "3d-assets/lincoln/lincoln-great-hall/model.glb",
       "model_sha256": "7a25c2e357b42682614697ace4128ecfc3f9559cf70feb701a6dc34510773908",
       "descriptor": "3d-assets/lincoln/lincoln-great-hall/asset.json",
-      "descriptor_sha256": "0d28d9a2073c2392cb9b7e8c0d5584936118c88aa5b68b28ce0daa3d3cec89fc",
+      "descriptor_sha256": "5784345a22fca80446c411fc23dc9183511fa36bcc15cad0950c8ad43b80905e",
       "id": "lincoln-great-hall",
       "resources": []
     },
@@ -420,7 +420,7 @@
       "model": "3d-assets/lincoln/lincoln-keep-annex/model.glb",
       "model_sha256": "1b7f7ad238dc69412315cbc01986e6d1727a75c6fde7ae5326ec6e003872d3bb",
       "descriptor": "3d-assets/lincoln/lincoln-keep-annex/asset.json",
-      "descriptor_sha256": "15fb4f27191e14526ced730f9742920f050da8ca9536a38613f7a15db4d91dd3",
+      "descriptor_sha256": "491ed0909aabff7d2d0a15a765062515340353bb9dc0adf6cb0fb232acaa1e38",
       "id": "lincoln-keep-annex"
     },
     {

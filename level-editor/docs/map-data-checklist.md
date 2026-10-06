@@ -169,23 +169,26 @@ complete-sprite and rendered verification remain open.
 All ten scenes reopen after publication, and full Derby passes all five control
 apply/reset checks. All ten Derby stair definitions now pass local floor-anchor
 support checks after the upper-west publication below.
-A library-wide local-anchor audit finds unsupported anchors in 29 of 53 authored stair
-definitions: Derby 0/10, Leicester 0/8, Lincoln 1/6, Nottingham 11/12,
+A library-wide local-anchor audit finds unsupported anchors in 28 of 53 authored stair
+definitions: Derby 0/10, Leicester 0/8, Lincoln 0/6, Nottingham 11/12,
 Sherwood 1/1 and York 16/16. All audited floors are planar. This checks local
 definitions, not placed connectivity or actual route failures; corrections and
 moved/rotated native traversal checks remain necessary across these assets.
 
-The Lincoln great-hall candidate now passes all 96 directed routes through two
+The Lincoln great hall and its independently owned ramp/annex contacts are now
+published. The three-asset assembly passes all 96 directed routes through two
 copies at four rotations and two elevations, retaining all 64 missing/raised
-landing rejections. Ordinary passages preserve world endpoints for their gate
+neighbour rejections and passing 32 control checks. Ordinary passages preserve world endpoints for their gate
 approach, in-stair walks and midpoint handoff, including edge-on floors. Receiver
 roundoff probes follow the actual exit direction instead of moving both axes
 equally. The two passage midpoints are corrected to the stair boundary, with
 6.840/11.933-unit shifts; no door is removed. The existing stair-flight review
-has 566/566 mesh sample hits. The fixture uses independent synthetic landing
-assets with the lower ramp's actual slope. This candidate remains unpublished:
-full Lincoln still needs its two real neighbouring contacts corrected and
-retested, followed by publication and rendered verification. Fresh exports of
+has 566/566 mesh sample hits. Full Lincoln passes sixteen stair routes, eight
+climbs and eleven controls. Fresh published geometry equals tested candidates,
+and all ten scenes reopen. The ramp's corrected contact edge lies up to 0.299
+units beyond its mesh; the annex contact has discrepancies up to 0.473 units.
+These remain explicit draft limitations, with rendered actor integration still
+unverified. Fresh exports of
 the ten saved scenes retain all 284 stair routes and 84 climbing routes with
 the runtime fixes.
 The Nottingham road stair is also published after sixteen moved/elevated routes,

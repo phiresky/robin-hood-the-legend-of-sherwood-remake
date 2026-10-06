@@ -4,6 +4,38 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published great hall with independent ramp and annex contacts (2026-10-06)
+
+The full-scene passage candidate `lincoln-great-hall-passages-TqcwjI` initially
+fails six of sixteen stair routes: the independently owned receiving boundaries
+do not meet the corrected stair. `stage-lincoln-great-hall-contacts.mjs` stages
+only the ramp's `building-288-walk-0` edge and the annex's
+`building-198-walk-0` edge, verifies their translation-only authoring frames and
+samples the affected strips against the pinned meshes.
+
+Stage `lincoln-great-hall-contacts-Yg0Yg0` combines those edits with
+`local-passage-seams-NYYqrN`. Ramp endpoint shifts are 3.901/5.188 units;
+annex shifts are 1.817/1.897 units. Ramp strip coverage is 1/205 exact samples,
+with its pre-existing edge reaching a 2.344-unit mesh gap; the corrected edge
+reduces the maximum to 0.299 units. Annex strip coverage is 173/205, with a
+0.473-unit maximum gap. Explicit draft warnings retain these limitations.
+The stair's repeated mesh review retains 566/566 flight hits.
+
+Full Lincoln `lincoln-great-hall-connected-4fbCiz` passes sixteen stair routes,
+eight climbs and eleven control apply/reset checks. Real-neighbour assembly
+`great-hall-neighbour-placements-nU0klO` places two independent copies at
+0/37/90/180 degrees and heights 0/40: all 96 actor routes and 32 control checks
+pass, while all 64 missing/raised-neighbour cases reject. This uses the actual
+ramp and annex assets, not synthetic receiving floors.
+
+Publication backup is `lincoln-great-hall-publication-20261006`; all three asset
+definitions and Lincoln scene pins are updated. Published assembly exports
+`great-hall-neighbour-placements-yr00AO` and full Lincoln exactly equal the
+native-tested descriptors. All ten scenes reopen. Audit
+`lift-anchor-support-sUVZfU` finds 28/53 unsupported stair definitions, with
+Lincoln now 0/6; ladders and walls remain 1/8 and 9/9. Formatting checks pass.
+Rendered integration and fresh browser ZIP verification remain outstanding.
+
 ## Physical ordinary-passage walks and directed receiver probes (2026-10-06)
 
 Ordinary passage walks on physical stairs now retain world destinations on
