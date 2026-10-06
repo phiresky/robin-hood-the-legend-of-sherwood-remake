@@ -1,0 +1,39 @@
+{
+  "status": "PASS: installed and normal-HTTP browser verified",
+  "scene_sha256": "a21ffc960717087a10fa239b2c6e03e0c14824f66c8b6587c9307ece18084550",
+  "index_sha256": "062944b2e7ce2e11e4b09dfbd57aaf4d6b1ca393a5043eded502f355b7affa1d",
+  "published_files": {
+    "3d-assets/croisement01/croisement01-southwest-broken-stump/model.glb": "112aa6953ee8d03643107e91a58e11fba58e49f8d220d930dd0ee60ab69f4715",
+    "3d-assets/croisement01/croisement01-southwest-broken-stump/asset.json": "fc384333f4cc8a40bced4e5e9d8edfdfaf176736de5b5ce4bb6058dddd7020fb",
+    "3d-assets/croisement01/croisement01-central-ivy-stump/model.glb": "c31f1f3e7d9da6d73686aebc45b3b2a276bbc1cad395e3f89d3f22356ad65ff8",
+    "3d-assets/croisement01/croisement01-central-ivy-stump/asset.json": "0bf0f424e2f3cbdcf466bbc785bc5e285c2aaeb7163b13199891325011bfb040",
+    "3d-assets/croisement01/croisement01-east-ivy-stump/model.glb": "9d3abe6b2990edda6e48db32d86a93c4841ffbfb361d83a3eee5c6e1e2bf2b15",
+    "3d-assets/croisement01/croisement01-east-ivy-stump/asset.json": "948ad19ce5e820cea97e425b02c91ad89a5d5a602a95b562974d5f4713eecf09"
+  },
+  "private_full_editor": {
+    "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/stumps64-67-69-integration-batch-v1/full-editor-private-v2/result.json",
+    "sha256": "ce8834f64917ee319a29b76c316a24458d1891715b2de19cfeacee4d7fa0066a",
+    "config_sha256": "6b232e44bc0276981bc6cbf6a5b205aa0a14820f512b4bbb6f86933f796c96de",
+    "checker_provenance_sha256": "531e18e660c79d4d772b5e87f0a91ec7e0db1ffab2df9ed6ba2ea325ccb05ff7"
+  },
+  "backup": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/stumps64-67-69-integration-batch-v1/publication-backup-v1",
+  "unchanged_other_placements": 56,
+  "unrelated_palette_entries_preserved": 1300,
+  "protected_existing_asset_files": 358,
+  "scope": {
+    "stump64": "WOOD ONLY;1424ivy/mixed pixels excluded; native60 preserved",
+    "stump69": "WOOD ONLY;1106ivy/mixed pixels excluded; native57/58 preserved",
+    "stump67": "WOOD ONLY;1945ivy/mixed pixels excluded; native54 preserved"
+  },
+  "bounded_live_proof_sha256": "cbeff5cfc98bed44a2b44671b059b4ce6fab457a142b7781ff17bc06fb346ba5",
+  "postcopy_published_files_verified": 6,
+  "postcopy_existing_asset_files_verified": 358,
+  "live_visual_review": "Personally inspected each installed asset screenshot; matches reviewed texture and cap/shaft form. Wood-only scope, excluded ivy remains unfinished.",
+  "live_screenshots": {
+    "croisement01-southwest-broken-stump-live-browser.png": "6a4df7933210cfaccaf32b3d377ed12e8456ae62bf614261ac0861af464dd4d9",
+    "croisement01-central-ivy-stump-live-browser.png": "742cd0f6f2f92225b7f687d821a0523319afbf0b9233c437e3b26018268251e9",
+    "croisement01-east-ivy-stump-live-browser.png": "5b6473be160f24b3b8ab9b95ebfd14c10ad31081d7cf4031260fc1a14687dcb5"
+  },
+  "publication_path": "level-editor/work/croisement01-refinement/restart2/stumps64-67-69-integration-batch-v1/publication.json",
+  "publication_sha256": "6f4210bb88094ddfedacfe455852ccb8609489f413109746a180574a5d5765a0"
+}
