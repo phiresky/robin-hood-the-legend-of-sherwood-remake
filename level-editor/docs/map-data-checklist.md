@@ -166,6 +166,11 @@ heights or coverage still disagree.
 The expanded local-anchor audit finds 4/8 ladder definitions and 9/9 wall
 definitions with unsupported floor anchors. Those counts do not check landing
 height compatibility or certify placed routes. Physical walls remain unfinished.
+The Sherwood central oak ladder seam candidate remains unpublished: eight moved
+placements fail all sixteen climb routes. A diagnostic collision clearance lets
+the lower landing bind in the traced default placement, but actors still stall.
+Matching receiving geometry and centered waypoints do not resolve traversal;
+the local collision cuts and actor footprint support need further review.
 All 84 climb routes in the ten saved-scene exports now pass, as do all 71 control
 apply/reset checks and Derby's 28/28 stair routes. The published tower matches
 its native-tested candidate; Leicester retains 22/22 climb and 16/16 stair

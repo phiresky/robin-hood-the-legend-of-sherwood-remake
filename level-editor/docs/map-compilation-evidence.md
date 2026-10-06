@@ -4,6 +4,29 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Sherwood central oak ladder investigation (2026-10-06)
+
+The unpublished seam candidate `local-stair-seams-84DWuZ` corrects the ladder
+floor and adjacent platforms, but its eight placements fail all sixteen directed
+climbs. A centered-waypoint candidate (`local-stair-seams-JgrTcH`) also fails.
+The lower landing cannot bind to the physical door; the upper landing binds.
+
+A dedicated lower-platform receiving volume matching the corrected surface
+(`oak-receiver-ZNPvxA`, placements `local-stair-placements-XVaPOv`) retains
+part collision but still fails all sixteen routes with the same binding error.
+This rules out receiving-volume coverage alone as a sufficient correction.
+A diagnostic whole-platform clearance (`oak-receiver-xefXEn`, placements
+`local-stair-placements-tE0Piq`) removes collision cuts at the seam and allows
+both landings to bind in the traced default placement. All sixteen routes still
+fail. Combining that diagnostic with centered waypoints (`oak-receiver-RLvu4H`,
+placements `local-stair-placements-9KiS13`) or preserved movement boundaries
+(`oak-receiver-ketHUR`, placements `local-stair-placements-gH6GNp`) also fails
+all sixteen routes. Actors stall at the lower seam or cannot route down from
+the ladder interior. These diagnostics are not published asset corrections:
+the clearance needs local ownership/mesh review, and footprint support across
+the bound seams remains unresolved. The unsuccessful general waypoint-centering
+option was removed from the authoring tool; staged diagnostics remain available.
+
 ## Published Lincoln ground contact and precise raised landings (2026-10-06)
 
 The terrain/plateau contact additionally needed precision on the plateau's
