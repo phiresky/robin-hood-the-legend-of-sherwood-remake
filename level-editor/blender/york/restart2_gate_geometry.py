@@ -7,7 +7,7 @@ import sys
 
 ROOT=Path(__file__).resolve().parents[3]
 WORK=ROOT/'level-editor/work/york-refinement'
-DEST=WORK/'restart2/gate-geometry-v3'
+DEST=WORK/'restart2/gate-geometry-v6'
 if DEST.exists(): raise FileExistsError(DEST)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -68,14 +68,31 @@ def beam(start,end,width,depth):
         vertices.extend([p-side-cross,p+side-cross,p+side+cross,p-side+cross])
     faces.extend([tuple(n+i for i in f) for f in ((0,3,2,1),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7))])
 height=62/c
-for i in range(7):
-    p=a+(b-a)*i/6;beam(p,p+Vector((0,0,height)),2.0,2.0)
-for i in range(7):
-    z=Vector((0,0,(4+i*9.5)/c));beam(a+z,b+z,2.0,2.0)
+upright_x=[2336.8003]+[2339.9+i*4.5 for i in range(9)]+[2377.6338]
+for x in upright_x:
+    p=a+(b-a)*(x-2336.8003)/(2377.6338-2336.8003)
+    beam(p,p+Vector((0,0,height)),2.0,2.0)
+for i in range(6):
+    z=Vector((0,0,(8+i*9.5)/c));beam(a+z,b+z,2.0,2.0)
 mesh=bpy.data.meshes.new('Inferred solid gate lattice');mesh.from_pydata(vertices,[],faces);mesh.update()
 gate=bpy.data.objects.new('scenery-york-castle-portcullis',mesh);scene.collection.objects.link(gate)
 gate['source_node']=gate.name;gate['asset_group']='york-castle-portcullis';gate['asset_name']='Castle courtyard portcullis';gate['part_name']='Lifting grille'
 gate['native_patch']='patch-000';gate['geometry_status']='unapproved hypothesis';gate.data.materials.append(wood)
+# A recessed stone return belongs to the gatehouse, never to the movable grille.
+# Its visible left jamb follows the narrow stone boundary beside the gate sprite;
+# the occluded crown/right return are explicitly inferred to meet the old lintel.
+arch_profile=[(2336.8003,90.00101),(2336.8003,192.08401),(2377.6338,192.08401),(2377.6338,90.00101),
+              (2371.0,90.00101),(2371.0,151),(2368,161),(2362,168),(2355,170),
+              (2349,166),(2345,157),(2343,150),(2343,90.00101)]
+arch_points=[world(x,1012.82166+(x-2336.8003),z) for x,z in arch_profile]
+assert normal.dot(Vector((0,-c,s)))>0, 'Return extrusion must face the native camera'
+arch_vertices=arch_points+[p+normal*5 for p in arch_points]
+n=len(arch_points);arch_faces=[tuple(reversed(range(n))),tuple(range(n,2*n))]
+arch_faces += [(i,(i+1)%n,(i+1)%n+n,i+n) for i in range(n)]
+arch_mesh=bpy.data.meshes.new('Scoped recessed arch return hypothesis');arch_mesh.from_pydata(arch_vertices,[],arch_faces);arch_mesh.update()
+arch=bpy.data.objects.new('building-778-portcullis-jamb-return',arch_mesh);scene.collection.objects.link(arch);arch.data.materials.append(gray)
+arch['source_node']='building-778';arch['projection_component']='portcullis-jamb-return';arch['asset_group']='york-castle-west-gatehouse';arch['geometry_status']='unapproved source-led correction hypothesis'
+context_objects.append(arch)
 level=json.loads((WORK/'baseline/york.rhp.json').read_text())
 floor_evidence=[]
 def clip(poly,axis,value,above):
@@ -132,6 +149,8 @@ for state,lift,source_frame in [('covered',0,'initial'),('raised',57,'transition
     bpy.ops.wm.save_as_mainfile(filepath=str(out/'model.blend'),compress=True)
     for o in context_objects:o.hide_render=True
     review(out/'isolated',isolated,iso_rows)
+    arch.hide_render=False
+    review(out/'gate-and-return',isolated,iso_rows)
     for o in context_objects:o.hide_render=False
     review(out/'contact',joint,joint_rows)
     scene.render.resolution_x=440;scene.render.resolution_y=500
@@ -141,5 +160,5 @@ for state,lift,source_frame in [('covered',0,'initial'),('raised',57,'transition
     d=ImageDraw.Draw(sheet);d.text((5,6),'Original native source (mechanism separate)',fill='white');d.text((445,6),'Gate hypothesis + unrefined gray context',fill='white');sheet.save(out/'native-comparison.png')
     scene.render.resolution_x=320;scene.render.resolution_y=384
     states.append({'state':state,'lift_game_pixels':lift,'model_sha256':sha(out/'model.blend')})
-(DEST/'geometry-proposal.json').write_text(json.dumps({'status':'HOLD pending self-review','source_blend':str(source),'source_sha256':sha(source),'source_study_sha256':sha(WORK/'restart2/gate-source-study-v2/manifest.json'),'context':context_evidence,'floor_contact':floor_evidence,'states':states,'inferences':['Hidden gate extends across exact floor92/98 seam; seven upright bars provisional, not directly countable from the 11-pixel native sliver.','Full solid lattice translates upward57 game pixels; gatehouse supplies occlusion, gate is never cut to sprite bounds.','No source texture projected; ochre identifies unknown gate geometry.','Gatehouse geometry is unrefined context only; mechanism patch004 excluded.'],'gameplay':'Native doors13/14 association retained in source study only; no descriptor, catalog or live changes.'},indent=2)+'\n')
+(DEST/'geometry-proposal.json').write_text(json.dumps({'status':'HOLD pending self-review','source_blend':str(source),'source_sha256':sha(source),'source_study_sha256':sha(WORK/'restart2/gate-source-study-v2/manifest.json'),'context':context_evidence,'floor_contact':floor_evidence,'states':states,'scoped_gatehouse_correction':{'owner':'york-castle-west-gatehouse','source_node':'building-778','component':'portcullis-jamb-return','profile_game_xz':arch_profile,'extrusion_world_depth':5,'source_basis':'Visible narrow stone jamb immediately left of patch000 and curved head; hidden crown/right return inferred to join lintel777 at192.08401','approval':'NONE; requires combined geometry review separately from unchanged context'},'inferences':['Hidden gate extends across exact floor92/98 seam; Three visible uprights and six crossbars traced from the native sliver; regular hidden upright continuation and edge posts inferred.','Full solid lattice translates upward57 game pixels; gatehouse supplies occlusion, gate is never cut to sprite bounds.','No source texture projected; ochre identifies unknown gate geometry.','Existing gatehouse geometry is unrefined context; newly authored recessed arch return is explicitly included in correction scope. Mechanism patch004 excluded.'],'gameplay':'Native doors13/14 association retained in source study only; no descriptor, catalog or live changes.'},indent=2)+'\n')
 print('GATE GEOMETRY PROPOSAL COMPLETE',flush=True)
