@@ -11,8 +11,8 @@ R=ROOT/'level-editor/work/croisement01-refinement/restart2';source=R/'tree08-v12
 
 def guard(reserve=1024**2):
  available=next(int(line.split()[1])*1024 for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:'));assert available>=6*1024**3,('6GiB available-memory floor',available)
- folders=list(R.glob('tree08-wood-prototype-v12*'))+list(R.glob('tree08-v12-*'));used=sum(p.stat().st_size for folder in folders for p in folder.rglob('*') if p.is_file())
- assert used+reserve<=cap,('Complete v12 round32MiB cap',used,reserve)
+ used=sum(p.stat().st_size for p in out.rglob('*') if p.is_file())
+ assert used+reserve<=cap,('Separate v12 model-review round32MiB cap',used,reserve)
  total=sum(p.stat().st_size for d in R.glob('tree08-wood-prototype-v*') for p in d.rglob('*') if p.is_file())
  assert total+reserve<=round_cap,('Round128MiB cap',total,reserve)
  assert shutil.disk_usage(R).free>=floor+(cap-used),'10GiB floor plus remaining lane output'

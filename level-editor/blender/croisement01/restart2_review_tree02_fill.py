@@ -18,11 +18,11 @@ from evidence_io import sha
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('workspace',type=Path);parser.add_argument('--native-context-node',action='append',default=[])
+    parser=argparse.ArgumentParser();parser.add_argument('workspace',type=Path);parser.add_argument('--native-context-node',action='append',default=[]);parser.add_argument('--reserve-mib',type=float,default=3)
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
-    workspace=args.workspace.resolve();case=workspace.parent
-    assert shutil.disk_usage(case).free>=10*1024**3+3*1024**2
-    assert sum(p.stat().st_size for p in case.rglob('*') if p.is_file() and not p.is_symlink())+3*1024**2<=32*1024**2, 'Fresh bake/review32MiBcap'
+    workspace=args.workspace.resolve();case=workspace.parent;reserve=int(args.reserve_mib*1024**2);assert reserve>=2*1024**2
+    assert shutil.disk_usage(case).free>=10*1024**3+reserve
+    assert sum(p.stat().st_size for p in case.rglob('*') if p.is_file() and not p.is_symlink())+reserve<=32*1024**2, 'Fresh bake/review32MiBcap'
     acquire()
     model_hash=sha(workspace/'model.blend')
     bpy.ops.wm.open_mainfile(filepath=str(workspace/'model.blend'))

@@ -8,7 +8,7 @@ from render_slots import acquire,release
 from texture_staging import validate_texture_handoff,verify_baked_geometry
 from export_editor import export_asset_library
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';asset='croisement01-tree-00';case=R/'approved-tree01-isolated-wood-fill-v1'/asset
+R=ROOT/'level-editor/work/croisement01-refinement/restart2';asset='croisement01-tree-01';case=R/'approved-tree01-isolated-wood-fill-v1'/asset
 assert shutil.disk_usage(R).free >= 10*1024**3+32*1024**2, 'Disk floor plus output reserve'
 acquire()
 try:

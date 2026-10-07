@@ -7,7 +7,7 @@ from mathutils.bvhtree import BVHTree
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';b=R/'approved-tree02-fill-v1/croisement01-tree-02/baked-v1-luminance';e=b.parent/'experiment';out=b/'face-provenance-census.json';assert not out.exists();acquire();before=sha(b/'worker.blend');bpy.ops.wm.open_mainfile(filepath=str(b/'worker.blend'));frames=json.loads((e/'views.json').read_text());report=json.loads((b/'validation.json').read_text());vertices=[];faces=[];offsets={};objects={name:bpy.data.objects[name] for name in frames['object_names']}
+R=ROOT/'level-editor/work/croisement01-refinement/restart2';b=R/'approved-tree02-fill-v1/croisement01-tree-02'/('baked-v2-two-sided-crown' if '--two-sided-crown' in sys.argv else 'baked-v1-luminance');e=b.parent/'experiment';out=b/'face-provenance-census.json';assert not out.exists();acquire();before=sha(b/'worker.blend');bpy.ops.wm.open_mainfile(filepath=str(b/'worker.blend'));frames=json.loads((e/'views.json').read_text());report=json.loads((b/'validation.json').read_text());vertices=[];faces=[];offsets={};objects={name:bpy.data.objects[name] for name in frames['object_names']}
 for name,o in objects.items():
  offsets[name]=len(faces);offset=len(vertices);vertices.extend(o.matrix_world@v.co for v in o.data.vertices);faces.extend(tuple(offset+i for i in f.vertices) for f in o.data.polygons)
 bvh=BVHTree.FromPolygons(vertices,faces);counts={}
