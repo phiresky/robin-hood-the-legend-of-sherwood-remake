@@ -364,6 +364,38 @@ test("ordinary physical climb landings retain fractional support boundaries", ()
   }
 });
 
+test("ordinary floors preserve fractional receiving seams without a lift", () => {
+  for (const rotation of [0, 37, 90, 180]) {
+    const { document, assets, hut } = assetCompilerFixture();
+    hut.gameplay!.collision = "none";
+    hut.gameplay!.doors = [];
+    hut.gameplay!.surfaces = [
+      {
+        id: "doorstep",
+        node: "building-999",
+        preserveMovementPrecision: true,
+        polygon: [
+          [0.25, 0.25],
+          [30.25, 0.25],
+          [30.25, 20.25],
+          [0.25, 20.25],
+        ],
+        height: [20, 20, 30, 30],
+      },
+    ];
+    document.groups[0]!.transform = { dx: 900.125, dy: 900.125, dz: 0, rot_deg: rotation };
+    const compiled = compileAssetGameplay(document, assets, bounds);
+    const areas = compiled.motion_data.layers.flat();
+    assert.equal(areas.length, 1);
+    assert.ok(areas[0]!.precise_polygon, `Missing precise ordinary floor at ${rotation}`);
+    const receivers = compiled.sight_obstacles.filter((receiver) => receiver.projection_area);
+    assert.equal(receivers.length, 1);
+    const heights = receivers[0]!.points.map((point) => point.z_top);
+    assert.ok(Math.abs(Math.min(...heights) - 20) < 1e-4, `Trimmed low seam at ${rotation}`);
+    assert.ok(Math.abs(Math.max(...heights) - 30) < 1e-4, `Trimmed high seam at ${rotation}`);
+  }
+});
+
 test("fractional receiving contours can be smaller than one integer-grid triangle", () => {
   const { document, assets, hut } = assetCompilerFixture();
   hut.gameplay!.collision = "none";

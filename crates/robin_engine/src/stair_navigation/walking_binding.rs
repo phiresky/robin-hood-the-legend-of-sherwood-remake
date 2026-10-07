@@ -3,6 +3,8 @@
 use super::*;
 use walking_surface::PhysicalWalkingSurface;
 
+mod neighbours;
+
 /// Fit physical navigation from the receiver anchors without rounding the
 /// coefficients to f32. Rounding the intercept before inverse projection can
 /// separate an otherwise shared edge by several coordinate ULPs after placement.
@@ -35,6 +37,8 @@ pub struct BoundPhysicalWalkingSurface {
     area: usize,
     geometry: PhysicalWalkingSurface,
     obstacle_states: Vec<u32>,
+    #[serde(default)]
+    neighbours: Vec<neighbours::WalkingNeighbour>,
 }
 
 impl BoundPhysicalWalkingSurface {
@@ -155,6 +159,7 @@ impl BoundPhysicalWalkingSurface {
                         support: vec![],
                     },
                     obstacle_states: motion.obstacles.iter().map(|o| o.state_id).collect(),
+                    neighbours: vec![],
                 })
             })
             .collect()

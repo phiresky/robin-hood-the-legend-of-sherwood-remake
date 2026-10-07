@@ -2451,6 +2451,9 @@ impl EngineInner {
                 }
             }
         }
+        crate::stair_navigation::walking_binding::BoundPhysicalWalkingSurface::bind_neighbours(
+            &mut floors,
+        );
         assets.navigation.physical_walking = std::sync::Arc::new(floors);
     }
 

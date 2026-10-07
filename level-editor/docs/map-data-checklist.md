@@ -974,13 +974,19 @@ then an elevation crossing switched them back to the ground underneath.
 Compiled physical-floor exits now bind the receiver at their actual midpoint.
 Generated receivers also carry independent, well-spaced plane anchors: clipping
 can leave nearly collinear leading vertices, which previously changed the
-loaded slope after translating a copy. With that correction **28/32 round trips
-pass**. Four stone-tower approaches still fail the movement command's footprint
-support check at 90 degrees. The 64/64 approach checks exercise path dispatch;
-they do not replace this source-authorization check. All six full-map geometry
-controls apply and reset, and all 130 stair and 40 climb routes pass with complete
-sprites and the new anchors. Rendered contacts, the remaining building failures
-and 15 feature omissions need review before publication.
+loaded slope after translating a copy. That correction improved round trips to
+28/32. The remaining four source-authorization failures are now resolved by
+preserving ordinary receiving contours before integer rounding and supporting
+feet across actual height-matched neighbouring floor edges. All **32/32 complete
+building round trips** now pass, alongside both sets of **64/64 approaches** and
+64 rejected missing/raised-terrain connections. Neighbour support retains holes,
+live blockers and floor ownership, and rejects gaps, corner-only contact and
+height/layer/sector mismatches. Full world-space cross-floor routing still needs
+integration. All six full-map geometry controls apply and reset, and fresh
+traversal checks pass all **130/130 stair** and **40/40 climb** routes with
+complete sprites and the contour/support revision.
+Rendered contacts, wider terrain integration and 15 feature omissions still
+need review before publication.
 The receiving-plane loader now propagates f32 rounding through both the plane
 anchors and each receiver vertex. Steep valid planes no longer fail loading
 merely because assets are translated; the regression still rejects explicit

@@ -18,9 +18,9 @@
   selected asset receiver tops into walkable floors with exterior edge sockets.
   It retains the volume's fitted plane through rotation, checks descriptor pins
   and refuses unreviewed material partitions. Two candidate doorsteps connect to
-  newly authored terrain in copied, rotated and elevated compiler checks; native
-  traversal coverage and rendered review are still incomplete, so these changes
-  remain unpublished.
+  newly authored terrain in copied, rotated and elevated compiler checks. All
+  32 tested complete-sprite building entry/exit round trips pass; rendered review
+  and broader terrain integration remain incomplete, so the assets stay unpublished.
 
 - **Physical walking on receiving floors (integration in progress).** Precise receiving
   floors support world-coordinate routes and bounded source recovery, retaining
@@ -38,7 +38,11 @@
   with live barriers and compatible-height neighbours, preserving physical
   position, receiver identity and material. Failed expanded source recovery can
   retain a position supported by the normal movement footprint. Connected stairs
-  can support footprints at their landing; climb walls cannot. Seek/line orders,
+  can support footprints at their landing; climb walls cannot. Ordinary floors
+  also share foot support across nonzero height-matched edges in the same motion
+  region. Gaps, incompatible heights, holes and live neighbour obstacles remain
+  blocked. Receiving contours retain authored precision without requiring a lift.
+  The character's center remains owned by its current floor. Seek/line orders,
   cross-floor routing and ordinary soft repulsion still need integration.
   Same-floor dispatch now checks the destination's actual receiver before
   unprojecting its position. A raised neighbour cannot accidentally select the
@@ -49,8 +53,8 @@
   Building exits onto compiled physical floors select their receiver at the
   actual handoff position. A later doorstep boundary crossing then installs
   the raised floor instead of switching a prematurely selected receiver back
-  to the ground underneath. Complete-sprite entrance/exit coverage still has
-  unresolved approach failures on rotated doorsteps.
+  to the ground underneath. Retaining exact floor seams and adjoining foot support
+  resolves the remaining rotated doorstep source-authorization failures.
   Physical floor and stair-landing bindings fit receiver anchors in double
   precision, avoiding translation-sensitive edge gaps caused by rounding plane
   coefficients before reconstructing collision contours. Compatibility movement

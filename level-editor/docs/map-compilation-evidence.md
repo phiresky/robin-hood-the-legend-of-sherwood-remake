@@ -10355,6 +10355,43 @@ Those helpers now transform or redefine the anchors with their polygons;
 all **54 navigation tests** and the receiver-state regression then pass.
 The 32 external-data tests ignored by the full suite are not counted as passes.
 
+### Ordinary floors support feet across precise receiving seams (2026-10-08)
+
+The remaining stone-tower failures combined two issues: the standing footprint
+crossed the low doorstep edge, and integer clipping trimmed that edge to a
+different height. Ordinary receiving contours now retain their authored
+pre-grid precision even without a lift. Native floor binding precomputes
+nonzero shared-edge connections only within the same layer and motion sector,
+requiring compatible heights at both contact endpoints. Incompatible raised
+contacts cannot provide foot support through the surrounding terrain. Query-time
+support subtracts the neighbour's current obstacle states; the character center
+still belongs to its current floor. This is not full world-space cross-floor routing.
+
+Fresh `receiver-floor-placements-wG7jw2` passes **32/32 complete-sprite building
+entry/exit round trips**, both **64/64 direct approach** suites, and all **64
+disconnected/raised-terrain rejections**. These are two copies of two assets on
+independently authored terrain, at four rotations and two elevations. All prior
+four 90-degree failures are resolved without relaxing height matching.
+
+New regressions cover edge versus corner contact, real gaps, wrong heights,
+wrong layers/sectors, holes, live blocker apply/reset, retained floor ownership,
+translated coordinates and ordinary fractional receiver contours without lifts.
+The focused compiler/plane/stair suite passes **152 tests**; the **54 existing
+native navigation tests**, the new movement-command seam regression and nine
+walking-binding tests pass. The broader editor
+fixture comparisons still have the two previously recorded merged-platform and
+sloped-terrain-socket mismatches. Full candidate `saved-map-exports-SlmjWZ` has
+the identical 1,176-warning set, including 40 omissions and 15 feature omissions.
+Its six geometry controls apply and reset, and all **130 complete-sprite stair
+routes** and **40 complete-sprite climb routes** pass. A final emitter cleanup
+avoids redundant precision fields and uses fixed-point contour comparison to handle coincident
+edges. `receiver-floor-placements-pUQGfB` matches the verified eight placement
+descriptors exactly. Full candidate `saved-map-exports-Ui295T` differs from the
+native-audited input only by omitted `precise_polygon` fields equal to their
+integer polygons, verified recursively. App typechecking, focused lint, formatting
+and the game build pass. The doorstep/terrain authoring experiments remain
+unpublished.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

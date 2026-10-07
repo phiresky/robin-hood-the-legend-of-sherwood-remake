@@ -143,6 +143,55 @@ fn ordinary_walking_binding_retains_the_full_receiver() {
 }
 
 #[test]
+fn ordinary_walking_source_can_straddle_only_a_connected_receiving_seam() {
+    for (gap, height, supported) in [(0., 0., true), (0.1, 0., false), (0., 1., false)] {
+        let mut document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/asset-multi-plane-region.level.json"
+        )))
+        .unwrap();
+        let upper = &mut document["asset_geometry"]["sight_obstacles"][0];
+        upper.as_object_mut().unwrap().remove("projection_plane");
+        for point in upper["points"].as_array_mut().unwrap() {
+            point["x"] = serde_json::json!(point["x"].as_f64().unwrap() + gap);
+            for key in ["z_bottom", "z_top"] {
+                point[key] = serde_json::json!(point[key].as_f64().unwrap() + height);
+            }
+        }
+        let (mut engine, mut assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+        let number = crate::sector::SectorNumber::new(0);
+        let index = engine.world.fast_grid.level.sector_number_map[&number];
+        let handle = crate::position_interface::SectorHandle::from_number(number)
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index as u32).unwrap());
+        let position = crate::coordinates::WorldPoint3D::new(399., 350., 36.);
+        let source = MapPoint::new(position.x, position.y - position.z);
+        let receiver = engine
+            .get_projection_area_index(&assets, handle, 0, source)
+            .unwrap();
+        let owner = walking_pc(&mut engine, &mut assets, source, 0, handle);
+        engine.set_obstacle_and_material(&assets, owner, Some(receiver));
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .position_iface_mut()
+            .set_position(position);
+        assert!(
+            engine
+                .current_physical_walking_floor(&assets, owner)
+                .is_some()
+        );
+        assert_eq!(
+            engine.extract_move_instruction_owner(&assets, owner),
+            supported,
+            "gap={gap}, height={height}"
+        );
+        assert_eq!(engine.ent(owner).position_iface().get_position(), position);
+    }
+}
+
+#[test]
 fn physical_landing_binding_uses_the_unrounded_approach() {
     for explicit_endpoints in [false, true] {
         let mut document = physical_stair_fixture();

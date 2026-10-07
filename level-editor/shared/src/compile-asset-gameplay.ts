@@ -1912,9 +1912,10 @@ function compileAssetGameplayAttempt(
             containsNavigationAnchor(area, door.outside),
         ),
     );
-    // Ordinary surface landings need the same pre-grid support as receivers
-    // attached to lower navigation. Rounded edges can otherwise cut their seam.
+    // Ordinary receiving floors also need their pre-grid edges: rounding can
+    // trim the height-matched seam between a doorstep and adjoining terrain.
     const physicalLanding =
+      (!lift && pieces.some((piece) => piece.receivingPolygon !== undefined)) ||
       raisedLanding ||
       (!lift &&
         doors.some(
@@ -1943,12 +1944,16 @@ function compileAssetGameplayAttempt(
             ) && polygonClipping.xor([rounded], [boundary]).length === 0,
         )
       : [];
-    const preciseBoundary =
+    const recoveredBoundary =
       preciseBoundaries.length === 1
         ? preciseBoundaries[0]!.exact
         : physicalLanding && pieces.length > 1
           ? joinedReceivingBoundary(pieces, boundary)
           : undefined;
+    const preciseBoundary =
+      recoveredBoundary && fixedPolygonBoolean("xor", [recoveredBoundary], [[boundary]]).length > 0
+        ? recoveredBoundary
+        : undefined;
     layers[layer]!.push(
       physical?.area ?? {
         is_lift: !!lift,
@@ -2043,19 +2048,9 @@ function compileAssetGameplayAttempt(
           );
         receiver.projection_area = [sector, layer];
       }
-      const physicalLanding =
-        !lift &&
-        doors.some(
-          (door) =>
-            door.lift &&
-            physicalStairs.has(door.lift) &&
-            containsNavigationAnchor(piece, door.outsideAnchor, { allowBlocked: true }),
-        );
-      const receivingPolygon = physicalLanding
-        ? (piece.receivingPolygon ?? piece.polygon)
-        : piece.polygon;
+      const receivingPolygon = !lift ? (piece.receivingPolygon ?? piece.polygon) : piece.polygon;
       const preciseLanding =
-        physicalLanding &&
+        !lift &&
         fixedPolygonBoolean("xor", polygon(receivingPolygon), [polygon(piece.polygon)]).length > 0;
       for (const material of partitionProjectionMaterials(receivingPolygon, supports, warnings)) {
         if (material.obstacleIndex !== undefined) continue;

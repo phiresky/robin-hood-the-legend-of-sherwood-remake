@@ -1615,7 +1615,7 @@ fn point_edge_distance(point: [f64; 2], edge: geo::Line<f64>) -> f64 {
 /// Encoded boundary vertices may disagree by a few ULPs along the same seam.
 /// Require a nonzero overlapping segment within that precision, not a nearby
 /// corner or an extension across a real gap.
-fn rounded_shared_edge_precise(
+pub(super) fn rounded_shared_edge_precise(
     first: geo::Line<f64>,
     second: geo::Line<f64>,
     tolerance: f64,

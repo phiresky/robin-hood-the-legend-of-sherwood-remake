@@ -13,6 +13,9 @@ impl EngineInner {
     ) -> crate::stair_navigation::walking_surface::PhysicalWalkingSurface {
         let floor = &assets.navigation.physical_walking[index as usize];
         let mut geometry = floor.snapshot(&self.world.pathfinder);
+        geometry.support.extend(
+            floor.neighbour_support(&assets.navigation.physical_walking, &self.world.pathfinder),
+        );
         for stair in assets.navigation.physical_stairs.values() {
             geometry.support.extend(stair.walking_support(
                 &self.world.pathfinder,

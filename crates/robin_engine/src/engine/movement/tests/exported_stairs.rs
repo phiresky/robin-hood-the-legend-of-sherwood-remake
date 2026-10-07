@@ -531,7 +531,11 @@ fn walk_exported_lift_with_tick(
                         && receiver.is_some_and(|receiver| floor.receivers.contains(&receiver.get()))
                 })
                 .map(|(index, floor)| {
-                    let geometry = floor.snapshot(&engine.world.pathfinder);
+                    let mut geometry = floor.snapshot(&engine.world.pathfinder);
+                    geometry.support.extend(floor.neighbour_support(
+                        &assets.navigation.physical_walking,
+                        &engine.world.pathfinder,
+                    ));
                     let point = [world_position.x, world_position.y, world_position.z];
                     let half = engine.ent(owner).position_iface().get_half_diagonal();
                     serde_json::json!({
