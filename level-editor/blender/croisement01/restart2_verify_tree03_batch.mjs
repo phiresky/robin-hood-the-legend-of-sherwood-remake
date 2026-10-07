@@ -6,25 +6,34 @@ import {chromeEndpoint,socketOpen,evaluate} from '../../app/tests/cdp.mjs';
 const live=process.argv.includes('--live');
 if(!live)throw Error('This bounded verifier requires installed --live scope');
 const base=resolve('level-editor/work/croisement01-refinement/restart2/tree03-integration-batch-v1');
-const origin=process.argv.find(value=>value.startsWith('http://'))??'http://127.0.0.1:5180';
+if(process.argv.some(value=>value.startsWith('http://')))throw Error('Sandbox proof owns its local server; external origins are forbidden');
+const {createServer}=await import('../../app/node_modules/vite/dist/node/index.js');
+const server=await createServer({configFile:resolve('level-editor/app/vite.config.ts'),root:resolve('level-editor/app'),cacheDir:base+'/sandbox-vite-cache',server:{host:'127.0.0.1',port:0,watch:null,hmr:false}});
+await server.listen();await server.watcher.close();
+const origin='http://127.0.0.1:'+server.httpServer.address().port;
 const verificationAssets=live?resolve('level-editor/library/3d-assets'):base+'/assets';
 const originalScene=live?base+'/publication-backup-v1/croisement01.rhlos-map.json':resolve('level-editor/library/scenes/croisement01.rhlos-map.json');
 const outputPrefix=live?'live-browser':'browser-export';
 const publication=JSON.parse(await readFile(base+'/publication.json','utf8'));
 const library=resolve('level-editor/library');
 const digest=async path=>createHash('sha256').update(await readFile(path)).digest('hex');
+const runtime=JSON.parse(await readFile(base+'/sandbox-runtime-provenance.json','utf8'));
 const verifyInstalled=async()=>{
+ for(const [path,expected] of Object.entries(runtime))if(await digest(path)!==expected)throw Error('Runtime changed: '+path);
  if(await digest(library+'/scenes/croisement01.rhlos-map.json')!==publication.scene_sha256)throw Error('Installed scene changed');
  if(await digest(base+'/croisement01.rhlos-map.json')!==publication.scene_sha256)throw Error('Staged scene differs from installed bytes');
  for(const [path,expected] of Object.entries(publication.published_files))if(await digest(library+'/'+path)!==expected)throw Error('Installed asset changed: '+path);
 };
 await verifyInstalled();
 const profile=await mkdtemp('/home/phire/.cache/crois01-approved-batch-');
-const chrome=spawn('/usr/lib/chromium/chromium',['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--enable-unsafe-swiftshader','--use-angle=swiftshader','--remote-debugging-port=0','--user-data-dir='+profile,origin+'/tests/asset-scenes.html'],{stdio:['ignore','ignore','pipe']});
+const chrome=spawn('/usr/lib/chromium/chromium',['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--enable-unsafe-swiftshader','--use-angle=swiftshader','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:['ignore','ignore','pipe']});
 const closed=new Promise(r=>chrome.on('close',r));let ws,id=0;
 const command=(method,params)=>new Promise((resolve,reject)=>{const n=++id;const f=e=>{const m=JSON.parse(e.data);if(m.id===n){ws.removeEventListener('message',f);m.error?reject(Error(JSON.stringify(m.error))):resolve(m.result);}};ws.addEventListener('message',f);ws.send(JSON.stringify({id:n,method,params}));});
 try{
  const endpoint=new URL(await chromeEndpoint(chrome));const pages=await(await fetch('http://'+endpoint.host+'/json/list')).json();ws=new WebSocket(pages.find(p=>p.type==='page').webSocketDebuggerUrl);await socketOpen(ws);
+ await command('Page.enable');
+ const loaded=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Sandbox page load timeout')),30000);const listener=e=>{if(JSON.parse(e.data).method==='Page.loadEventFired'){clearTimeout(timer);ws.removeEventListener('message',listener);resolve()}};ws.addEventListener('message',listener)});
+ await command('Page.navigate',{url:origin+'/tests/asset-scenes.html'});await loaded;
  for(let i=0;i<200;i++){try{if(await evaluate(ws,++id,'!!window.assetSceneVerification'))break;}catch(error){if(!String(error).includes('execution context'))throw error;}await new Promise(r=>setTimeout(r,100));}
  await new Promise(r=>setTimeout(r,1500));
  const runAsync=async expression=>{const result=await command('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(result.exceptionDetails)throw Error(JSON.stringify(result.exceptionDetails));return result.result.value;};
@@ -36,5 +45,5 @@ try{
  const preview=result.map(r=>r.preview);
  const memory=await evaluate(ws,++id,'assetSceneVerification.retire()');
  await verifyInstalled();
- await writeFile(base+'/'+outputPrefix+'-proof.json',JSON.stringify({status:'PASS',assets,result,preview,memory,mapProof,palette_insert_save_reload:true},null,2)+'\n');console.log(JSON.stringify({status:'PASS',result}));
-}finally{ws?.close();chrome.kill('SIGTERM');await closed;await rm(profile,{recursive:true,force:true});}
+ await writeFile(base+'/'+outputPrefix+'-proof.json',JSON.stringify({status:'PASS',execution:'sandbox-local Vite and Chromium, no host origin',runtime_provenance_sha256:await digest(base+'/sandbox-runtime-provenance.json'),assets,result,preview,memory,mapProof,palette_insert_save_reload:true},null,2)+'\n');console.log(JSON.stringify({status:'PASS',result}));
+}finally{ws?.close();chrome.kill('SIGTERM');await closed;await rm(profile,{recursive:true,force:true});await server.close();}

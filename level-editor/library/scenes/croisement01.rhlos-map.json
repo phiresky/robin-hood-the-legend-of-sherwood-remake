@@ -437,11 +437,18 @@
       "descriptor_sha256": "0b379da8a6c512a45c097cd20719e7a69a7b8f4d11940feb43143bd435c0103f"
     },
     {
+      "id": "croisement01-tree-03",
+      "model": "3d-assets/croisement01/croisement01-tree-03/model.glb",
+      "model_sha256": "7688ce50decd31937fdccba40e2a160aae81054cc544f895c1292c4d291d27e5",
+      "descriptor": "3d-assets/croisement01/croisement01-tree-03/asset.json",
+      "descriptor_sha256": "0c1077aa0b235cc74882132aeef7c3486f8fbb54a83fb0d3fb43e064478b5b89"
+    },
+    {
       "id": "croisement01-group-005",
       "model": "3d-assets/croisement01/croisement01-group-005/model.glb",
-      "model_sha256": "28c439608fa21166d35fb2ce89322b81d9818895fa7caa6274c77367073ad8a0",
+      "model_sha256": "a915bfd38b560c34e9320d628fc9463bd93e0edc8a53d4dfbd1ca39b59ac09ec",
       "descriptor": "3d-assets/croisement01/croisement01-group-005/asset.json",
-      "descriptor_sha256": "73d5be035145bb61e3e5b79ab1db930f63bbbdf37e7c2cf6873372d782e5a2e1"
+      "descriptor_sha256": "24c0066f7b054fa4038d089167bd00e11b3a6522519e83ea0b7cfea651c11dd9"
     }
   ],
   "sceneMetadata": {},
@@ -1205,6 +1212,18 @@
         "dx": -12.046493530273438,
         "dy": 666.3846325920487,
         "dz": 110.06526893648092,
+        "rot_deg": 0
+      }
+    },
+    {
+      "id": "tree03-approved",
+      "assets": [
+        "croisement01-tree-03"
+      ],
+      "transform": {
+        "dx": 172.45095825195312,
+        "dy": 528.4884412913468,
+        "dz": 109.29420157716477,
         "rot_deg": 0
       }
     }
