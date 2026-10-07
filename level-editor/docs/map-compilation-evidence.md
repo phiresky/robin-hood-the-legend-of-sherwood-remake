@@ -10249,6 +10249,31 @@ supersede the earlier sampler's missing 90/180-degree approach coverage, but do
 not complete world-space cross-floor routing or certify building entry/exit and
 rendering. The doorstep/terrain asset candidate remains unpublished.
 
+### Explicit destination layers in physical walking dispatch (2026-10-07)
+
+A regression with two valid overlapping screen footprints at different heights
+showed that the physical-walking shortcut also bypassed normal routing for an
+explicit destination on another layer. Before the fix, the upper-layer request
+returned `Success` with a lower-floor physical walking order. The shortcut now
+checks a specified destination's layer, public sector and available runtime
+sector identity before resolving a screen point on the current floor. An
+unspecified sector retains the existing local-destination semantics. Explicit
+gate world endpoints continue through their existing floor checks, and deferred
+door-handoff routing retains its own direct-movement rules.
+
+`physical_walking_shortcut_respects_the_requested_destination_layer` passes for
+a local explicit goal, an upper-layer goal that remains queued for normal
+routing, and a local goal without a specified sector. This verifies dispatch
+ownership, not complete traversal between disconnected floors. The full
+compiled-navigation group passes **53 tests** with 16 external-data audits
+ignored. All **22 path-request timing/direct-movement tests** pass, including
+the deferred door-handoff regression; the direct binary invocation requires the
+standard `RUST_MIN_STACK=33554432` setting (the initial default-stack invocation
+aborted in a direct-movement test). The existing doorstep batch
+`receiver-floor-placements-jzIo86` still passes **64/64 directed approaches**.
+Cargo formatting and the game build pass. General physical cross-floor routing, complete building
+entry/exit animations and rendered integration remain unfinished.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

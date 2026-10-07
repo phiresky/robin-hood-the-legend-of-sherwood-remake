@@ -1,6 +1,108 @@
 use super::*;
 
 #[test]
+fn physical_walking_shortcut_respects_the_requested_destination_layer() {
+    let cases: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-sloped-terrain-sockets.json"
+    )))
+    .unwrap();
+    let mut descriptor = cases[0]["descriptor"].clone();
+    let geometry = &mut descriptor["asset_geometry"];
+    let mut area = geometry["motion_data"]["layers"][0][0].clone();
+    area["polygon"]["points"] = serde_json::json!([[0, 0], [100, 0], [100, 100], [0, 100]]);
+    geometry["motion_data"]["layers"] = serde_json::json!([[area.clone()], [area], []]);
+    let template = geometry["sight_obstacles"][0].clone();
+    geometry["sight_obstacles"] = serde_json::Value::Array(
+        [0, 1]
+            .into_iter()
+            .map(|layer| {
+                let mut receiver = template.clone();
+                let z = layer * 30;
+                receiver["projection_area"] = serde_json::json!([layer, layer]);
+                receiver["points"] = serde_json::json!(
+                    [(0, 0), (100, 0), (100, 100), (0, 100)].map(|(x, y)| serde_json::json!({
+                        "x": x, "y": y+z, "z_bottom": z, "z_top": z
+                    }))
+                );
+                receiver
+            })
+            .collect(),
+    );
+    let bytes = serde_json::to_vec(&descriptor).unwrap();
+    for (target_layer, explicit_sector) in [(0, true), (1, true), (1, false)] {
+        let (mut engine, mut assets) = compiled_walkway(&bytes);
+        let handle = |index: usize| {
+            crate::position_interface::SectorHandle::from_number(
+                engine.world.fast_grid.level.sectors[index].sector_number,
+            )
+            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index as u32).unwrap())
+        };
+        let source_sector = handle(0);
+        let target_sector = handle(usize::from(target_layer));
+        let source = MapPoint::new(30., 50.);
+        let goal = MapPoint::new(70., 50.);
+        let owner = walking_pc(&mut engine, &mut assets, source, 0, source_sector);
+        let receiver = engine
+            .get_projection_area_index(&assets, source_sector, 0, source)
+            .unwrap();
+        engine.set_obstacle_and_material(&assets, owner, Some(receiver));
+        assert!(
+            engine
+                .current_physical_walking_floor(&assets, owner)
+                .is_some()
+        );
+        assert!(
+            engine
+                .get_projection_area_index(&assets, target_sector, target_layer, goal)
+                .is_some()
+        );
+        let mut movement =
+            SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
+        let crate::sequence::SequenceElementData::Movement {
+            destination,
+            layer,
+            sector,
+            ..
+        } = &mut movement.data
+        else {
+            unreachable!()
+        };
+        *destination = goal;
+        *layer = target_layer;
+        *sector = explicit_sector.then_some(target_sector);
+        let sequence = engine.t_launch_in_progress(&assets, movement);
+        let sim = crate::sim_rng::test_context();
+        let result = engine.try_dispatch_move_path(
+            TickCtx::new(&sim, &assets),
+            owner,
+            crate::sequence::SequenceElementRef::new(sequence, 0),
+            goal,
+            OrderType::WalkingUpright,
+        );
+        let physical = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .orders
+            .iter()
+            .any(|order| order.physical_walking.is_some());
+        assert_eq!(
+            physical,
+            target_layer == 0 || !explicit_sector,
+            "destination layer {target_layer}, explicit sector {explicit_sector}: {result:?}"
+        );
+        if target_layer == 1 && explicit_sector {
+            assert!(
+                matches!(result, MovePathOutcome::Pending),
+                "cross-layer goal must retain normal route dispatch: {result:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn dispatched_walk_changes_receivers_between_overlapping_height_planes() {
     let cases: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),

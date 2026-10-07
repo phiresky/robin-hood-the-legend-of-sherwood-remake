@@ -903,7 +903,11 @@ The loader now binds complete ordinary receiving floors separately from trimmed
 stair landing contacts, using only exported motion and receiver geometry. Both
 copied 150-degree roof approaches have supported recovery positions about 1.15
 world units away on these full floors. Both elevations now pass all eight focused
-routes, and the expanded sweep passes all 200. Seek/line movement, cross-floor
+routes, and the expanded sweep passes all 200. Same-floor physical dispatch also
+checks an explicit destination's layer and sector, preventing a goal on an
+overlapping upper floor from being accepted as a move on the lower floor.
+Unspecified local destinations and the existing gate handoff remain supported.
+Seek/line movement, cross-floor
 routing and ordinary soft repulsion still need integration. Projected
 collision cannot reconstruct an exactly edge-on ordinary receiver; that case
 still needs explicit world collision data.

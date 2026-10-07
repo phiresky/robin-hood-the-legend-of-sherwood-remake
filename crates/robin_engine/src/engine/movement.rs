@@ -5330,6 +5330,8 @@ impl EngineInner {
                         gate_id,
                         element: None,
                         flags,
+                        layer: requested_layer,
+                        sector: requested_sector,
                         ..
                     } = &element.data
                     else {
@@ -5361,6 +5363,19 @@ impl EngineInner {
                         // to one of its receivers; crossing moves must keep
                         // their receiver transitions.
                         let sector = self.world.entities.get(owner)?.element_data().sector()?;
+                        // Only a specified destination sector gives the layer
+                        // field authority. Gate approaches above already carry
+                        // their explicit world endpoint on the current floor.
+                        if requested_sector.is_some_and(|target| {
+                            *requested_layer != floor.layer
+                                || target.get() != sector.get()
+                                || target
+                                    .arena_index()
+                                    .zip(sector.arena_index())
+                                    .is_some_and(|(target, current)| target != current)
+                        }) {
+                            return None;
+                        }
                         let receiver =
                             self.get_projection_area_index(tcx.assets, sector, entity_layer, dest)?;
                         floor

@@ -35,6 +35,8 @@
   unprojecting its position. A raised neighbour cannot accidentally select the
   flat floor underneath; moves onto another receiver retain their existing
   transition path instead of walking at the wrong height.
+  Explicit destinations on a different layer or sector also retain normal
+  routing rather than being reinterpreted on the actor's current floor.
   Physical floor and stair-landing bindings fit receiver anchors in double
   precision, avoiding translation-sensitive edge gaps caused by rounding plane
   coefficients before reconstructing collision contours. Compatibility movement
