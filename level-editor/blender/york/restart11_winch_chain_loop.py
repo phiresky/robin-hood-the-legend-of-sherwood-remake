@@ -1,7 +1,7 @@
 """Prototype a complete hidden chain return without cutting the visible strands."""
 import hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';BASE=WORK/'winch-motion-physical-v2';OUT=WORK/'winch-chain-loop-prototype-v1'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';BASE=WORK/'winch-motion-physical-v2';OUT=WORK/'winch-chain-loop-prototype-v4'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -32,10 +32,19 @@ for i in range(count):
  position,tangent=point(i*spacing+5.5/c)
  # Front planes face the native art on straight runs; alternating link planes
  # turn90degrees. Curved returns continue those bases in three dimensions.
- side=Vector((1,0,0));side-=tangent*side.dot(tangent)
- if side.length<.1:side=Vector((0,1,0));side-=tangent*side.dot(tangent)
- side.normalize();normal=side.cross(tangent).normalized()
+ path_normal=up.cross(direction).normalized();roll=math.atan2(path_normal.x,direction.x)*tangent.z;side=path_normal.cross(tangent)*math.cos(roll)+path_normal*math.sin(roll);side.normalize();normal=side.cross(tangent).normalized()
  if i%2:side=normal;normal=side.cross(tangent).normalized()
- rotation=Matrix((side,tangent,normal)).transposed();bpy.ops.mesh.primitive_torus_add(major_segments=16,minor_segments=6,major_radius=1.5,minor_radius=.85,location=position);o=bpy.context.object;o.name=f'Complete chain loop link {i:03d}';o.rotation_euler=rotation.to_euler();o.scale.y=1.4 if i%2==0 else 1.2;o.data.materials.append(iron);o['source_node']='scenery-york-castle-winch';o['asset_group']='york-castle-winch';o['native_patch']='patch-004';o['chain_path_distance']=i*spacing;rows.append({'name':o.name,'path_distance':i*spacing,'center':list(position)})
+ rotation=Matrix((side,tangent,normal)).transposed();vertices=[];faces=[]
+ for j in range(24):
+  a=j*math.tau/24;radial=Vector((math.cos(a)/1.5,math.sin(a)/3,0)).normalized();centerline=Vector((1.5*math.cos(a),3*math.sin(a),0))
+  for k in range(8):
+   phi=k*math.tau/8;vertices.append(centerline+radial*(.6*math.cos(phi))+Vector((0,0,.6*math.sin(phi))))
+ for j in range(24):
+  for k in range(8):faces.append((j*8+k,((j+1)%24)*8+k,((j+1)%24)*8+(k+1)%8,j*8+(k+1)%8))
+ mesh=bpy.data.meshes.new(f'Closed oval chain link {i:03d}');mesh.from_pydata(vertices,[],faces);mesh.update();o=bpy.data.objects.new(f'Complete chain loop link {i:03d}',mesh);scene.collection.objects.link(o);o.location=position;o.rotation_euler=rotation.to_euler();o.data.materials.append(iron);o['source_node']='scenery-york-castle-winch';o['asset_group']='york-castle-winch';o['native_patch']='patch-004';o['chain_path_distance']=i*spacing;rows.append({'name':o.name,'path_distance':i*spacing,'center':list(position)})
+# A complete hidden top return needs its own inferred idler and bearing shaft.
+normal=direction.cross(up).normalized();top_center=mid+up*height
+for name,rad,depth in [('Inferred upper chain idler',radius-2.15,2),('Inferred upper idler bearing shaft',.9,18)]:
+ bpy.ops.mesh.primitive_cylinder_add(vertices=24,radius=rad,depth=depth,location=top_center);o=bpy.context.object;o.name=name;o.rotation_euler=normal.to_track_quat('Z','Y').to_euler();o.data.materials.append(iron);o['source_node']='scenery-york-castle-winch';o['asset_group']='york-castle-winch';o['native_patch']='patch-004'
 bpy.context.view_layer.update();assert protected=={o.name:_geometry(o,protect_appearance=True) for o in scene.objects if o.name in protected};OUT.mkdir();bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'model.blend'),compress=True)
-(OUT/'proposal.json').write_text(json.dumps({'status':'Private inferred return prototype, not approved and not animated','source_model_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'model_sha256':hashlib.sha256((OUT/'model.blend').read_bytes()).hexdigest(),'link_count':count,'spacing_world':spacing,'path_length':length,'straight_height':height,'radius_world':radius,'nodes':rows,'outside_exact':len(protected),'limitations':['Visible front-link spacing and strand positions retained, but source phase fit must be rebuilt for the closed path.','The source does not reveal the upper return or prove a single-loop mechanism. This is a complete-object hypothesis to review, not established native mechanical behavior.','Bottom chain arc and drum alignment must be inspected together before retaining this hypothesis.','No chain animation or library write.']},indent=2)+'\n');print('COMPLETE CHAIN RETURN PROTOTYPE SAVED')
+(OUT/'proposal.json').write_text(json.dumps({'status':'Private inferred return prototype, not approved and not animated','source_model_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'model_sha256':hashlib.sha256((OUT/'model.blend').read_bytes()).hexdigest(),'link_count':count,'link_profile':{'centerline_half_width':1.5,'centerline_half_height':3,'circular_wire_radius':.6},'spacing_world':spacing,'path_length':length,'straight_height':height,'radius_world':radius,'nodes':rows,'outside_exact':len(protected),'limitations':['Visible front-link spacing and strand positions retained, but source phase fit must be rebuilt for the closed path.','The source does not reveal the upper return or prove a single-loop mechanism. This is a complete-object hypothesis to review, not established native mechanical behavior.','Bottom chain arc and drum alignment must be inspected together before retaining this hypothesis.','No chain animation or library write.']},indent=2)+'\n');print('COMPLETE CHAIN RETURN PROTOTYPE SAVED')
