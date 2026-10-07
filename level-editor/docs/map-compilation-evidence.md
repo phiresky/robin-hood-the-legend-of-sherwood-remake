@@ -9755,6 +9755,45 @@ terrain sockets) also fail with the unchanged compiler, verified by rerunning
 those two cases against its HEAD version; they are not marked as passing here.
 The final game build and Rust/editor formatting checks pass.
 
+### Keep-annex approach extraction diagnosis (2026-10-07)
+
+The earlier label "handoff failure" was too broad. A focused final-code rerun
+in `lincoln-keep-annex-neighbour-placements-3BJQRg` records the active movement
+command, orders, world position and whether the actor has entered the flight
+when receiving-floor verification fails. Both unraised failures occur with
+`crossed=false` and `MoveWaiting`, before the climb. The first actor is moved
+to map [1433.7631, 1305.7365], 6.765310 units outside its roof and 7.209041 units
+from the authored outside-to-middle approach. Its stale receiving plane then
+evaluates height 453.96176 instead of the original outside height 350.94511.
+
+The instruction's source extraction checks a projected move box and pushes it
+away from intersecting movement lines. This differs from supported physical
+climb extraction, which already checks world-coordinate clearance. Measuring
+the exact bound landing and its live exclusions shows zero unsupported area
+for the normal effective world-XY footprint at either copied lower entrance;
+the equivalent projected rectangle lacks 19.897772 and 19.898947 square units
+of support. The center's plane residuals are only 0.000123 and 0.000402 units.
+This is a projected walking-footprint problem, not evidence for a larger seam
+height tolerance or a changed roof contour.
+The full source box must be considered separately: it lacks 0.203359 and
+0.203470 square world-XY units at those two outside anchors, versus 41.027888
+and 41.029084 projected units. Thus the normal movement inset's zero deficit
+does not certify source authorization, and merely changing query coordinates
+would not by itself prove this asset contact complete.
+
+`audit-lift-support.py` now reports ordinary landing approach measurements in
+both world and projected coordinates, with both the normal movement inset and
+the full source box, alongside each outside anchor's height residual. It retains
+holes and active obstacles, reports degenerate projections
+explicitly, and never changes input geometry. These landing-only measurements
+exclude the adjacent flight: the whole approach sweep is not certified merely
+because its outside footprint fits. The four added tests cover projection
+compression, live exclusions, edge-on floors and the distinct source box;
+all twelve diagnostic tests
+pass. Physical-space walking-source authorization and supported approach motion
+remain required follow-up work. No navigation behavior or asset definition is
+changed by this diagnostic commit.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

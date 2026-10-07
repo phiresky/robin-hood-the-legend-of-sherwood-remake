@@ -125,6 +125,48 @@ class ContactSupportTests(unittest.TestCase):
         offsets = audit.runtime_offsets(self.bound, [6, 3])
         self.assertEqual(audit.inspect(self.bound, [[0]], [6, 3], offsets)["doors"][0]["inside"]["unsupported_area"], 0)
 
+    def test_landing_projection_can_reject_a_world_supported_walking_footprint(self):
+        self.landing["boundary"] = rectangle(-20, -20, 20, 20)
+        self.landing["plane"] = [0, 0.95, 0]
+        self.bound["landings"] = [self.landing]
+        self.bound["definition"]["doors"][0].update(
+            outside=[0, 0, 0], middle=[0, 10, 9.5]
+        )
+        before = copy.deepcopy(self.bound)
+        result = audit.inspect_landing_approaches(self.bound, [[0], [0]], [6, 3])[0]
+        self.assertEqual(result["world_ground_footprint"]["approach_unsupported_area"], 0)
+        self.assertAlmostEqual(result["projected_footprint"]["outside_unsupported_area"], 20)
+        self.assertAlmostEqual(result["full_projected_footprint"]["outside_unsupported_area"], 48)
+        self.assertEqual(result["projected_footprint"]["approach_center_length_outside"], 0)
+        self.assertEqual(result["outside_height_error"], 0)
+        self.assertEqual(self.bound, before)
+
+    def test_landing_approach_keeps_holes_and_live_obstacles(self):
+        self.bound["landings"] = [self.landing]
+        self.landing["holes"] = [rectangle(-1, 3, 1, 4)]
+        self.landing["obstacles"] = [{"state": 2, "polygon": rectangle(-1, 4, 1, 5)}]
+        self.bound["definition"]["doors"][0]["middle"] = [0, 4, 0]
+        inactive = audit.inspect_landing_approaches(self.bound, [[0], [0]], [6, 3])[0]
+        active = audit.inspect_landing_approaches(self.bound, [[0], [2]], [6, 3])[0]
+        self.assertEqual(inactive["world_ground_footprint"]["outside_unsupported_area"], 2)
+        self.assertEqual(active["world_ground_footprint"]["outside_unsupported_area"], 4)
+        self.assertEqual(active["projected_footprint"], active["world_ground_footprint"])
+
+    def test_edge_on_landing_does_not_invent_a_projected_floor(self):
+        self.bound["landings"] = [self.landing]
+        self.landing["plane"] = [0, 1, 0]
+        result = audit.inspect_landing_approaches(self.bound, [[0], [0]], [6, 3])[0]
+        self.assertTrue(result["projection_degenerate"])
+        self.assertIsNone(result["projected_footprint"])
+        self.assertEqual(result["outside_height_error"], 4)
+
+    def test_movement_inset_does_not_certify_full_source_authorization(self):
+        self.bound["landings"] = [self.landing]
+        self.landing["boundary"] = rectangle(-5.5, -20, 5.5, 20)
+        result = audit.inspect_landing_approaches(self.bound, [[0], [0]], [6, 3])[0]
+        self.assertEqual(result["world_ground_footprint"]["outside_unsupported_area"], 0)
+        self.assertEqual(result["full_world_ground_footprint"]["outside_unsupported_area"], 6)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,6 +11,7 @@ import json
 import math
 from pathlib import Path
 
+from shapely.affinity import affine_transform
 from shapely.geometry import LineString, MultiPoint, Point, Polygon, box
 from shapely.ops import unary_union
 
@@ -211,6 +212,60 @@ def inspect(bound, states, half, offsets=None):
     }
 
 
+def inspect_landing_approaches(bound, states, half):
+    """Compare ordinary walking footprints on each real bound landing.
+
+    World support is an alternative-frame measurement, not permission to bypass
+    the runtime's projected walking collision or transition animations.
+    """
+    def footprint(point, inset):
+        effective = [value-inset for value in half]
+        x, y = point[:2]
+        return box(x-effective[0], y-effective[1], x+effective[0], y+effective[1])
+
+    def coverage(region, outside, middle, inset=1):
+        source = footprint(outside, inset)
+        sweep = unary_union([source, footprint(middle, inset)]).convex_hull
+        center = LineString([outside[:2], middle[:2]])
+        return {
+            "outside_unsupported_area": source.difference(region).area,
+            "approach_unsupported_area": sweep.difference(region).area,
+            "approach_center_length_outside": center.difference(region).length,
+        }
+
+    results = []
+    for index, landing in enumerate(bound["landings"]):
+        region = polygon(landing["boundary"])
+        exclusions = [polygon(hole) for hole in landing["holes"]]
+        exclusions.extend(
+            polygon(obstacle["polygon"])
+            for obstacle in landing["obstacles"]
+            if active(states, landing["layer"], landing["area"], obstacle["state"])
+        )
+        region = region.difference(unary_union(exclusions))
+        a, b, c = landing["plane"]
+        degenerate = abs(1-b) < 1e-12
+        projected = None if degenerate else affine_transform(region, [1, 0, -a, 1-b, 0, -c])
+        for door_index, door in enumerate(bound["definition"]["doors"]):
+            outside, middle = door["outside"], door["middle"]
+            project = lambda p: [p[0], p[1]-p[2]]
+            results.append({
+                "landing": index, "door": door_index,
+                "outside_center_supported_xy": region.covers(Point(outside[:2])),
+                "outside_height_error": a*outside[0] + b*outside[1] + c - outside[2],
+                "world_ground_footprint": coverage(region, outside, middle),
+                "full_world_ground_footprint": coverage(region, outside, middle, 0),
+                "projection_degenerate": degenerate,
+                "projected_footprint": (
+                    None if degenerate else coverage(projected, project(outside), project(middle))
+                ),
+                "full_projected_footprint": (
+                    None if degenerate else coverage(projected, project(outside), project(middle), 0)
+                ),
+            })
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("report", type=Path)
@@ -234,6 +289,9 @@ def main():
                 "file": result["file"], "sector": sector,
                 **inspect(framed, result["initial_motion_states"], args.half,
                           runtime_offsets(bound, args.half) if args.frame == "runtime" else None),
+                "landing_approaches_in_original_coordinates": inspect_landing_approaches(
+                    bound, result["initial_motion_states"], args.half
+                ),
             })
     if not results:
         parser.error("No failed bound physical navigation matched the request")
@@ -245,6 +303,7 @@ def main():
             "Does not close sub-ULP contour cracks; tiny nonzero areas require precision review.",
             "Measures contacts and straight inside-to-inside sweeps; blocked sweeps may admit detours.",
             "Alternative frames are experiments, not runtime behavior; areas use the selected frame.",
+            "Landing approach measurements exclude the adjoining flight; seam footprints can span both floors.",
         ],
         "results": results,
     }, indent=2))

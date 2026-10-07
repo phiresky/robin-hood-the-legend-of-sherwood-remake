@@ -427,7 +427,19 @@ fn walk_exported_lift_with_tick(
         // Climbing preserves its approach receiver while animation motion
         // changes altitude; ordinary receiving lookup applies after landing.
         if !passing && !(climbing && sector.arena_index() == Some(lift_sector)) {
-            actor_receiver_result(&engine, &assets, owner, sector, element.layer(), position)?;
+            actor_receiver_result(&engine, &assets, owner, sector, element.layer(), position)
+                .map_err(|error| {
+                    let selected = engine
+                        .entities()
+                        .current_element_for_actor(owner)
+                        .and_then(|(id, index)| engine.seq().get_element(id, index));
+                    format!(
+                        "{error}; crossed={crossed}, world={:?}, selected={:?}, orders={:?}",
+                        engine.ent(owner).position_iface().get_position(),
+                        selected.map(|element| element.command),
+                        selected.map(|element| &element.orders),
+                    )
+                })?;
         }
         if crossed
             && (position - leave.point_out).length() < 0.01

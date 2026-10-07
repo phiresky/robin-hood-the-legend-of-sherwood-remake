@@ -884,7 +884,13 @@ entrance-rounding error: a supported exact point was discarded after rounding
 outside its roof. Physical lift endpoints now retain their world coordinates
 through compilation and receiving-floor binding. All 50 expanded placements
 compile, with 200 missing/raised-neighbour rejections. Native traversal passes
-196/200 routes; four outgoing landing receiver mismatches remain at 150 degrees.
+196/200 routes; four approach receiver mismatches remain at 150 degrees.
+The native trace locates these before entry: projected move-box recovery moves
+the actor off its supporting roof. The exact outside point supports the normal
+inset world-XY movement footprint, but not its projected rectangle; the full
+world-XY source box still has a small uncovered corner. Walking-source recovery and
+approach clearance on steep rotated receiving floors still need physical-space
+handling; changing the climb endpoint or padding the roof is not a proven fix.
 Reliable new-map placement, rather than matching an existing layout, is the
 acceptance criterion.
 York's central-lane gable-house climb and separate lean-to roof also remain
