@@ -18,7 +18,7 @@ try {
         [0, 0],
         [-2, 3],
         [12, -1],
-      ]) {
+      ] as const) {
         const source = new Uint8Array(9 * 7 * 4);
         for (let i = 0; i < source.length; i += 4) {
           source.set(
