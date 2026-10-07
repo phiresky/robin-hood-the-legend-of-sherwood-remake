@@ -8,7 +8,7 @@ from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 from review_evidence import sha
-p=argparse.ArgumentParser();p.add_argument('--tree',type=int,choices=[4,5],required=True);p.add_argument('--revision',type=int,required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);R=ROOT/'level-editor/work/croisement01-refinement/restart2';tree_id=a.tree;source_revision={4:6,5:7}[tree_id];source=R/f'tree{tree_id:02d}-v{source_revision}/assets/croisement01-tree-{tree_id:02d}';dest=R/f'tree{tree_id:02d}-complete-banks-v{a.revision}';worker=dest/f'assets/croisement01-tree-{tree_id:02d}';assert not dest.exists();acquire();bpy.ops.wm.open_mainfile(filepath=str(source/'model.blend'));bpy.context.preferences.filepaths.save_version=0;cfg=json.loads((source/'workspace.json').read_text());collection=bpy.data.collections[cfg['collection_name']];nodes={4:['building-003','building-004'],5:['building-006','building-007']}[tree_id];banks=[o for o in collection.all_objects if o.type=='MESH' and o.get('source_node') in nodes];source_hash=sha(source/'model.blend')
+p=argparse.ArgumentParser();p.add_argument('--tree',type=int,choices=[4,5],required=True);p.add_argument('--revision',type=int,required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);R=ROOT/'level-editor/work/croisement01-refinement/restart2';tree_id=a.tree;source_revision={4:6,5:7}[tree_id];source=R/f'tree{tree_id:02d}-v{source_revision}/assets/croisement01-tree-{tree_id:02d}';dest=R/f'tree{tree_id:02d}-complete-banks-v{a.revision}';worker=dest/f'assets/croisement01-tree-{tree_id:02d}';assert not dest.exists();acquire();bpy.ops.wm.open_mainfile(filepath=str(source/'model.blend'));bpy.context.preferences.filepaths.save_version=0;cfg=json.loads((source/'workspace.json').read_text());collection=bpy.data.collections[cfg['collection_name']];nodes=([f'building-{i:03d}' for i in range(2,6)] if tree_id==4 and a.revision>=4 else {4:['building-003','building-004'],5:['building-006','building-007']}[tree_id]);banks=[o for o in collection.all_objects if o.type=='MESH' and o.get('source_node') in nodes];source_hash=sha(source/'model.blend')
 def geom(o):return hashlib.sha256(json.dumps([[list(v.co) for v in o.data.vertices],[list(f.vertices) for f in o.data.polygons]],separators=(',',':')).encode()).hexdigest()
 def make_bvh(objects):
  points=[];faces=[]
@@ -56,7 +56,7 @@ for _ in range(max(len(xs),len(ys))):
   near=[(labels[ii,jj],z0[ii,jj]) for ii,jj in [(i-1,j),(i+1,j),(i,j-1),(i,j+1)] if 0<=ii<len(xs) and 0<=jj<len(ys) and labels[ii,jj]>=0]
   if near:labels[i,j]=collections.Counter(x[0] for x in near).most_common(1)[0][0];z0[i,j]=sum(x[1] for x in near)/len(near)
 assert not np.any(closed&(labels<0));domain=closed;boundary=domain&~erode(domain)
-if a.revision>=3:
+if a.revision==3:
  # Match the outside support height instead of retaining tall proxy walls.
  context=[o for o in collection.all_objects if o.type=='MESH' and o not in banks and o.get('source_node') in {'ground'}|{f'building-{i:03d}' for i in range(10)}]
  context_bvh,_=make_bvh(context)
