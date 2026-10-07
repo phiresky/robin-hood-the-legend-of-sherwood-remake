@@ -10033,6 +10033,44 @@ and any residual exclusions tied to surrounding buildings; admitting an interior
 point or enlarging a tolerance would conceal that issue. No asset metadata is
 changed or published in this step.
 
+### Physical terrain ownership experiment and collinear obstacle partitions (2026-10-07)
+
+World-space inspection of the gable's lower midpoint confirms that the rear
+gable-house blocker is at height zero and does not contain the physical XY
+position at height 90.00101. The raised terrain does contain it, and its top
+supports that height. No placed solid other than the supporting terrain contains
+that physical point. This separates the stale projected exclusion from actual
+physical contact.
+
+`refinement/stage-raised-terrain-surface.mjs` creates an unpublished authoring
+candidate from pinned assets: an explicit flat deck replaces the terrain's
+projection-only receiver and inherited exclusions. Intersecting neighbouring
+parts supply placed solid collision, except explicitly reviewed movement-solid
+selections and state-controlled parts. It does not publish or change saved scenes.
+Stage `raised-terrain-surface-2t5N1c` removes 19 terrain-owned exclusions and
+selects 255 neighbouring parts; generated receiving areas remain independent
+where collision disconnects the deck. Mesh, material and moved-placement review
+remain required before any publication.
+
+This experiment exposed a compiler failure in obstacle island triangulation:
+a bridge triangle had area approximately 1.3e-12 and aborted the entire export.
+`collinear-obstacle-islands.json` preserves the failing geometry. Partitioning
+now calculates signed area relative to a local origin and omits degenerate
+triangulated ears, while retaining the existing whole-region coverage check and
+rejecting degenerate authored outer rings. The new test fails before the fix,
+passes afterwards and checks collision difference below 1e-8. All 163 focused
+compiler, boundary, partition and ground-recovery tests pass, alongside app
+typechecking, focused lint, formatting and the game build.
+
+Fresh candidate `saved-map-exports-cpF6Ar` exports successfully and restores the
+gable's physical navigation definition. It is not a publication candidate:
+omission warnings rise from 8 to 45 and other entrance/receiver contacts need
+review. The completed native audit still passes only 38/40 climb routes. The
+gable now has physical navigation (sector 614), but its actor footprint lacks
+support at the lower handoff; point-level admission alone is insufficient. The
+published baseline and the earlier 200/200 isolated placement result remain
+unchanged. This broad ownership experiment is diagnostic, not a parity success.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

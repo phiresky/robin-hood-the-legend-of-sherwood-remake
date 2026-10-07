@@ -922,7 +922,12 @@ lies inside shared exclusion-4 blockers owned by the rear gable house and the
 raised terrain. Their collision ownership must be reviewed so terrain exclusions
 do not depend on the old building layout. A separate compiler fix now admits
 precise hole-boundary seams on raised receivers, while rejecting hole interiors;
-the full York descriptor is unchanged by that fix. The mesh review has 596/602 sampled
+the full York descriptor is unchanged by that fix. An unpublished physical-deck
+experiment restores the gable's compiled physical navigation but still passes
+only 38/40 native climbs and raises other omission warnings from 8 to 45; the
+lower handoff lacks full actor-footprint support. It is not ready for publication. It also exposed
+and fixed a collinear obstacle-triangulation crash, with coverage preserved by a
+captured regression. The mesh review has 596/602 sampled
 flight hits, maximum nearest-mesh height residual 0.872101 and maximum uncovered
 edge distance 0.039980; rendered traversal remains unverified. Fresh published-scene
 regressions retain all 84 climbs and 192 stairs across five saved maps. Failed
