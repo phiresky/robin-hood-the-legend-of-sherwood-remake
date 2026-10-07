@@ -6,9 +6,11 @@ import restart14_butterfly07_anatomy_contacts as audit
 from restart14_butterfly07_pose_fit import geometry
 B=audit.B;OUT=B/'butterfly07-contact-free-selection-v1'
 
-def main():
+def main(source_path=None, evidence_path=None, output=None, motion_output=None):
+    global OUT
+    if output is not None:OUT=output
     assert not OUT.exists()
-    source=B/'butterfly07-pose-fit-v1/fit.json';evidence=B/'butterfly07-fit-alternatives-v1/report.json'
+    source=source_path if source_path is not None else B/'butterfly07-pose-fit-v1/fit.json';evidence=evidence_path if evidence_path is not None else B/'butterfly07-fit-alternatives-v1/report.json'
     fit=json.loads(source.read_text());report=json.loads(evidence.read_text());banks={}
     for r in report['rows']:
         if not r['contacts']:banks.setdefault(r['phase'],[]).append(r)
@@ -37,6 +39,6 @@ def main():
         rows.append(c)
     fit.update(status='CONTACT_FREE_ENDPOINTS_NOT_SWEPT_CLEARANCE',rows=rows,parent_fit_sha256=audit.reader.sha(source),endpoint_evidence_sha256=audit.reader.sha(evidence))
     OUT.mkdir();(OUT/'fit.json').write_text(json.dumps(fit,indent=2)+'\n')
-    audit.OUT=B/'butterfly07-contact-free-selection-motion-v1';audit.main(OUT/'fit.json')
+    audit.OUT=motion_output if motion_output is not None else B/'butterfly07-contact-free-selection-motion-v1';audit.main(OUT/'fit.json')
 
 if __name__=='__main__':main()
