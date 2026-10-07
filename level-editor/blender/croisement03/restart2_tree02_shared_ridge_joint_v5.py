@@ -66,7 +66,7 @@ def main():
   for x,y,my in profile:rv.extend([(x,-my/SIN,0),(x,-my/SIN,85/COS),(x,-350/SIN,85/COS),(x,-350/SIN,0)])
   for i in range(len(profile)-1):
    for j in range(4):rf.append((i*4+j,(i+1)*4+j,(i+1)*4+(j+1)%4,i*4+(j+1)%4))
-  rf.extend([(0,3,2,1),tuple(range(len(rv)-4,len(rv)))]);rm=bpy.data.meshes.new('Source-supported shared ridge section');rm.from_pydata(rv,[],rf);rm.update();ridge=bpy.data.objects.new('CROPPED ridge52 / mask96 interface',rm);s.collection.objects.link(ridge)
+  rf.extend([(0,3,2,1),tuple(range(len(rv)-4,len(rv)))]);rf=[tuple(reversed(face)) for face in rf];rm=bpy.data.meshes.new('Source-supported shared ridge section');rm.from_pydata(rv,[],rf);rm.update();ridge=bpy.data.objects.new('CROPPED ridge52 / mask96 interface',rm);s.collection.objects.link(ridge)
   source_crop=(160,145,345,370);Image.open(B.parent/'baseline/covered.png').crop(source_crop).save(out/'ridge-native-source.png');source_image=bpy.data.images.load(str(out/'ridge-native-source.png'),check_existing=False)
   known=bpy.data.materials.new('Observed ridge native RGB');known.use_nodes=True;n=known.node_tree.nodes;n.clear();tex=n.new('ShaderNodeTexImage');tex.image=source_image;tex.interpolation='Closest';em=n.new('ShaderNodeEmission');known.node_tree.links.new(tex.outputs['Color'],em.inputs['Color']);dest=n.new('ShaderNodeOutputMaterial');known.node_tree.links.new(em.outputs[0],dest.inputs['Surface'])
   unknown=bpy.data.materials.new('Unobserved cropped ridge back');unknown.diffuse_color=(.18,.18,.18,1);unknown.use_nodes=True;unknown.node_tree.nodes.get('Principled BSDF').inputs['Base Color'].default_value=(.18,.18,.18,1)
