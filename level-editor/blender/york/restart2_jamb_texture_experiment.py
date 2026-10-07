@@ -1,7 +1,7 @@
 """Translate exact Batch16 jamb approval into the repository texture packet."""
 import hashlib,json,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';GEO=WORK/'restart2/gate-geometry-v10';BASE=WORK/'restart2/jamb-texture-inputs-v1';worker=BASE;asset='york-castle-west-gatehouse'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';GEO=WORK/'restart2/gate-geometry-v10';BASE=WORK/'restart2/jamb-texture-inputs-v2';worker=BASE;asset='york-castle-west-gatehouse'
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from prepare_texture_packet import prepare
 from review_evidence import sha

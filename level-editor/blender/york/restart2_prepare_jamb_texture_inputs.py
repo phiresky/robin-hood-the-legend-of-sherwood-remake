@@ -6,7 +6,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 WORK = ROOT / 'level-editor/work/york-refinement/restart2'
-OUT = WORK / 'jamb-texture-inputs-v1'
+OUT = WORK / 'jamb-texture-inputs-v2'
 PROBE = WORK / 'jamb-source-probe-v1'
 GEO = WORK / 'gate-geometry-v10'
 OBJECT = 'building-778-portcullis-jamb-return'
@@ -59,7 +59,7 @@ authority = {
 }
 (OUT / 'authority.json').write_text(json.dumps(authority, indent=2) + '\n')
 manifest = {'version': 1, 'mask_inventory': str((OUT / 'inventory.json').resolve()), 'projections': {
-    'jamb-native': {'source_sha256': sha(OUT / 'source.png'), 'assignments': [
+    'jamb-native': {'state': 'Covered gate; static recessed jamb, patch000 excluded', 'source_sha256': sha(OUT / 'source.png'), 'assignments': [
         {'reviewed': True, 'asset_group': ASSET, 'mask_indices': [0], 'review_evidence': str((OUT / 'authority.json').resolve())}]}}}
 (OUT / 'source-masks.json').write_text(json.dumps(manifest, indent=2) + '\n')
 collection = bpy.data.collections.new('Jamb texture context')
