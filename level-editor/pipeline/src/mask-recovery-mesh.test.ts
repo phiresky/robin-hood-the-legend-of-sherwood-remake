@@ -107,6 +107,61 @@ test("mesh recovery applies descendant and parent transforms for indexed and raw
   }
 });
 
+test("compact alpha deduplicates texture contents without merging different dimensions or material rules", () => {
+  const { model, primitive } = fixture(false);
+  const buffer = model.getRoot().listBuffers()[0]!;
+  primitive.setAttribute(
+    "TEXCOORD_0",
+    model
+      .createAccessor()
+      .setBuffer(buffer)
+      .setType("VEC2")
+      .setArray(new Float32Array([0, 0, 1, 0, 0, 1])),
+  );
+  const textures = [model.createTexture(), model.createTexture(), model.createTexture()];
+  const images = new Map(
+    textures.map((texture, i) => [
+      texture,
+      {
+        width: i === 2 ? 1 : 2,
+        height: i === 2 ? 2 : 1,
+        alpha: new Uint8Array([255, 0]),
+      },
+    ]),
+  );
+  const mesh = model.getRoot().listMeshes()[0]!;
+  for (const [i, texture] of textures.entries()) {
+    const part = i === 0 ? primitive : primitive.clone();
+    const material = model
+      .createMaterial()
+      .setAlphaMode("MASK")
+      .setBaseColorTexture(texture)
+      .setAlphaCutoff(i === 1 ? 0.75 : 0.5)
+      .setDoubleSided(i === 1);
+    material.getBaseColorTextureInfo()!.setWrapS(i === 1 ? 33648 : 10497);
+    part.setMaterial(material);
+    if (i !== 0) mesh.addPrimitive(part);
+  }
+  const { alphaCoverage } = maskRecoveryTexturedMesh(model, "part", (p) => p, images);
+  assert.equal(alphaCoverage.textures.length, 2);
+  assert.deepEqual(
+    alphaCoverage.triangles.map((rule) => rule.texture),
+    [0, 0, 1],
+  );
+  assert.deepEqual(
+    alphaCoverage.triangles.map((rule) => rule.cutoff),
+    [0.5, 0.75, 0.5],
+  );
+  assert.deepEqual(
+    alphaCoverage.triangles.map((rule) => rule.wrap[0]),
+    ["repeat", "mirror", "repeat"],
+  );
+  assert.deepEqual(
+    alphaCoverage.triangles.map((rule) => rule.doubleSided),
+    [false, true, false],
+  );
+});
+
 test("mesh recovery requires an unambiguous part in the selected scene", () => {
   const { model, scene } = fixture();
   model.createNode("part"); // An unreachable node is not a duplicate in this state.
@@ -187,6 +242,10 @@ test("cutout mesh recovery decodes alpha and keeps foliage ownership separate", 
   );
   assert.throws(() => maskRecoveryMesh(model, "part", (p) => p), /texture coverage/);
   const textures = await maskRecoveryTextures(model);
+  const duplicate = model.createTexture().setImage(texture.getImage()!);
+  model.createMaterial().setAlphaMode("MASK").setBaseColorTexture(duplicate);
+  const sharedTextures = await maskRecoveryTextures(model);
+  assert.equal(sharedTextures.get(texture), sharedTextures.get(duplicate));
   assert.deepEqual(
     maskRecoveryMesh(model, "part", (p) => p, textures),
     [],
@@ -215,6 +274,14 @@ test("cutout mesh recovery decodes alpha and keeps foliage ownership separate", 
   partial.set(texture, { width: 2, height: 2, alpha: new Uint8Array([255, 0, 255, 0]) });
   const clipped = maskRecoveryMesh(model, "part", (p) => p, partial);
   assert.ok(clipped.length > 0);
+  const streamed: ReturnType<typeof maskRecoveryMesh> = [];
+  assert.deepEqual(
+    maskRecoveryMesh(model, "part", (p) => p, partial, undefined, {
+      onTriangle: (triangle) => streamed.push(triangle),
+    }),
+    [],
+  );
+  assert.deepEqual(streamed, clipped);
   assert.notDeepEqual(clipped, covered);
   assert.deepEqual(
     maskRecoveryMesh(model, "part", (p) => p, partial, undefined, {

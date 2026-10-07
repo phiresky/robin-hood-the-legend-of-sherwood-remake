@@ -226,8 +226,8 @@ disable physical navigation at 37 degrees. The latest unpublished candidate
 emits physical navigation at all eight placements but fails all 48 actor routes,
 including the twelve routes previously using projected navigation.
 
-The current library-wide audit (`gameplay-coverage-io9QXo`) finds 75 of 1,279
-indexed assets without gameplay definitions. Of these, 47 are placed: 43 in
+The current library-wide audit (`gameplay-coverage-ieNAcG`) finds 67 of 1,279
+indexed assets without gameplay definitions. Of these, 39 are placed: 35 in
 Croisement02, one in Croisement01, and Croisement03's ferns 35/76 and stream
 fallen log. The timber bridge now has a published draft definition. These counts
 reflect the current asset inventory, not gameplay certification.
@@ -252,15 +252,27 @@ definitions occupy about 469 MB before publication, with one shrub alone at
 mesh/UV/alpha representation is now implemented and staged for shrub 69: its
 mask occupies 18.1 MB with 24,334 triangles, and all ten rotated/elevated exports
 match the prior bitmap coverage exactly and pass native construction. This
-format is not yet published; migration, further size reduction and rendered
-verification remain before scaling this authoring path. The experimental
-authoring command still computes clipped geometry temporarily for the footprint.
-Shrubs 73/74 also expose unsupported UV/sampler cases. Geometry-derived
+format is published for shrub 69 as a warned draft. Full-bounds browser review
+matches the compact mesh to the source model exactly, but CPU bitmap differences
+remain at rotated placements (89/52/81 pixels at 90/180/270 degrees).
+Migration, further size reduction and rendered verification remain before scaling
+this authoring path. Footprint authoring now streams clipped triangles into a
+bounded-batch hull instead of retaining the expanded mesh. Repeat/mirrored UVs
+and explicit nearest base-level sampling unblock shrubs 73/74; these and shrub 68
+are published as warned compact drafts after thirty placement/native checks.
+Shrubs 57–60 are also published after forty placement/native checks. Identical
+alpha planes shared by separate material textures now serialize only once;
+this fixes a duplicated-texture size failure without changing sampling rules.
+Shrub 60's origin lies in a ground gap. Published asset-local receiving points
+around its footprint now bind its mask to the surrounding ground; the saved scene
+exports 22 masks without that omission. Wrong-height and competing-layer contacts
+still reject. Rotated CPU/GPU bitmap differences remain unresolved.
+Geometry-derived
 publication now supports reviewed model hashes in addition to descriptor hashes.
 
 The earlier library-wide audit found 38 of 1,297 indexed assets without gameplay
 definitions, including the composite Derby keep, several Nottingham buildings,
-and York market props. Four are placed in the current Croisement03 scene:
+and York market props. At that time four were placed in the Croisement03 scene:
 ferns 35/76, the stream fallen log and the timber bridge. Exporting these or
 placing another missing definition in a new map omits its gameplay with a warning.
 These need individual ownership/geometry review; empty scenery definitions would

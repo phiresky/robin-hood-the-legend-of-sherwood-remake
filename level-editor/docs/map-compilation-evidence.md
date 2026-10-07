@@ -10002,3 +10002,110 @@ The candidate is not published. Authoring still computes the clipped mesh
 temporarily for its established canopy footprint; this does not yet solve the
 unsupported sampler cases or authoring memory cost. Published foliage migration,
 browser review support for compact coverage and further storage reduction remain.
+
+### Compact coverage visual review and first draft publication
+
+The browser reviewer now independently draws compact mesh UVs, alpha textures,
+cutoffs and material sidedness on the GPU. It preserves diagnostic images on
+failure and sizes its viewport from every tested mask's complete bounds; the
+previous fixed viewport cropped large shrubs. Two helper regressions check
+texture sharing, vertex sampling, sidedness, disposal and legacy opaque coverage.
+
+Shrub 69's complete-bounds review ran 16 point-mask compositions across four
+rotations. GPU compact coverage and the source textured model have zero differing
+pixels at every rotation. CPU bitmap differences are 0/89/52/81 pixels at
+0/90/180/270 degrees. At 90 and 270 degrees some discrepancies are isolated
+rather than immediately adjacent to matching coverage, so the diagnostic fails.
+Snapping vertices to 1/16 pixel reduces those differences to 0/36/28/36 but does
+not eliminate them; no production rasterizer quantization change was made.
+Images are in `fern-gameplay-hQfhNB/browser-review-full/after.png`.
+
+`shrub69-compact-publish-hQfhNB` installs the reviewed asset definition and updates
+the saved Croisement02 descriptor pin. It carries an explicit draft warning for
+rotated CPU rasterization differences and the approximate canopy boundary.
+Publication does not establish rendered gameplay parity. Other published foliage
+still needs migration, and remaining missing asset definitions still need authoring.
+
+The installed saved-scene export `saved-map-exports-31wLjX` contains 15 masks
+and emits both shrub 69 draft warnings. Native construction passes with 5 areas,
+154 sight obstacles, 5 doors, 4 jump pairs, 8,575 grid blocks and 57 elevation
+boundaries; all nine existing transitions apply and reset successfully.
+
+### Streaming wrapped foliage footprints
+
+Compact authoring now streams alpha-clipped triangles into a hull accumulator
+in batches of 3,000 points. It no longer retains the full expanded asset mesh.
+Repeat and mirrored repeat UVs are split into their intersecting tiles, preserving
+interpolated positions and vertex alpha. Excessive repetition above 4,096 tiles
+per triangle reports an error. Clamped edges retain their exterior texels.
+The explicit nearest base-level authoring mode matches map baking even when a
+source material requests filtering; texture transforms remain unsupported.
+
+`fern-gameplay-BZ5rMA` checks shrub 68. Its boundary and ten rotated/elevated
+bitmap exports match `fern-gameplay-3HULzB` exactly. It stores 3,928 triangles
+instead of 59,474, in a 3,746,085-byte mask definition. `fern-gameplay-GO93gA`
+successfully authors previously blocked shrubs 73/74: respectively 20,840/7,405
+stored triangles and 15,261,157/5,011,969 bytes. All thirty native construction
+cases pass and all thirty incorrect receiving heights are rejected.
+
+`compact-shrubs-publish-BZ5rMA-GO93gA` installs these three definitions and updates
+the saved Croisement02 pins. All retain draft warnings for approximate canopy
+boundaries and unverified rendered occlusion/projectile contact. Twenty-four
+focused tests pass, including streamed geometry equivalence and negative/repeated
+UV footprints. This does not resolve the CPU/GPU bitmap edge differences or
+complete the remaining foliage migration.
+
+The installed full-scene export `saved-map-exports-w0yeJQ` contains 18 masks.
+Native construction and all nine control apply/reset checks pass. Pipeline
+typechecking still reports the existing state-delivery test errors; focused lint
+and formatting pass.
+
+### Deduplicated foliage alpha planes
+
+Compact staging initially failed for shrub 57 (`fern-gameplay-A05eJC`) because
+separate texture objects repeated the same 1,152×2,112 alpha plane enough times
+to exceed the 64-million-texel decoded coverage limit. Identical alpha contents
+and dimensions now share one serialized plane, while triangle UVs, cutoff,
+wrapping and sidedness remain independent. Identical encoded images also share
+their decoded alpha during extraction. Eight focused recovery tests pass,
+including distinct dimensions with identical bytes and differing material rules.
+
+`fern-gameplay-vyNGFf` authors shrubs 57–60 with 4/4/4/3 unique alpha planes and
+6,064,531 / 4,641,548 / 4,442,239 / 6,205,455-byte mask definitions. All forty
+rotated/elevated exports pass native construction and reject an incorrect
+receiving height. `compact-shrubs-publish-vyNGFf` publishes these as warned drafts
+and updates saved Croisement02 pins. Rendered occlusion/projectile contact and
+CPU/GPU rasterization differences remain unresolved.
+
+The subsequent inventory `gameplay-coverage-ieNAcG` finds 67 of 1,279 definitions
+missing, including 39 placed assets. Definition presence is not proof of complete
+gameplay behavior; 26 missing assets have potential ownership candidates that
+still require local geometry/control review.
+
+Installed export `saved-map-exports-ZkIZxm` passes native construction and all nine
+control apply/reset checks. It has 21 masks: shrub 60 is omitted with an explicit
+warning because its placed origin has no authored receiving surface at its ground
+height. Its ten isolated terrain cases pass, but the saved scene requires further
+receiver/placement authoring. This omission is not hidden by the successful native
+construction result.
+
+### Asset-local mask receiving points
+
+Shrub 60's origin is unsupported, but multiple canopy-footprint vertices overlap
+the same surrounding ground layer. Masks now accept explicit `receiverPoints`
+in asset-local coordinates, mutually exclusive with segment/polyline probes.
+Placement transforms each point; only contacts at the authored surface height
+contribute, and all contributing receivers must resolve to one layer. No nearby
+layer or source-level fallback is used. Foliage authoring emits the ground origin
+and alpha-covered footprint vertices as receiving points.
+
+Spline deformation transforms and trims these points with each repeat. A surviving
+point retains a mask whose representative origin was cropped; a repeat with no
+surviving contacts is omitted with a warning. Tests cover unsupported origins,
+wrong heights, competing layers, rotated duplicates and cropped spline contacts.
+
+`foliage-contacts-EQHthn` stages shrub 60's contact definition;
+`saved-map-exports-DRzWhE` restores its mask, producing 22 masks without a shrub 60
+receiver omission. Native construction and control apply/reset checks pass.
+`foliage-contacts-publish-EQHthn` installs the definition and scene pin. This fixes
+receiving-layer selection, not the remaining rendered bitmap discrepancies.

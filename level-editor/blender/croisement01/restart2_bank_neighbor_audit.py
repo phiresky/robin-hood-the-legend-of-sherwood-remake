@@ -16,6 +16,8 @@ def bvh(objects):
  return BVHTree.FromPolygons(points,faces)
 banks=bvh([o for o in objects if o.type=='MESH' and o.get('source_node') in construction['changed_nodes']]);native=json.loads((R.parent/'baseline/masks/manifest.json').read_text());sine,cosine=math.sin(math.radians(35)),math.cos(math.radians(35));direction=Vector((0,-cosine,sine));records=[]
 neighbors=[(0,'approved-tree00-wood-fill-v1/croisement01-tree-00/baked-v4-support/worker.blend','tree00-v4/wood-domain.png'),(1,'approved-tree01-isolated-wood-fill-v1/croisement01-tree-01/baked-v1-luminance/worker.blend','tree01-source-prep-v1/wood-domain-proposal.png'),(2,'tree02-v8/assets/croisement01-tree-02/model.blend','tree02-v8/wood-domain.png'),(3,'approved-tree03-fill-v1/croisement01-tree-03/baked-v1-luminance/worker.blend','tree03-v4/wood-domain.png')]
+if any(row['mask']==6 for row in construction['root_constraints']):
+ row=next(row for row in construction['root_constraints'] if row['mask']==6);neighbors.append((6,row.get('model_path','tree06-v6/assets/croisement01-tree-06/model.blend'),row.get('domain_path','tree06-v6/wood-domain.png')))
 for n,path,mask_path in neighbors:
  path=R/path;mask_path=R/mask_path
  with bpy.data.libraries.load(str(path),link=False) as (src,dst):dst.objects=list(src.objects)
@@ -23,7 +25,7 @@ for n,path,mask_path in neighbors:
  for imported in loaded:bpy.context.scene.collection.objects.link(imported)
  bpy.context.view_layer.update()
  targets=[o for o in loaded if o.type=='MESH' and o.get('asset_group')==f'croisement01-tree-{n:02d}' and 'foliage' not in o.get('source_node','') and o.get('projection_component')!='crown'];assert targets
- reference=next(row for row in json.loads((R/'bank-neighbor-transform-reference-v1.json').read_text())['sources'] if row['mask']==n);assert reference['model_sha256']==sha(path)
+ reference_files=[R/'bank-neighbor-transform-reference-v1.json',R/'bank-neighbor-transform-reference-v2.json',*R.glob('bank-neighbor-transform-reference-tree06-v*.json')];matches=[row for reference_path in reference_files if reference_path.exists() for row in json.loads(reference_path.read_text())['sources'] if row['mask']==n and row['model_sha256']==sha(path)];assert matches;reference=matches[-1]
  assert len(reference['objects'])==len(targets)
  for target in targets:
   expected=[row for row in reference['objects'] if row['source_node']==target.get('source_node')];assert len(expected)==1

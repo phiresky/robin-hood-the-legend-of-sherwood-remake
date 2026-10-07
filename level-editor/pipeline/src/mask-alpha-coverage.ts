@@ -1,5 +1,6 @@
 import type { Vec3 } from "../../shared/src/scene.ts";
 import type { MaskTriangle } from "../../shared/src/compile-mask-geometry.ts";
+import type { MaskTextureWrap } from "../../shared/src/mask-alpha-sampler.ts";
 
 export interface MaskAlphaImage {
   width: number;
@@ -29,6 +30,71 @@ function clip(polygon: Vertex[], distance: (vertex: Vertex) => number): Vertex[]
     }
   }
   return output;
+}
+
+/** Stream wrapped UV tiles so authoring can accumulate a footprint without
+ * retaining every alpha-clipped triangle from the asset. */
+export function* maskWrappedAlphaCoverage(
+  points: MaskTriangle,
+  uv: [number, number][],
+  vertexAlpha: number[],
+  cutoff: number,
+  texture: MaskAlphaImage | undefined,
+  wraps: readonly [MaskTextureWrap, MaskTextureWrap],
+): Generator<MaskTriangle> {
+  if (!texture) {
+    yield* maskAlphaCoverage(points, uv, vertexAlpha, cutoff, undefined, [true, true]);
+    return;
+  }
+  if (uv.length !== 3 || uv.some((p) => p.length !== 2 || !p.every(Number.isFinite)))
+    throw new Error("Wrapped mask alpha requires finite UVs");
+  const ranges = wraps.map((mode, axis) => {
+    if (mode === "clamp") return [0, 0];
+    const low = Math.floor(Math.min(...uv.map((p) => p[axis]!)));
+    const high = Math.max(low, Math.ceil(Math.max(...uv.map((p) => p[axis]!))) - 1);
+    return [low, high];
+  });
+  const tiles = (ranges[0]![1]! - ranges[0]![0]! + 1) * (ranges[1]![1]! - ranges[1]![0]! + 1);
+  if (
+    !Number.isSafeInteger(tiles) ||
+    tiles > 4096 ||
+    ranges.flat().some((n) => !Number.isSafeInteger(n))
+  )
+    throw new Error("Wrapped mask footprint exceeds 4096 UV tiles per triangle");
+  const original = points.map((point, i): Vertex => ({
+    point,
+    uv: uv[i]!,
+    alpha: vertexAlpha[i]!,
+  }));
+  for (let y = ranges[1]![0]!; y <= ranges[1]![1]!; y++)
+    for (let x = ranges[0]![0]!; x <= ranges[0]![1]!; x++) {
+      const tile = [x, y];
+      let polygon = original;
+      for (const axis of [0, 1] as const) {
+        if (wraps[axis] === "clamp") continue;
+        polygon = clip(polygon, (v) => v.uv[axis] - tile[axis]!);
+        polygon = clip(polygon, (v) => tile[axis]! + 1 - v.uv[axis]);
+      }
+      const coordinates = polygon.map(
+        (v) =>
+          v.uv.map((value, axis) => {
+            if (wraps[axis] === "clamp") return value;
+            const fraction = Math.max(0, Math.min(1, value - tile[axis]!));
+            return wraps[axis] === "mirror" && Math.abs(tile[axis]! % 2) === 1
+              ? 1 - fraction
+              : fraction;
+          }) as [number, number],
+      );
+      for (let i = 1; i + 1 < polygon.length; i++)
+        yield* maskAlphaCoverage(
+          [polygon[0]!.point, polygon[i]!.point, polygon[i + 1]!.point],
+          [coordinates[0]!, coordinates[i]!, coordinates[i + 1]!],
+          [polygon[0]!.alpha, polygon[i]!.alpha, polygon[i + 1]!.alpha],
+          cutoff,
+          texture,
+          [wraps[0] === "clamp", wraps[1] === "clamp"],
+        );
+    }
 }
 
 /** Intersect an actual mesh triangle with nearest-sampled base-level alpha.

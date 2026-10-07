@@ -7,6 +7,35 @@ import { IDENTITY_TRANSFORM } from "./level3d.ts";
 import type { AssetGameplay } from "./asset-gameplay.ts";
 
 const bounds: [number, number, number, number] = [0, 0, 2000, 2000];
+test("mask ground contact points survive an unsupported origin and reject wrong or competing layers", () => {
+  const { document, assets, hut } = maskAssetCompilerFixture();
+  const gameplay = hut.gameplay!;
+  gameplay.doors = [];
+  gameplay.movementTransitions = [];
+  const mask = gameplay.masks![0]!;
+  const baseline = compileAssetGameplay(document, assets, bounds).masks;
+  mask.anchor = [150, 150, 0];
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /found 0/);
+  mask.receiverPoints = [
+    [150, 150, 0],
+    [45, 80, 0],
+  ];
+  assert.deepEqual(compileAssetGameplay(document, assets, bounds).masks, baseline);
+  mask.receiverPoints = [[45, 80, 1]];
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /found 0/);
+  gameplay.surfaces.push({ ...gameplay.surfaces[0]!, id: "second-contact-floor", height: 5 });
+  mask.receiverPoints = [
+    [45, 80, 0],
+    [45, 80, 5],
+  ];
+  assert.throws(
+    () => compileAssetGameplay(document, assets, bounds),
+    /exactly one authored receiving layer/,
+  );
+  mask.receiverPoints = [];
+  assert.throws(() => validateAssetGameplay(gameplay, hut), /invalid mask receiving points/);
+});
+
 test("mask receiving polylines resolve all bends and reject competing layers", () => {
   const { document, assets, hut } = maskAssetCompilerFixture();
   const gameplay = hut.gameplay!;
@@ -146,7 +175,11 @@ test("asset mask geometry, rules and transitions compile entirely from local def
 });
 
 test("rotated duplicates rebuild independent mask and obstacle state references", () => {
-  const { document, assets } = maskAssetCompilerFixture();
+  const { document, assets, hut } = maskAssetCompilerFixture();
+  for (const mask of hut.gameplay!.masks!) {
+    mask.receiverPoints = [mask.anchor];
+    mask.anchor = [150, 150, 0];
+  }
   const part = document.objects.find((p) => p.group)!;
   document.groups.push({
     id: "mask-copy",

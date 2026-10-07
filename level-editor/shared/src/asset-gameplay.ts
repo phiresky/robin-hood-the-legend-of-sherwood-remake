@@ -213,6 +213,8 @@ export interface AssetOcclusionMask {
   receiverSegment?: [[number, number, number], [number, number, number]];
   /** Bend-preserving receiving probe; mutually exclusive with receiverSegment. */
   receiverPolyline?: [number, number, number][];
+  /** Ground contact samples; select one unambiguous layer at their placed heights. */
+  receiverPoints?: [number, number, number][];
   /** Disconnected probes; all intersections must select the same receiving layer. */
   receiverPolylines?: [number, number, number][][];
   view: boolean;
@@ -624,6 +626,16 @@ export function validateAssetGameplay(
   const maskIds = new Set<string>();
   for (const mask of data.masks ?? []) {
     feature(mask);
+    if (
+      mask.receiverPoints !== undefined &&
+      (mask.receiverSegment !== undefined ||
+        mask.receiverPolyline !== undefined ||
+        mask.receiverPolylines !== undefined ||
+        !Array.isArray(mask.receiverPoints) ||
+        !mask.receiverPoints.length ||
+        !mask.receiverPoints.every((p) => point(p, 3)))
+    )
+      fail(`invalid mask receiving points ${mask.id}`);
     if (
       mask.receiverSegment !== undefined &&
       (!Array.isArray(mask.receiverSegment) ||

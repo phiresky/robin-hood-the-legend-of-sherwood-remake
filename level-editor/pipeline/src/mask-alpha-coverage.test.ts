@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { maskAlphaCoverage } from "./mask-alpha-coverage.ts";
+import { maskAlphaCoverage, maskWrappedAlphaCoverage } from "./mask-alpha-coverage.ts";
 import {
   rasterizeMaskGeometry,
   type MaskTriangle,
@@ -24,6 +24,55 @@ const area = (triangles: MaskTriangle[]) =>
       sum + Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])) / 2,
     0,
   );
+
+test("wrapped alpha footprints follow repeat and mirrored tiles across negative UVs", () => {
+  const texture = { width: 2, height: 1, alpha: new Uint8Array([255, 0]) };
+  const rules = {
+    layer: 0,
+    mask_type: 4,
+    character_polyline: null,
+    projectile_polyline: null,
+    obstacle_indices: [],
+  };
+  for (const mode of ["repeat", "mirror"] as const) {
+    const clipped = [a, b].flatMap((t) => [
+      ...maskWrappedAlphaCoverage(
+        t,
+        t.map(([x, y]) => [x / 2 - 1, y / 4]),
+        [1, 1, 1],
+        0.5,
+        texture,
+        [mode, "clamp"],
+      ),
+    ]);
+    assert.equal(area(clipped), 8);
+    const pixels = new Set(
+      rasterizeMaskGeometry(clipped, rules).flatMap((m) => [...maskCoverage(m)]),
+    );
+    const expectedXs = mode === "repeat" ? [0, 2] : [1, 2];
+    assert.deepEqual(
+      pixels,
+      new Set(expectedXs.flatMap((x) => [0, 1, 2, 3].map((y) => `${x},${y}`))),
+    );
+  }
+  assert.throws(
+    () => [
+      ...maskWrappedAlphaCoverage(
+        a,
+        [
+          [0, 0],
+          [10000, 0],
+          [0, 1],
+        ],
+        [1, 1, 1],
+        0.5,
+        texture,
+        ["repeat", "clamp"],
+      ),
+    ],
+    /4096/,
+  );
+});
 
 test("nearest alpha clips holes and retains cutoff equality exactly", () => {
   const texture = {
