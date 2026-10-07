@@ -39,7 +39,10 @@ def main():
    origin=hit-native_ray*.01
   raise ValueError('Too many root support intersections')
  main_anchor=point(386,357);future_shift=native_ray*((upward_hit(386,357)-main_anchor).dot(native_ray)+.2)
- def root_center(x,y,r):return upward_hit(x,y)+native_ray*((r+.3)/SIN)-future_shift
+ def root_center(x,y,r):
+  # Screen-down is predominantly forward ground depth, not a vertical limb.
+  z=main_anchor.z-max(0,y-357)*.25+r*.3
+  return Vector((x,-(y+z*COS)/SIN,z))
  trace=[(386,358,22),(380,332,19),(381,290,17),(382,240,15),(382,190,14),(380,145,14),(377,100,13),(380,45,13),(383,-35,12)]
  body=tube('Slender continuous native trunk',[point(x,y) for x,y,r in trace]+[Vector((382,base_y,690)),Vector((375,base_y,785))],[r for x,y,r in trace]+[10,3]);body['defer_union']=True;rng=random.Random(106)
  domain=np.asarray(wood)>0;xx=np.arange(domain.shape[1])+334
@@ -83,7 +86,7 @@ def main():
  for target in [obj,crown]:
   for vertex in target.data.vertices:vertex.co+=shift
   target.data.update()
- (dest/'root-centerline.json').write_text(json.dumps(dict(method='Full swept wood tube along native-ray supported centerline; no per-vertex terrain draping',local_centers=[list(p) for p in root_centers],future_shift=list(future_shift),support_is_archived_hypothesis=True),indent=2)+'\n')
+ (dest/'root-centerline.json').write_text(json.dumps(dict(method='Full swept wood tube along a gently descending forward root centerline; native screen trace fixed, soil extension separately required',local_centers=[list(p) for p in root_centers],future_shift=list(future_shift),support_is_archived_hypothesis=True),indent=2)+'\n')
  (dest/'support-placement.json').write_text(json.dumps(dict(hit=list(hit),owner=anchor_owner,shift=list(shift),skipped=skipped,claim='Private placement only; contact review required'),indent=2)+'\n')
  keep={o for o in working.all_objects if o.type=='MESH' and (o in [obj,crown] or o.get('source_node') in terrain_nodes)}
  for other in list(bpy.data.objects):
