@@ -24,8 +24,17 @@ Resources decoded by the character loader stay borrowed. Cache invalidation must
 include frame, pose, receiver membership, geometry and world-transform revisions.
 Retirement, inactive actors and empty shadow frames remove the owned shadow.
 
-The current candidate is not installed in the shared viewport. Existing imported
-character shadows still have the older support path, and editable actors do not
-implicitly acquire receiver ownership. A later adapter must surface unresolved
-support, use the same current frame for body and shadow, and receive browser
-verification after integration.
+The typed implementation now lives in `app/src/actor-shadow-receivers.ts` and
+`app/src/actor-receiver-binding.ts`. The viewport exposes an explicit selection
+for an editable character through the State Preview's **Shadow surface** control.
+Its initial authority is the reviewed north woodland bank's five physical meshes,
+bound to the model hash and current placement; the contact appearance is excluded.
+Changing the receiver placement invalidates the cached projection. Missing or
+ambiguous support retires the owned shadow and reports an error.
+
+The production loader has GPU evidence for four authored directions from front
+and reverse cameras, with current body and shadow frames checked together. The
+complete viewport/control proof remains pending. Existing imported character
+shadows still use the older support path; editable actors do not implicitly
+acquire receiver ownership. This scoped preview does not simulate a mission or
+establish character-body ground contact.
