@@ -175,6 +175,62 @@ mod tests {
     }
 
     #[test]
+    fn rotated_landing_uses_anchor_precision_without_accepting_a_height_gap() {
+        #[derive(Serialize, Deserialize)]
+        struct Fixture {
+            definition: robin_level_data::physical_stair::PhysicalStairNavigation,
+            motion: crate::level_data::RawMotionArea,
+            receiver: Vec<[f32; 2]>,
+            plane_points: [[f32; 3]; 3],
+        }
+        let fixture: Fixture = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/rotated-landing-plane-precision.json"
+        )))
+        .unwrap();
+        let plane = super::walking_binding::receiver_plane(&fixture.plane_points).unwrap();
+        let rounded =
+            crate::position_interface::PlaneZCoeffs::from_plane_points(&fixture.plane_points);
+        let receiver = polygon(&fixture.receiver).unwrap();
+        for gap in [0.0, 0.02] {
+            let mut bound = BoundPhysicalStair {
+                climbing: true,
+                floor: None,
+                definition: fixture.definition.clone(),
+                layer: 3,
+                area: 0,
+                obstacle_states: vec![0],
+                landings: vec![],
+            };
+            let mut shifted = plane;
+            shifted[2] += gap;
+            let result = bound.bind_landing(1, &fixture.motion, 1, 0, 2, shifted, Some(&receiver));
+            if gap == 0.0 {
+                result.unwrap();
+                assert_eq!(bound.landings.len(), 1);
+                bound.landings.clear();
+                assert!(
+                    bound
+                        .bind_landing(
+                            1,
+                            &fixture.motion,
+                            1,
+                            0,
+                            2,
+                            [rounded.az, rounded.bz, rounded.dz].map(f64::from),
+                            Some(&receiver),
+                        )
+                        .is_err(),
+                    "the captured rounded plane must reproduce the disconnected landing"
+                );
+            } else {
+                assert!(result.is_err(), "a real height gap must remain rejected");
+            }
+        }
+        assert!((plane[2] - f64::from(rounded.dz)).abs() > 0.00001);
+    }
+
+    #[test]
     fn steep_wall_landing_accepts_coordinate_roundoff_but_not_a_height_gap() {
         #[derive(Serialize, Deserialize)]
         struct Fixture {

@@ -909,37 +909,23 @@ collision cannot reconstruct an exactly edge-on ordinary receiver; that case
 still needs explicit world collision data.
 Reliable new-map placement, rather than matching an existing layout, is the
 acceptance criterion.
-York's central-lane gable-house climb and separate lean-to roof also remain
-unpublished. Fresh candidate exports compile eight moved/copied placements and
-reject 48 disconnected neighbours. Surface-aware climbing clearance now completes
-24 of 32 complete-character routes, up from zero; eight upper-door handoffs at
-90 degrees remain blocked. Applying horizontal walking clearance had left about
-8.512 square units unsupported at the upper inside point and 1.470 overlapping
-the slab. Climbing now preserves actor dimensions along the floor plane instead;
-routes, closing barriers and neighbour bounds share that footprint. All 84
-existing climb routes across ten saved-map snapshots still pass, along with
-copied-asset isolation and barrier close/reopen tests. Failed native audits save
-bound landing geometry and initial collision states; `audit-lift-support.py`
-compares runtime, horizontal, surface and screen clearance without editing assets.
-An unpublished one-unit slide of the upper doorway along the equal-height seam
-does not solve that contact: the wider sweep now passes 152/200 routes after
-physical walking integration, up from 144/200. The 90-degree approaches pass;
-105/120/135 and 285/300/315 degrees still fail at both elevations. A sampled
-failure stalls at the upper midpoint: the inside-anchor route is supported, but
-the actual movement-order route is not. The midpoint footprint exposes a small
-unsupported region at the flight/roof contact; precision and contact geometry
-still need diagnosis.
-The full-precision exported flight and roof confirm a real corner shortfall of
-0.001384 square units at 105 degrees. An unpublished two-unit local seam shift
-passes all 16 focused 105/135-degree routes across copies and elevations; the
-120-degree cases pass only 2/8. Their upper landing binding has a separate
-translation-sensitive subpixel gap. This candidate has not passed the full sweep
-or mesh review and is not published.
-The full York candidate still passes 38/40 climbs because its ground entrance lacks
-physical landing support. Neither the contact edits nor the shifted anchors are
-published. The placement checker accepts explicit rotation lists and preserves
-failed descriptors and scenes with an incomplete diagnostic report for review.
-Connection registration alone does not prove usable character passage.
+York's central-lane gable-house climb and separate lean-to roof remain unpublished.
+The two-unit asset-local entrance shift and precise physical receiver-plane fit
+now pass **200/200 complete-character routes** across 25 angles, two elevations
+and two copies. Compilation rejects all 300 disconnected-neighbour cases.
+The seam shift avoids a real roof-corner shortfall; fitting the receiver anchors
+in double precision avoids a separate translation-sensitive landing gap. No
+floor padding or wider acceptance tolerance is used. A captured binding test
+reproduces the old failure and continues to reject a real 0.02-unit height gap.
+The fresh full York candidate still passes only **38/40 climbs**: its connection
+to the surrounding map remains unresolved. The mesh review has 596/602 sampled
+flight hits, maximum nearest-mesh height residual 0.872101 and maximum uncovered
+edge distance 0.039980; rendered traversal remains unverified. Fresh published-scene
+regressions retain all 84 climbs and 192 stairs across five saved maps. Failed
+native audits retain the actual movement-order route, bound landing geometry and
+initial collision states; `audit-lift-support.py` measures contact support.
+Passing the placement sweep does not certify the remaining full-scene or visual
+behavior, and no candidate asset is published from this work.
 The receiving-plane loader now propagates f32 rounding through both the plane
 anchors and each receiver vertex. Steep valid planes no longer fail loading
 merely because assets are translated; the regression still rejects explicit

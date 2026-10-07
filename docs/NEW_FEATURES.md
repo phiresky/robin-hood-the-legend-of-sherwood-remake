@@ -15,6 +15,10 @@
   retain a position supported by the normal movement footprint. Connected stairs
   can support footprints at their landing; climb walls cannot. Seek/line orders,
   cross-floor routing and ordinary soft repulsion still need integration.
+  Physical floor and stair-landing bindings fit receiver anchors in double
+  precision, avoiding translation-sensitive edge gaps caused by rounding plane
+  coefficients before reconstructing collision contours. Compatibility movement
+  retains its existing plane evaluation.
 
 - **Physical ladder and wall navigation.** Compatible planar climbs export world-space
   floors and live collision alongside stairs. Ladder entry/exit climbing orders

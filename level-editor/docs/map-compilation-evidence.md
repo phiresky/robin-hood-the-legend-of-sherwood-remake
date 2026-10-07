@@ -9967,6 +9967,42 @@ plane coefficients; their precision and the support clipping remain to be
 isolated before changing any acceptance tolerance. The focused candidate results
 do not replace the earlier 152/200 full-sweep measurement.
 
+### Receiver-plane fitting and complete gable placement sweep (2026-10-07)
+
+The 120-degree comparison isolates coefficient rounding from receiver-anchor
+rounding. With the same float32 anchors, fitting in double precision reduces
+the first copy's middle-to-support gap from 0.000594979 to 0.000123650 units and
+the second copy's from 0.001190442 to zero. Using the exported full-precision
+anchors also gives zero for both. Physical walking and stair-landing bindings
+now fit their existing receiver anchors in double precision and retain those
+coefficients through collision reconstruction. Compatibility movement retains
+its previous plane calculation. Degenerate or nonfinite physical planes report
+an error; no clearance or height tolerance is enlarged.
+
+The captured `rotated-landing-plane-precision.json` regression binds with this
+fit, reproduces the disconnected landing with rounded coefficients, and rejects
+a real 0.02-unit height gap. All 39 physical-navigation and 51 regular compiled-
+navigation tests pass. The focused two-unit entrance candidate passes 24/24
+routes in `precise-plane-york-ivffm_58`.
+
+Fresh `york-central-lane-stone-gable-house-neighbour-placements-T0Cbsl` compiles
+all 50 placements, rejects 300 disconnected-neighbour cases, and passes
+**200/200 complete-character routes** across 25 angles, two copies and two
+elevations. The candidate stage is `york-gable-roof-contact-9D5MvH`; the runtime
+fit is general and reads no source-level fallback data. Its repeated mesh review
+retains 596/602 flight hits, maximum nearest-mesh height residual 0.872101 and
+maximum uncovered edge distance 0.039980. The upper approach belongs to the
+separate roof; its absence from the climb asset's own mesh samples does not
+measure the assembled roof. Rendered integration remains unverified.
+
+The fresh candidate full scene `saved-map-exports-hr4SST` still passes **38/40**
+climbs, with entrances 127 and 128 failing inside the gable lift. It remains
+unpublished pending its connection to the surrounding map. Separately,
+`precise-plane-saved-ie9dhna_` retains all **84 published-scene climb routes**
+and **192 stair routes** across Derby, Leicester, Lincoln, Sherwood and York.
+`precise-plane-keep-lkkqafqd` also retains all eight keep-annex 150-degree routes
+across both copies and elevations. Rust formatting and the game build pass.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

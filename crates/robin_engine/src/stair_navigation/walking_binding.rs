@@ -3,6 +3,30 @@
 use super::*;
 use walking_surface::PhysicalWalkingSurface;
 
+/// Fit physical navigation from the receiver anchors without rounding the
+/// coefficients to f32. Rounding the intercept before inverse projection can
+/// separate an otherwise shared edge by several coordinate ULPs after placement.
+pub(crate) fn receiver_plane(points: &[[f32; 3]; 3]) -> Result<[f64; 3], &'static str> {
+    let [p, q, r] = points.map(|point| point.map(f64::from));
+    let u = std::array::from_fn::<_, 3, _>(|i| q[i] - p[i]);
+    let v = std::array::from_fn::<_, 3, _>(|i| r[i] - p[i]);
+    let normal = [
+        u[1] * v[2] - u[2] * v[1],
+        u[2] * v[0] - u[0] * v[2],
+        u[0] * v[1] - u[1] * v[0],
+    ];
+    if normal[2].abs() < 1e-9 {
+        return Err("physical receiver anchors do not define a height plane");
+    }
+    let a = -normal[0] / normal[2];
+    let b = -normal[1] / normal[2];
+    let plane = [a, b, p[2] - a * p[0] - b * p[1]];
+    if plane.iter().any(|value| !value.is_finite()) {
+        return Err("physical receiver plane must be finite");
+    }
+    Ok(plane)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BoundPhysicalWalkingSurface {
     pub layer: u16,

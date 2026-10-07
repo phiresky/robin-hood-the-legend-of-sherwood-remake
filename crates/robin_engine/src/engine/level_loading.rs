@@ -2409,7 +2409,7 @@ impl EngineInner {
         }
         // Display activation is not floor ownership. Receivers retain their
         // walking geometry when artwork is hidden by a visibility switch.
-        let mut groups: BTreeMap<(u32, [u32; 3]), (Vec<u32>, geo::MultiPolygon<f32>)> =
+        let mut groups: BTreeMap<(u32, [u64; 3]), (Vec<u32>, geo::MultiPolygon<f32>)> =
             BTreeMap::new();
         for (id, receiver) in self.sight_obstacles(assets).iter_indexed() {
             let Some(projection) = receiver.projection_area else {
@@ -2421,13 +2421,17 @@ impl EngineInner {
             if projection.layer.get() != layer {
                 continue;
             }
-            let p = crate::position_interface::PlaneZCoeffs::from_plane_points(
+            let plane = crate::stair_navigation::walking_binding::receiver_plane(
                 &receiver.top_plane_points,
             );
-            let key = (
-                projection.sector.get(),
-                [p.az, p.bz, p.dz].map(f32::to_bits),
-            );
+            let plane = match plane {
+                Ok(plane) => plane,
+                Err(error) => {
+                    tracing::warn!(id, %error, "physical walking receiver has invalid anchors");
+                    continue;
+                }
+            };
+            let key = (projection.sector.get(), plane.map(f64::to_bits));
             let (ids, coverage) = groups
                 .entry(key)
                 .or_insert_with(|| (vec![], geo::MultiPolygon::new(vec![])));
@@ -2437,7 +2441,7 @@ impl EngineInner {
         let mut floors = Vec::new();
         for ((index, coefficients), (receivers, coverage)) in groups {
             let &(layer, area, sector, motion) = &areas[&index];
-            let plane = coefficients.map(|v| f64::from(f32::from_bits(v)));
+            let plane = coefficients.map(f64::from_bits);
             match crate::stair_navigation::walking_binding::BoundPhysicalWalkingSurface::bind(
                 motion, layer, area, sector, plane, receivers, &coverage,
             ) {
@@ -2508,12 +2512,19 @@ impl EngineInner {
                             .get(usize::from(index))
                             .expect("physical landing receiver disappeared")
                     });
-                let plane = receiver.map_or([0.0; 3], |receiver| {
-                    let p = crate::position_interface::PlaneZCoeffs::from_plane_points(
+                let plane = receiver.map_or(Ok([0.0; 3]), |receiver| {
+                    crate::stair_navigation::walking_binding::receiver_plane(
                         &receiver.top_plane_points,
-                    );
-                    [f64::from(p.az), f64::from(p.bz), f64::from(p.dz)]
+                    )
                 });
+                let plane = match plane {
+                    Ok(plane) => plane,
+                    Err(error) => {
+                        tracing::warn!(sector=lift.motion_area_index, door=door_index, %error,
+                            "physical stair landing has invalid receiver anchors");
+                        continue;
+                    }
+                };
                 let receiver_geometry = receiver.and_then(|_| {
                     use geo::{BooleanOps, Intersects};
                     let obstacles = self.sight_obstacles(assets);
@@ -2526,13 +2537,17 @@ impl EngineInner {
                         {
                             continue;
                         }
-                        let p = crate::position_interface::PlaneZCoeffs::from_plane_points(
-                            &candidate.top_plane_points,
-                        );
-                        if [p.az, p.bz, p.dz]
+                        let Ok(candidate_plane) =
+                            crate::stair_navigation::walking_binding::receiver_plane(
+                                &candidate.top_plane_points,
+                            )
+                        else {
+                            continue;
+                        };
+                        if candidate_plane
                             .iter()
                             .zip(plane)
-                            .any(|(value, expected)| (f64::from(*value) - expected).abs() > 1e-6)
+                            .any(|(value, expected)| (*value - expected).abs() > 1e-6)
                         {
                             continue;
                         }
