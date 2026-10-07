@@ -11,10 +11,10 @@ from evidence_io import sha,write_json
 B=ROOT/'level-editor/work/croisement03-refinement/restart2'
 def stored_world(o):return stored_world(o.parent)@o.matrix_parent_inverse@o.matrix_basis if o.parent else o.matrix_basis.copy()
 def main():
- out=B/'tree10-crown-joint-v3';assert shutil.disk_usage(ROOT).free>25*1024**3;out.mkdir(exist_ok=False);model=B/'tree10-crown-prototype-v3/worker.blend';sources={str(model):sha(model)};acquire()
+ out=B/'tree10-crown-joint-v4';assert shutil.disk_usage(ROOT).free>25*1024**3;out.mkdir(exist_ok=False);model=B/'tree10-crown-prototype-v3/worker.blend';sources={str(model):sha(model)};acquire()
  try:
   bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.data.scenes['Tree13 isolated wood'];bpy.context.window.scene=scene;imports=[]
-  plans=[(B/'tree11-crown-prototype-v4/worker.blend',{'croisement03-tree-11','croisement03-arbre06-fragment-tree11-provisional'},16,'Root-reviewed Tree11 static geometry, user approval pending'),(B.parent/'croisement03-grouped.blend',{'croisement03-tree-09'},1,'Untouched coarse neighboring Tree09; unfinished')]
+  plans=[(B/'tree11-crown-prototype-v4/worker.blend',{'croisement03-tree-11','croisement03-arbre06-fragment-tree11-provisional'},21,'Root-reviewed Tree11 static geometry, user approval pending'),(B.parent/'croisement03-grouped.blend',{'croisement03-tree-09'},1,'Untouched coarse neighboring Tree09; unfinished')]
   for path,groups,count,status in plans:
    sources[str(path)]=sha(path)
    with bpy.data.libraries.load(str(path),link=False) as (a,b):b.objects=list(a.objects)
