@@ -1704,3 +1704,35 @@ test("a placement edited during loading prevents atomic replacement and leaves i
   assert.equal(f.disposals(), 1);
   f.viewport.dispose();
 });
+
+test("native patch seeking uses one clock, rejects before mutation, and retires its focus", () => {
+  const { viewport } = fixture();
+  const calls: unknown[] = [];
+  const internal = viewport as unknown as {
+    nativePatchFocus?: string;
+    nativeArt: {
+      ready: boolean;
+      seek(t: number): void;
+      setPatchState(id: string, phase: string, tick: number): void;
+    };
+  };
+  const art = internal.nativeArt;
+  Object.defineProperty(art, "ready", { configurable: true, get: () => true });
+  art.seek = (t) => calls.push(["seek", t]);
+  art.setPatchState = (id, phase, tick) => calls.push([id, phase, tick]);
+  internal.nativePatchFocus = "cover";
+  viewport.seekNativePatch("cover", "forward", 5);
+  viewport.seekNativePatch("cover", "initial", 0);
+  assert.deepEqual(calls, [
+    ["seek", 5],
+    ["cover", "forward", 5],
+    ["seek", 0],
+    ["cover", "initial", 0],
+  ]);
+  assert.throws(() => viewport.seekNativePatch("wrong", "forward", 0), /not ready/);
+  assert.throws(() => viewport.seekNativePatch("cover", "forward", -1), /Invalid/);
+  assert.equal(calls.length, 4);
+  viewport.clearNativeArtPresentation();
+  assert.throws(() => viewport.seekNativePatch("cover", "initial"), /not ready/);
+  viewport.dispose();
+});

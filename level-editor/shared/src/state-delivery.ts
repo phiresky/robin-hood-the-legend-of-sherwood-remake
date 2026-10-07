@@ -278,3 +278,49 @@ export function nativeLoopPreviewPeriod(contract: NativeLoopPreviewContract): nu
     .find((e) => e.id === contract.focus_element_id)!
     .frames.reduce((ticks, frame) => ticks + frame.delay + 1, 0);
 }
+
+/** A controlled artwork preview does not imply physical endpoint coverage. */
+export interface NativePatchPreviewContract {
+  version: 1;
+  kind: "native-patch";
+  scope: string;
+  native: NativeStatePresentationContract;
+  focus_patch_id: string;
+}
+export function validateNativePatchPreview(
+  value: unknown,
+): asserts value is NativePatchPreviewContract {
+  if (!value || typeof value !== "object") throw new Error("Missing native patch preview");
+  const contract = value as NativePatchPreviewContract;
+  if (
+    contract.version !== 1 ||
+    contract.kind !== "native-patch" ||
+    typeof contract.scope !== "string" ||
+    !contract.scope.trim() ||
+    "physical" in contract ||
+    "families" in contract
+  )
+    throw new Error("Invalid native patch preview");
+  validateNativeStatePresentation(contract.native);
+  const focus = contract.native.patch_states?.find((p) => p.id === contract.focus_patch_id);
+  if (
+    !focus ||
+    !focus.transition.length ||
+    (focus.integrate_in_background && focus.activation !== "phases") ||
+    contract.native.background_states?.length ||
+    contract.native.patch_states?.some(
+      (p) => p.id !== focus.id && p.integrate_in_background && p.activation !== "initial-only",
+    )
+  )
+    throw new Error("Native patch preview requires one controlled focus and initial context");
+}
+export function nativePatchPreviewTerminal(contract: NativePatchPreviewContract): number {
+  validateNativePatchPreview(contract);
+  const patch = contract.native.patch_states!.find((p) => p.id === contract.focus_patch_id)!;
+  return Math.max(1, patch.transition.reduce((ticks, frame) => ticks + frame.delay + 1, 0) - 1);
+}
+export function nativePatchPreviewLoops(contract: NativePatchPreviewContract): boolean {
+  validateNativePatchPreview(contract);
+  const patch = contract.native.patch_states!.find((p) => p.id === contract.focus_patch_id)!;
+  return patch.final_loop && patch.final.length > 0;
+}

@@ -3,6 +3,9 @@ import type { Level3D } from "@rle/shared";
 import type { EditorViewport } from "./editor-viewport.ts";
 import {
   nativeLoopPreviewPeriod,
+  nativePatchPreviewTerminal,
+  nativePatchPreviewLoops,
+  type NativePatchPreviewContract,
   stateDeliveryLoopsAfterTransition,
   type NativeLoopPreviewContract,
   type StateDeliveryContract,
@@ -24,6 +27,8 @@ export default function StatePreview(props: {
     [selected, setSelected] = createSignal(""),
     [contract, setContract] = createSignal<StateDeliveryContract | null>(null),
     [loopContract, setLoopContract] = createSignal<NativeLoopPreviewContract | null>(null),
+    [patchContract, setPatchContract] = createSignal<NativePatchPreviewContract | null>(null),
+    [patchStarted, setPatchStarted] = createSignal(false),
     [family, setFamily] = createSignal(""),
     [status, setStatus] = createSignal(""),
     [mode, setMode] = createSignal<"art" | "initial" | "applied">("art"),
@@ -36,6 +41,8 @@ export default function StatePreview(props: {
     lastMission = "";
   const current = () => contract()?.families.find((f) => f.id === family());
   const lastTick = () => {
+    const patch = patchContract();
+    if (patch) return nativePatchPreviewTerminal(patch);
     const loop = loopContract();
     if (loop) return nativeLoopPreviewPeriod(loop) - 1;
     const c = contract(),
@@ -52,7 +59,7 @@ export default function StatePreview(props: {
     );
   };
   function applyMode(view: "art" | "initial" | "applied", familyId: string) {
-    if (loopContract()) props.viewport.setStatePresentationMode("native-art");
+    if (loopContract() || patchContract()) props.viewport.setStatePresentationMode("native-art");
     else if (view === "art") props.viewport.setDeliveredStateMode("native-art");
     else {
       props.viewport.setDeliveredStateMode("physical-endpoint");
@@ -69,6 +76,8 @@ export default function StatePreview(props: {
     setSelected(entry.id);
     setContract(null);
     setLoopContract(null);
+    setPatchContract(null);
+    setPatchStarted(false);
     setStatus("Loading state preview…");
     setPlaying(false);
     props.viewport.clearNativeArtPresentation();
@@ -76,15 +85,20 @@ export default function StatePreview(props: {
       const loaded = await loadMissionStatePreview(root, entry);
       if (context !== generation || attempt !== request) return;
       const ready =
-        loaded.kind === "native-loop"
-          ? await props.viewport.setNativeArtPresentation(
-              loaded.contract.native,
-              root,
-              loaded.source,
-            )
-          : await props.viewport.setStateDelivery(loaded.contract, root, loaded.source);
+        loaded.kind === "native-patch"
+          ? await props.viewport.setNativePatchPresentation(loaded.contract, root, loaded.source)
+          : loaded.kind === "native-loop"
+            ? await props.viewport.setNativeArtPresentation(
+                loaded.contract.native,
+                root,
+                loaded.source,
+              )
+            : await props.viewport.setStateDelivery(loaded.contract, root, loaded.source);
       if (!ready || context !== generation || attempt !== request) return;
-      if (loaded.kind === "native-loop") {
+      if (loaded.kind === "native-patch") {
+        setPatchContract(loaded.contract);
+        setFamily(loaded.contract.focus_patch_id);
+      } else if (loaded.kind === "native-loop") {
         setLoopContract(loaded.contract);
         setFamily(loaded.contract.focus_element_id);
       } else {
@@ -116,6 +130,8 @@ export default function StatePreview(props: {
       setEntries([]);
       setContract(null);
       setLoopContract(null);
+      setPatchContract(null);
+      setPatchStarted(false);
       setSelected("");
       setStatus("");
       setPlaying(false);
@@ -137,7 +153,7 @@ export default function StatePreview(props: {
   createEffect(
     () => ({
       active: props.active,
-      loaded: contract() ?? loopContract(),
+      loaded: contract() ?? loopContract() ?? patchContract(),
       familyId: family(),
       view: mode(),
     }),
@@ -149,10 +165,11 @@ export default function StatePreview(props: {
     },
   );
   const timer = setInterval(() => {
-    if (!contract() && !loopContract()) return;
-    const s = loopContract()
-      ? props.viewport.nativeArtStatus()
-      : props.viewport.deliveredStateStatus(family());
+    if (!contract() && !loopContract() && !patchContract()) return;
+    const s =
+      loopContract() || patchContract()
+        ? props.viewport.nativeArtStatus()
+        : props.viewport.deliveredStateStatus(family());
     if (!s.ready) return;
     setTick(loopContract() ? (s.tick ?? 0) % (lastTick() + 1) : Math.min(lastTick(), s.tick ?? 0));
     setPlaying(s.playing);
@@ -160,9 +177,12 @@ export default function StatePreview(props: {
       !loopContract() &&
       s.playing &&
       (s.tick ?? 0) >= lastTick() &&
-      !stateDeliveryLoopsAfterTransition(contract()!, family())
+      !(patchContract()
+        ? nativePatchPreviewLoops(patchContract()!)
+        : stateDeliveryLoopsAfterTransition(contract()!, family()))
     ) {
-      props.viewport.setDeliveredStatePlaying(false);
+      if (patchContract()) props.viewport.setNativeArtPlaying(false);
+      else props.viewport.setDeliveredStatePlaying(false);
       setPlaying(false);
     }
   }, 100);
@@ -173,6 +193,20 @@ export default function StatePreview(props: {
     props.viewport.clearNativeArtPresentation();
   });
   function play() {
+    const patch = patchContract();
+    if (patch) {
+      if (
+        !playing() &&
+        (!patchStarted() || (tick() >= lastTick() && !nativePatchPreviewLoops(patch)))
+      ) {
+        props.viewport.seekNativePatch(family(), "forward", 0);
+        setPatchStarted(true);
+        setTick(0);
+      }
+      props.viewport.setNativeArtPlaying(!playing());
+      setPlaying(!playing());
+      return;
+    }
     if (loopContract()) {
       props.viewport.setNativeArtPlaying(!playing());
       setPlaying(!playing());
@@ -193,6 +227,13 @@ export default function StatePreview(props: {
     setPlaying(true);
   }
   function reset() {
+    if (patchContract()) {
+      props.viewport.seekNativePatch(family(), "initial", 0);
+      setPatchStarted(false);
+      setTick(0);
+      setPlaying(false);
+      return;
+    }
     if (loopContract()) {
       props.viewport.setNativeArtPlaying(false);
       props.viewport.seekNativeArt(0);
@@ -230,11 +271,13 @@ export default function StatePreview(props: {
             </select>
           </label>
         </Show>
-        <Show when={contract() || loopContract()}>
+        <Show when={contract() || loopContract() || patchContract()}>
           <p class="hint">
-            {loopContract()
-              ? "Original artwork repeats the selected animation. Nearby animation keeps its own timing."
-              : "Original artwork plays the recorded transition. 3D views show the object when present in each state."}
+            {patchContract()
+              ? "Original artwork previews this change. Physical states are not included in this preview."
+              : loopContract()
+                ? "Original artwork repeats the selected animation. Nearby animation keeps its own timing."
+                : "Original artwork plays the recorded transition. 3D views show the object when present in each state."}
           </p>
           <Show when={(contract()?.families.length ?? 0) > 1}>
             <label>
@@ -258,7 +301,7 @@ export default function StatePreview(props: {
             View
             <select
               aria-label="State preview view"
-              disabled={!!loopContract()}
+              disabled={!!loopContract() || !!patchContract()}
               value={mode()}
               onChange={(event) => {
                 props.viewport.setDeliveredStatePlaying(false);
@@ -301,7 +344,10 @@ export default function StatePreview(props: {
                 value={tick()}
                 onInput={(event) => {
                   const t = Number(event.currentTarget.value);
-                  if (loopContract()) {
+                  if (patchContract()) {
+                    props.viewport.seekNativePatch(family(), "forward", t);
+                    setPatchStarted(true);
+                  } else if (loopContract()) {
                     props.viewport.setNativeArtPlaying(false);
                     props.viewport.seekNativeArt(t);
                   } else {

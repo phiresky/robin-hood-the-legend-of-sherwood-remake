@@ -8,6 +8,8 @@ import type { MissionStateContract } from "../../shared/src/mission-state.ts";
 import type { NativeStatePresentationContract } from "../../shared/src/native-state-presentation.ts";
 import {
   verifyStaticStateReplacements,
+  validateNativePatchPreview,
+  type NativePatchPreviewContract,
   type StateDeliveryContract,
 } from "../../shared/src/state-delivery.ts";
 import { StateDelivery, type StateDeliveryMode } from "./state-delivery.ts";
@@ -726,6 +728,7 @@ export class EditorViewport {
       playing: this.stateDelivery.ready && this.stateDelivery.native.isPlaying,
     };
   }
+  private nativePatchFocus: string | undefined;
   private nativeSurface: NativeArtworkSurface | undefined;
   private nativeControlState: { orbit: boolean; gizmo: boolean } | undefined;
   get statePresentationMode(): "physical" | "native-art" {
@@ -750,6 +753,26 @@ export class EditorViewport {
       this.bindings.onError?.(String(error));
       throw error;
     }
+  }
+  async setNativePatchPresentation(
+    contract: NativePatchPreviewContract,
+    library: FileSystemDirectoryHandle,
+    source: MissionStateSource,
+  ) {
+    validateNativePatchPreview(contract);
+    const focus = contract.focus_patch_id;
+    const ready = await this.setNativeArtPresentation(contract.native, library, source);
+    if (ready) this.nativePatchFocus = focus;
+    return ready;
+  }
+  seekNativePatch(id: string, phase: "initial" | "forward", tick = 0) {
+    if (!this.nativeArt.ready || this.nativePatchFocus !== id)
+      throw new Error("Native patch focus is not ready");
+    if (!["initial", "forward"].includes(phase) || !Number.isSafeInteger(tick) || tick < 0)
+      throw new Error("Invalid native patch seek");
+    this.nativeArt.seek(tick);
+    this.nativeArt.setPatchState(id, phase, tick);
+    this.nativeSurface?.update(this.nativeArt.pixels());
   }
   setStatePresentationMode(mode: "physical" | "native-art") {
     if (mode === "physical") {
@@ -786,6 +809,7 @@ export class EditorViewport {
     this.nativeSurface.update(this.currentNativeArt.pixels());
   }
   clearNativeArtPresentation() {
+    this.nativePatchFocus = undefined;
     this.setStatePresentationMode("physical");
     this.nativeArt.clear();
     this.clearStateDelivery();

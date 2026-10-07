@@ -176,3 +176,20 @@ test("native loop catalog entries validate their own source contract without fab
     /catalog/,
   );
 });
+
+test("native patch catalog discriminant cannot accept a loop or fabricated physical contract", async () => {
+  const f = await fixture();
+  const entry = { ...f.entry, kind: "native-patch" as const };
+  assert.equal(parseMissionStateCatalog({ version: 1, entries: [entry] })[0]!.kind, "native-patch");
+  await assert.rejects(loadMissionStatePreview(f.root, entry), /Invalid native patch/);
+  entry.contract = await f.pin("mission-states/patch.json", {
+    version: 1,
+    kind: "native-patch",
+    scope: "Original artwork",
+    native: f.contract.native,
+    focus_patch_id: "missing",
+  });
+  await assert.rejects(loadMissionStatePreview(f.root, entry), /controlled focus/);
+  f.files.delete(entry.contract.path);
+  await assert.rejects(loadMissionStatePreview(f.root, entry), /Missing/);
+});

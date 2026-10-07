@@ -2657,3 +2657,8 @@ Asset-local occlusion masks can opt into `cullBackfaces` to match one-sided mesh
 coverage after placement. Existing masks retain two-sided coverage by default.
 This prevents invisible rear faces from masking characters through leaf gaps;
 fern candidates still need rotated rasterization and native renderer review.
+
+Mission-state previews can play, seek and reset an individual source-artwork
+patch while retaining its mission context. These previews validate pinned source
+resources and expose no 3D endpoint controls unless physical states are supplied
+separately; switching missions or leaving the preview retires playback.

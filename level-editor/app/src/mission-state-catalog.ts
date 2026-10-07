@@ -3,6 +3,8 @@ import { isNotFound, readJson, subdir } from "./fs.ts";
 import {
   validateStateDelivery,
   validateNativeLoopPreview,
+  validateNativePatchPreview,
+  type NativePatchPreviewContract,
   physicalEndpointSources,
   type NativeLoopPreviewContract,
   type StateDeliveryContract,
@@ -15,7 +17,7 @@ interface PinnedJson {
   sha256: string;
 }
 export interface MissionStateCatalogEntry {
-  kind?: "transition" | "native-loop";
+  kind?: "transition" | "native-loop" | "native-patch";
   id: string;
   name: string;
   map: string;
@@ -45,7 +47,8 @@ export function parseMissionStateCatalog(value: unknown): MissionStateCatalogEnt
   return (data.entries as MissionStateCatalogEntry[]).map((entry) => {
     if (
       !entry ||
-      (entry.kind !== undefined && !["transition", "native-loop"].includes(entry.kind)) ||
+      (entry.kind !== undefined &&
+        !["transition", "native-loop", "native-patch"].includes(entry.kind)) ||
       ![entry.id, entry.name, entry.map, entry.mission].every(
         (v) => typeof v === "string" && v.trim().length > 0,
       ) ||
@@ -100,6 +103,7 @@ export async function loadMissionStatePreview(
 ): Promise<
   | { kind: "transition"; contract: StateDeliveryContract; source: MissionStateSource }
   | { kind: "native-loop"; contract: NativeLoopPreviewContract; source: MissionStateSource }
+  | { kind: "native-patch"; contract: NativePatchPreviewContract; source: MissionStateSource }
 > {
   parseMissionStateCatalog({ version: 1, entries: [entry] });
   const [contract, data, level] = await Promise.all([
@@ -108,12 +112,16 @@ export async function loadMissionStatePreview(
     pinnedJson(root, entry.level_data),
   ]);
   const loop = entry.kind === "native-loop";
-  if (loop) validateNativeLoopPreview(contract);
+  const patch = entry.kind === "native-patch";
+  if (patch) validateNativePatchPreview(contract);
+  else if (loop) validateNativeLoopPreview(contract);
   else validateStateDelivery(contract);
-  const native = (contract as StateDeliveryContract | NativeLoopPreviewContract).native;
+  const native = (
+    contract as StateDeliveryContract | NativeLoopPreviewContract | NativePatchPreviewContract
+  ).native;
   if (native.mission !== entry.mission)
     throw new Error("State catalog mission differs from its contract");
-  for (const family of loop ? [] : (contract as StateDeliveryContract).families)
+  for (const family of loop || patch ? [] : (contract as StateDeliveryContract).families)
     for (const binding of [
       ...physicalEndpointSources(family.physical.initial),
       ...physicalEndpointSources(family.physical.applied),
@@ -127,6 +135,8 @@ export async function loadMissionStatePreview(
     camera: { kind: "oblique-orthographic", elevation_deg: native.camera_elevation_deg },
   };
   await verifyNativePresentationSource(native, source);
+  if (patch)
+    return { kind: "native-patch", contract: contract as NativePatchPreviewContract, source };
   return loop
     ? { kind: "native-loop", contract: contract as NativeLoopPreviewContract, source }
     : { kind: "transition", contract: contract as StateDeliveryContract, source };

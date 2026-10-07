@@ -239,3 +239,66 @@ test("only a declared nonempty final loop continues after the transition", () =>
   assert.equal(stateDeliveryLoopsAfterTransition(c, f.id), false);
   assert.throws(() => stateDeliveryLoopsAfterTransition(c, "missing"), /Unknown state family/);
 });
+
+test("source-only patches require one focus, preserve timing, and never fabricate endpoints", async () => {
+  const { validateNativePatchPreview, nativePatchPreviewTerminal, nativePatchPreviewLoops } =
+    await import("./state-delivery.ts");
+  const native = deliveryFixture().native,
+    frame = native.background;
+  native.elements = [];
+  native.patch_states = [
+    {
+      id: "focus",
+      source: { kind: "mission-patch", index: 0, sha256: "a".repeat(64) },
+      profile: { path: "profile.json", sha256: "a".repeat(64), name: "cover", center: [0, 0] },
+      integrate_in_background: true,
+      activation: "phases",
+      restore_bounds: [0, 0, 1, 1],
+      elevation: 0,
+      layer: "background",
+      display_position: [0, 0],
+      sort_position: [0, 0],
+      display_order: 0,
+      creation_order: 0,
+      polyline: [],
+      definitive: true,
+      initial: [frame],
+      transition: [frame, frame],
+      final: [],
+      initial_loop: true,
+      final_loop: true,
+    },
+  ];
+  const contract = {
+    version: 1,
+    kind: "native-patch",
+    scope: "Source artwork only",
+    native,
+    focus_patch_id: "focus",
+  };
+  validateNativePatchPreview(contract);
+  assert.equal(nativePatchPreviewTerminal(contract), 5);
+  assert.equal(nativePatchPreviewLoops(contract), false);
+  native.patch_states[0]!.final = [frame];
+  assert.equal(nativePatchPreviewLoops(contract), true);
+  assert.throws(
+    () => validateNativePatchPreview({ ...contract, focus_patch_id: "missing" }),
+    /controlled focus/,
+  );
+  assert.throws(
+    () => validateNativePatchPreview({ ...contract, physical: { kind: "absent" } }),
+    /Invalid/,
+  );
+  native.background = { ...native.background, width: 3 };
+  const other = structuredClone(native.patch_states[0]!);
+  other.id = "context";
+  other.source.index = 1;
+  other.creation_order = 1;
+  other.display_position = [2, 0];
+  other.sort_position = [2, 0];
+  other.restore_bounds = [2, 0, 1, 1];
+  native.patch_states.push(other);
+  assert.throws(() => validateNativePatchPreview(contract), /controlled focus/);
+  other.activation = "initial-only";
+  validateNativePatchPreview(contract);
+});
