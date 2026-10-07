@@ -591,7 +591,9 @@ export class EditorViewport {
   private actorPreview: EditorActorPreview | undefined;
   private actorPreviewEpoch = 0;
   private actorPreviewError: string | undefined;
-  private actorPreviewReceipt: { identities: string[]; actors: unknown[] } | undefined;
+  private actorPreviewReceipt:
+    | { identities: string[]; actors: unknown[]; tieProof: unknown }
+    | undefined;
   /** Explicit bounded editor-preview bindings; no mission script execution. */
   async setNativeActorPreview(source: MissionStateSource, bindings: readonly EditorActorBinding[]) {
     this.clearNativeActorPreview();
@@ -661,7 +663,11 @@ export class EditorViewport {
         this.currentNativeArt.tick,
         this.currentActorFrames(),
       );
-      this.actorPreviewReceipt = { identities: result.identities, actors: result.actors };
+      this.actorPreviewReceipt = {
+        identities: result.identities,
+        actors: result.actors,
+        tieProof: result.tieProof,
+      };
       return result.pixels;
     } catch (error) {
       this.clearNativeActorPreview();

@@ -8,6 +8,7 @@ import {
 import type { NativeLoopDrawSnapshot, NativePixels } from "./native-state-presentation.ts";
 import type { MissionSpritePreview } from "./mission.ts";
 import type { NativeShadowKey } from "../../shared/src/native-state-presentation.ts";
+import { mergeNativeDisplay, type NativeOrderedDraw } from "./native-display-merge.ts";
 
 export interface CurrentActorDraw {
   identity: string;
@@ -64,7 +65,7 @@ export class NativeActorComposition {
     )
       throw new Error("Actor preview snapshot belongs to a retired or different source");
     const background: { identity: string; rank: number; draw: Draw }[] = [];
-    const ordered: { identity: string; rank: number; order: number; draw: Draw }[] = [];
+    const ordered: (NativeOrderedDraw & { draw: Draw })[] = [];
     const ids = new Set<string>();
     const rank = (id: string) => {
       if (ids.has(id)) throw new Error(`Duplicate dynamic preview identity: ${id}`);
@@ -86,6 +87,8 @@ export class NativeActorComposition {
           identity,
           rank: creation,
           order: Math.fround(row.element.display_order),
+          mapPosition: row.element.sort_position,
+          polyline: row.element.polyline,
           draw,
         });
       }
@@ -107,6 +110,8 @@ export class NativeActorComposition {
         identity: actor.identity,
         rank: creation,
         order: Math.fround(actor.displayOrder),
+        mapPosition: actor.maskQuery.mapPosition,
+        polyline: [],
         draw: {
           pixels: prepared.pixels,
           x: actor.maskQuery.screenOrigin[0] - loop.origin[0],
@@ -121,11 +126,12 @@ export class NativeActorComposition {
       });
     }
     background.sort((a, b) => a.rank - b.rank);
-    ordered.sort((a, b) => a.order - b.order || a.rank - b.rank);
+    const merged = mergeNativeDisplay(ordered);
     return {
       background: loop.background,
-      draws: [...background, ...ordered].map((row) => row.draw),
-      identities: [...background, ...ordered].map((row) => row.identity),
+      draws: [...background, ...merged.rows].map((row) => row.draw),
+      identities: [...background, ...merged.rows].map((row) => row.identity),
+      tieProof: merged.tieProof,
       actors: actorReceipts,
     };
   }
@@ -139,6 +145,7 @@ export class NativeActorComposition {
       pixels: this.gpu.compose(renderer, prepared.background, prepared.draws),
       identities: prepared.identities,
       actors: prepared.actors,
+      tieProof: prepared.tieProof,
     };
   }
   dispose() {
