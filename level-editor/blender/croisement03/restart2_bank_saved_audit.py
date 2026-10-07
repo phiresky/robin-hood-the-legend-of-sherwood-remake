@@ -23,7 +23,7 @@ def main():
   if (O/'interface-construction.json').exists():
    from mathutils.bvhtree import BVHTree
    from mathutils import Vector
-   plan=json.loads((B/'restart2/bank-whole-geometry-plan-v3/geometry.json').read_text());trace_errors={};contact_errors={}
+   receipt=json.loads((O/'interface-construction.json').read_text());plan_path=Path(receipt.get('geometry_plan',B/'restart2/bank-whole-geometry-plan-v3/geometry.json'));plan=json.loads(plan_path.read_text());trace_errors={};contact_errors={}
    for index in ('52','54'):
     o=s.objects['Candidate bank '+index];m=o.data;m.calc_loop_triangles();tree=BVHTree.FromPolygons([v.co for v in m.vertices],[list(t.vertices) for t in m.loop_triangles],all_triangles=True)
     errors=[]

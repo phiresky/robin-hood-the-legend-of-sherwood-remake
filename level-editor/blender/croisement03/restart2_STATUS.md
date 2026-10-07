@@ -1,3 +1,23 @@
+## Native-visibility CPU correction ready
+
+`bank-whole-geometry-plan-v4/geometry.json` fixes the failed bank sightlines.
+The new full-segment CPU guard detects122 blocked samples in the prior recipe,
+and zero in the correction across1,475 samples, with no misses. The source
+crease projections remain exact. Closed topology, fixed166-point crest and
+original3,446 source coverage continue to pass.
+
+Eastern52 and southern54 occluding shoulders are recessed. The western52
+lower break becomes a shallow five-unit band below the unchanged85 top, with
+its screen-space slope carried by inferred depth;53 stays exact. Neither52
+nor54 maximum height increases, and approximately98.3%/99.7% of their prior
+volumes remain. CPU eight views/native traces were inspected; broad hidden
+planes still require saved morphological review.
+
+The concrete builder now checks all crease segments for surface preservation
+and native first-hit visibility immediately after Boolean, before saving or
+rendering. `correction-review.json` records inference and limits. Request a
+bounded lane for `bank-whole-prototype-v2`; no Blender launched this step.
+
 ## Whole-bank saved pass — HOLD native trace visibility
 
 `bank-whole-prototype-v1/worker.blend`, hash `4b04f6beb12c8823`, is931,494bytes.

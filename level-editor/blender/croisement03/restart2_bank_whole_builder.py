@@ -3,7 +3,7 @@ import argparse,hashlib,json,math,sys
 from collections import Counter
 from pathlib import Path
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';P=B/'restart2/bank-whole-source-plan-v1/plan.json';O=B/'restart2/bank-whole-geometry-plan-v3'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';P=B/'restart2/bank-whole-source-plan-v1/plan.json';O=B/'restart2/bank-whole-geometry-plan-v4'
 S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 
 def inside(p,ring):
@@ -84,14 +84,16 @@ def prepare():
  boundary52=[[p['x'],p['y'],p['z_top']] for p in points]
  # Front heights are inferred under vegetation; the source-supported rear crest
  # and the 52/54 shared upper contact remain exact.
- heights={7:54.,8:50.,9:48.,12:38.,13:43.,14:60.,15:55.}
+ heights={7:20.,8:30.,9:40.,12:38.,13:43.,14:60.,15:55.}
  for index,height in heights.items():boundary52[len(profile)+index-2][2]=height
- boundary52.insert(len(profile)+5,[615.,312.,55.])
+ boundary52.insert(len(profile)+5,[615.,312.,25.])
  lines52=[];old=plan['previous_main_breaks'];upper=old[0]['points'];lower=old[1]['points'];lx=[p[0] for p in lower];ly=[p[1] for p in lower]
  a=[[x,y+85,85] for x,y in upper];b=[]
  for x in sorted(set(lx+[p[0] for p in upper if lx[0]<p[0]<lx[-1]])):
   y=float(np.interp(x,lx,ly))
-  upper_y=float(np.interp(x,[p[0] for p in upper],[p[1] for p in upper]));my=upper_y+86.5
+  # A shallow five-unit band below the fixed85 top, with the source
+  # screen slope carried by depth instead of an excessively deep vertical drop.
+  my=y+80.
   b.append([x,my,my-y])
  lines52.extend([('west-upper',a),('west-lower',b)])
  lines54=[]
@@ -106,7 +108,7 @@ def prepare():
  raw54=level['sight_obstacles'][54]['points'];boundary54=[[p['x'],p['y'],p['z_top']] for p in raw54]
  # Align visual contact to exact bank52 endpoints, retaining gameplay separately.
  boundary54[0]=[raw[11]['x'],raw[11]['y'],raw[11]['z_top']];boundary54[1]=[raw[10]['x'],raw[10]['y'],raw[10]['z_top']]
- boundary54[2][0]+=2.
+ boundary54[2][0]+=2.;boundary54[2][2]=34.
  boundary54,lines54=extend_stripes(boundary54,lines54)
  out={'52':mesh(boundary52,lines52),'54':mesh(boundary54,lines54)}
  for id,m in out.items():
@@ -123,11 +125,12 @@ def prepare():
 def run():
  import bpy,bmesh
  sys.path.insert(0,str(Path(__file__).parent));import restart2_bank_full_v1 as base
+ proof=json.loads((O/'cpu-crease-firsthits.json').read_text());assert proof['blocked']==0 and proof['misses']==0 and proof['geometry_sha256']==hashlib.sha256((O/'geometry.json').read_bytes()).hexdigest()
  data=json.loads((O/'geometry.json').read_text());west=json.loads((B/'restart2/bank-continuous-strata-plan-v1/geometry.json').read_text());data['53']=west
  assert data['guards']['plan_sha256']==hashlib.sha256(P.read_bytes()).hexdigest()
  baseline=B/'restart2/bank-continuous-strata-v1/worker.blend'
  assert data['guards']['baseline53_sha256']==hashlib.sha256(baseline.read_bytes()).hexdigest()
- base.O=B/'restart2/bank-whole-prototype-v1';interface={}
+ base.O=B/'restart2/bank-whole-prototype-v2';interface={'geometry_plan':str(O/'geometry.json'),'geometry_plan_sha256':hashlib.sha256((O/'geometry.json').read_bytes()).hexdigest()}
  def signature(obj):return ([list(v.co) for v in obj.data.vertices],sorted(tuple(sorted(f.vertices)) for f in obj.data.polygons))
  def build(name,points,scene):
   index=name.rsplit(' ',1)[1];d=data[index];mesh=bpy.data.meshes.new(name+' continuous surface');mesh.from_pydata(d['vertices'],[],d['faces']);mesh.update();obj=bpy.data.objects.new(name,mesh);scene.collection.objects.link(obj)
@@ -147,6 +150,27 @@ def run():
    for x,sy,my in profile:
     p=(x,-my/S,85/C);errors.append(min(max(abs(a-b) for a,b in zip(v.co,p)) for v in owner.data.vertices))
    assert max(errors)<1e-4
+   from mathutils import Vector
+   from mathutils.bvhtree import BVHTree
+   ray=Vector((0,-C,S));trees={}
+   for key in ('52','53','54'):
+    m=bpy.data.objects['Candidate bank '+key].data;m.calc_loop_triangles();trees[key]=BVHTree.FromPolygons([v.co for v in m.vertices],[list(t.vertices) for t in m.loop_triangles],all_triangles=True)
+   failures=[];sample_count=0;max_surface_error=0.
+   for key in ('52','54'):
+    for trace in data[key]['traces']:
+     pts=[Vector(data[key]['vertices'][i]) for i in trace['vertices']]
+     for a,b in zip(pts,pts[1:]):
+      distance=math.hypot(b.x-a.x,(-b.y*S-b.z*C)-(-a.y*S-a.z*C));count=max(2,int(distance*2)+1)
+      for i in range(count):
+       point=a.lerp(b,i/(count-1));sample_count+=1;surface_error=trees[key].find_nearest(point)[3];max_surface_error=max(max_surface_error,surface_error);hits=[]
+       for other,tree in trees.items():
+        hit,normal,face,dist=tree.ray_cast(point+ray*5000,-ray)
+        if hit is not None:hits.append((dist,other))
+       nearest=min(hits) if hits else None
+       if surface_error>1e-4 or nearest is None or nearest[0]<4999.99:failures.append(dict(owner=key,trace=trace['id'],source=[point.x,-point.y*S-point.z*C],surface_error=surface_error,firsthit=nearest))
+   interface['full_crease_guard']=dict(samples=sample_count,failures=failures,max_surface_error=max_surface_error)
+   (base.O/'construction-crease-guard.json').write_text(json.dumps(interface,indent=2)+'\n')
+   assert not failures,'Post-Boolean full-crease guard failed; no saved model or render'
    interface.update(dict(retained53_exact=True,bank52_after_difference_vertices=len(owner.data.vertices),bank52_after_difference_faces=len(owner.data.polygons),fixed_crest_max_world_error=max(errors),status='PASS construction checks; saved native and oblique review pending'))
   return obj
  base.mesh_object=build;base.main();(base.O/'interface-construction.json').write_text(json.dumps(interface,indent=2)+'\n')
