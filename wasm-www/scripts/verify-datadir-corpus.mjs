@@ -15,8 +15,9 @@ export const DEMO_PARENT_ROOT = 'datadirs/demo-leicester';
 // v17: native shipping datadir format 17 (match-gated VQ sprite coding).
 // v17r2: same format, opusenc/libopus 1.6.1 audio and per-datadir music remasters.
 // v18: native shipping datadir format 18 (browser-decoded AVIF web images).
-export const DEMO_ROOT = `${DEMO_PARENT_ROOT}/v18`;
-export const DEMO_PATH = `${DEMO_ROOT}/v18-web-opus-q80.rhdata.zst`;
+// v23: current native shipping datadir layout.
+export const DEMO_ROOT = `${DEMO_PARENT_ROOT}/v23`;
+export const DEMO_PATH = `${DEMO_ROOT}/v23-web-opus-q80.rhdata.zst`;
 export const DEMO_CONTENT_MANIFEST_PATH = `${DEMO_ROOT}/robinhood-web-content.json`;
 export const WEB_CONTENT_MANIFEST_NAME = 'robinhood-web-content.json';
 export const WEB_CONTENT_MANIFEST_SCHEMA = 2;
@@ -80,6 +81,16 @@ export const RETAINED_DEMO_GENERATIONS = Object.freeze([
         contentManifestSha256: 'd62fce960fdd2895c45ec5359019e630f505f1fe7a64786d3807a8e701b8953b',
         datadirSha256: '12ef4c0caf2934eeee40d9eb89b33350a52837599f00d55ca1e99947f30c3162',
         datadirByteLength: 3_697_444,
+        nativeContentSha256: 'b86d7c960d960f33a504905bc3b6e7d7dd0b168944fa34fcfb55787c34b3f8b3',
+    }),
+    Object.freeze({
+        // Native shipping datadir format 18, retained for published runtimes.
+        root: `${DEMO_PARENT_ROOT}/v18`,
+        datadirPath: `${DEMO_PARENT_ROOT}/v18/v18-web-opus-q80.rhdata.zst`,
+        contentManifestPath: `${DEMO_PARENT_ROOT}/v18/robinhood-web-content.json`,
+        contentManifestSha256: '132614421a5829d2f3eb0c9d9b03423caba72107ddfce0a29bb6e63faca46875',
+        datadirSha256: 'f7361fa8b968def240b0d489c3fdee9561f3808a480e8bd66c3e0e96de20fb20',
+        datadirByteLength: 3_104_326,
         nativeContentSha256: 'b86d7c960d960f33a504905bc3b6e7d7dd0b168944fa34fcfb55787c34b3f8b3',
     }),
 ]);
