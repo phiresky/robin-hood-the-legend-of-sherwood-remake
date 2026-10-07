@@ -922,8 +922,11 @@ copied-asset isolation and barrier close/reopen tests. Failed native audits save
 bound landing geometry and initial collision states; `audit-lift-support.py`
 compares runtime, horizontal, surface and screen clearance without editing assets.
 An unpublished one-unit slide of the upper doorway along the equal-height seam
-does not solve that contact: a wider sweep passes only 144/200 routes, and the
-full York candidate passes 38/40 climbs because its ground entrance lacks
+does not solve that contact: the wider sweep now passes 152/200 routes after
+physical walking integration, up from 144/200. The 90-degree approaches pass;
+105/120/135 and 285/300/315 degrees still fail at both elevations. A sampled
+failure stalls during the climbing sequence despite supported physical routes.
+The full York candidate still passes 38/40 climbs because its ground entrance lacks
 physical landing support. Neither the contact edits nor the shifted anchors are
 published. The placement checker accepts explicit rotation lists and preserves
 failed descriptors and scenes with an incomplete diagnostic report for review.

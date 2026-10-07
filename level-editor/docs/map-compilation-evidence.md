@@ -9911,6 +9911,17 @@ ordinary floor identities, requiring replay schema 67. Seek/line orders,
 cross-floor routing, ordinary soft repulsion and exactly edge-on ordinary floors
 remain outside this integration.
 
+The next candidate audit, `physical-walking-york-ob7b61mv`, reruns the unchanged
+one-unit gable/lean-to doorway candidate across all 200 placement routes. It
+improves from 144 to **152 passing routes**: the 90-degree approach cases now
+pass, while 105/120/135 and 285/300/315 degrees fail for both copies at both
+elevations. A sampled 105-degree failure has a supported source, destination and
+physical route but stalls inside the climbing sequence after entry. This needs
+execution diagnosis rather than an assumed clearance change. The corresponding
+full-scene candidate in `physical-walking-york-scene-u66e7h2r` retains its two
+failed climbs (38/40 pass). These candidate assets remain unpublished; they are
+distinct from the passing saved-map baseline above.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms
