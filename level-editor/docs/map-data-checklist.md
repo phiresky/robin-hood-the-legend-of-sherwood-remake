@@ -226,10 +226,10 @@ disable physical navigation at 37 degrees. The latest unpublished candidate
 emits physical navigation at all eight placements but fails all 48 actor routes,
 including the twelve routes previously using projected navigation.
 
-The current library-wide audit (`gameplay-coverage-ieNAcG`) finds 67 of 1,279
-indexed assets without gameplay definitions. Of these, 39 are placed: 35 in
-Croisement02, one in Croisement01, and Croisement03's ferns 35/76 and stream
-fallen log. The timber bridge now has a published draft definition. These counts
+The current library-wide audit (`gameplay-coverage-3RzSpw`) finds 59 of 1,279
+indexed assets without gameplay definitions. Of these, 31 are placed: 29 in
+Croisement02, one in Croisement01, and Croisement03's stream fallen log.
+The timber bridge and both ferns have published draft definitions. These counts
 reflect the current asset inventory, not gameplay certification.
 
 Croisement02 ground plants 111–123 now have published draft asset-derived mask
@@ -282,20 +282,19 @@ finds that 32 of these assets have every part
 represented in newer gameplay-bearing assets, often larger state assemblies.
 Their standalone definitions still need restoring with local control dependencies
 and coordinate frames; matching parts alone does not make them interchangeable.
-The four Croisement03 assets and two old ground assets have no component-owner
-match. Definition counts alone do not verify masks, collision or traversal.
-The two fern candidates now derive typed mask coverage from their own GLBs,
+At that audit, the four Croisement03 assets and two old ground assets had no
+component-owner match. Definition counts alone do not verify masks, collision or traversal.
+The two ferns now have published compact mask definitions derived from their own GLBs,
 including clamped alpha sampling. Twenty rotated/elevated exports and twenty
 wrong-height receiver rejections pass; native loading retains their bitmaps and
 layer registration. Their closed canopy masking boundaries still need rendered
-character/projectile review, so they remain unpublished and are still counted
-as missing definitions.
+character/projectile review; publication retains explicit draft warnings.
 Rendered GLB/sprite compositing exposed masks covering invisible backfaces.
 Explicit one-sided mask coverage now removes those faces after placement. Both
 canonical fern views have zero masked transparent pixels in the browser
 diagnostic; quarter-turn views retain 6–17 mismatches. Native construction still
-passes all twenty exports. Remaining rasterization and in-game review keep these
-candidates unpublished.
+passes all twenty exports. Remaining rasterization and in-game review prevent
+claiming rendered parity for these drafts.
 Two-way coverage checks also find 5–12 rendered pixels missing from the rotated
 masks. Some discrepancies are isolated beyond a one-pixel shared edge; the
 browser diagnostic now reports failure instead of treating these as edge noise.
@@ -303,6 +302,12 @@ Full Croisement03 compilation with these staged definitions passes native
 geometry construction and all nine state apply/reset checks. Best-effort export
 now deduplicates repeated draft warnings without changing source assets or
 relaxing geometry validation; strict validation still rejects repeated warnings.
+The latest compact fern stage (`fern-gameplay-BL4YZw`) passes twenty placement
+checks and native construction. Its full-scene export retains three masks,
+including both ferns, and all nine transition checks pass. Shrubs 62–67 are also
+published as compact drafts after sixty placement/native checks and exact bitmap
+comparisons with their previous definitions. Croisement02 retains all six without
+receiver omissions and exports 28 masks.
 The Croisement03 timber bridge was developed from an asset-only deck candidate.
 Ten rotated/elevated exports join its two end edges to matching terrain and
 reject twenty one-unit height mismatches; all ten native construction checks

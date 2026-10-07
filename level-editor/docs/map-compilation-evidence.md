@@ -10109,3 +10109,27 @@ wrong heights, competing layers, rotated duplicates and cropped spline contacts.
 receiver omission. Native construction and control apply/reset checks pass.
 `foliage-contacts-publish-EQHthn` installs the definition and scene pin. This fixes
 receiving-layer selection, not the remaining rendered bitmap discrepancies.
+
+### Published compact ferns and shrubs 62–67
+
+`fern-gameplay-BL4YZw` derives Croisement03 ferns 35/76 from their pinned assets,
+using compact alpha and explicit ground-contact points. Twenty rotated/elevated
+exports pass native construction and reject one-unit receiving-height mismatches.
+The masks occupy 5,514,315 and 3,611,041 bytes. Full-scene stage
+`saved-map-exports-wXMFi3` retains three masks, including both ferns, without
+receiver omissions. Native construction and all nine transition checks pass.
+`compact-ferns-publish-BL4YZw` installs the definitions and saved-scene pins.
+
+`fern-gameplay-uPfUI9` derives Croisement02 shrubs 62–67. All sixty placement
+exports construct natively and reject incorrect receiving heights. All sixty
+bitmaps match their previous clipped definitions exactly, with source model
+hashes verified equal before comparison. Full-scene stage
+`saved-map-exports-JlmjWo` contains 28 masks and no receiver omissions for this
+batch; native construction and nine transition checks pass.
+`compact-shrubs-publish-uPfUI9` publishes these definitions and scene pins.
+
+All eight assets remain drafts: closed canopy boundaries are approximations and
+rendered character/projectile contact is unverified. The subsequent inventory
+`gameplay-coverage-3RzSpw` finds 59 missing definitions among 1,279 assets, with
+31 placed in saved scenes. Only the stream fallen log remains without gameplay
+in Croisement03; definition presence does not establish full map parity.
