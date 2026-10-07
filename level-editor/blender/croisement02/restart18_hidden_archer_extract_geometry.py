@@ -15,7 +15,7 @@ from evidence_io import sha
 from tree_geometry import RAY,SIN
 from refinement_review import _tree
 from render_slots import acquire,release
-BASE=OUT/'restart14-hidden-archer';DEST=BASE/'climbing-v17/exact-geometry-readonly-v1';CAP=2*1024**2
+BASE=OUT/'restart14-hidden-archer';DEST=BASE/'climbing-v17/exact-geometry-readonly-v2';CAP=3*1024**2
 
 def pack(value):
     a=np.ascontiguousarray(value);raw=a.tobytes();shuffled=a.view('u1').reshape(-1,a.dtype.itemsize).T.copy().tobytes();compressed=zlib.compress(shuffled,9)
