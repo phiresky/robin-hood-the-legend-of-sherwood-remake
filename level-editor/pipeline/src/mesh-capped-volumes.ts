@@ -33,6 +33,11 @@ function intersection(subject: Point[], clip: Point[]): Point[] {
       }
     }
   }
+  return cleanRing(result);
+}
+
+function cleanRing(input: Point[]): Point[] {
+  const result = [...input];
   // Native cap planes use the first three points. Remove clipping duplicates
   // and collinear corners so those points define a plane.
   let changed = true;
@@ -154,13 +159,33 @@ export function meshCappedVolumes(mesh: readonly MaskTriangle[]): ObstaclePoint[
           regions = clipping.difference(regions, [other.ring]);
       }
       for (const region of regions) {
-        const flattened = flatten(region);
-        const indices = earcut(flattened.vertices, flattened.holes, flattened.dimensions);
-        for (let offset = 0; offset < indices.length; offset += 3) {
-          const polygon: Point[] = indices
-            .slice(offset, offset + 3)
-            .map((index) => [flattened.vertices[index * 2]!, flattened.vertices[index * 2 + 1]!]);
-          if (cross(polygon[0]!, polygon[1]!, polygon[2]!) < 0) polygon.reverse();
+        const outer = cleanRing(region[0]!);
+        if (outer.length < 3) continue;
+        if (cross(outer[0]!, outer[1]!, outer[2]!) < 0) outer.reverse();
+        let polygons: Point[][];
+        if (
+          region.length === 1 &&
+          outer.every(
+            (p, index) =>
+              cross(p, outer[(index + 1) % outer.length]!, outer[(index + 2) % outer.length]!) > 0,
+          )
+        ) {
+          // Native obstacles already support convex polygons; triangulating
+          // them adds collision seams without improving the represented shape.
+          polygons = [outer];
+        } else {
+          const flattened = flatten(region);
+          const indices = earcut(flattened.vertices, flattened.holes, flattened.dimensions);
+          polygons = [];
+          for (let offset = 0; offset < indices.length; offset += 3) {
+            const polygon: Point[] = indices
+              .slice(offset, offset + 3)
+              .map((index) => [flattened.vertices[index * 2]!, flattened.vertices[index * 2 + 1]!]);
+            if (cross(polygon[0]!, polygon[1]!, polygon[2]!) < 0) polygon.reverse();
+            polygons.push(polygon);
+          }
+        }
+        for (const polygon of polygons) {
           const size = area(polygon);
           if (size <= 1e-9) continue;
           const points = polygon.map((p) => {
@@ -171,7 +196,16 @@ export function meshCappedVolumes(mesh: readonly MaskTriangle[]): ObstaclePoint[
             if (z_bottom > z_top) z_bottom = z_top = (z_bottom + z_top) / 2;
             return { x: p[0], y: p[1], z_bottom, z_top };
           });
-          volume += (size * points.reduce((sum, p) => sum + p.z_top - p.z_bottom, 0)) / 3;
+          for (let k = 1; k < points.length - 1; k++) {
+            const triangleArea = Math.abs(cross(polygon[0]!, polygon[k]!, polygon[k + 1]!)) / 2;
+            volume +=
+              (triangleArea *
+                [points[0]!, points[k]!, points[k + 1]!].reduce(
+                  (sum, p) => sum + p.z_top - p.z_bottom,
+                  0,
+                )) /
+              3;
+          }
           coveredArea += size;
           volumes.push(points);
         }

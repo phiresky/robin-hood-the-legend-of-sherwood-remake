@@ -226,11 +226,10 @@ disable physical navigation at 37 degrees. The latest unpublished candidate
 emits physical navigation at all eight placements but fails all 48 actor routes,
 including the twelve routes previously using projected navigation.
 
-The current library-wide audit (`gameplay-coverage-cykIvk`) finds 34 of 1,279
-indexed assets without gameplay definitions. Six are placed: Croisement02's
-upright fences 94/95 and supplemental wood 09/44, Croisement01 tree 03, and
-Croisement03's stream fallen log.
-The timber bridge and both ferns have published draft definitions. These counts
+The current library-wide audit (`gameplay-coverage-T88GIW`) finds 33 of 1,279
+indexed assets without gameplay definitions. Five are placed: Croisement02's
+upright fences 94/95 and supplemental wood 09/44, and Croisement01 tree 03.
+The timber bridge, both ferns and fallen log have published draft definitions. These counts
 reflect the current asset inventory, not gameplay certification.
 
 The asset-only physical-mesh preflight (`physical-mesh-audit-dpmilw`) checks
@@ -249,13 +248,26 @@ The optional `--caps` audit converts a closed shell into convex pieces with
 independent planar bottom/top caps, retaining multiple solid intervals and the
 air between them. It rejects crossing/coincident caps and verifies footprint
 coverage and enclosed volume. Rotated/elevated sloped solids, concave corners,
-stacked rails and invalid intersecting caps have focused tests. The fallen log
-now converts from 436 triangles to 1,889 capped pieces
-(`physical-mesh-audit-91Ekbf`). This is an unpublished authoring result, not
-native gameplay evidence: simplification, material/movement semantics and
-native sight/projectile/navigation checks remain. The audit limits conversion
+stacked rails and invalid intersecting caps have focused tests. Retaining convex
+cap intersections as polygons reduces the fallen log from 1,889 to 1,120 pieces
+without adding triangle seams (`physical-mesh-audit-tCHJKA`). The audit limits conversion
 to 5,000 triangles per shell; dense wood needs an authored physical mesh before
 using this decomposition.
+
+The fallen log now has a published physical draft with 1,103 wood volumes.
+Authoring removed seventeen numerical slivers with total footprint area
+0.00000025926151485335255 square game units, recorded in its review and warning.
+Ten rotated/elevated exports (`log-gameplay-8tyX7n`) pass native construction,
+twenty movement checks and 520 sight/projectile checks. Full Croisement03
+(`saved-map-exports-T9OxL9`) constructs eleven areas, 1,736 sight obstacles,
+fifteen doors, ten jump pairs and 69 elevation boundaries; all nine tested
+controls apply/reset. Fresh published output (`saved-map-exports-VL3r0K`)
+matches the tested descriptor except its additional draft warning. Movement
+compilation still omits 39–60 collapsed grid fragments per isolated placement
+and 69 in the full scene. Dense collision cost, rendered behavior and any
+traversal surface/jump remain unverified. Publication backup:
+`log-gameplay-publish-8tyX7n`; authoring tool:
+`refinement/stage-log-gameplay.mjs`. All ten saved scenes reopen after publication.
 
 Croisement02 ground plants 111–123 now have published draft asset-derived mask
 definitions. All 130 rotated/elevated exports construct native geometry, preserve

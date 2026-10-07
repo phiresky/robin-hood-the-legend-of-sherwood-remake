@@ -652,7 +652,7 @@
     {
       "id": "croisement03-stream-fallen-log",
       "descriptor": "3d-assets/croisement03/croisement03-stream-fallen-log/asset.json",
-      "descriptor_sha256": "d1446212c8086c780a6601fcaea1f1648a6f4c15464f5cbe1766f34377a3df52",
+      "descriptor_sha256": "e9fdf5b170269be7d716b848f7b20287f7153503f0103f7c7ea3aca6047836f3",
       "model": "3d-assets/croisement03/croisement03-stream-fallen-log/model.glb",
       "model_sha256": "de741427559185cf70fda9ddbeede614c2aceecf2368f7af2f7b2266859a0920",
       "model_scene": "default"

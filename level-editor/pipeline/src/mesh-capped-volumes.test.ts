@@ -18,6 +18,20 @@ test("rejects a closed shell whose cap crosses through its floor", () => {
   assert.throws(() => meshCappedVolumes(mesh), /intersecting cap faces/);
 });
 
+test("keeps convex cap intersections as polygons instead of adding triangle seams", () => {
+  const mesh = extrude([
+    [0, 0],
+    [3, 0],
+    [3, 2],
+    [0, 2],
+  ]);
+  for (const point of new Set(mesh.flat())) {
+    point[0] += point[2] * 0.37;
+    point[1] += point[2] * 0.21;
+  }
+  assert.ok(meshCappedVolumes(mesh).some((polygon) => polygon.length > 3));
+});
+
 function extrude(ring: Point[], slope = 0): MaskTriangle[] {
   const low = ring.map(([x, y]): Vec3 => [x, y, slope * x]);
   const high = ring.map(([x, y]): Vec3 => [x, y, 1 + slope * x]);
