@@ -898,6 +898,13 @@ infrastructure: ordinary actor movement is not yet wired to them, and the native
 placement result remains 196/200. The entire problematic projected landing has
 no valid center for any of those three footprints, so relocating its outside
 anchor cannot solve the projected clearance problem.
+The loader now binds complete ordinary receiving floors separately from trimmed
+stair landing contacts, using only exported motion and receiver geometry. Both
+copied 150-degree roof approaches have supported recovery positions about 1.15
+world units away on these full floors. The focused actor audit still fails 2/4
+routes until ordinary movement dispatch and stepping use the bindings. Projected
+collision cannot reconstruct an exactly edge-on ordinary receiver; that case
+still needs explicit world collision data.
 Reliable new-map placement, rather than matching an existing layout, is the
 acceptance criterion.
 York's central-lane gable-house climb and separate lean-to roof also remain

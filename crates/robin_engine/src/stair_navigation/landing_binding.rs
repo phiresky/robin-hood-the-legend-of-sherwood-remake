@@ -1529,7 +1529,7 @@ fn rounded_shared_edge_precise(
         .then_some(overlap)
 }
 
-fn receiver_matches_motion(
+pub(super) fn receiver_matches_motion(
     receiver: &Polygon<f32>,
     motion: &crate::level_data::RawMotionArea,
     plane: [f64; 3],

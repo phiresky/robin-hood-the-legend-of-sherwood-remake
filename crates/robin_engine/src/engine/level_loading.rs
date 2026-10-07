@@ -2379,7 +2379,75 @@ impl EngineInner {
         self.initialize_motion_obstacle_states(assets);
         self.register_motion_sectors(assets, staging, motion_data, lifts);
         self.bind_physical_stairs(assets, motion_data, lifts);
+        self.bind_physical_walking(assets, motion_data);
         self.initialize_motion_jump_zones(staging);
+    }
+
+    fn bind_physical_walking(
+        &self,
+        assets: &mut LevelAssets,
+        motion_data: &crate::level_data::RawMotionData,
+    ) {
+        use geo::BooleanOps;
+        use std::collections::BTreeMap;
+        let mut areas = BTreeMap::new();
+        let mut sector = 0u16;
+        for (layer, definitions) in motion_data.layers.iter().enumerate() {
+            for (area, definition) in definitions.iter().enumerate() {
+                if !definition.is_lift {
+                    let number = crate::sector::SectorNumber::new(sector as i16);
+                    let index = self.world.fast_grid.level.sector_number_map[&number] as u32;
+                    areas.insert(index, (layer as u16, area, sector, definition));
+                }
+                sector = sector
+                    .checked_add(
+                        u16::try_from(1 + definition.obstacles.len())
+                            .expect("too many walking motion obstacles"),
+                    )
+                    .expect("too many walking motion sectors");
+            }
+        }
+        // Display activation is not floor ownership. Receivers retain their
+        // walking geometry when artwork is hidden by a visibility switch.
+        let mut groups: BTreeMap<(u32, [u32; 3]), (Vec<u32>, geo::MultiPolygon<f32>)> =
+            BTreeMap::new();
+        for (id, receiver) in self.sight_obstacles(assets).iter_indexed() {
+            let Some(projection) = receiver.projection_area else {
+                continue;
+            };
+            let Some(&(layer, _, _, _)) = areas.get(&projection.sector.get()) else {
+                continue;
+            };
+            if projection.layer.get() != layer {
+                continue;
+            }
+            let p = crate::position_interface::PlaneZCoeffs::from_plane_points(
+                &receiver.top_plane_points,
+            );
+            let key = (
+                projection.sector.get(),
+                [p.az, p.bz, p.dz].map(f32::to_bits),
+            );
+            let (ids, coverage) = groups
+                .entry(key)
+                .or_insert_with(|| (vec![], geo::MultiPolygon::new(vec![])));
+            ids.push(id);
+            *coverage = coverage.union(receiver.polygon.as_geo());
+        }
+        let mut floors = Vec::new();
+        for ((index, coefficients), (receivers, coverage)) in groups {
+            let &(layer, area, sector, motion) = &areas[&index];
+            let plane = coefficients.map(|v| f64::from(f32::from_bits(v)));
+            match crate::stair_navigation::walking_binding::BoundPhysicalWalkingSurface::bind(
+                motion, layer, area, sector, plane, receivers, &coverage,
+            ) {
+                Ok(bound) => floors.extend(bound),
+                Err(error) => {
+                    tracing::warn!(layer, sector, %error, "physical walking receiver could not be bound")
+                }
+            }
+        }
+        assets.navigation.physical_walking = std::sync::Arc::new(floors);
     }
 
     fn bind_physical_stairs(

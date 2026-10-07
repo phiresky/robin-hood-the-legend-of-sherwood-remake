@@ -1144,8 +1144,18 @@ fn audit_exported_lifts(
                             if let Some(bound) = assets.navigation.physical_stairs.get(&number) {
                                 failed_physical_navigation.insert(number, bound);
                             }
+                            let walking_approaches = engine.physical_stair_door(&assets, (entrance as u32).into()).map(|(_, _, physical)| {
+                                assets.navigation.physical_walking.iter().enumerate()
+                                    .filter(|(_, floor)| floor.layer == doors[entrance].layer_out && floor.sector == u16::from(doors[entrance].sector_out))
+                                    .map(|(index, floor)| {
+                                        let geometry = floor.snapshot(&engine.world.pathfinder);
+                                        let recovery = geometry.recover_source(physical.outside, crate::coordinates::MoveBoxHalfDiagonal::new(6.,3.), 3.);
+                                        serde_json::json!({"floor": index, "source": physical.outside, "geometry": geometry, "source_recovery_within_three_units": recovery})
+                                    }).collect::<Vec<_>>()
+                            });
                             failures.push(serde_json::json!({
-                                "sector": sector.sector_number, "entrance": entrance, "exit": exit, "error": message
+                                "sector": sector.sector_number, "entrance": entrance, "exit": exit, "error": message,
+                                "ordinary_walking_approaches": walking_approaches
                             }));
                         }
                     }

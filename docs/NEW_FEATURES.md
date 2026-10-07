@@ -5,6 +5,10 @@
   holes and current collision. Walking clearance uses its normal inset; source
   authorization checks the full standing box and recovery adds a half-unit margin.
   Recovery retains the receiving plane and rejects newly unsupported swept space.
+  The loader binds complete ordinary receivers to their motion regions, including
+  coplanar pieces, holes and live obstacle identities. This works without a lift
+  and keeps floors available when their artwork is hidden. Disconnected patches
+  and different receiving planes remain separate.
   The actor movement loop does not yet use these ordinary-floor queries.
 
 - **Physical ladder and wall navigation.** Compatible planar climbs export world-space

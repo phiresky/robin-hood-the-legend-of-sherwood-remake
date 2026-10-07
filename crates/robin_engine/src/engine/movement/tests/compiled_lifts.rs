@@ -1,4 +1,5 @@
 use super::*;
+use crate::coordinates::MoveBoxHalfDiagonal;
 
 pub(super) fn physical_stair_fixture() -> serde_json::Value {
     let mut document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
@@ -25,6 +26,55 @@ pub(super) fn physical_stair_fixture() -> serde_json::Value {
         ]
     });
     document
+}
+
+#[test]
+fn ordinary_walking_binding_does_not_require_a_lift() {
+    let (_, assets) = compiled_walkway(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-spline-walkway.level.json"
+    )));
+    assert!(assets.navigation.physical_stairs.is_empty());
+    assert!(!assets.navigation.physical_walking.is_empty());
+}
+
+#[test]
+fn ordinary_walking_binding_retains_the_full_receiver() {
+    let document = physical_stair_fixture();
+    let (engine, assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+    let floors = &assets.navigation.physical_walking;
+    assert!(!floors.is_empty());
+    assert!(
+        floors.iter().all(|floor| floor.sector != 3),
+        "lift sectors keep their distinct traversal rules"
+    );
+    let roof = floors
+        .iter()
+        .find(|floor| floor.layer == 1 && floor.sector == 2)
+        .expect("ordinary roof receiver");
+    let floor = roof.snapshot(&engine.world.pathfinder);
+    assert!(
+        floor
+            .route(
+                [430., 320., 100.],
+                [480., 380., 100.],
+                MoveBoxHalfDiagonal::new(6., 3.)
+            )
+            .unwrap()
+            .is_some(),
+        "the whole roof is bound, not only a doorway-sized contact"
+    );
+    assert!(
+        floor
+            .route(
+                [430., 320., 0.],
+                [480., 380., 0.],
+                MoveBoxHalfDiagonal::new(6., 3.)
+            )
+            .unwrap()
+            .is_none(),
+        "a roof must not grant a route on the ground beneath it"
+    );
 }
 
 #[test]

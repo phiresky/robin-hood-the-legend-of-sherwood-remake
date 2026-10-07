@@ -83,6 +83,11 @@ pub struct LevelNavigationAssets {
     pub physical_stairs: std::sync::Arc<
         std::collections::BTreeMap<u16, crate::stair_navigation::BoundPhysicalStair>,
     >,
+    /// Complete ordinary receiving floors, independent of stair landing trims.
+    /// Motion obstacle activation remains in the live pathfinder state table.
+    #[serde(default)]
+    pub physical_walking:
+        std::sync::Arc<Vec<crate::stair_navigation::walking_binding::BoundPhysicalWalkingSurface>>,
     /// Hiking/patrol paths loaded from the mission file (PWAY/RAIL chunks).
     pub hiking_paths: std::sync::Arc<Vec<crate::level_data::RawHikingPath>>,
     /// Exact live sector identity for each `(path index, waypoint index)`.

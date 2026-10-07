@@ -9834,6 +9834,42 @@ dispatcher, per-tick ordinary movement, dynamic-neighbour snapshots and receivin
 ownership handoffs still need to use it together. The native keep-annex result
 remains 196/200; no asset is published or runtime parity claimed by this change.
 
+### Complete ordinary receiver binding (2026-10-07)
+
+`LevelNavigationAssets::physical_walking` now retains complete ordinary receiving
+floors independently of stair landing contacts. The loader groups coplanar
+receivers by their exact motion identity, intersects them with the assigned
+motion region and retains holes, disconnected components and live obstacle
+state identities. Receiver geometry can retain pre-grid boundaries when their
+rounded coverage belongs to that region. Visibility switches do not remove
+walking floors. Binding does not synthesize a lift, clip against a stair flight,
+or extrapolate a receiver plane across the rest of a multi-height motion region.
+
+Three binding tests cover full-floor routing through close/reopen and serialized
+binding restoration, disconnected support, holes and pre-grid boundaries. Two
+loader tests cover an ordinary roof away from its doorway and a walkway map
+without lifts. All 37 physical-navigation tests and 50 regular compiled-navigation
+tests pass; the latter still explicitly ignores 15 external-fixture audits.
+Rust formatting and the game build pass.
+
+The focused copy of the earlier export in `walking-floor-bindings-sgzgks2f`
+retains the expected two failures among four actor routes: ordinary movement
+execution has not changed. Failure reports now include matching ordinary floors
+and their full-box recovery queries. Both lower roof approaches bind correctly;
+the native recovery queries succeed at physical distances 1.152761 and 1.152922
+from their authored sources. This differs from the earlier trimmed stair-contact
+fixture because ordinary walking uses the complete receiver. The recovery limit
+in this diagnostic is three world units, not a new global movement rule.
+Independent footprint sweeps from each recovered point back to its doorway
+have zero unsupported world-XY area with the ordinary movement inset, retaining
+all holes and active solids.
+
+The next integration must use these floors for source authorization, route
+dispatch, live-neighbour collision, per-tick walking and receiver handoffs
+together. Motion imported only as projected contours still cannot reconstruct
+an exactly edge-on ordinary floor; that case requires explicit world collision.
+Neither the unchanged actor result nor these binding tests certify full parity.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms
