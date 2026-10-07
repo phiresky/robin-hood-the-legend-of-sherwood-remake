@@ -12,7 +12,7 @@ const row = (
   point: [number, number],
   polyline: [number, number][] = [],
   x = 0,
-): NativeOrderedDraw => ({
+): NativeOrderedDraw & { draw: NonNullable<NativeOrderedDraw["draw"]> } => ({
   identity,
   order,
   rank,
@@ -148,4 +148,40 @@ test("malformed display polylines and excessive unresolved ties fail explicitly"
       ),
     /bounded/,
   );
+});
+
+test("active pixel-empty polylines can reorder visible actors without creating a draw", () => {
+  const empty: NativeOrderedDraw = {
+    ...row(
+      "empty",
+      0,
+      102,
+      [0, 0],
+      [
+        [0, 50],
+        [100, 50],
+      ],
+    ),
+    draw: null,
+  };
+  const front = row("front", 1, 40, [50, 51]),
+    behind = row("behind", 2, 41, [50, 49]);
+  assert.deepEqual(
+    mergeNativeDisplay([front, behind, empty]).rows.map((r) => r.identity),
+    ["behind", "empty", "front"],
+  );
+  assert.deepEqual(
+    mergeNativeDisplay([front, behind]).rows.map((r) => r.identity),
+    ["front", "behind"],
+  );
+  const other: NativeOrderedDraw = {
+    ...empty,
+    identity: "other",
+    rank: 103,
+    polyline: [
+      [0, 50],
+      [100, 100],
+    ],
+  };
+  assert.throws(() => mergeNativeDisplay([front, behind, empty, other]), /Unresolved overlapping/);
 });

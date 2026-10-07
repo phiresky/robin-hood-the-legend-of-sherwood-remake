@@ -65,7 +65,7 @@ export class NativeActorComposition {
     )
       throw new Error("Actor preview snapshot belongs to a retired or different source");
     const background: { identity: string; rank: number; draw: Draw }[] = [];
-    const ordered: (NativeOrderedDraw & { draw: Draw })[] = [];
+    const ordered: (NativeOrderedDraw & { draw: Draw | null })[] = [];
     const ids = new Set<string>();
     const rank = (id: string) => {
       if (ids.has(id)) throw new Error(`Duplicate dynamic preview identity: ${id}`);
@@ -92,6 +92,19 @@ export class NativeActorComposition {
           draw,
         });
       }
+    }
+    for (const element of loop.orderOnly ?? []) {
+      if (!element.active || element.frames.length !== 0)
+        throw new Error("Order-only effect must be active with explicitly empty artwork");
+      const identity = `${element.source.kind}:${element.source.index}`;
+      ordered.push({
+        identity,
+        rank: rank(identity),
+        order: element.display_order,
+        mapPosition: element.sort_position,
+        polyline: element.polyline,
+        draw: null,
+      });
     }
     const actorReceipts: {
       identity: string;
@@ -129,7 +142,7 @@ export class NativeActorComposition {
     const merged = mergeNativeDisplay(ordered);
     return {
       background: loop.background,
-      draws: [...background, ...merged.rows].map((row) => row.draw),
+      draws: [...background, ...merged.rows].flatMap((row) => (row.draw ? [row.draw] : [])),
       identities: [...background, ...merged.rows].map((row) => row.identity),
       tieProof: merged.tieProof,
       actors: actorReceipts,

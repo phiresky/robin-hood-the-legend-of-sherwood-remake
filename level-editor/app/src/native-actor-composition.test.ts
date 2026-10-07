@@ -117,3 +117,26 @@ test("inactive actors retain validated identities but do not draw and snapshots 
   assert.equal(loop.revision, 1);
   composition.dispose();
 });
+
+test("explicit empty active effects retain ordering identity without a fabricated GPU image", () => {
+  const composition = create(),
+    element = {
+      ...loop.draws[0]!.element,
+      polyline: [
+        [0, 50],
+        [100, 50],
+      ] as [number, number][],
+    };
+  const prepared = composition.prepare({ ...loop, draws: [], orderOnly: [element] }, snapshot);
+  assert.deepEqual(prepared.identities, ["soldiers:0", "mission-target:4"]);
+  assert.equal(prepared.draws.length, 1);
+  assert.throws(
+    () =>
+      composition.prepare(
+        { ...loop, draws: [], orderOnly: [{ ...element, active: false }] },
+        snapshot,
+      ),
+    /active/,
+  );
+  composition.dispose();
+});

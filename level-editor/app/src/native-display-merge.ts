@@ -6,7 +6,7 @@ export interface NativeOrderedDraw {
   order: number;
   mapPosition: readonly [number, number];
   polyline: readonly (readonly [number, number])[];
-  draw: { pixels: NativePixels; x: number; y: number };
+  draw: { pixels: NativePixels; x: number; y: number } | null;
 }
 
 export function behindDisplayPolyline(
@@ -31,6 +31,7 @@ export function behindDisplayPolyline(
 }
 
 function overlapsAlpha(a: NativeOrderedDraw, b: NativeOrderedDraw) {
+  if (!a.draw || !b.draw) return false;
   const x0 = Math.max(a.draw.x, b.draw.x),
     y0 = Math.max(a.draw.y, b.draw.y);
   const x1 = Math.min(a.draw.x + a.draw.pixels.width, b.draw.x + b.draw.pixels.width);
@@ -56,11 +57,12 @@ export function mergeNativeDisplay<T extends NativeOrderedDraw>(input: readonly 
       !row.mapPosition.every((n) => Number.isFinite(Math.fround(n))) ||
       !Number.isFinite(Math.fround(row.order)) ||
       !Number.isSafeInteger(row.rank) ||
-      ![row.draw.x, row.draw.y].every(Number.isSafeInteger) ||
-      ![row.draw.pixels.width, row.draw.pixels.height].every(
-        (n) => Number.isSafeInteger(n) && n > 0,
-      ) ||
-      row.draw.pixels.data.length !== row.draw.pixels.width * row.draw.pixels.height * 4 ||
+      (row.draw !== null &&
+        (![row.draw.x, row.draw.y].every(Number.isSafeInteger) ||
+          ![row.draw.pixels.width, row.draw.pixels.height].every(
+            (n) => Number.isSafeInteger(n) && n > 0,
+          ) ||
+          row.draw.pixels.data.length !== row.draw.pixels.width * row.draw.pixels.height * 4)) ||
       row.polyline.some(
         (p, i) =>
           !p.every((n) => Number.isFinite(Math.fround(n))) ||
@@ -123,6 +125,10 @@ export function mergeNativeDisplay<T extends NativeOrderedDraw>(input: readonly 
   }
   return {
     rows: selected,
-    tieProof: { variants: orders.length, changedOrderPairsHaveDisjointAlpha: true },
+    tieProof: {
+      variants: orders.length,
+      sourceTieOrder: orders.length > 1 ? "unspecified-pixel-equivalent" : "unique",
+      changedOrderPairsHaveDisjointAlpha: true,
+    },
   };
 }

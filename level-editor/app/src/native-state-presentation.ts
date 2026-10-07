@@ -26,6 +26,8 @@ export interface NativeLoopDrawSnapshot {
   mission: string;
   origin: [number, number];
   background: NativePixels;
+  /** Active pixel-empty effects still participate in display ordering. */
+  orderOnly?: NativePresentationElement[];
   draws: {
     element: NativePresentationElement;
     frame: number;
@@ -548,6 +550,7 @@ export class NativeStatePresentation {
     if (contract.patch_states?.length || contract.background_states?.length)
       throw new Error("Actor loop composition cannot infer patch or background state ownership");
     const draws: NativeLoopDrawSnapshot["draws"] = [];
+    const orderOnly: NativePresentationElement[] = [];
     for (const original of contract.elements) {
       const active = this.activeElements.get(original.id) ?? original.active;
       const element =
@@ -558,7 +561,10 @@ export class NativeStatePresentation {
         element,
         Math.max(0, this.currentTick + (this.offsets.get(element.id) ?? 0)),
       );
-      if (frame < 0) continue;
+      if (frame < 0) {
+        if (element.active && element.frames.length === 0) orderOnly.push(element);
+        continue;
+      }
       const image = element.frames[frame]!;
       draws.push({
         element,
@@ -574,6 +580,7 @@ export class NativeStatePresentation {
       mission: contract.mission,
       origin: [...contract.origin],
       background: this.images.get(contract.background.path)!,
+      orderOnly,
       draws,
     };
   }

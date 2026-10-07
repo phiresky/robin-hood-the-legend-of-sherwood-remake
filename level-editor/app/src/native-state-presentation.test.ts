@@ -568,3 +568,23 @@ test("external native source sampling preserves exact phase without acquiring a 
   assert.equal(art.advance(0.08), true);
   art.dispose();
 });
+
+test("active pixel-empty effects retain order snapshots while inactive ones leave the merge", async () => {
+  const f = await fixture(),
+    player = new NativeStatePresentation();
+  f.contract.elements[0]!.frames = [];
+  await player.set(f.contract, f.source, f.read);
+  assert.equal(player.loopDrawSnapshot().draws.length, 0);
+  assert.deepEqual(
+    player.loopDrawSnapshot().orderOnly?.map((e) => e.id),
+    ["sign"],
+  );
+  player.setElementState("sign", false);
+  assert.deepEqual(player.loopDrawSnapshot().orderOnly, []);
+  player.setElementState("sign", true);
+  assert.deepEqual(
+    player.loopDrawSnapshot().orderOnly?.map((e) => e.id),
+    ["sign"],
+  );
+  player.dispose();
+});
