@@ -1119,6 +1119,7 @@ impl TimelineRuntime {
                     | MultiplayerAdmissionEvent::InitialSnapshotAdopted { .. }
             ) {
                 self.network.clear_local_hashes();
+                self.multiplayer.timing.clear_schedule();
             }
             self.multiplayer.admission.apply(*event)?;
         }

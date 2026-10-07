@@ -1172,6 +1172,25 @@ pub(super) fn drain_mission_network(
 
     let local_is_peer = host.transport.net().is_some()
         && host.transport.local_seat() != robin_engine::player_command::PlayerId::HOST;
+    if local_is_peer {
+        for event in &drain.admission_events {
+            if let MultiplayerAdmissionEvent::BeginSim {
+                frame,
+                start_epoch_ms,
+            } = event
+            {
+                timeline
+                    .multiplayer_mut()
+                    .timing_mut()
+                    .accept_start_schedule(
+                        *frame,
+                        *start_epoch_ms,
+                        now_epoch_ms,
+                        crate::window::process_uptime_ms(),
+                    );
+            }
+        }
+    }
     if local_is_peer
         && let Some((clock_frame, ms_until_next_frame)) = drain.latest_host_clock_sample
     {

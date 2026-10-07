@@ -53,6 +53,29 @@ impl MultiplayerTiming {
         true
     }
 
+    /// BeginSim is also the first authoritative clock anchor. A periodic hash
+    /// may have been published before this peer connected, and an early story
+    /// barrier can prevent the host from reaching the next hash boundary.
+    pub(in crate::game_session) fn accept_start_schedule(
+        &mut self,
+        frame: u32,
+        start_epoch_ms: u64,
+        now_epoch_ms: u64,
+        now_ms: u32,
+    ) {
+        if self.schedule.is_some() {
+            return;
+        }
+        let deadline_ms = (i128::from(now_ms) + i128::from(start_epoch_ms)
+            - i128::from(now_epoch_ms))
+        .clamp(0, i128::from(u32::MAX)) as u32;
+        self.schedule = Some(HostFrameSchedule { frame, deadline_ms });
+    }
+
+    pub(super) fn clear_schedule(&mut self) {
+        self.schedule = None;
+    }
+
     pub(in crate::game_session) fn sample_hash(
         &mut self,
         frame: u32,
@@ -102,6 +125,21 @@ fn log_due(last_ms: &mut u32, now_ms: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn begin_supplies_a_clock_without_a_periodic_hash() {
+        let mut timing = MultiplayerTiming::default();
+        timing.accept_start_schedule(0, 1_150, 1_000, 500);
+        assert_eq!(timing.deadline_ms(0), Some(650));
+        assert_eq!(timing.deadline_ms(1), Some(690));
+        timing.accept_start_schedule(0, 1_150, 1_100, 700);
+        assert_eq!(timing.deadline_ms(0), Some(650));
+        assert!(timing.accept_schedule(25, 10, 1_650));
+        assert_eq!(timing.deadline_ms(25), Some(1_660));
+        timing.clear_schedule();
+        timing.accept_start_schedule(7, 2_000, 2_100, 1_700);
+        assert_eq!(timing.deadline_ms(7), Some(1_600));
+    }
 
     #[test]
     fn stale_schedule_cannot_replace_the_current_clock() {

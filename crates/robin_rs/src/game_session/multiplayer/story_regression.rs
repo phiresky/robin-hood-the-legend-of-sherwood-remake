@@ -1,7 +1,8 @@
 //! Deterministic integration coverage across mission ingress, effect admission,
 //! presentation batches and modal authority. Only socket delivery and rendering
 //! are substituted: each peer owns real session channels, timeline and engine.
-//! No threads, sleeps, external game data or network services are required.
+//! The default tests need no threads, sleeps, game data or network services.
+//! The ignored authored-mission test additionally requires full game data.
 
 use super::drain_mission_network;
 use crate::game_session::replay_init::ReplayAndRollback;
@@ -39,17 +40,21 @@ struct Peer {
 
 impl Peer {
     fn new(seat: PlayerId) -> Self {
+        Self::new_at(seat, RESTORED_FRAME)
+    }
+
+    fn new_at(seat: PlayerId, frame: u32) -> Self {
         let is_host = seat == PlayerId::HOST;
         let (mut engine, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         if is_host {
-            engine.test_set_frame_counter(RESTORED_FRAME);
+            engine.test_set_frame_counter(frame);
         }
         let (net, incoming, outgoing, _, _) = NetChannels::new();
         net.install_session_id(MultiplayerSessionId([83; 32]))
             .unwrap();
         net.set_modal_player_count(2);
         net.set_modal_player_names(vec!["Desktop".into(), "Laptop".into()]);
-        net.publish_frame(if is_host { RESTORED_FRAME } else { 0 });
+        net.publish_frame(if is_host { frame } else { 0 });
         let mut host = Host::scratch(640.0, 480.0);
         if is_host {
             host.effects
@@ -73,7 +78,7 @@ impl Peer {
             is_host,
         );
         if is_host {
-            timeline.adopt_frame(TimelineFrame::from_wire(RESTORED_FRAME));
+            timeline.adopt_frame(TimelineFrame::from_wire(frame));
         }
         Self {
             host,
@@ -220,7 +225,7 @@ impl Link {
                     })
                 }
                 NetOutbound::ReadyToSim { frame } => {
-                    assert_eq!(frame, RESTORED_FRAME);
+                    assert_eq!(frame, host.timeline.frame_number());
                     let begin = NetEvent::BeginSim {
                         frame,
                         start_epoch_ms: 0,
@@ -350,6 +355,20 @@ fn assert_settled(host: &mut Peer, client: &mut Peer, link: &mut Link, expected:
     assert!(
         client.outgoing.try_recv().is_err(),
         "completed ACKs must not survive recovery"
+    );
+}
+
+#[test]
+fn startup_without_periodic_hash_allows_client_progress() {
+    // The host can consume its frame-zero hash before the peer connects. The
+    // next hash is unreachable if an early scroll waits for that peer.
+    let (mut host, mut client, _) = pair();
+    assert!(!host.drain());
+    assert!(!client.drain(), "BeginSim must supply the initial clock");
+    assert_eq!(
+        client.timeline.multiplayer().timing().schedule_frame(),
+        Some(RESTORED_FRAME),
+        "startup also works away from a periodic hash boundary"
     );
 }
 
@@ -626,5 +645,202 @@ fn completed_mission_snapshot_commits_the_hosts_campaign_before_rebuilding() {
                 .is_none()
         );
         assert!(client.host.transport.reconnecting());
+    }
+}
+
+#[test]
+#[ignore = "requires full game data via ROBINHOOD_DATA_DIR"]
+fn one_robin_startup_scroll_reaches_both_players_in_authored_missions() {
+    use robin_engine::engine::{
+        Engine, EngineArgs, LevelLoadArgs, SimConfig, SimulationFrameInput,
+    };
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let data = robin_test_support::original_data::data_directory("");
+    let (base_campaign, profiles, context) =
+        crate::main_entry::rust_init_with_roots(Some(&data), Some(root)).unwrap();
+    let files = context.preparation_files().unwrap().clone();
+    let mut bank_host = Host::scratch(640.0, 480.0);
+    bank_host
+        .frontend
+        .resources
+        .frame_holder_before_publication_mut()
+        .initialize_sprite_bank_with_files(".", &files)
+        .unwrap();
+    for mission_name in ["H01_Lin_VL", "S01_Not_VL"] {
+        let mut campaign = base_campaign.clone();
+        let mission = campaign
+            .missions
+            .iter()
+            .position(|m| m.profile(&profiles).mission_filename == mission_name)
+            .unwrap();
+        campaign.force_next_mission(mission);
+        let config = SimConfig {
+            script_enabled: true,
+            coop: robin_engine::coop::CoopRules {
+                players: 2,
+                team: [b'R', 0, 0, 0, 0],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (campaign, selected, seed, config) =
+            Engine::select_next_mission(campaign, &profiles, 0, config);
+        assert_eq!(selected, mission);
+        let mut assets = LevelAssets::new();
+        assets.profile_manager = profiles.clone();
+        assets.sprite_scriptor = Arc::new(
+            robin_engine::sprite_script::SpriteScriptor::with_resources(Arc::new(
+                robin_engine::sprite_script::MissionResourceEnvironment::from_files(&files),
+            )),
+        );
+        assets.bank_signature = bank_host.frontend.resources.frame_holder().signature();
+        let path = files
+            .resolve_data_path(&format!("Data/Levels/{mission_name}.scb"))
+            .unwrap();
+        let program = robin_engine::script_manager::ScriptProgram::from_scb(
+            robin_assets::scb::parse_file(&path).unwrap(),
+        )
+        .unwrap();
+        assets.scripts.mission_programs = Arc::new(std::collections::BTreeMap::from([(
+            mission_name.to_owned(),
+            Arc::new(program),
+        )]));
+        let mut text = robin_assets::resource_manager::ResourceManager::with_files(files.clone());
+        text.attach_resource_file("Data/Text/Level.res").unwrap();
+        (assets.peasant_firstnames, assets.peasant_surnames) =
+            crate::game_session::load_peasant_name_pool(&mut text).unwrap();
+        assets.fixed_vip_names = crate::game_session::load_fixed_vip_name_map(&mut text).unwrap();
+        let loaded = robin_engine::engine::level_loading::load_mission_for_campaign_with_files(
+            &campaign,
+            &profiles,
+            "Data/Levels",
+            &mut |_| {},
+            &files,
+        )
+        .unwrap();
+        let engine = Engine::new(EngineArgs {
+            campaign,
+            level: LevelLoadArgs {
+                assets: &mut assets,
+                level_directory: "Data/Levels",
+                progress: &mut |_| {},
+                loaded,
+                bg_pixel_dims: (4096.0, 4096.0),
+            },
+            ground_mark_sprite: None,
+            titbit_row_frame_counts: Vec::new(),
+            rng_seed: seed,
+            original_rng_replay: None,
+            sim_config: config,
+        })
+        .unwrap();
+        assert_eq!(
+            engine
+                .pc_ids()
+                .iter()
+                .filter(|&&id| engine
+                    .get_entity(id)
+                    .and_then(robin_engine::element::Entity::pc_data)
+                    .is_some_and(|pc| pc.playable
+                        && pc.mission_role
+                            == robin_engine::human_control::MissionRole::PlayerParty))
+                .count(),
+            1,
+            "{mission_name}: fixture must exercise a one-character start"
+        );
+        let assets = Arc::new(assets);
+        let mut host = Peer::new_at(PlayerId::HOST, 0);
+        let mut client = Peer::new_at(PlayerId(1), 0);
+        for peer in [&mut host, &mut client] {
+            peer.assets = assets.clone();
+            peer.manager = EngineManager::new(engine.clone());
+        }
+        client
+            .incoming
+            .send(NetEvent::InitialSnapshot {
+                frame: 0,
+                engine_bytes: host.manager.engine.encode_native_snapshot(),
+            })
+            .unwrap();
+        let mut link = Link::default();
+        for _ in 0..4 {
+            link.pump(&mut host, &mut client, false);
+        }
+        for frame in 0..250 {
+            for peer in [&mut host, &mut client] {
+                peer.timeline.adopt_frame(TimelineFrame::from_wire(frame));
+                peer.net().publish_frame(frame);
+                let output = peer
+                    .manager
+                    .engine
+                    .advance_frame_without_hash(
+                        &assets,
+                        SimulationFrameInput::default().with_post_initialize(frame == 0),
+                    )
+                    .unwrap();
+                peer.host.apply_side_effects(output.events);
+                peer.host.apply_side_effects(output.post_boundary_events);
+                if let Some(events) = output.post_initialize_events {
+                    peer.host.apply_side_effects(events);
+                }
+            }
+            if !host.host.effects.pending_modal_kinds().is_empty() {
+                break;
+            }
+        }
+        assert_eq!(
+            client.host.effects.popup_text_count(),
+            0,
+            "predicted client stories must wait for host authority"
+        );
+        assert!(
+            host.host.effects.popup_text_count() > 0,
+            "{mission_name}: actual mission startup must emit a scroll; pending {:?}",
+            host.host.effects.pending_modal_kinds()
+        );
+        let modal_frame = host.timeline.frame_number();
+        eprintln!("{mission_name}: startup scroll at frame {modal_frame}");
+        for _ in 0..64 {
+            link.pump(&mut host, &mut client, false);
+            host.draw();
+            client.draw();
+            if host.visible.is_some() && !host.gate.is_pending() {
+                host.click();
+            }
+            if client.visible.is_some() && !client.gate.is_pending() {
+                client.click();
+            }
+        }
+        assert!(!host.opened.is_empty(), "{mission_name}");
+        assert_eq!(
+            host.opened, client.opened,
+            "{mission_name}: client must receive every starting scroll"
+        );
+        assert_eq!(host.opened, host.completed);
+        assert_eq!(client.opened, client.completed);
+        assert!(!host.net().story_barrier_pending());
+        assert!(!client.net().story_barrier_pending());
+        assert!(
+            !host.drain(),
+            "{mission_name}: both acknowledgements release the host"
+        );
+        // This fixture advances engine ticks without wall-clock sleeps. The
+        // client's ordinary pacing gate may still be ahead of real time, but
+        // it must have a finite deadline and no unresolved story barrier.
+        assert!(
+            client
+                .timeline
+                .multiplayer()
+                .timing()
+                .deadline_ms(modal_frame)
+                .is_some(),
+            "{mission_name}: client has a clock for resuming after the scroll"
+        );
+        assert_eq!(host.timeline.frame_number(), modal_frame);
+        assert_eq!(client.timeline.frame_number(), modal_frame);
     }
 }
