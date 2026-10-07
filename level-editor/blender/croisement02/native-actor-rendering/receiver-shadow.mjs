@@ -24,7 +24,7 @@ function intersection(subject,boundary) {
   return result;
 }
 
-/** Private support projection. Triangles are native map [x,y,height] coordinates. */
+/** Private support projection. Receiver vertices are [worldX, worldY-height, height]. */
 export function projectShadowReceivers({anchor,bounds,elevation,triangles}) {
   if(!Array.isArray(anchor)||anchor.length!==3||!anchor.every(Number.isFinite)||
       !Number.isFinite(elevation)||elevation<=0||elevation>=Math.PI/2)
