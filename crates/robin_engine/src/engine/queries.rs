@@ -48,6 +48,14 @@ impl EngineInner {
         &self.players.seats[0].selection
     }
 
+    /// Combat automation yields to heroes selected by any active player.
+    /// Disconnected seats retain their selection for reconnect, but do not
+    /// suppress autonomous combat while their player is absent.
+    pub(crate) fn is_hero_selected_by_any_player(&self, entity_id: EntityId) -> bool {
+        self.active_seats()
+            .any(|(_, seat)| seat.selection.contains(&entity_id))
+    }
+
     /// Selection for a specific seat, or `&[]` if the seat hasn't
     /// joined yet.  Multi-seat read path.
     pub fn hero_selection(&self, player_id: crate::player_command::PlayerId) -> &[EntityId] {

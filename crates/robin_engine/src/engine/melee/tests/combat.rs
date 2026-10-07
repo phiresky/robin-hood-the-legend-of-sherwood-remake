@@ -4091,3 +4091,53 @@ fn coop_required_hero_death_latches_only_after_last_copy() {
     assert_eq!(engine.mission_domain.dead_pc, Some(ids[1]));
     assert!(engine.mission_domain.campaign.gang_indices.is_empty());
 }
+
+#[test]
+fn player_selected_attacker_does_not_queue_automatic_taunt_after_damage() {
+    for selected_seat in [None, Some(0), Some(1)] {
+        let mut engine = make_engine();
+        let attacker = engine.add_test_entity(make_pc(wp(0.0, 100.0), None));
+        let victim = engine.add_test_entity(make_soldier(wp(10.0, 100.0), None));
+        engine.enemy_mut(victim).hth_weapon_id = 1;
+        engine.actor_mut(victim).action_state = ActionState::WaitingSword;
+        engine.ensure_seat(crate::player_command::PlayerId(1));
+        engine.players.seats[1].connected = true;
+        if let Some(seat) = selected_seat {
+            engine.players.seats[seat].selection = vec![attacker];
+        }
+        let mut assets = assets_with_sword_profile_effects(1, 50, 4, 0);
+        std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].fighting = 100;
+        let mut damage =
+            crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
+        damage.data =
+            crate::sequence::SequenceElementData::new_sword_damage(attacker, SwordStrike::A, 1);
+        let sequence = engine.orders.sequence_manager.insert_element(damage);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
+        engine.select_sequence_element(victim, Some((sequence, 0)));
+        engine.t_element_in_progress(&assets, sequence, 0);
+        engine.control.rng = SimulationRng::with_original_replay(vec![0; 32]);
+        engine.with_simulation_context(|engine, sim| {
+            engine.apply_sword_damage(
+                TickCtx::new(sim, &assets),
+                victim,
+                Some(attacker),
+                Some(SwordStrike::A),
+                Some(1),
+                (sequence, 0),
+            );
+        });
+        assert!(engine.ent(victim).npc_data().unwrap().life_points < 50);
+        assert_eq!(
+            engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(attacker, |command| command
+                    == Command::Provoke,),
+            selected_seat.is_none(),
+            "selection by {selected_seat:?} must suppress the automatic taunt",
+        );
+    }
+}

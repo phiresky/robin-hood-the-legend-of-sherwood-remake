@@ -791,7 +791,7 @@ impl EngineInner {
             // Controlled soldiers use stance policy instead: Hold and
             // Defensive remain at their assigned position, while Aggressive
             // retains the original soldier AI's pursuit/repositioning.
-            if entity.is_pc() && self.selected_hero_ids().contains(&entity_id)
+            if entity.is_pc() && self.is_hero_selected_by_any_player(entity_id)
                 || entity.is_soldier() && !self.tactical_allows_combat_movement(entity_id)
             {
                 return false;
@@ -1432,7 +1432,7 @@ impl EngineInner {
                             "phase=evaluate_nonmutual roll={} accepted=false is_pc={} selected_pc={}",
                             roll,
                             is_pc,
-                            is_pc && self.selected_hero_ids().contains(&entity_id),
+                            is_pc && self.is_hero_selected_by_any_player(entity_id),
                         ),
                     );
                 }
@@ -1455,7 +1455,7 @@ impl EngineInner {
             (
                 entity.element_data().position(),
                 max,
-                entity.is_pc() && self.selected_hero_ids().contains(&entity_id),
+                entity.is_pc() && self.is_hero_selected_by_any_player(entity_id),
             )
         };
         let principal_pos = self
@@ -1761,7 +1761,7 @@ impl EngineInner {
         let entity_id = entity_id.into();
         let entity = self.expect_entity(entity_id, "swordfight evaluation step-back owner");
 
-        if entity.is_pc() && self.selected_hero_ids().contains(&entity_id) {
+        if entity.is_pc() && self.is_hero_selected_by_any_player(entity_id) {
             return None;
         }
         if entity.is_soldier() {
@@ -1974,7 +1974,7 @@ impl EngineInner {
                     None => continue,
                 };
                 let is_selected_pc =
-                    victim.kind().is_pc() && self.selected_hero_ids().contains(&victim_id);
+                    victim.kind().is_pc() && self.is_hero_selected_by_any_player(victim_id);
                 let is_npc_soldier = matches!(victim, Entity::Soldier(_));
                 let npc_substate = if let Entity::Soldier(s) = victim {
                     Some(s.npc.ai_substate())
