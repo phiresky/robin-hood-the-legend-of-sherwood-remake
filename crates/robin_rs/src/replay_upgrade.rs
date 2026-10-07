@@ -154,7 +154,7 @@ fn upgrade_header(header: &mut serde_json::Value) -> Result<u32> {
         .context("replay header has no valid schema")?;
     ensure!(
         version == REPLAY_SCHEMA_VERSION
-            || (version == 64 && REPLAY_SCHEMA_VERSION == 65)
+            || ((64..=65).contains(&version) && REPLAY_SCHEMA_VERSION == 66)
             || ((43..=56).contains(&version) && (43..=56).contains(&REPLAY_SCHEMA_VERSION)),
         "replay schema {version} needs an input migration before upgrading to {REPLAY_SCHEMA_VERSION}"
     );
@@ -267,12 +267,25 @@ fn prepare_source(source: &Path, staging: &Path) -> Result<(ReplayFile, u32)> {
     // not reconstruct deleted or relocated simulation fields.
     for load in file.load_backs.values() {
         if let Some(snapshot) = &load.snapshot {
+            if snapshot.kind == robin_engine::replay::ReplaySnapshotKind::NetworkEngine {
+                robin_engine::engine::Engine::decode_native_snapshot(&snapshot.payload)
+                    .map_err(anyhow::Error::msg)
+                    .context("network snapshot requires migration before replay upgrade")?;
+                continue;
+            }
             let save: crate::save_file::GameSaveFile = serde_json::from_slice(&snapshot.payload)
                 .context("embedded save requires migration before replay upgrade")?;
             save.validate_current_schema()?;
         }
     }
-    file.hashes.clear();
+    file.hashes.retain(|ordinal, _| {
+        file.load_backs
+            .get(ordinal)
+            .and_then(|load| load.snapshot.as_ref())
+            .is_some_and(|snapshot| {
+                snapshot.kind == robin_engine::replay::ReplaySnapshotKind::NetworkEngine
+            })
+    });
     Ok((file, version))
 }
 
@@ -419,7 +432,15 @@ fn apply_captured_hashes(file: &mut ReplayFile, hashes: &[(u64, u64)]) {
     file.hashes.clear();
     for (ordinal, &(before, after)) in hashes.iter().enumerate() {
         let ordinal = ordinal as u32;
-        if ordinal.is_multiple_of(robin_engine::multiplayer::STATE_HASH_INTERVAL) {
+        if ordinal.is_multiple_of(robin_engine::multiplayer::STATE_HASH_INTERVAL)
+            || file
+                .load_backs
+                .get(&ordinal)
+                .and_then(|load| load.snapshot.as_ref())
+                .is_some_and(|snapshot| {
+                    snapshot.kind == robin_engine::replay::ReplaySnapshotKind::NetworkEngine
+                })
+        {
             file.hashes.insert(ordinal, after);
         }
         if let Some(marker) = file.save_markers.get_mut(&ordinal) {
@@ -488,16 +509,33 @@ mod tests {
         assert_eq!(source_version, 64);
         let text = String::from_utf8(upgraded).unwrap();
         let header: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
-        assert_eq!(header["version"], 65);
+        assert_eq!(header["version"], REPLAY_SCHEMA_VERSION);
         assert!(header.get("mission_profiles").is_none());
         assert!(text.contains("{\"f\":0,\"i\":{\"unchanged\":true}}"));
+    }
+
+    #[test]
+    fn schema_65_saved_game_payloads_keep_their_load_semantics() {
+        let (upgraded, version) = normalize_jsonl(b"{\"version\":65}\n", false).unwrap();
+        assert_eq!(version, 65);
+        assert!(
+            String::from_utf8(upgraded)
+                .unwrap()
+                .contains(&format!("\"version\":{}", REPLAY_SCHEMA_VERSION))
+        );
+        let snapshot: robin_engine::replay::ReplaySaveSnapshot =
+            serde_json::from_str(r#"{"payload":[1],"timeline_frame":7}"#).unwrap();
+        assert_eq!(
+            snapshot.kind,
+            robin_engine::replay::ReplaySnapshotKind::SavedGame
+        );
     }
 
     #[test]
     fn obsolete_input_schemas_require_explicit_migration_before_relabeling() {
         for version in (0..REPLAY_SCHEMA_VERSION)
             .chain([REPLAY_SCHEMA_VERSION + 1])
-            .filter(|version| !(*version == 64 && REPLAY_SCHEMA_VERSION == 65))
+            .filter(|version| !((64..=65).contains(version) && REPLAY_SCHEMA_VERSION == 66))
         {
             let mut header = serde_json::json!({"version":version});
             let before = header.clone();

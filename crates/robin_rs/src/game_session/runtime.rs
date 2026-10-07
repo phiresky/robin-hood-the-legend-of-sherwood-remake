@@ -1014,6 +1014,20 @@ impl TimelineRuntime {
             &mut self.history.buffer,
         )?;
         if result.rewrote_sim_state {
+            if result.rollback.is_some()
+                || result.adopted_frame.is_some()
+                || result.admission_events.iter().any(|event| {
+                    matches!(
+                        event,
+                        MultiplayerAdmissionEvent::InitialSnapshotAdopted { .. }
+                    )
+                })
+            {
+                self.replay.record_network_correction(
+                    &manager.engine,
+                    result.adopted_frame.unwrap_or(self.frame_number()),
+                );
+            }
             self.history.reset_checker();
             super::tick::refresh_live_sound_boundary(
                 &mut self.lifecycle.pending_external_facts.sound_boundary,
@@ -1585,32 +1599,49 @@ pub(super) fn apply_replay_timeline_events_with_hash_policy(
     }
     if let Some(load_back) = player.load_back_for_frame(frame) {
         if let Some(snapshot) = &load_back.snapshot {
-            let save: crate::save_file::GameSaveFile = serde_json::from_slice(&snapshot.payload)
-                .map_err(|error| {
-                    MissionError::replay(format!("invalid embedded save at frame {frame}: {error}"))
+            if snapshot.kind == robin_engine::replay::ReplaySnapshotKind::NetworkEngine {
+                let decoded =
+                    Engine::decode_native_snapshot(&snapshot.payload).map_err(|error| {
+                        MissionError::replay(format!(
+                            "invalid network snapshot at frame {frame}: {error}"
+                        ))
+                    })?;
+                manager.engine =
+                    Engine::adopt_authoritative_snapshot(decoded, assets).map_err(|error| {
+                        MissionError::replay(format!(
+                            "network snapshot at frame {frame} is incompatible: {error}"
+                        ))
+                    })?;
+            } else {
+                let save: crate::save_file::GameSaveFile =
+                    serde_json::from_slice(&snapshot.payload).map_err(|error| {
+                        MissionError::replay(format!(
+                            "invalid embedded save at frame {frame}: {error}"
+                        ))
+                    })?;
+                save.validate_current_schema().map_err(|error| {
+                    MissionError::replay(format!("invalid embedded save: {error:#}"))
                 })?;
-            save.validate_current_schema().map_err(|error| {
-                MissionError::replay(format!("invalid embedded save: {error:#}"))
-            })?;
-            save.engine
-                .campaign()
-                .validate_history_schema()
-                .map_err(|error| {
-                    MissionError::replay(format!("invalid embedded save campaign: {error}"))
-                })?;
-            if save.header.mission_assets != player.header().mission_assets {
-                return Err(MissionError::replay(format!(
-                    "embedded save at frame {frame} requires different mission assets"
-                )));
+                save.engine
+                    .campaign()
+                    .validate_history_schema()
+                    .map_err(|error| {
+                        MissionError::replay(format!("invalid embedded save campaign: {error}"))
+                    })?;
+                if save.header.mission_assets != player.header().mission_assets {
+                    return Err(MissionError::replay(format!(
+                        "embedded save at frame {frame} requires different mission assets"
+                    )));
+                }
+                save.apply_to_with_game(&mut manager.engine, host, game, assets)
+                    .map_err(|error| {
+                        MissionError::replay(format!(
+                            "embedded save restore at frame {frame} failed: {error}"
+                        ))
+                    })?;
+                game.apply_post_load_sync(load_back.is_continue);
+                game.post_load_resolution_resync();
             }
-            save.apply_to_with_game(&mut manager.engine, host, game, assets)
-                .map_err(|error| {
-                    MissionError::replay(format!(
-                        "embedded save restore at frame {frame} failed: {error}"
-                    ))
-                })?;
-            game.apply_post_load_sync(load_back.is_continue);
-            game.post_load_resolution_resync();
             *rewind_buffer = RewindBuffer::new();
             if let Some(expected) = player.hash_for_frame(frame) {
                 let actual = robin_engine::replay::state_hash(&manager.engine);
@@ -3161,6 +3192,118 @@ mod tests {
         assert!(
             matches!(outgoing.try_recv().unwrap(), robin_engine::multiplayer::NetOutbound::ReadyToSim { frame } if frame == saved_frame)
         );
+    }
+
+    #[test]
+    fn network_corrections_round_trip_jsonl_compact_and_exact_playback() {
+        use robin_engine::engine::SimulationFrameInput;
+        use robin_engine::replay::{ReplaySnapshotKind, state_hash};
+        let mut assets = LevelAssets::new();
+        let initial = Engine::new_for_test(1024.0, 768.0, Default::default(), &mut assets).unwrap();
+        let mut live = initial.clone();
+        let service = Arc::new(crate::replay_service::ReplayService::default());
+        let mut recorder = ReplayRecorder::with_writer(
+            Box::new(service.recording().begin_recording()),
+            "network".into(),
+            test_mission_assets("network"),
+            0,
+            Default::default(),
+            initial.campaign(),
+        )
+        .unwrap();
+        let input = SimulationFrameInput::new(vec![
+            PlayerCommand::SetAmountOfSpeaking { amount: 7 }.into(),
+        ])
+        .with_hourglass(false);
+        recorder.write_frame(0, 0, 1, input.clone(), Vec::new(), Some(state_hash(&live)));
+        live.advance_frame(&assets, input).unwrap();
+        let mut expected = Vec::new();
+        for (target, amount) in [(54, 9), (3, 2)] {
+            live.advance_frame(
+                &assets,
+                SimulationFrameInput::new(vec![
+                    PlayerCommand::SetAmountOfSpeaking { amount }.into(),
+                ])
+                .with_hourglass(false),
+            )
+            .unwrap();
+            expected.push((target, state_hash(&live)));
+            recorder.write_network_snapshot(
+                live.encode_native_snapshot(),
+                target,
+                state_hash(&live),
+            );
+        }
+        recorder.flush().unwrap();
+        let jsonl = service.exports().snapshot().unwrap().parse_sync().unwrap();
+        assert_eq!(jsonl.frame_count(), 3);
+        let mut missing_hash = robin_engine::replay::ReplayFile::from(&jsonl);
+        missing_hash.hashes.remove(&1);
+        assert!(robin_engine::replay::ReplayData::try_from(missing_hash).is_err());
+        let mut save_fixups = robin_engine::replay::ReplayFile::from(&jsonl);
+        save_fixups.load_backs.get_mut(&1).unwrap().is_continue = true;
+        assert!(robin_engine::replay::ReplayData::try_from(save_fixups).is_err());
+        let bytes =
+            crate::replay_format::encode_compact(&jsonl, robin_replay_format::ENGINE_VERSION_HASH)
+                .unwrap();
+        let (_, compact) = crate::replay_format::decode_compact(&bytes).unwrap();
+        for data in [jsonl, compact] {
+            assert!(
+                data.rankability()
+                    .unwrap()
+                    .taints()
+                    .iter()
+                    .any(|taint| taint.kind
+                        == robin_engine::replay_rankability::InputTaintKind::StateLoad)
+            );
+            let mut player = ReplayPlayer::new(data);
+            let mut manager = EngineManager::new(initial.clone());
+            let mut host = Host::scratch(1024.0, 768.0);
+            let mut game = Game::default();
+            let mut saves = BTreeMap::new();
+            let mut rewind = RewindBuffer::new();
+            let mut timeline = TimelineFrame::ZERO;
+            while !player.is_finished() {
+                let ordinal = player.current_frame();
+                if ordinal > 0 {
+                    let snapshot = player
+                        .load_back_for_frame(ordinal)
+                        .unwrap()
+                        .snapshot
+                        .as_ref()
+                        .unwrap();
+                    assert_eq!(snapshot.kind, ReplaySnapshotKind::NetworkEngine);
+                }
+                if let Some(adopted) = apply_replay_timeline_events_at_boundary(
+                    &player,
+                    timeline,
+                    &mut saves,
+                    &mut rewind,
+                    &mut host,
+                    &mut game,
+                    &mut manager,
+                    &assets,
+                )
+                .unwrap()
+                {
+                    timeline = adopted;
+                }
+                assert_eq!(
+                    state_hash(&manager.engine),
+                    player.hash_for_frame(ordinal).unwrap()
+                );
+                if ordinal > 0 {
+                    let (target, hash) = expected[ordinal as usize - 1];
+                    assert_eq!(timeline.number(), target);
+                    assert_eq!(state_hash(&manager.engine), hash);
+                }
+                let frame = player.next_frame().clone();
+                assert_eq!(frame.timeline_before, timeline.number());
+                manager.engine.advance_frame(&assets, frame.input).unwrap();
+                timeline = TimelineFrame::from_wire(frame.timeline_after);
+            }
+            assert_eq!(state_hash(&manager.engine), state_hash(&live));
+        }
     }
 
     #[test]

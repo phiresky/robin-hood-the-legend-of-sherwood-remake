@@ -114,6 +114,18 @@ async fn prepare(
 fn replay_submission_unavailable_reason(
     replay: &robin_engine::replay::ReplayData,
 ) -> Result<Option<String>, RankedError> {
+    if (0..replay.frame_count()).any(|ordinal| {
+        replay
+            .load_back_for_frame(ordinal)
+            .and_then(|load| load.snapshot.as_ref())
+            .is_some_and(|snapshot| {
+                snapshot.kind == robin_engine::replay::ReplaySnapshotKind::NetworkEngine
+            })
+    }) {
+        return Ok(Some(
+            "This run contains multiplayer state recovery and cannot be submitted.".into(),
+        ));
+    }
     let rankability = replay
         .rankability()
         .map_err(|error| RankedError::evidence(error.to_string()))?;
@@ -463,6 +475,7 @@ mod tests {
             0,
             ReplayLoadBack {
                 snapshot: Some(ReplaySaveSnapshot {
+                    kind: robin_engine::replay::ReplaySnapshotKind::SavedGame,
                     payload: vec![0; 4_077_629],
                     timeline_frame: 0,
                 }),

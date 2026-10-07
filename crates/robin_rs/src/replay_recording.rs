@@ -276,6 +276,25 @@ impl SharedReplayRecorder {
             .recorder
             .write_load_snapshot(ordinal, bytes, timeline, is_continue);
     }
+    pub(crate) fn write_network_snapshot(
+        &self,
+        engine: &robin_engine::engine::Engine,
+        timeline: u32,
+    ) -> u32 {
+        let mut recording = lock(&self.0);
+        assert!(
+            !recording.sealed,
+            "network correction requires an active recording"
+        );
+        recording.recorder.write_network_snapshot(
+            engine.encode_native_snapshot(),
+            timeline,
+            robin_engine::replay::state_hash(engine),
+        );
+        recording.timeline = timeline;
+        recording.recorder.next_ordinal()
+    }
+
     pub(crate) fn record_input_taint(
         &self,
         kind: robin_engine::replay_rankability::InputTaintKind,

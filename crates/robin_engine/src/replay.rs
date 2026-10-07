@@ -172,7 +172,8 @@ pub struct ReplayHeader {
 /// Version 63 retains compiled world-space passage endpoints.
 /// Version 64 retains connected physical stair floor patches.
 /// Version 65 persists the mission profile catalog in the replay header.
-pub const REPLAY_SCHEMA_VERSION: u32 = 65;
+/// Version 66 distinguishes exact network state adoption from saved-game loads.
+pub const REPLAY_SCHEMA_VERSION: u32 = 66;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
@@ -258,7 +259,7 @@ pub struct ReplayLoadBack {
     pub is_continue: bool,
 }
 
-/// Exact persisted save payload and the recording's adopted timeline boundary.
+/// Explicit state replacement payload and the recording's adopted timeline boundary.
 #[derive(
     Clone,
     Debug,
@@ -271,8 +272,30 @@ pub struct ReplayLoadBack {
     bitcode::Decode,
 )]
 pub struct ReplaySaveSnapshot {
+    #[serde(default)]
+    pub kind: ReplaySnapshotKind,
     pub payload: Vec<u8>,
     pub timeline_frame: u32,
+}
+
+/// Saved games apply load fixups; network corrections adopt exact engine state.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+pub enum ReplaySnapshotKind {
+    #[default]
+    SavedGame,
+    NetworkEngine,
 }
 
 /// State pinned by an in-mission save at one replay host ordinal.
@@ -621,6 +644,13 @@ impl ReplayData {
         }
         for (&frame, load_back) in self.load_backs.iter() {
             if let Some(snapshot) = &load_back.snapshot {
+                if snapshot.kind == ReplaySnapshotKind::NetworkEngine
+                    && (load_back.is_continue || !self.hashes.contains_key(&frame))
+                {
+                    return Err(format!(
+                        "network snapshot at frame {frame} requires an exact state hash and no save-load fixups"
+                    ));
+                }
                 if snapshot.payload.is_empty() || load_back.to_frame != frame {
                     return Err(format!("invalid embedded save at frame {frame}"));
                 }

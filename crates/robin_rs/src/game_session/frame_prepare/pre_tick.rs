@@ -461,11 +461,23 @@ mod tests {
                 Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap(),
             );
             let mut assets = Arc::new(assets);
+            let service = Arc::<crate::replay_service::ReplayService>::default();
+            let recorder = robin_engine::replay::ReplayRecorder::with_writer(
+                Box::new(service.recording().begin_recording()),
+                "boundary".into(),
+                robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+                    "boundary", "boundary", "boundary",
+                )
+                .unwrap(),
+                0,
+                Default::default(),
+                manager.engine.campaign(),
+            )
+            .unwrap();
             let mut timeline = TimelineRuntime::new(
                 ReplayAndRollback {
-                    recording_control: Arc::<crate::replay_service::ReplayService>::default()
-                        .recording(),
-                    recorder: None,
+                    recording_control: service.recording(),
+                    recorder: Some(recorder.into()),
                     player: None,
                     rollback_checker: None,
                     rewind_buffer: RewindBuffer::new(),
@@ -514,6 +526,25 @@ mod tests {
             .unwrap();
             assert!(paused);
             assert_eq!(timeline.frame_number(), target);
+            let recorded = service.exports().snapshot().unwrap().parse_sync().unwrap();
+            assert_eq!(recorded.frame_count(), 1);
+            let correction = recorded
+                .load_back_for_frame(0)
+                .unwrap()
+                .snapshot
+                .as_ref()
+                .unwrap();
+            assert_eq!(correction.timeline_frame, target);
+            assert_eq!(
+                correction.kind,
+                robin_engine::replay::ReplaySnapshotKind::NetworkEngine
+            );
+            let decoded = Engine::decode_native_snapshot(&correction.payload).unwrap();
+            assert_eq!(
+                robin_engine::replay::state_hash(&decoded),
+                robin_engine::replay::state_hash(&manager.engine)
+            );
+
             assert_eq!(
                 serde_json::to_value(frame.commands()).unwrap(),
                 serde_json::to_value([due]).unwrap(),
@@ -861,7 +892,10 @@ mod tests {
             },
         );
         assert_eq!(timeline.history().buffer().next_record_frame(), 3);
-        assert_eq!(frame.recorder_hash, Some(corrected_pre_tick_hash));
+        assert_eq!(
+            frame.recorder_hash, None,
+            "the correction already consumed ordinal zero's hash record"
+        );
         assert_eq!(
             timeline.history().buffer().commands_for(2).unwrap().len(),
             2
@@ -872,6 +906,23 @@ mod tests {
             .restore_recent(&assets, 2, robin_engine::sim_timeline::RestorePolicy::Exact)
             .unwrap();
         assert_eq!(state_hash(&checkpoint.engine), corrected_pre_tick_hash);
+        let recorded = robin_engine::replay::ReplayData::from_reader(std::io::BufReader::new(
+            std::fs::File::open(&recording_path).unwrap(),
+        ))
+        .unwrap();
+        assert_eq!(recorded.frame_count(), 1);
+        assert_eq!(recorded.hash_for_frame(0), Some(corrected_pre_tick_hash));
+        let correction = recorded
+            .load_back_for_frame(0)
+            .unwrap()
+            .snapshot
+            .as_ref()
+            .unwrap();
+        assert_eq!(correction.timeline_frame, 2);
+        assert_eq!(
+            state_hash(&Engine::decode_native_snapshot(&correction.payload).unwrap()),
+            corrected_pre_tick_hash
+        );
 
         // The telemetry intentionally survives into the next host iteration.
         // Its empty second drain must not re-open/re-sample based on stale

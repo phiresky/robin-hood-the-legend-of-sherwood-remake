@@ -327,6 +327,7 @@ impl ReplayRecorder {
             sv: None,
             lb: Some(ReplayLoadBack {
                 snapshot: Some(ReplaySaveSnapshot {
+                    kind: crate::replay::ReplaySnapshotKind::SavedGame,
                     payload: snapshot,
                     timeline_frame,
                 }),
@@ -335,6 +336,43 @@ impl ReplayRecorder {
             }),
             t: Vec::new(),
         });
+    }
+
+    /// Persist an exact network correction as a complete no-tick boundary.
+    /// The state is local playback evidence, never ranked re-simulation input.
+    pub fn write_network_snapshot(&mut self, payload: Vec<u8>, timeline: u32, hash: u64) {
+        let ordinal = self.next_expected_ordinal;
+        assert!(!payload.is_empty(), "network snapshot must not be empty");
+        self.record_input_taint(InputTaintKind::StateLoad, ordinal);
+        self.boundary_metadata_pending = true;
+        self.write_record(&FrameRecord {
+            f: ordinal,
+            i: None,
+            h: None,
+            sv: None,
+            lb: Some(ReplayLoadBack {
+                snapshot: Some(ReplaySaveSnapshot {
+                    kind: crate::replay::ReplaySnapshotKind::NetworkEngine,
+                    payload,
+                    timeline_frame: timeline,
+                }),
+                to_frame: ordinal,
+                is_continue: false,
+            }),
+            t: Vec::new(),
+        });
+        assert!(
+            self.write_frame(
+                ordinal,
+                timeline,
+                timeline,
+                SimulationFrameInput::default()
+                    .with_hourglass(false)
+                    .with_simulation_body_allowed(false),
+                Vec::new(),
+                Some(hash),
+            )
+        );
     }
 
     /// Append the first observation of one ranked-ineligible input path.

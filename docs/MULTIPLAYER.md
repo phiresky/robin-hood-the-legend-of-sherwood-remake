@@ -283,7 +283,11 @@ authoritative load input.
 Only the host records the canonical server-ordered multiplayer replay. A
 connecting peer cannot select `--record`, and the browser peer's replay RPC
 fails with `no active replay recording` instead of publishing a competing
-history.
+history. Native diagnostic recordings preserve snapshot adoption and late-input
+reconstruction as explicit exact-state boundaries. Replay schema 66 distinguishes
+these network corrections from saved-game loads, verifies their state hashes,
+and excludes them from ranked submission. Playback adopts the recorded engine
+state without applying saved-game load fixups.
 
 The in-game multiplayer menu needs no flags or environment: it joins the
 serverless matchmaking swarm automatically (see **Matchmaking** above).

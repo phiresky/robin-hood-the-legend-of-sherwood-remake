@@ -2038,6 +2038,7 @@ mod tests {
                 to_frame: 0,
                 is_continue: false,
                 snapshot: Some(ReplaySaveSnapshot {
+                    kind: robin_engine::replay::ReplaySnapshotKind::SavedGame,
                     payload: vec![b' '; 4096],
                     timeline_frame: 0,
                 }),

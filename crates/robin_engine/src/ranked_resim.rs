@@ -760,6 +760,7 @@ mod tests {
         let load = forged.load_backs.get_mut(&25).unwrap();
         load.to_frame = 25;
         load.snapshot = Some(crate::replay::ReplaySaveSnapshot {
+            kind: crate::replay::ReplaySnapshotKind::SavedGame,
             payload: b"{}".to_vec(),
             timeline_frame: 0,
         });

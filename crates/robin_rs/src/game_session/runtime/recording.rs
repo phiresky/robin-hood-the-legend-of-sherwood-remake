@@ -219,6 +219,15 @@ impl ReplayLifecycle {
         }
     }
 
+    /// A correction replaces already-recorded prediction. Persist a complete
+    /// boundary immediately so another drain or an early exit cannot orphan it.
+    pub(super) fn record_network_correction(&mut self, engine: &Engine, timeline: u32) {
+        if let Some(recorder) = self.recording.recorder() {
+            self.ordinal =
+                ReplayFrameOrdinal::from_wire(recorder.write_network_snapshot(engine, timeline));
+        }
+    }
+
     pub(in crate::game_session) fn begin_recording(
         &mut self,
         frame: &mut MissionFrame,
