@@ -9,6 +9,7 @@ for recipe, arguments in [
     ('restart2_winch_native.py', []),
     ('restart2_winch_room_probe_audit.py', ['--', 'winch-room-physical-v6']),
     ('restart2_winch_room_review.py', ['--', 'winch-room-physical-v6']),
+    ('restart2_winch_room_review.py', ['--', 'winch-room-physical-v6', 'transition-00']),
 ]:
     sys.argv = [str(HERE / recipe), *arguments]
     runpy.run_path(str(HERE / recipe), run_name='__main__')

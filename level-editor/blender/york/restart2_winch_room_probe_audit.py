@@ -25,7 +25,7 @@ back=Vector((0,-c,s))
 source=WORK/'geometry-pass-01/native-state-source-v1'
 record=next(r for r in json.loads((source/'manifest.json').read_text())['records'] if r['id']=='patch-004')
 states=[]
-for state,row,index in [('transition-44',1,44)]:
+for state,row,index in [('transition-00',1,0),('transition-44',1,44)]:
     path=BASE/state/'model.blend';digest=sha(path);bpy.ops.wm.open_mainfile(filepath=str(path));bpy.context.view_layer.update()
     scene=bpy.context.scene;verts=[];polys=[];owners=[]
     for o in scene.objects:
