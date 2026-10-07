@@ -1,6 +1,7 @@
 """Inspect every propagated mound against its ground, bank, and wall contacts."""
 from pathlib import Path
 import sys,json,hashlib,math
+import shutil
 import bpy
 from mathutils import Vector
 P=Path(__file__).resolve().parent;sys.path.insert(0,str(P))
@@ -21,7 +22,7 @@ def main():
    if obj.type=='MESH':obj.hide_render=obj not in own and obj not in receivers
   paths=[]
   for view,direction in [('native',RAY),('side',Vector((COS,0,SIN))),('low-side',Vector((math.cos(math.radians(12)),0,math.sin(math.radians(12)))))]:
-   camera=frame(scene,own,direction,480,1.5);file=out/f'{row["tag"]}-{view}.png';scene.render.filepath=str(file);bpy.ops.render.render(write_still=True);paths.append(file);images.append(dict(tag=row['tag'],view=view,path=file.name,sha256=sha(file),camera_matrix=[list(v)for v in camera.matrix_world],receivers=[o.name for o in receivers]))
+   camera=frame(scene,own,direction,480,1.5);file=out/f'{row["tag"]}-{view}.png';scene.render.filepath=str(file);assert shutil.disk_usage(out).free>25*1024**3,'Disk reserve reached before render';bpy.ops.render.render(write_still=True);paths.append(file);images.append(dict(tag=row['tag'],view=view,path=file.name,sha256=sha(file),camera_matrix=[list(v)for v in camera.matrix_world],receivers=[o.name for o in receivers]))
   sheet(paths,out/f'{row["tag"]}-contact-three.png')
  sheet([out/r['path']for r in images],out/'all-contact-views.png');(out/'report.json').write_text(json.dumps(dict(model_sha256=sha(model),static_base_sha256=sha(base),substitutions=pins,images=images,scope='Ground/bank and relevant wall only. Canopy omitted to expose contact. Native camera first, two oblique support views. No full-scene occlusion claim.'),indent=2)+'\n')
 if __name__=='__main__':

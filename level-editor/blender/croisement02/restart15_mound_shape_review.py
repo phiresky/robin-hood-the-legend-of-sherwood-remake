@@ -1,6 +1,7 @@
 """Render native-first shape evidence for every site and complete exceptional orbits."""
 from pathlib import Path
 import sys,json,hashlib,math
+import shutil
 import bpy
 from mathutils import Vector
 P=Path(__file__).resolve().parent;sys.path.insert(0,str(P))
@@ -17,7 +18,7 @@ def main():
   for mode in ['actual','coverage-gray']:
    scene.view_layers[0].material_override=gray if mode=='coverage-gray'else None;files=[]
    for i in indices:
-    angle=i*math.pi/4;frame(scene,own,Vector((math.sin(angle)*COS,-math.cos(angle)*COS,SIN)),384,1.2);file=out/f'{row["tag"]}-{mode}-{i:02}.png';scene.render.filepath=str(file);bpy.ops.render.render(write_still=True);files.append(file);images.append(dict(mode=mode,view=i,path=file.name,sha256=sha(file)))
+    angle=i*math.pi/4;frame(scene,own,Vector((math.sin(angle)*COS,-math.cos(angle)*COS,SIN)),384,1.2);file=out/f'{row["tag"]}-{mode}-{i:02}.png';scene.render.filepath=str(file);assert shutil.disk_usage(out).free>25*1024**3,'Disk reserve reached before render';bpy.ops.render.render(write_still=True);files.append(file);images.append(dict(mode=mode,view=i,path=file.name,sha256=sha(file)))
     if mode=='actual'and i==0:native.append(file)
    sheet(files,out/f'{row["tag"]}-{mode}-sheet.png')
   rows.append(dict(tag=row['tag'],instance=row['instance'],exceptional=exceptional,world_extent=extent,height_width_ratio=extent[2]/extent[0],support_height_range=[min(heights),max(heights)],images=images))
