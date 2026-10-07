@@ -2096,6 +2096,45 @@ test("joined lift assets retain multiple height planes in one traversal sector",
     /type and direction disagree/,
   );
 });
+test("compound climbs retain their piecewise floors after rotation and copying", () => {
+  for (const type of [2, 3] as const) {
+    for (const rotation of [0, 37, 90, 180]) {
+      const { document, assets } = compoundLiftCompilerFixture();
+      for (const asset of assets.values())
+        for (const lift of asset.gameplay?.lifts ?? []) lift.type = type;
+      const groups = [...document.groups];
+      const parts = [...document.objects];
+      for (const group of groups) {
+        group.transform.rot_deg = rotation;
+        group.transform.dx = 800;
+        group.transform.dy = 800;
+        document.groups.push({
+          id: `${group.id}-copy`,
+          transform: { ...group.transform, dx: 1800 },
+        });
+      }
+      for (const part of parts.filter((part) => part.group))
+        document.objects.push({
+          ...structuredClone(part),
+          id: `${part.id}-copy`,
+          group: `${part.group}-copy`,
+        });
+      const compiled = compileAssetGameplay(document, assets, [0, 0, 4000, 4000]);
+      assert.equal(
+        compiled.lifts!.length,
+        2,
+        JSON.stringify({ type, rotation, warnings: compiled.warnings }),
+      );
+      assert.notEqual(compiled.lifts![0]!.motion_area_index, compiled.lifts![1]!.motion_area_index);
+      for (const lift of compiled.lifts!) {
+        assert.equal(lift.lift_type, type);
+        assert.equal(lift.physical_navigation?.floor_patches?.length, 2);
+        assert.equal(lift.doors.length, 2);
+      }
+    }
+  }
+});
+
 test("compound lifts rotate and duplicate with independent geometric joins", () => {
   const { document, assets } = compoundLiftCompilerFixture();
   const groups = [...document.groups];

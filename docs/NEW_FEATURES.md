@@ -48,7 +48,11 @@
   floor metadata. Editor exports now emit each joined stair flight's plane,
   split projected boundaries at slope changes, and assemble collision and
   control bindings per flight. Cropping retains each surviving floor's height.
-  Ladders still require a planar flight. A shared compiler-generated fixture
+  Ladders and climbable walls also accept connected piecewise floors. Their
+  compiler checks cover rotated and copied assemblies; native climbing tests
+  cross both planes in both directions and retain live barrier apply/reset.
+  Invalid seam heights and missing support still reject for all three lift types.
+  A shared compiler-generated fixture
   passes native bidirectional actor traversal and live barrier apply/reset;
   published multi-plane asset verification remains open.
   Local point Move requests resolve supported goals on invertible floors to

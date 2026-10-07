@@ -250,6 +250,16 @@ Reproduce from `level-editor` with
 The helper accepts other assets, lift IDs and mesh-node patterns and records
 descriptor/model/staged-data hashes in its report.
 
+The compiler and native loader now accept connected piecewise floors for ladders
+and climbable walls, removing the previous single-plane restriction. Compiler
+regressions cover both types at 0, 37, 90 and 180 degrees with independent copies.
+A complete-sprite native fixture crosses both floor planes in both directions:
+eight open routes pass and eight closed-barrier requests reject across apply/reset
+cycles. Admission tests still reject mismatched seams and missing floor coverage
+for stairs, ladders and walls. This enables asset-local curved climbing definitions
+where each piece is a valid height surface; it does not resolve vertical surfaces,
+the oak's mesh/contact reconstruction, or its actor-footprint clearance failures.
+
 Fresh published York and Sherwood exports (`saved-map-exports-vDlOcb`) pass all
 132 native stair routes, 50 climb routes and six control apply/reset checks after
 the runtime corrections, including the final contact-separation geometry.

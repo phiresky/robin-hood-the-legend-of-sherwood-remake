@@ -74,9 +74,6 @@ impl PhysicalStairNavigation {
         let floor = if self.floor_patches.is_empty() {
             None
         } else {
-            if lift.lift_type != 1 {
-                return Err("piecewise physical floors require a stair".into());
-            }
             Some(StairNavigationFloor::new(self.floor_patches.clone())?)
         };
         let check_polygon = |points: &[[f32; 2]]| -> Result<(), String> {

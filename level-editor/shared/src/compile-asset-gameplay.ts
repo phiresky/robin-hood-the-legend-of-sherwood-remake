@@ -1690,10 +1690,6 @@ function compileAssetGameplayAttempt(
         })),
       ],
     });
-    if ((lift.type === 2 || lift.type === 3) && compiled.navigation.floor_patches)
-      throw new Error(
-        `Physical ${lift.type === 2 ? "ladders" : "walls"} require one planar flight`,
-      );
     return compiled;
   };
   let navigationRegions: ReturnType<typeof assembleNavigationRegions>;
