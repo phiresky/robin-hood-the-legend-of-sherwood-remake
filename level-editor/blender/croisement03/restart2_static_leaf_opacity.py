@@ -8,8 +8,8 @@ from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
 B=ROOT/'level-editor/work/croisement03-refinement/restart2'
-def main(tree):
- assert tree in (12,14);p=B/f'tree{tree}-static-leaf-crown-v1';out=p/'physical-opacity-audit';out.mkdir(exist_ok=False);acquire()
+def main(tree,version=1):
+ assert tree in (12,14);p=B/f'tree{tree}-static-leaf-crown-v{version}';out=p/'physical-opacity-audit';out.mkdir(exist_ok=False);acquire()
  try:
   bpy.ops.wm.open_mainfile(filepath=str(p/'worker.blend'));scene=bpy.data.scenes['Croisement03 Refinement'];materials=set();images={im.name:hashlib.sha256(np.asarray(im.pixels[:],np.float32).tobytes()).hexdigest() for im in bpy.data.images if im.has_data}
   leaves=[o for o in scene.objects if o.type=='MESH' and o.get('asset_group')==f'croisement03-arbre06-fragment-tree{tree}-provisional'];assert len(leaves)==2
@@ -25,4 +25,4 @@ def main(tree):
    im=Image.open(out/f'view-{i}-textured.png').convert('RGBA');bg=Image.new('RGBA',im.size,'#333333');bg.alpha_composite(im);sheet.paste(bg.convert('RGB'),((i%4)*384,(i//4)*384))
   sheet.save(out/'sheet.png');write_json(out/'receipt.json',dict(status='Physical alpha diagnostic complete; visual review required',model_sha256=sha(p/'worker.blend'),leaf_objects=[o.name for o in leaves],leaf_materials=[m.name for m in materials],native_view_index=0,alpha_uv_geometry_images_unchanged=True,modified_worker_saved=False,sheet_sha256=sha(out/'sheet.png')))
  finally:release()
-if __name__=='__main__':main(int(sys.argv[sys.argv.index('--')+1]))
+if __name__=='__main__':main(*map(int,sys.argv[sys.argv.index('--')+1:]))

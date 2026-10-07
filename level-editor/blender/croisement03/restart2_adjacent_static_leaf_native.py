@@ -10,8 +10,8 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from evidence_io import sha,write_json
 B=ROOT/'level-editor/work/croisement03-refinement/restart2';RAY=Vector((0,-math.cos(math.radians(35)),math.sin(math.radians(35))));SIN=math.sin(math.radians(35))
-def main(number):
- out=B/f'tree{number}-static-leaf-crown-v1';assert not (out/'native-audit.json').exists();acquire()
+def main(number,version=1):
+ out=B/f'tree{number}-static-leaf-crown-v{version}';assert not (out/'native-audit.json').exists();acquire()
  try:
   bpy.ops.wm.open_mainfile(filepath=str(out/'worker.blend'));scene=bpy.data.scenes['Croisement03 Refinement'];rows=[]
   for obj in [o for o in scene.objects if o.type=='MESH']:
@@ -34,4 +34,4 @@ def main(number):
   known=expected[:,:,3]>0;miss=known&(actual[:,:,3]==0);changed=known&np.any(expected[:,:,:3]!=actual[:,:,:3],axis=2);leafdomain=(leaf[:,:,3]>0)|(static[:,:,3]>0);visiblebark=bark&~leafdomain;bark_changed=visiblebark&(changed|(owner!=1));leafchanged=leafdomain&(changed|(owner!=2));diff=src.copy();diff[changed]=[255,0,100,255];diff[bark_changed]=[0,200,255,255];sheet=Image.new('RGBA',(w*3,h),(40,40,40,255));sheet.paste(Image.fromarray(expected),(0,0));sheet.paste(Image.fromarray(actual),(w,0));sheet.paste(Image.fromarray(diff),(w*2,0));sheet.resize((w*9,h*3),Image.Resampling.NEAREST).save(out/'native-comparison.png');np.savez_compressed(out/'native-samples.npz',expected=expected,actual=actual,owner=owner)
   write_json(out/'native-audit.json',dict(model_sha256=sha(out/'worker.blend'),status='PASS provisional source first-hit' if not changed.any() and not exhausted else 'HOLD source changes',accepted_bark_pixels=int(bark.sum()),visible_bark_pixels=int(visiblebark.sum()),bark_occluded_by_diagnostic_frame0=int((bark&leafdomain).sum()),accepted_bark_changes=int(bark_changed.sum()),provisional_foliage_pixels=int(leafdomain.sum()),dynamic_foliage_pixels=int((leaf[:,:,3]>0).sum()),new_static_foliage_pixels=int((static[:,:,3]>0).sum()),new_static_foliage_changes=int(((static[:,:,3]>0)&changed).sum()),provisional_foliage_changes=int(leafchanged.sum()),known_misses=int(miss.sum()),ray_exhaustions=exhausted,changed_pixels=[[int(xx+box[0]),int(yy)] for yy,xx in zip(*np.where(changed))],limits=['Exact dynamic frame0 interval first-hit does not prove runtime/global ordering or static exclusive membership.','Unknown wood and outside-mask source domains remain unassigned.']))
  finally:release()
-if __name__=='__main__':main(int(sys.argv[sys.argv.index('--')+1]))
+if __name__=='__main__':main(*map(int,sys.argv[sys.argv.index('--')+1:]))
