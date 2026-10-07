@@ -204,6 +204,8 @@ fn edge_on_physical_stair_fixture() -> serde_json::Value {
     for (sector, z, y) in [(0, 100, 270), (1, 200, 400)] {
         let mut receiver = template.clone();
         receiver["projection_area"] = serde_json::json!([sector, sector]);
+        receiver["projection_plane"] =
+            serde_json::json!([[380, y, z], [420, y, z], [380, y + 30, z]]);
         receiver["points"] = serde_json::json!([
             {"x":380,"y":y,"z_bottom":z,"z_top":z},
             {"x":420,"y":y,"z_bottom":z,"z_top":z},
@@ -244,6 +246,7 @@ pub(super) fn joined_physical_stair_fixture() -> serde_json::Value {
     geometry["sight_obstacles"].as_array_mut().unwrap().pop();
     for (x0, x1, z0, z1) in [(390, 400, 0, 40), (400, 410, 40, 100)] {
         let mut part = receiver.clone();
+        part["projection_plane"] = serde_json::json!([[x0, 300, z0], [x1, 300, z1], [x0, 400, z0]]);
         part["points"] = serde_json::json!([
             {"x":x0,"y":300,"z_bottom":z0,"z_top":z0},
             {"x":x1,"y":300,"z_bottom":z1,"z_top":z1},
@@ -1738,6 +1741,13 @@ fn transformed_lift_fixture(
             let moved = place(MapPoint::new(point.x, point.y - point.z_top));
             point.x = moved.x;
             point.y = moved.y + point.z_top;
+        }
+        if let Some(anchors) = &mut obstacle.projection_plane {
+            for [x, y, z] in anchors {
+                let moved = place(MapPoint::new(*x, *y - *z));
+                *x = moved.x;
+                *y = moved.y + *z;
+            }
         }
     }
     for lift in &mut geometry.lifts {

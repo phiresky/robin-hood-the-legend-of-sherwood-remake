@@ -10315,6 +10315,46 @@ interior sector identity. All 53 existing compiled-navigation tests and all
 33 door-passing tests pass; 18 external-data navigation audits remain ignored
 in the ordinary group. Formatting and the game build pass.
 
+### Generated receiving planes survive clipping and copied placement (2026-10-08)
+
+The complete-sprite building audit distinguished source authorization from
+direct path dispatch. At 37 degrees, one stone-tower copy loaded an incorrect
+receiving slope because clipping introduced nearly collinear first vertices.
+The compiler now writes explicit `projection_plane` anchors for generated
+receivers using both projected bounding spans and the existing height plane.
+The anchors do not enlarge receiving coverage. Explicit asset anchors and
+physical volume plane semantics remain unchanged.
+
+Fresh batch `receiver-floor-placements-pXwJDW` retains 32 copied, rotated and
+elevated placements and rejects all 64 disconnected-terrain cases. Synthetic
+and complete-sprite direct approaches each pass **64/64**. Complete building
+round trips improve from 26/32 to **28/32**, resolving both 37-degree failures.
+The four remaining failures occur before entry at 90 degrees, for both copies
+and elevations. Their diagnostic reports now include the ordinary floor,
+collision, source support and bounded recovery result. The footprint extends
+past the small doorstep toward adjoining terrain; ordinary neighbouring-floor
+support still needs integration. Direct path-dispatch success does not cover
+this movement-command authorization stage.
+
+Full York candidate `saved-map-exports-aZY6Fi` retains 70 buildings and exactly
+the earlier warning set: 1,176 warnings, including 40 omissions and 15 omitted
+door/receiver/jump/light features. All **130 complete-sprite stair routes**,
+**40 complete-sprite climb routes** and **six geometry-control apply/reset
+checks** pass with the new receiving planes. The doorstep and physical-terrain
+assets remain unpublished.
+
+Focused compiler/plane/stair checks pass **151 tests**. Native fixture updates
+add 111 plane definitions across 28 files; a recursive comparison verifies
+that every pre-existing field and array member is unchanged. Editor export
+comparisons retain only the two previously recorded merged-platform and
+sloped-terrain-socket geometry mismatches. The new anchor fields do not hide
+those differences. App typechecking, focused lint, formatting and the game build
+pass. The full native suite initially passed 4,384 tests and exposed 19 fixture
+helpers that changed receiver geometry without updating its new anchors.
+Those helpers now transform or redefine the anchors with their polygons;
+all **54 navigation tests** and the receiver-state regression then pass.
+The 32 external-data tests ignored by the full suite are not counted as passes.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

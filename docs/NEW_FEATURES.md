@@ -21,6 +21,9 @@
   holes and current collision. Walking clearance uses its normal inset; source
   authorization checks the full standing box and recovery adds a half-unit margin.
   Recovery retains the receiving plane and rejects newly unsupported swept space.
+  Generated receiving polygons carry independent plane anchors spanning their
+  projected bounds. Clipping can no longer redefine a floor through nearly
+  collinear leading vertices; authored anchors retain their explicit definition.
   The loader binds complete ordinary receivers to their motion regions, including
   coplanar pieces, holes and live obstacle identities. This works without a lift
   and keeps floors available when their artwork is hidden. Disconnected patches

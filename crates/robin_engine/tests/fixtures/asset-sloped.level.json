@@ -176,7 +176,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            300,
+            200,
+            0
+          ],
+          [
+            500,
+            300,
+            100
+          ],
+          [
+            300,
+            400,
+            0
+          ]
+        ]
       }
     ],
     "doors": []

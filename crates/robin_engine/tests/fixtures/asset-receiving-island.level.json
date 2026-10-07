@@ -237,7 +237,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 4,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            330,
+            330,
+            20
+          ],
+          [
+            370,
+            330,
+            20
+          ],
+          [
+            330,
+            370,
+            20
+          ]
+        ]
       }
     ],
     "material_sectors": [

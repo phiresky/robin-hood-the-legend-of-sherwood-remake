@@ -971,11 +971,16 @@ it accounts for the zero-distance stop animation's 0.01-unit reserved endpoint
 only after that animation's order chain finishes. Building entry/exit coverage
 initially passed only 4/32: 22 exits selected the destination floor prematurely,
 then an elevation crossing switched them back to the ground underneath.
-Compiled physical-floor exits now bind the receiver at their actual midpoint,
-and **26/32 round trips pass**. Six stone-tower approaches still fail before
-entry at 37 or 90 degrees; they remain explicit failures. All six earlier
-full-map geometry controls apply and reset. Rendered contacts, the remaining
-building failures and 15 feature omissions need review before publication.
+Compiled physical-floor exits now bind the receiver at their actual midpoint.
+Generated receivers also carry independent, well-spaced plane anchors: clipping
+can leave nearly collinear leading vertices, which previously changed the
+loaded slope after translating a copy. With that correction **28/32 round trips
+pass**. Four stone-tower approaches still fail the movement command's footprint
+support check at 90 degrees. The 64/64 approach checks exercise path dispatch;
+they do not replace this source-authorization check. All six full-map geometry
+controls apply and reset, and all 130 stair and 40 climb routes pass with complete
+sprites and the new anchors. Rendered contacts, the remaining building failures
+and 15 feature omissions need review before publication.
 The receiving-plane loader now propagates f32 rounding through both the plane
 anchors and each receiver vertex. Steep valid planes no longer fail loading
 merely because assets are translated; the regression still rejects explicit

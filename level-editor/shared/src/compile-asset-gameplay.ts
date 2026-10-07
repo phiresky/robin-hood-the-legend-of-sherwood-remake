@@ -62,7 +62,12 @@ import {
   type AssetGameplay,
 } from "./asset-gameplay.ts";
 
-import { heightPlane, planeHeight, type HeightPlane } from "./gameplay-plane.ts";
+import {
+  heightPlane,
+  planeHeight,
+  projectionPlaneAnchors,
+  type HeightPlane,
+} from "./gameplay-plane.ts";
 import { movementVolumeHeightSlice } from "./movement-volume-height-slice.ts";
 import { quantizeGeneratedMotionPolygon, simplifyMotionRing } from "./motion-quantization.ts";
 import { restoreReceivingBoundary, restoreObstacleBoundary } from "./restore-receiving-boundary.ts";
@@ -2065,7 +2070,8 @@ function compileAssetGameplayAttempt(
           ? heightPlane(material.planePoints.map(([x, y, z]) => [x, y - z, z]))
           : piece.plane;
         sight.push({
-          ...(material.planePoints ? { projection_plane: material.planePoints } : {}),
+          projection_plane:
+            material.planePoints ?? projectionPlaneAnchors(material.polygon, receivingPlane),
           points: material.polygon.map(([x, y]) => {
             const height = planeHeight(receivingPlane, [x, y]);
             return { x, y: y + height, z_bottom: height, z_top: height };

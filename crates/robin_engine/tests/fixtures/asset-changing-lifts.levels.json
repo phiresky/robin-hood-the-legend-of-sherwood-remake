@@ -261,7 +261,24 @@
           "mouse": true,
           "show_shadow_polygon": false,
           "default_material": 0,
-          "material_indices": []
+          "material_indices": [],
+          "projection_plane": [
+            [
+              1200,
+              1200,
+              20
+            ],
+            [
+              1290,
+              1200,
+              20
+            ],
+            [
+              1200,
+              1300,
+              20
+            ]
+          ]
         },
         {
           "points": [
@@ -299,7 +316,24 @@
           "mouse": true,
           "show_shadow_polygon": false,
           "default_material": 0,
-          "material_indices": []
+          "material_indices": [],
+          "projection_plane": [
+            [
+              1310,
+              1200,
+              119.99999999999999
+            ],
+            [
+              1400,
+              1200,
+              119.99999999999999
+            ],
+            [
+              1310,
+              1300,
+              119.99999999999999
+            ]
+          ]
         },
         {
           "points": [
@@ -337,7 +371,24 @@
           "mouse": true,
           "show_shadow_polygon": false,
           "default_material": 0,
-          "material_indices": []
+          "material_indices": [],
+          "projection_plane": [
+            [
+              1290,
+              1100,
+              20
+            ],
+            [
+              1310,
+              1200,
+              120
+            ],
+            [
+              1290,
+              1300,
+              20
+            ]
+          ]
         }
       ],
       "doors": [],
@@ -782,7 +833,24 @@
           "mouse": true,
           "show_shadow_polygon": false,
           "default_material": 0,
-          "material_indices": []
+          "material_indices": [],
+          "projection_plane": [
+            [
+              326,
+              1091,
+              20
+            ],
+            [
+              500,
+              1091,
+              20
+            ],
+            [
+              326,
+              1143,
+              20
+            ]
+          ]
         },
         {
           "points": [
@@ -820,7 +888,24 @@
           "mouse": true,
           "show_shadow_polygon": false,
           "default_material": 0,
-          "material_indices": []
+          "material_indices": [],
+          "projection_plane": [
+            [
+              326,
+              1154,
+              119.99999999999999
+            ],
+            [
+              500,
+              1154,
+              119.99999999999999
+            ],
+            [
+              326,
+              1206,
+              119.99999999999999
+            ]
+          ]
         },
         {
           "points": [
@@ -858,7 +943,24 @@
           "mouse": true,
           "show_shadow_polygon": false,
           "default_material": 0,
-          "material_indices": []
+          "material_indices": [],
+          "projection_plane": [
+            [
+              326,
+              1154.401451943111,
+              120.40145194311094
+            ],
+            [
+              500,
+              1154.401451943111,
+              120.40145194311094
+            ],
+            [
+              326,
+              1142.8688224734717,
+              19.86882247347171
+            ]
+          ]
         }
       ],
       "doors": [],
@@ -1285,7 +1387,24 @@
           "mouse": true,
           "show_shadow_polygon": false,
           "default_material": 0,
-          "material_indices": []
+          "material_indices": [],
+          "projection_plane": [
+            [
+              600,
+              590,
+              20
+            ],
+            [
+              690,
+              590,
+              20
+            ],
+            [
+              600,
+              690,
+              20
+            ]
+          ]
         },
         {
           "points": [
@@ -1323,7 +1442,24 @@
           "mouse": true,
           "show_shadow_polygon": false,
           "default_material": 0,
-          "material_indices": []
+          "material_indices": [],
+          "projection_plane": [
+            [
+              490,
+              590,
+              119.99999999999999
+            ],
+            [
+              580,
+              590,
+              119.99999999999999
+            ],
+            [
+              490,
+              690,
+              119.99999999999999
+            ]
+          ]
         },
         {
           "points": [
@@ -1361,7 +1497,24 @@
           "mouse": true,
           "show_shadow_polygon": false,
           "default_material": 0,
-          "material_indices": []
+          "material_indices": [],
+          "projection_plane": [
+            [
+              580,
+              590,
+              120
+            ],
+            [
+              600,
+              490,
+              20
+            ],
+            [
+              580,
+              790,
+              120
+            ]
+          ]
         }
       ],
       "doors": [],
@@ -1806,7 +1959,24 @@
           "mouse": true,
           "show_shadow_polygon": false,
           "default_material": 0,
-          "material_indices": []
+          "material_indices": [],
+          "projection_plane": [
+            [
+              1390,
+              747,
+              20
+            ],
+            [
+              1564,
+              747,
+              20
+            ],
+            [
+              1390,
+              799,
+              20
+            ]
+          ]
         },
         {
           "points": [
@@ -1844,7 +2014,24 @@
           "mouse": true,
           "show_shadow_polygon": false,
           "default_material": 0,
-          "material_indices": []
+          "material_indices": [],
+          "projection_plane": [
+            [
+              1390,
+              684,
+              119.99999999999999
+            ],
+            [
+              1564,
+              684,
+              119.99999999999999
+            ],
+            [
+              1390,
+              736,
+              119.99999999999999
+            ]
+          ]
         },
         {
           "points": [
@@ -1882,7 +2069,24 @@
           "mouse": true,
           "show_shadow_polygon": false,
           "default_material": 0,
-          "material_indices": []
+          "material_indices": [],
+          "projection_plane": [
+            [
+              1390,
+              735.6811748504839,
+              119.6811748504839
+            ],
+            [
+              1564,
+              735.6811748504839,
+              119.6811748504839
+            ],
+            [
+              1390,
+              747.1041785828321,
+              20.104178582832105
+            ]
+          ]
         }
       ],
       "doors": [],

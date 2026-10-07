@@ -165,6 +165,11 @@ fn overlapping_stairs_on_separate_layers_do_not_block_each_other() {
     for point in &mut receiver.points {
         point.x += 5.;
     }
+    if let Some(anchors) = &mut receiver.projection_plane {
+        for point in anchors {
+            point[0] += 5.;
+        }
+    }
     receiver.projection_area = Some((4, 3));
     geometry.sight_obstacles.push(receiver);
     let mut lift = geometry.lifts[0].clone();
@@ -211,6 +216,15 @@ fn stair_passages_bridge_gaps_overlaps_and_ground_edges_after_placement() {
             // Keep a genuine receiving-polygon edge inside the navigation
             // boundary, exercising the doorway's replacement of that edge.
             point.x += if point.x < 400. { 0.25 } else { -0.25 };
+        }
+        if let Some(anchors) = &mut geometry.sight_obstacles[2].projection_plane {
+            for point in anchors {
+                point[0] += if point[0] < 400. {
+                    f32::from(gap) + 0.25
+                } else {
+                    -f32::from(gap) - 0.25
+                };
+            }
         }
         document["asset_geometry"] = serde_json::to_value(geometry).unwrap();
         let bytes = serde_json::to_vec(&document).unwrap();
@@ -506,6 +520,30 @@ fn walk_exported_lift_with_tick(
                 .and_then(|(id, index)| engine.seq().get_element(id, index))
                 .map(|element| &element.orders);
             let world_position = engine.ent(owner).position_iface().get_position();
+            let walking_support = assets
+                .navigation
+                .physical_walking
+                .iter()
+                .enumerate()
+                .filter(|(_, floor)| {
+                    floor.layer == element.layer()
+                        && floor.sector == sector.get()
+                        && receiver.is_some_and(|receiver| floor.receivers.contains(&receiver.get()))
+                })
+                .map(|(index, floor)| {
+                    let geometry = floor.snapshot(&engine.world.pathfinder);
+                    let point = [world_position.x, world_position.y, world_position.z];
+                    let half = engine.ent(owner).position_iface().get_half_diagonal();
+                    serde_json::json!({
+                        "index": index,
+                        "contains_source": floor.contains_world_position(point),
+                        "source_on_plane": floor.world_point_from_screen(position),
+                        "supported": geometry.route(point, point, half),
+                        "recovery": geometry.recover_source(point, half, f64::from(half.x.hypot(half.y)) + 0.5),
+                        "geometry": geometry
+                    })
+                })
+                .collect::<Vec<_>>();
             let sprite = engine.ent(owner).sprite();
             let animation = (
                 sprite.current_row,
@@ -577,7 +615,7 @@ fn walk_exported_lift_with_tick(
                         .collect::<Vec<_>>()
                 });
             return Err(format!(
-                "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}, world={world_position:?}, orders={selected_orders:?}, physical_support={physical_support:?}, animation={animation:?}, animation_rows={animation_rows:?}",
+                "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}, world={world_position:?}, orders={selected_orders:?}, physical_support={physical_support:?}, walking_support={walking_support:?}, animation={animation:?}, animation_rows={animation_rows:?}",
                 element.layer(),
                 leave.point_out,
             ));

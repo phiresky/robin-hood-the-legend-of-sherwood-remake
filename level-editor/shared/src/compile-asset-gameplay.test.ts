@@ -2956,6 +2956,32 @@ test("receiving materials preserve a joined walking area and follow asset placem
   );
 });
 
+test("generated receiving planes retain their heights without authored anchors", () => {
+  const { document, assets, hut } = projectionMaterialCompilerFixture();
+  for (const surface of hut.gameplay!.surfaces) {
+    const base = typeof surface.height === "number" ? surface.height : 0;
+    surface.height = surface.polygon.map(([, y]) => base + y * 0.2);
+  }
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  const receivers = compiled.sight_obstacles.filter((o) => o.projection_area);
+  assert.ok(receivers.length > 0);
+  for (const receiver of receivers) {
+    assert.ok(
+      receiver.projection_plane,
+      "generated receivers must carry independent plane anchors",
+    );
+    const plane = heightPlane(
+      receiver.projection_plane.map(([x, y, z]) => [
+        Math.fround(x),
+        Math.fround(y),
+        Math.fround(z),
+      ]),
+    );
+    for (const point of receiver.points)
+      assert.ok(Math.abs(planeHeight(plane, [point.x, point.y]) - point.z_top) < 0.001);
+  }
+});
+
 test("receiving plane anchors survive clipping and follow asset placement", () => {
   const { document, assets, hut } = projectionMaterialCompilerFixture();
   const surface = hut.gameplay!.surfaces[0]!;
@@ -2973,7 +2999,7 @@ test("receiving plane anchors survive clipping and follow asset placement", () =
   ];
   inset.projectionMaterials!.priority = 1;
   const compiled = compileAssetGameplay(document, assets, bounds);
-  const receivers = compiled.sight_obstacles.filter((o) => o.projection_plane);
+  const receivers = compiled.sight_obstacles.filter((o) => o.material_indices.length);
   assert.ok(receivers.length > 1, "hole should subdivide the receiver");
   const expected = [
     [400, 300, 20],
@@ -2989,7 +3015,7 @@ test("receiving plane anchors survive clipping and follow asset placement", () =
   }
   for (const part of document.objects) part.transform.dx += 100;
   const moved = compileAssetGameplay(document, assets, bounds);
-  for (const receiver of moved.sight_obstacles.filter((o) => o.projection_plane))
+  for (const receiver of moved.sight_obstacles.filter((o) => o.material_indices.length))
     assert.deepEqual(
       receiver.projection_plane!.map((p) => p.map(Math.fround)),
       expected.map(([x, y, z]) => [x! + 100, y, z]),

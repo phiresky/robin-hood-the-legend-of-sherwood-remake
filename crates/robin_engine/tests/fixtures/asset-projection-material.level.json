@@ -125,6 +125,23 @@
         "default_material": 2,
         "material_indices": [
           0
+        ],
+        "projection_plane": [
+          [
+            300,
+            300,
+            20
+          ],
+          [
+            400,
+            300,
+            20
+          ],
+          [
+            300,
+            400,
+            20
+          ]
         ]
       },
       {
@@ -163,7 +180,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 4,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            400,
+            300,
+            20
+          ],
+          [
+            500,
+            300,
+            20
+          ],
+          [
+            400,
+            400,
+            20
+          ]
+        ]
       }
     ],
     "material_sectors": [

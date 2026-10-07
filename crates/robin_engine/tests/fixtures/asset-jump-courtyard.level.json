@@ -347,7 +347,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            411,
+            430,
+            100
+          ],
+          [
+            441,
+            430,
+            100
+          ],
+          [
+            411,
+            490,
+            100
+          ]
+        ]
       },
       {
         "points": [
@@ -385,7 +402,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            411,
+            520,
+            100
+          ],
+          [
+            441,
+            520,
+            100
+          ],
+          [
+            411,
+            580,
+            100
+          ]
+        ]
       }
     ],
     "doors": []

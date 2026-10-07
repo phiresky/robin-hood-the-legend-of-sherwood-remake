@@ -472,7 +472,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            26,
+            791,
+            40
+          ],
+          [
+            200,
+            791,
+            40
+          ],
+          [
+            26,
+            843,
+            40
+          ]
+        ]
       },
       {
         "points": [
@@ -510,7 +527,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            410,
+            300,
+            100
+          ],
+          [
+            500,
+            300,
+            100
+          ],
+          [
+            410,
+            400,
+            100
+          ]
+        ]
       },
       {
         "points": [
@@ -548,7 +582,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            26,
+            854,
+            140
+          ],
+          [
+            200,
+            854,
+            140
+          ],
+          [
+            26,
+            906,
+            140
+          ]
+        ]
       },
       {
         "points": [
@@ -586,7 +637,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            390,
+            200,
+            0
+          ],
+          [
+            410,
+            300,
+            100
+          ],
+          [
+            390,
+            400,
+            0
+          ]
+        ]
       },
       {
         "points": [
@@ -624,7 +692,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            26,
+            854.401451943111,
+            140.40145194311106
+          ],
+          [
+            200,
+            854.401451943111,
+            140.40145194311106
+          ],
+          [
+            26,
+            842.8688224734718,
+            39.86882247347182
+          ]
+        ]
       }
     ],
     "doors": [],

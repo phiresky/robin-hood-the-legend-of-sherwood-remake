@@ -1228,6 +1228,10 @@ mod tests {
                     point["z_top"] = 40.into();
                     point["z_bottom"] = 40.into();
                 }
+                for point in upper["projection_plane"].as_array_mut().unwrap() {
+                    point[1] = (point[1].as_f64().unwrap() + 20.).into();
+                    point[2] = 40.into();
+                }
                 upper["default_material"] = 4.into();
                 upper["material_indices"] = serde_json::json!([]);
                 descriptor["asset_geometry"]["sight_obstacles"]

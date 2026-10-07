@@ -6,6 +6,26 @@ export type HeightPlane = [number, number, number];
 export const planeHeight = (plane: HeightPlane, point: Point) =>
   plane[0] * point[0] + plane[1] * point[1] + plane[2];
 
+/** Store a projected receiving plane independently of clipped polygon order. */
+export function projectionPlaneAnchors(points: Point[], plane: HeightPlane): [Vec3, Vec3, Vec3] {
+  const xs = points.map(([x]) => x),
+    ys = points.map(([, y]) => y),
+    minX = Math.min(...xs),
+    maxX = Math.max(...xs),
+    minY = Math.min(...ys),
+    maxY = Math.max(...ys);
+  if (!(maxX > minX && maxY > minY))
+    throw new Error("Receiving polygon needs nonzero projected bounds");
+  const world = (x: number, y: number): Vec3 => {
+    const z = planeHeight(plane, [x, y]);
+    return [x, y + z, z];
+  };
+  // A clipping operation can introduce three nearly collinear leading
+  // vertices. Bounding corners retain both spans even for very thin pieces;
+  // the anchors define a plane, not additional receiving coverage.
+  return [world(minX, minY), world(maxX, minY), world(minX, maxY)];
+}
+
 export function heightPlane(points: Vec3[], requirePlanar = true): HeightPlane {
   const a = points[0]!;
   for (let i = 1; i + 1 < points.length; i++) {
