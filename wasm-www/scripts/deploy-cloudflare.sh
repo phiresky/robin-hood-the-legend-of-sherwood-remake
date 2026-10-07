@@ -41,7 +41,7 @@ fi
 [[ $datadir_only == 1 ]] || : "${ROBINHOOD_WASM_BINDGEN:?}"
 
 cd "$(dirname "$0")/.."
-test "$(pnpm exec wrangler --version)" = "4.131.1"
+test "$(pnpm exec wrangler --version)" = "4.142.0"
 
 # Deploy one Worker and print the version ID from Wrangler's NDJSON output.
 deploy_worker() {
