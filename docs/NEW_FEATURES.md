@@ -1,10 +1,16 @@
 # Post-port Features
 
+- **Multiplayer desync recovery.** A client hash mismatch requests diagnostics,
+  suspends gameplay and reconnects for a fresh host snapshot. Input resumes only
+  after the readiness barrier; pending recovery suppresses duplicate requests.
+  Complete live command batches and late-input journals use stable player-seat
+  ordering, preventing packet batch boundaries from changing command execution.
+
 - **Automatic multiplayer desync diagnostics.** The first host/client hash
   mismatch per native process or browser page queues a bug report and attempts
   upload. Reports include the frame, both hashes, local seat, network timing,
   rollback context and recent logs; native reports also capture the active replay.
-  Failed uploads remain queued. This diagnoses divergence without correcting it.
+  Failed uploads remain queued. Clients also reconnect for snapshot recovery.
 
 - **Stair collision derived from authored flights.** Two York library stairs now
   carry movement volumes matching their corrected walking surfaces, so their

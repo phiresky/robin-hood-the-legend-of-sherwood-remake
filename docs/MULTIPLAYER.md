@@ -187,14 +187,25 @@ max(server_frame, origin_frame) + INPUT_DELAY_FRAMES
 ```
 
 `INPUT_DELAY_FRAMES` is currently 2 (about 80 ms at 25 Hz). Each mission keeps
-future inputs grouped by target frame. When a late input arrives:
+future inputs grouped by target frame. Commands within a frame execute in
+ascending player-seat order, preserving each player's own command order. The
+complete frame is ordered after merging network drains, and late-input edits
+restore that same order in the retained journal before reconstruction.
+When a late input arrives:
 
 1. splice it into the shared command log at its target frame;
 2. restore the dense recent Engine snapshot when available;
 3. replay deterministically to the current frame;
 4. use the longer-horizon rewind history when outside the dense window;
-5. report a desync and apply at the current frame only when the target is older
-   than every retained snapshot.
+5. require a full host-snapshot reconnect when the input predates the retained
+   command history, rather than applying it at a different frame.
+
+A client state-hash mismatch requests a diagnostic report and initiates the same
+snapshot reconnect. Gameplay input and simulation are held immediately, pending
+prediction inputs and hashes are discarded, and recovery completes only after
+snapshot adoption and the host readiness barrier. Further mismatches during that
+recovery do not initiate additional reconnects. A missing historical hash sample
+is not treated as a mismatch.
 
 During reconstruction, live speech resolutions are regenerated from the corrected
 pending speech queue and the mission's immutable timing catalog. This applies to

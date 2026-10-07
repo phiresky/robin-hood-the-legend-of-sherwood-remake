@@ -298,6 +298,15 @@ impl MissionFrame {
         &self.commands.commands
     }
 
+    /// Network drains partition one frame arbitrarily. Order the complete
+    /// batch before execution and recording, preserving each seat's wire order.
+    pub(in crate::game_session) fn order_multiplayer_commands(&mut self) {
+        self.execution.assert_pre_simulation();
+        self.commands
+            .commands
+            .sort_by_key(|input| input.player_id.0);
+    }
+
     pub(in crate::game_session) fn post_commands(
         &self,
     ) -> &[robin_engine::player_command::PlayerInput] {

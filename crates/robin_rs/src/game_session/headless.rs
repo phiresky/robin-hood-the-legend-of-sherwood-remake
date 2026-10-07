@@ -144,8 +144,8 @@ impl HeadlessMission {
             } = world.ingress();
             drain_mission_network(timeline, host, manager, assets, true, current_epoch_ms())?
         };
-        let network_paused = net_drain.pause_simulation;
-        let tick_paused = self.runtime.control.manual_pause || network_paused;
+        let mut network_paused = net_drain.pause_simulation;
+        let mut tick_paused = self.runtime.control.manual_pause || network_paused;
         let net_inputs = net_drain.inputs;
         // Network ingress may adopt/rewind whole state, but due commands are
         // inputs to the resulting frame boundary. Capture before applying
@@ -203,8 +203,19 @@ impl HeadlessMission {
             let MissionRuntime {
                 world, timeline, ..
             } = &mut self.runtime;
-            let view = world.view();
-            super::frame_prepare::process_pre_tick_state_hash(timeline, view.host, view.manager);
+            let view = world.ingress();
+            let recovery_started = super::frame_prepare::process_pre_tick_state_hash(
+                timeline,
+                view.host,
+                view.manager,
+            )?;
+            if view.host.transport.reconnecting() {
+                network_paused = true;
+                tick_paused = true;
+            }
+            if recovery_started {
+                frame.discard_commands();
+            }
         }
         let simulation_start = super::frame_perf::start(profiling);
         let tick_exit_code = self.runtime.run_tick(

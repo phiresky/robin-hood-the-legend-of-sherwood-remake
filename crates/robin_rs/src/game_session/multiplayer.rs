@@ -196,6 +196,31 @@ fn channel_failure(context: &'static str, detail: String) -> MultiplayerSessionE
     SessionProtocolFailure::Channel { context, detail }.into()
 }
 
+/// Stop prediction immediately; the existing transport recovery supplies a
+/// fresh host snapshot and readiness barrier before gameplay resumes.
+pub(super) fn reconnect_desynced_client(
+    host: &mut Host,
+    timeline: &mut super::runtime::TimelineRuntime,
+    reason: String,
+) -> Result<(), MultiplayerSessionError> {
+    let seat = host.transport.local_seat();
+    require_protocol(
+        seat != robin_engine::player_command::PlayerId::HOST,
+        "authoritative host cannot recover from a client hash mismatch",
+    )?;
+    let net = host
+        .transport
+        .net()
+        .expect("hash comparison requires a session");
+    net.reconnect_for_snapshot(seat, reason)
+        .map_err(|error| channel_failure("failed to request desync snapshot recovery", error))?;
+    net.set_gameplay_input_enabled(false);
+    host.transport.await_authoritative_snapshot();
+    timeline.network_mut().abandon_prediction();
+    timeline.apply_multiplayer_admission_events(&[MultiplayerAdmissionEvent::Disconnected])?;
+    Ok(())
+}
+
 pub(crate) struct NetDrainResult {
     /// Inputs scheduled for the current frame. The caller applies these
     /// and records them in the per-frame command log.

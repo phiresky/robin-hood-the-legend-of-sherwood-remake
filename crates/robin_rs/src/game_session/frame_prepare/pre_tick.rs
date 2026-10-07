@@ -40,6 +40,7 @@ fn drain_pre_tick_network(
         discard_abandoned_frame_inputs(frame);
     }
     frame.stage_commands().commands.extend(drain.inputs);
+    frame.order_multiplayer_commands();
     if host.transport.local_seat() == engine_player_command::PlayerId::HOST
         && host.transport.reconnecting()
     {
@@ -59,14 +60,33 @@ fn discard_abandoned_frame_inputs(frame: &mut MissionFrame) {
 }
 
 /// Publish or verify the periodic multiplayer state hash after the second
-/// network drain has made this frame's command set final.
+/// network drain has made this frame's command set final. Returns true only
+/// when this call starts recovery, invalidating this frame's staged commands.
 pub(in crate::game_session) fn process_pre_tick_state_hash(
     runtime: &mut crate::game_session::runtime::TimelineRuntime,
-    host: &Host,
+    host: &mut Host,
     manager: &robin_engine::engine_manager::EngineManager,
-) {
-    if host.transport.net().is_none() {
-        return;
+) -> Result<bool, MissionError> {
+    process_pre_tick_state_hash_with_reporter(runtime, host, manager, |description| {
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::bug_report::report_multiplayer_desync(description);
+        // Browser diagnostics observe the warning emitted before this callback.
+        #[cfg(target_arch = "wasm32")]
+        let _ = description;
+    })
+}
+
+fn process_pre_tick_state_hash_with_reporter(
+    runtime: &mut TimelineRuntime,
+    host: &mut Host,
+    manager: &robin_engine::engine_manager::EngineManager,
+    mut report: impl FnMut(&str),
+) -> Result<bool, MissionError> {
+    if host.transport.net().is_none()
+        || host.transport.reconnecting()
+        || host.transport.has_snapshot_transition()
+    {
+        return Ok(false);
     }
     let local_is_host = host.transport.local_seat() == engine_player_command::PlayerId::HOST;
     let hash_boundary = runtime
@@ -90,7 +110,7 @@ pub(in crate::game_session) fn process_pre_tick_state_hash(
                 );
                 local_hash
             });
-        return;
+        return Ok(false);
     }
     if hash_boundary && !runtime.network().has_local_hash(runtime.frame_number()) {
         let frame = runtime.frame_number();
@@ -141,12 +161,19 @@ pub(in crate::game_session) fn process_pre_tick_state_hash(
                 last_rollback_total_us,
                 "{description}"
             );
-            #[cfg(not(target_arch = "wasm32"))]
-            crate::bug_report::report_multiplayer_desync(&description);
+            report(&description);
+            crate::game_session::multiplayer::reconnect_desynced_client(
+                host,
+                runtime,
+                description,
+            )?;
+            // Remaining comparisons describe the prediction we just abandoned.
+            return Ok(true);
         } else {
             tracing::debug!(frame, "multiplayer hash OK");
         }
     }
+    Ok(false)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -384,7 +411,11 @@ pub(super) fn finalize_pre_tick(
     // boundary; hashing earlier can compare two machines that will
     // tick the same commands but sampled before/after a current-frame
     // input that just arrived.
-    process_pre_tick_state_hash(runtime, host, manager);
+    let recovery_started = process_pre_tick_state_hash(runtime, host, manager)?;
+    mp_clock_pause |= host.transport.reconnecting();
+    if recovery_started {
+        discard_abandoned_frame_inputs(&mut frame);
+    }
 
     let pause_sources = PreTickPauseSources {
         // A local menu cannot stop an authoritative multiplayer clock.
@@ -585,6 +616,332 @@ mod tests {
                 1
             );
             assert!(timeline.history().buffer().paused_inputs_for(31).is_empty());
+        }
+    }
+
+    #[test]
+    fn multiplayer_hash_mismatch_reports_once_and_recovers_from_host_snapshot() {
+        use super::*;
+        use crate::game_session::replay_init::ReplayAndRollback;
+        use crate::game_session::runtime::{FrameContract, TimelineFrame};
+        use crate::multiplayer::{NetChannels, NetEvent, NetOutbound};
+        use crate::rewind::RewindBuffer;
+        use robin_engine::engine::SimulationFrameInput;
+        use robin_engine::engine_manager::EngineManager;
+        use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
+        use robin_engine::replay::state_hash;
+        use std::sync::Arc;
+
+        let (engine, assets) = robin_engine::test_support::seeded_engine(17);
+        let mut authoritative = engine.clone();
+        authoritative
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
+                    PlayerCommand::SetLockAlt(true),
+                )])
+                .with_hourglass(false),
+            )
+            .unwrap();
+        let mut manager = EngineManager::new(engine);
+        let mut assets = Arc::new(assets);
+        let mut timeline = TimelineRuntime::new(
+            ReplayAndRollback {
+                recording_control: Arc::<crate::replay_service::ReplayService>::default()
+                    .recording(),
+                recorder: None,
+                player: None,
+                rollback_checker: None,
+                rewind_buffer: RewindBuffer::new(),
+                start_paused: false,
+            },
+            FrameContract::Graphical,
+            false,
+            true,
+        );
+        timeline.adopt_frame(TimelineFrame::from_wire(25));
+        let (channels, incoming, outgoing, _, _) = NetChannels::new();
+        let mut host = Host::scratch(800.0, 600.0);
+        host.transport = crate::host::HostTransport::test_session(channels, PlayerId(2));
+        let hash = state_hash(&manager.engine);
+
+        // Equal hashes and an expired historical sample must not reconnect.
+        timeline.network_mut().remember_local_hash(25, hash);
+        timeline.network_mut().admit_remote_hash(25, hash);
+        timeline.network_mut().admit_remote_hash(24, 1);
+        process_pre_tick_state_hash_with_reporter(&mut timeline, &mut host, &manager, |_| {
+            panic!("matching or unavailable hashes are not a desync")
+        })
+        .unwrap();
+        assert!(!host.transport.reconnecting());
+        assert!(outgoing.try_recv().is_err());
+
+        timeline.network_mut().queue_input(
+            TimelineFrame::from_wire(30),
+            PlayerInput::new(PlayerId(2), PlayerCommand::SetLockAlt(true)),
+        );
+        timeline
+            .network_mut()
+            .admit_remote_hash(25, state_hash(&authoritative));
+        let mut reports = Vec::new();
+        let recovery_started = process_pre_tick_state_hash_with_reporter(
+            &mut timeline,
+            &mut host,
+            &manager,
+            |report| {
+                assert!(
+                    outgoing.try_recv().is_err(),
+                    "report is requested before reconnect"
+                );
+                reports.push(report.to_owned());
+            },
+        )
+        .unwrap();
+        assert!(
+            recovery_started,
+            "only a new recovery discards staged commands"
+        );
+        assert_eq!(reports.len(), 1);
+        assert!(reports[0].contains("frame=25"));
+        assert!(matches!(
+            outgoing.try_recv().unwrap(),
+            NetOutbound::ReconnectForSnapshot {
+                player_id: PlayerId(2),
+                ..
+            }
+        ));
+        assert!(host.transport.reconnecting());
+        assert_eq!(timeline.network().pending_frame_count(), 0);
+        assert!(
+            timeline
+                .multiplayer_mut()
+                .admission_paused(current_epoch_ms())
+        );
+        host.transport
+            .net()
+            .unwrap()
+            .send_input(PlayerCommand::SetLockAlt(true))
+            .unwrap();
+        assert!(
+            outgoing.try_recv().is_err(),
+            "local input is held immediately"
+        );
+
+        timeline.network_mut().admit_remote_hash(25, 1);
+        let recovery_started =
+            process_pre_tick_state_hash_with_reporter(&mut timeline, &mut host, &manager, |_| {
+                panic!("already recovering")
+            })
+            .unwrap();
+        assert!(
+            !recovery_started,
+            "a pending recovery must not discard replacement inputs"
+        );
+        assert!(outgoing.try_recv().is_err(), "one reconnect per recovery");
+
+        incoming.send(NetEvent::Disconnected).unwrap();
+        incoming
+            .send(NetEvent::InitialSnapshot {
+                frame: 24,
+                engine_bytes: authoritative.encode_native_snapshot(),
+            })
+            .unwrap();
+        let drain = drain_mission_network(
+            &mut timeline,
+            &mut host,
+            &mut manager,
+            &mut assets,
+            true,
+            current_epoch_ms(),
+        )
+        .unwrap();
+        assert!(
+            drain.pause_simulation,
+            "snapshot alone does not release the readiness barrier"
+        );
+        assert_eq!(state_hash(&manager.engine), state_hash(&authoritative));
+        assert_eq!(timeline.frame_number(), 24);
+        assert!(matches!(
+            outgoing.try_recv().unwrap(),
+            NetOutbound::ReadyToSim { frame: 24 }
+        ));
+        incoming
+            .send(NetEvent::BeginSim {
+                frame: 24,
+                start_epoch_ms: 0,
+            })
+            .unwrap();
+        let drain = drain_mission_network(
+            &mut timeline,
+            &mut host,
+            &mut manager,
+            &mut assets,
+            true,
+            current_epoch_ms(),
+        )
+        .unwrap();
+        assert!(!drain.pause_simulation);
+        assert!(!host.transport.reconnecting());
+        host.transport
+            .net()
+            .unwrap()
+            .send_input(PlayerCommand::SetLockAlt(true))
+            .unwrap();
+        assert!(matches!(
+            outgoing.try_recv().unwrap(),
+            NetOutbound::Input { .. }
+        ));
+
+        // A second incident after completed recovery is recoverable too.
+        timeline
+            .network_mut()
+            .remember_local_hash(24, state_hash(&manager.engine));
+        timeline.network_mut().admit_remote_hash(24, 1);
+        process_pre_tick_state_hash_with_reporter(&mut timeline, &mut host, &manager, |report| {
+            reports.push(report.to_owned())
+        })
+        .unwrap();
+        assert_eq!(reports.len(), 2);
+        assert!(matches!(
+            outgoing.try_recv().unwrap(),
+            NetOutbound::ReconnectForSnapshot { .. }
+        ));
+
+        host.transport.begin_simulation();
+        timeline
+            .network_mut()
+            .remember_local_hash(24, state_hash(&manager.engine));
+        timeline.network_mut().admit_remote_hash(24, 1);
+        drop(outgoing);
+        let error =
+            process_pre_tick_state_hash_with_reporter(&mut timeline, &mut host, &manager, |_| {})
+                .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("failed to request desync snapshot recovery")
+        );
+
+        host.transport.test_local_seat(PlayerId::HOST);
+        timeline.network_mut().admit_remote_hash(24, 1);
+        process_pre_tick_state_hash_with_reporter(&mut timeline, &mut host, &manager, |_| {
+            panic!("host does not compare against client hashes")
+        })
+        .unwrap();
+        assert!(!host.transport.reconnecting());
+    }
+
+    #[test]
+    fn multiplayer_split_drains_preserve_canonical_order() {
+        use super::*;
+        use crate::game_session::replay_init::ReplayAndRollback;
+        use crate::game_session::runtime::FrameContract;
+        use crate::multiplayer::{NetChannels, NetEvent};
+        use crate::rewind::RewindBuffer;
+        use robin_engine::engine::SimulationFrameInput;
+        use robin_engine::engine_manager::EngineManager;
+        use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
+        use std::sync::Arc;
+
+        for players in 2..=robin_engine::coop::MAX_PLAYERS as u8 {
+            let commands: Vec<_> = (0..players)
+                .flat_map(|seat| {
+                    [false, true].map(|value| {
+                        PlayerInput::new(PlayerId(seat), PlayerCommand::SetLockAlt(value))
+                    })
+                })
+                .collect();
+            // Each subset can arrive in the first drain; the complement is
+            // received in the final drain of the same frame.
+            for first_mask in 0..(1 << commands.len()) {
+                // Reliable streams can split a seat's pair across drains, but
+                // cannot deliver its second command before its first.
+                if (0..players).any(|seat| (first_mask >> (2 * seat)) & 3 == 2) {
+                    continue;
+                }
+                let (engine, assets) = robin_engine::test_support::seeded_engine(17);
+                let mut expected = engine.clone();
+                expected
+                    .advance_frame(
+                        &assets,
+                        SimulationFrameInput::from_player_inputs(commands.clone()),
+                    )
+                    .unwrap();
+                let mut manager = EngineManager::new(engine);
+                let mut assets = Arc::new(assets);
+                let mut timeline = TimelineRuntime::new(
+                    ReplayAndRollback {
+                        recording_control: Arc::<crate::replay_service::ReplayService>::default()
+                            .recording(),
+                        recorder: None,
+                        player: None,
+                        rollback_checker: None,
+                        rewind_buffer: RewindBuffer::new(),
+                        start_paused: false,
+                    },
+                    FrameContract::Graphical,
+                    false,
+                    true,
+                );
+                let (channels, incoming, _outgoing, _, _) = NetChannels::new();
+                let mut host = Host::scratch(800.0, 600.0);
+                host.transport = crate::host::HostTransport::test_session(channels, PlayerId(1));
+                let mut frame = MissionFrame::new(17);
+                for first in [true, false] {
+                    for (index, input) in commands.iter().enumerate() {
+                        if (first_mask & (1 << index) != 0) == first {
+                            incoming
+                                .send(NetEvent::Input {
+                                    server_frame: 0,
+                                    origin_frame: 0,
+                                    target_frame: 0,
+                                    input: input.clone(),
+                                })
+                                .unwrap();
+                        }
+                    }
+                    if first {
+                        let drained = drain_mission_network(
+                            &mut timeline,
+                            &mut host,
+                            &mut manager,
+                            &mut assets,
+                            true,
+                            current_epoch_ms(),
+                        )
+                        .unwrap();
+                        frame.stage_commands().commands.extend(drained.inputs);
+                    } else {
+                        let mut paused = false;
+                        drain_pre_tick_network(
+                            &mut timeline,
+                            &mut host,
+                            &mut manager,
+                            &mut assets,
+                            &mut frame,
+                            &mut paused,
+                            false,
+                        )
+                        .unwrap();
+                    }
+                }
+                assert_eq!(
+                    serde_json::to_value(frame.commands()).unwrap(),
+                    serde_json::to_value(&commands).unwrap(),
+                    "players={players}, first_mask={first_mask}"
+                );
+                manager
+                    .engine
+                    .advance_frame(
+                        &assets,
+                        SimulationFrameInput::from_player_inputs(frame.commands().to_vec()),
+                    )
+                    .unwrap();
+                assert_eq!(
+                    robin_engine::replay::state_hash(&manager.engine),
+                    robin_engine::replay::state_hash(&expected)
+                );
+            }
         }
     }
 

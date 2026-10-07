@@ -295,6 +295,12 @@ impl CommandJournal {
             return false;
         };
         frame.input.commands.push(input.into());
+        // Match live multiplayer frame ordering, not packet arrival order.
+        // Stable sorting retains the issuing seat's reliable-stream order.
+        frame
+            .input
+            .commands
+            .sort_by_key(|command| command.player_input().player_id.0);
         true
     }
 
@@ -1070,6 +1076,67 @@ mod tests {
         );
         assert_eq!(validate_replay_boundary(10, 10), Ok(()));
         assert_eq!(validate_replay_boundary(10, 11), Ok(()));
+    }
+
+    #[test]
+    fn multiplayer_late_inputs_preserve_canonical_order() {
+        use crate::engine::SimulationFrameInput;
+        use crate::player_command::{PlayerCommand, PlayerId};
+
+        // Two-player control through the maximum supported party. Each seat's
+        // toggle pair also detects an unstable sort within that seat.
+        for players in 2..=crate::coop::MAX_PLAYERS as u8 {
+            let commands: Vec<_> = (0..players)
+                .flat_map(|seat| {
+                    [false, true].map(|value| {
+                        PlayerInput::new(PlayerId(seat), PlayerCommand::SetLockAlt(value))
+                    })
+                })
+                .collect();
+            let (engine, assets) = crate::test_support::seeded_engine(17);
+            let checkpoint = SimSnapshot::new(0, &engine);
+            let mut expected = engine.clone();
+            let full = SimulationFrameInput::from_player_inputs(commands.clone());
+            expected.advance_frame(&assets, full).unwrap();
+            for _ in 1..5 {
+                expected
+                    .advance_frame(&assets, SimulationFrameInput::default())
+                    .unwrap();
+            }
+
+            for late_seat in 0..players {
+                let mut journal = CommandJournal::default();
+                journal.record_fixture_commands(
+                    0,
+                    commands
+                        .iter()
+                        .filter(|input| input.player_id.0 != late_seat)
+                        .cloned()
+                        .collect(),
+                );
+                // The input arrives after several subsequent ticks.
+                for frame in 1..5 {
+                    journal.record_fixture_commands(frame, Vec::new());
+                }
+                for input in commands
+                    .iter()
+                    .filter(|input| input.player_id.0 == late_seat)
+                {
+                    assert!(journal.append_input(0, input.clone()));
+                }
+                assert_eq!(
+                    serde_json::to_value(journal.commands_for(0).unwrap()).unwrap(),
+                    serde_json::to_value(&commands).unwrap(),
+                    "players={players}, late seat={late_seat}"
+                );
+                let (restored, _) =
+                    replay_journal_to_frame(checkpoint.clone(), &assets, 5, &journal).unwrap();
+                assert_eq!(
+                    crate::replay::state_hash(&restored.engine),
+                    crate::replay::state_hash(&expected)
+                );
+            }
+        }
     }
 
     #[test]

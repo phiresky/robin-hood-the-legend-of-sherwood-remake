@@ -49,6 +49,93 @@ fn dispatch_test_context() -> (super::ServerContext, Receiver<NetEvent>) {
 }
 
 #[test]
+fn multiplayer_relay_preserves_each_players_order_for_every_peer() {
+    use super::{NetMsg, PlayerCommand};
+
+    for players in 2..=robin_engine::coop::MAX_PLAYERS as u8 {
+        let (context, events) = dispatch_test_context();
+        *context.peers.lock() = ServerPeers::new(u32::from(players));
+        let mut claims = Vec::new();
+        let mut receivers = Vec::new();
+        for peer in 1..players {
+            let (sender, receiver) = unbounded_channel();
+            let mut peers = context.peers.lock();
+            let claim = peers
+                .sessions
+                .claim_seat(PeerOwner::Native([peer; 32]), "peer", sender)
+                .unwrap();
+            peers.readiness.host_frame = Some(10);
+            peers
+                .sessions
+                .record_ready(claim.seat, claim.generation, 10)
+                .unwrap();
+            claims.push(claim);
+            receivers.push(receiver);
+        }
+        // Different player streams interleave, while each player's two
+        // commands must survive the host relay in their original order.
+        for value in [false, true] {
+            for claim in claims.iter().rev() {
+                super::dispatch_server_peer_message(
+                    &context,
+                    PlayerId(claim.seat),
+                    claim.generation,
+                    NetMsg::Input {
+                        origin_frame: 10,
+                        command: PlayerCommand::SetLockAlt(value),
+                    },
+                )
+                .unwrap();
+            }
+        }
+        let host_inputs: Vec<_> = events
+            .try_iter()
+            .map(|event| {
+                let NetEvent::Input {
+                    target_frame,
+                    input,
+                    ..
+                } = event
+                else {
+                    panic!("expected input")
+                };
+                (target_frame, input)
+            })
+            .collect();
+        assert_eq!(host_inputs.len(), 2 * usize::from(players - 1));
+        for receiver in &mut receivers {
+            let mut forwarded = Vec::new();
+            while let Ok(message) = receiver.try_recv() {
+                let NetEvent::Input {
+                    target_frame,
+                    input,
+                    ..
+                } = crate::multiplayer::client_gameplay::decode(message).unwrap()
+                else {
+                    panic!("expected forwarded input")
+                };
+                forwarded.push((target_frame, input));
+            }
+            assert_eq!(
+                serde_json::to_value(&forwarded).unwrap(),
+                serde_json::to_value(&host_inputs).unwrap()
+            );
+            for claim in &claims {
+                let values: Vec<_> = forwarded
+                    .iter()
+                    .filter(|(_, input)| input.player_id == PlayerId(claim.seat))
+                    .map(|(_, input)| match input.command {
+                        PlayerCommand::SetLockAlt(value) => value,
+                        _ => panic!("expected toggle"),
+                    })
+                    .collect();
+                assert_eq!(values, [false, true]);
+            }
+        }
+    }
+}
+
+#[test]
 fn fatal_server_failure_cancels_and_notifies_once() {
     let (context, events) = dispatch_test_context();
     let shutdown = context.shutdown_tx.subscribe();
