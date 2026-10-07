@@ -1,3 +1,28 @@
+## Shared interface frozen; full bank and Tree01 CPU continuation
+
+The earlier Tree02 shared-interface HOLD below is superseded by the root PASS
+at `tree02-shared-ridge-joint-v5/root-shared-interface-review-v1.json`.
+One scoped card is frozen at `geometry-round15-tree02-shared-ridge-v1/`;
+all 34 frozen file hashes and both bound model hashes were rechecked unchanged.
+It covers Tree02 static geometry and the exact Tree03 leaf2787 derivative.
+The accepted shared bank lip is retained as a future construction constraint;
+the cropped diagnostic receiver is not a completed bank asset. This card is
+for the next consolidated collection. The existing pending gallery is unchanged.
+
+CPU continuation in `northwest-bank-tree01-constraints-v1/` records five unique
+authored bank/ramp interfaces and the additional west-ramp dependency on
+obstacle94. Its upper projected join differs from that surface by7.075 pixels;
+this is an unresolved visual transition, not permission to snap gameplay data.
+Tree01 source and four coarse obstacle outlines were inspected side by side.
+The visible stems must keep separate paths; low roots hidden by shrubs and
+rocks cannot be placed using their last visible bark pixel alone. Crown/source
+ownership and all actual geometry remain pending. The bank masks include ivy
+and foreground foliage and cannot become exclusive stone texture masks.
+
+At reconciliation disk headroom was7.2GiB, below the10GiB construction floor.
+No Blender/model/render/API or live publication was started. CPU artifacts are
+small; request the coordinator's model/render lane before later construction.
+
 ## Tree02 shared ridge interface — current HOLD
 
 Tree02 v7 remains frozen at63d1308c. Valid selected joint-v4 now has complete framing and root-reviewed coherent crowns; the older joint-v2/v3 failures remain preserved. Its flat ground cannot resolve the visible source foot at y166 versus lower closure at238, so no user geometry card is ready.
