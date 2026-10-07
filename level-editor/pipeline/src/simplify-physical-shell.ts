@@ -13,7 +13,12 @@ export async function simplifyPhysicalShell(
 ) {
   if (!Number.isFinite(maximumError) || maximumError < 0)
     throw new Error("Physical simplification needs a finite nonnegative error budget");
-  const components = closedMeshComponents(mesh, 1e-5, onCollinearFace);
+  let components: MaskTriangle[][];
+  try {
+    components = closedMeshComponents(mesh, 1e-5, onCollinearFace);
+  } catch (error) {
+    throw new Error(`Physical simplification input is invalid: ${String(error)}`, { cause: error });
+  }
   if (components.length !== 1) throw new Error("Physical simplification requires one closed shell");
   const vertices: Vec3[] = [];
   const lookup = new Map<Vec3, number>();
@@ -49,7 +54,15 @@ export async function simplifyPhysicalShell(
     ]);
   // The simplifier chooses indices only. Retain the original double-precision
   // positions, then validate that this exact output is still one closed shell.
-  if (closedMeshComponents(triangles).length !== 1)
-    throw new Error("Physical simplification split the shell");
+  try {
+    if (closedMeshComponents(triangles).length !== 1)
+      throw new Error("Physical simplification split the shell");
+  } catch (cause) {
+    const distinctPositions = new Set(vertices.map((p) => p.map(Math.fround).join(",")));
+    throw new Error(
+      `Simplified physical shell is invalid (${triangles.length} triangles, approximate error ${error}, ${vertices.length - distinctPositions.size} coincident float32 positions): ${String(cause)}`,
+      { cause },
+    );
+  }
   return { triangles, error, sourceTriangles: mesh.length };
 }

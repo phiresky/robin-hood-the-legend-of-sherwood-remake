@@ -81,6 +81,12 @@ descriptor.gameplay = {
             `Physical mesh was simplified independently per shell with maximum reported approximate appearance error ${Math.max(...reviewed.parts[0].simplifications.map((item) => item.approximateError))}; this is not a certified contact displacement bound.`,
           ]
         : []),
+      ...(reviewed.parts[0].decimations?.length
+        ? reviewed.parts[0].decimations.map(
+            (item) =>
+              `Physical shell ${item.component} was decimated with ${item.method}; sampled deviations are ${item.sourceToCandidate.maximumDistance} source-to-candidate and ${item.candidateToSource.maximumDistance} candidate-to-source game units. These samples are not a certified contact displacement bound.`,
+          )
+        : []),
     ],
   },
 };

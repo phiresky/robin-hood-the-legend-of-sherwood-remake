@@ -2,6 +2,9 @@
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { loadSceneModel } from "../pipeline/src/scene-assets.ts";
 import { maskRecoveryMesh } from "../pipeline/src/mask-recovery-mesh.ts";
 import { closedMeshComponents } from "../pipeline/src/closed-mesh-components.ts";
@@ -16,9 +19,27 @@ const simplifyError = simplifyOption
   ? Number(simplifyOption.slice("--simplify=".length))
   : undefined;
 assert.ok(simplifyError === undefined || (Number.isFinite(simplifyError) && simplifyError >= 0));
+const decimateOption = process.argv.find((arg) => arg.startsWith("--decimate="));
+const decimateRatio = decimateOption
+  ? Number(decimateOption.slice("--decimate=".length))
+  : undefined;
+assert.ok(
+  decimateRatio === undefined ||
+    (Number.isFinite(decimateRatio) && decimateRatio > 0 && decimateRatio <= 1),
+);
+assert.ok(
+  simplifyError === undefined || decimateRatio === undefined,
+  "Choose one reduction method",
+);
 const ids = process.argv
   .slice(2)
-  .filter((arg) => arg !== "--caps" && arg !== "--retain-collinear" && arg !== simplifyOption);
+  .filter(
+    (arg) =>
+      arg !== "--caps" &&
+      arg !== "--retain-collinear" &&
+      arg !== simplifyOption &&
+      arg !== decimateOption,
+  );
 assert.ok(ids.length && ids.every((id) => !id.startsWith("-")), "Supply library asset IDs");
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json")).assets;
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
@@ -49,6 +70,7 @@ for (const id of ids) {
     let triangles;
     const collinearFaces = [];
     const simplifications = [];
+    const decimations = [];
     try {
       triangles = maskRecoveryMesh(model, part.node, (p) => sceneToGame(camera, gltfToScene(p)));
       console.log(
@@ -94,6 +116,50 @@ for (const id of ids) {
         }
         components = simplified;
       }
+      if (decimateRatio !== undefined) {
+        const reduced = [];
+        for (const [index, component] of components.entries()) {
+          // Keep small, independently closed decorations intact.
+          if (component.length <= 5000) {
+            reduced.push(component);
+            continue;
+          }
+          const vertices = [],
+            lookup = new Map();
+          const faces = component.map((triangle) =>
+            triangle.map((point) => {
+              if (!lookup.has(point)) {
+                lookup.set(point, vertices.length);
+                vertices.push(point);
+              }
+              return lookup.get(point);
+            }),
+          );
+          const prefix = `${output}/${id}-${parts.length}-${index}`;
+          await fs.writeFile(`${prefix}-input.json`, JSON.stringify({ vertices, faces }));
+          await promisify(execFile)(process.env.BLENDER_BIN ?? "/usr/bin/blender", [
+            "--background",
+            "--factory-startup",
+            "--threads",
+            "2",
+            "--python",
+            fileURLToPath(new URL("./decimate-physical-shell.py", import.meta.url)),
+            "--",
+            `${prefix}-input.json`,
+            `${prefix}-decimated.json`,
+            String(decimateRatio),
+          ]);
+          const candidate = JSON.parse(await fs.readFile(`${prefix}-decimated.json`));
+          const shells = closedMeshComponents(
+            candidate.faces.map((face) => face.map((i) => candidate.vertices[i])),
+          );
+          assert.equal(shells.length, 1, "Physical decimation split the shell");
+          decimations.push({ component: index, ...candidate.report });
+          reduced.push(shells[0]);
+          console.log(JSON.stringify({ asset: id, node: part.node, ...decimations.at(-1) }));
+        }
+        components = reduced;
+      }
       let cappedVolumes;
       if (capped) {
         assert.ok(
@@ -109,7 +175,7 @@ for (const id of ids) {
               : undefined,
           ),
         );
-        if (simplifyError === undefined)
+        if (simplifyError === undefined && decimateRatio === undefined)
           assert.equal(componentCollinearFaces.length, collinearFaces.length);
         await fs.writeFile(
           `${output}/${id}-${parts.length}-caps.json`,
@@ -121,6 +187,7 @@ for (const id of ids) {
         triangles: triangles.length,
         collinearFaces,
         simplifications,
+        decimations,
         cappedVolumes: cappedVolumes?.length,
         closedComponents: components.map((component) => ({
           triangles: component.length,
@@ -144,6 +211,7 @@ for (const id of ids) {
         triangles: triangles?.length,
         collinearFaces,
         simplifications,
+        decimations,
         error: String(error),
       });
     }
@@ -162,6 +230,7 @@ await fs.writeFile(
       scope: "topology-preflight-only-not-solid-or-gameplay-certification",
       retainCollinearFaces: retainCollinear,
       requestedSimplificationError: simplifyError,
+      requestedDecimationRatio: decimateRatio,
       results,
     },
     null,

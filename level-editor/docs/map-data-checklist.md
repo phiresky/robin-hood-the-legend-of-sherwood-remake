@@ -244,6 +244,22 @@ is open and must not silently become a solid. No new gameplay definitions were
 published from this preflight. Reproduce it with
 `node refinement/audit-physical-meshes.mjs <asset-id> ...` from `level-editor`.
 
+Tree 03 now has a reproducible physical candidate, but it is not published.
+The error-budget simplifier produces nonmanifold edges at both 0.5 and 0.1
+units; the latter has no coincident float32 positions. Exact opposite-face
+removal also leaves invalid edges, so those candidates remain rejected.
+The alternative `--caps --decimate=0.01` audit (`physical-mesh-audit-7ARdDA`)
+uses Blender collapse decimation for shells above 5,000 triangles and retains
+smaller shells unchanged. The main wood shell reduces from 130,796 to 1,306
+triangles; all ten shells pass closure and cap-decomposition checks, producing
+3,732 capped pieces. Bidirectional vertex, edge-midpoint and face-centroid
+samples measure 1.3973 units source-to-candidate and 0.8884 units
+candidate-to-source (392,390 and 3,920 samples). These are sampled deviations,
+not certified maximum contact errors. The open crown still needs separate
+occlusion authoring, followed by moved/elevated native and full-scene checks.
+The audit saves its physical input, candidate and deviation report; visual
+models remain unchanged. `BLENDER_BIN` can select the offline Blender binary.
+
 The optional `--caps` audit converts a closed shell into convex pieces with
 independent planar bottom/top caps, retaining multiple solid intervals and the
 air between them. It rejects crossing/coincident caps and verifies footprint

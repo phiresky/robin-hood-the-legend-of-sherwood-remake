@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { MeshoptSimplifier } from "meshoptimizer";
 import type { MaskTriangle } from "../../shared/src/compile-mask-geometry.ts";
 import type { Vec3 } from "../../shared/src/scene.ts";
 import { simplifyPhysicalShell } from "./simplify-physical-shell.ts";
@@ -44,7 +45,10 @@ test("removes coplanar tessellation while retaining a closed physical shell", as
 
 test("rejects open geometry, mixed shells and invalid simplification budgets", async () => {
   const mesh = tetra();
-  await assert.rejects(simplifyPhysicalShell(mesh.slice(1), 0.1), /incident faces/);
+  await assert.rejects(
+    simplifyPhysicalShell(mesh.slice(1), 0.1),
+    /Physical simplification input is invalid:.*incident faces/,
+  );
   const moved = mesh.map((triangle): MaskTriangle => {
     const p = triangle.map(([x, y, z]): Vec3 => [x + 10, y, z]);
     return [p[0]!, p[1]!, p[2]!];
@@ -52,4 +56,19 @@ test("rejects open geometry, mixed shells and invalid simplification budgets", a
   await assert.rejects(simplifyPhysicalShell([...mesh, ...moved], 0.1), /one closed shell/);
   await assert.rejects(simplifyPhysicalShell(mesh, -1), /error budget/);
   await assert.rejects(simplifyPhysicalShell(mesh, NaN), /error budget/);
+});
+
+test("rejects invalid simplifier output with stage and precision diagnostics", async (t) => {
+  t.mock.method(MeshoptSimplifier, "simplify", (indices: Uint32Array) => [
+    new Uint32Array([...indices, ...indices.slice(0, 3)]),
+    0,
+  ]);
+  await assert.rejects(simplifyPhysicalShell(tetra(), 0.1), (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /Simplified physical shell is invalid \(5 triangles/);
+    assert.match(error.message, /approximate error 0, 0 coincident float32 positions/);
+    assert.ok(error.cause instanceof Error);
+    assert.match(error.cause.message, /3 incident faces/);
+    return true;
+  });
 });
