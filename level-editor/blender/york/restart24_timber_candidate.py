@@ -14,7 +14,9 @@ replace('ec34bcd8e3b98fa5a7e5a957e0b55b86684f7f4ae8096ebfe5c720eddad9bf12','82f3
 start=text.index('# Rectangular rightmost variant,');end=text.index('bpy.ops.wm.read_factory_settings',start)
 text=text[:start]+"best={'variant':'Full observed top and separately fitted lower edge','maximum_error':None}\n"+text[end:]
 replace("verts=[(x,y,z) for z in (p['bottom_z'],p['top_z']) for x,y in p['footprint_world']]","verts=[(x,y,p['bottom_z']) for x,y in p['bottom_footprint_world']]+[(x,y,p['top_z']) for x,y in p['footprint_world']]")
-replace('accepted=0;outside_mask=0;mask_uncovered=0',"""domain_report=json.loads((WORK/'restart2/timber-observed-domains-v1/report.json').read_text())
+replace('accepted=0;outside_mask=0;mask_uncovered=0',"""domain_path=WORK/'restart2/timber-observed-domains-v1/report.json'
+assert hashlib.sha256(domain_path.read_bytes()).hexdigest()=='13b315ac0a225fd37d2ae4899291e10a488dafa573de61acfe15761eba8669c3'
+domain_report=json.loads(domain_path.read_text())
 source_owners={tuple(r['pixel']):tuple(r['owner']) for r in domain_report['pixels']}
 role_rejected=0
 accepted=0;outside_mask=0;mask_uncovered=0""")
