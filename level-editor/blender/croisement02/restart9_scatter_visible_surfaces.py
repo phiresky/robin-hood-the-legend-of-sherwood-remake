@@ -15,7 +15,7 @@ sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def material(path):
  mat=bpy.data.materials.new(path.stem);mat.use_nodes=True;n=mat.node_tree.nodes;n.clear();t=n.new('ShaderNodeTexImage');t.image=bpy.data.images.load(str(path));t.image.pack();t.interpolation='Closest';em=n.new('ShaderNodeEmission');tr=n.new('ShaderNodeBsdfTransparent');mix=n.new('ShaderNodeMixShader');o=n.new('ShaderNodeOutputMaterial');l=mat.node_tree.links;l.new(t.outputs['Color'],em.inputs[0]);l.new(t.outputs['Alpha'],mix.inputs[0]);l.new(tr.outputs[0],mix.inputs[1]);l.new(em.outputs[0],mix.inputs[2]);l.new(mix.outputs[0],o.inputs['Surface']);return mat
 def main():
- out=OUT/'restart9-hiding-scatter/scatter-surfaces-v1';out.mkdir(parents=True,exist_ok=False);audit=json.loads((OUT/'restart9-hiding-scatter/terrain-receivers-v2/report.json').read_text());base=OUT/'restart7-source-patch-delivery/contracts-v1';manifest=json.loads((base/'manifest.json').read_text());resources={r['path']:Path(r['source'])for r in manifest['resources']};owners=[];vertices=[];triangles=[];modelpins=[]
+ out=OUT/'restart9-hiding-scatter/scatter-surfaces-v2';out.mkdir(parents=True,exist_ok=False);audit=json.loads((OUT/'restart9-hiding-scatter/terrain-receivers-v2/report.json').read_text());base=OUT/'restart7-source-patch-delivery/contracts-v1';manifest=json.loads((base/'manifest.json').read_text());resources={r['path']:Path(r['source'])for r in manifest['resources']};owners=[];vertices=[];triangles=[];modelpins=[]
  for pin in audit['models']:
   model=Path(pin['path']);assert sha(model)==pin['sha256'];bpy.ops.wm.open_mainfile(filepath=str(model));bpy.context.view_layer.update()
   for record in pin['objects']:
