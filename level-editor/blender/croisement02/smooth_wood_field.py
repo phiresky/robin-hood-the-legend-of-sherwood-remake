@@ -4,6 +4,42 @@ from scipy.ndimage import gaussian_filter, map_coordinates, distance_transform_e
 from continuous_wood_field import SIN, COS, RAY, center_depth
 
 
+def constrained_rim(body, weight=32., padding=8):
+    """CPU experiment: smooth curvature with local observed-center constraints.
+
+    Unlike a global threshold shift, this only forces the field outward where
+    an observed center requires it. This is not yet the model construction
+    default: mesh/collar and saved appearance guards must still pass.
+    """
+    from scipy.ndimage import laplace
+    from scipy.optimize import minimize
+    padded = np.pad(body, padding)
+    target = distance_transform_edt(padded)-distance_transform_edt(~padded)
+    lower = np.full(target.shape, -np.inf)
+    lower[padded] = .1
+
+    def objective(flat):
+        field = flat.reshape(target.shape)
+        delta = field-target
+        curvature = laplace(field, mode='reflect')
+        energy = .5*(np.sum(delta*delta)+weight*np.sum(curvature*curvature))
+        gradient = delta+weight*laplace(curvature, mode='reflect')
+        return energy, gradient.ravel()
+
+    initial = np.maximum(gaussian_filter(target, 1.6), lower)
+    result = minimize(objective, initial.ravel(), jac=True, method='L-BFGS-B',
+                      bounds=list(zip(lower.ravel(), np.full(target.size, np.inf))),
+                      options={'maxiter': 300, 'ftol': 1e-10, 'gtol': 1e-5, 'maxcor': 8})
+    if not result.success:
+        raise ValueError('Constrained rim did not converge: '+str(result.message))
+    field = result.x.reshape(target.shape)
+    if np.any(field[padded] < .1-1e-8):
+        raise ValueError('Constrained rim lost an observed center')
+    return field, dict(weight=weight, padding=padding, iterations=result.nit,
+                       method='Local observed-center bounds with quadratic Laplacian regularization',
+                       model_validated=False)
+
+
 def smooth_shell(body, thickness, origin, ground, sigma=.8, step=.5):
     """Clip triangles against a continuous positive thickness field.
 
