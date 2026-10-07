@@ -7,7 +7,7 @@ from mathutils import Vector
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from refinement_review import _tree
-B=ROOT/'level-editor/work/york-refinement';D=B/'restart7-market-well-v2';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S));ASSET='york-market-roofed-stone-well'
+B=ROOT/'level-editor/work/york-refinement';D=B/'restart7-market-well-v3';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S));ASSET='york-market-roofed-stone-well'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def main():
  model=D/'model.blend';digest=sha(model);bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;bpy.context.view_layer.update();own=[o for o in scene.objects if o.type=='MESH'and o.get('asset_group')==ASSET];context=[o for o in scene.objects if o.type=='MESH'and o not in own];cam=bpy.data.objects.new('Private native-first camera',bpy.data.cameras.new('Private native-first camera'));scene.collection.objects.link(cam);cam.data.type='ORTHO';cam.data.clip_end=20000;scene.camera=cam;scene.cycles.samples=8
@@ -37,12 +37,20 @@ def main():
   if p is None:miss.append([x,y])
   elif owners[i]in own:hits.append([x,y])
   else:foreign.append(dict(pixel=[x,y],owner=owners[i].name))
+ outside=[]
+ for yy,xx in np.argwhere(~mask):
+  x=int(xx)+202;y=int(yy)+1138;p,_,i,_=tree.ray_cast(Vector((x+.5,-(y+.5)/S,0))+RAY*5000,-RAY)
+  if p is not None and owners[i]in own:outside.append([x,y])
+ overlay=Image.open(B/'baseline/covered.png').convert('RGB');draw=ImageDraw.Draw(overlay)
+ for row in foreign:draw.point(tuple(row['pixel']),fill=(255,0,255))
+ for point in outside:draw.point(tuple(point),fill=(0,255,255))
+ overlay.crop((200,1135,262,1215)).resize((620,800),Image.Resampling.NEAREST).save(folder/'source-coverage-overlay.png')
  floor=next(o for o in context if o.get('source_node')=='building-086');ft,_,_=_tree([floor]);contacts=[]
- for x,y in [(230.8+18.8*math.cos(a*math.pi/4),-2245+16.7*math.sin(a*math.pi/4))for a in range(8)]:
+ for x,y in [(230.8+18.8*math.cos(a*math.pi/4),-2245+16.7*math.sin(a*math.pi/4))for a in range(8)]+[(246+2.7*math.cos(a*math.pi/4),-2264.6+2.7*math.sin(a*math.pi/4))for a in range(8)]:
   p,_,_,_=ft.ray_cast(Vector((x,y,500)),Vector((0,0,-1)));contacts.append(dict(xy=[x,y],ground_z=p.z if p else None,base_z=109.751,clearance=109.751-p.z if p else None))
  for o in own:
   bm=bmesh.new();bm.from_mesh(o.data);records.append(dict(object=o.name,vertices=len(bm.verts),faces=len(bm.faces),nonmanifold_edges=sum(not e.is_manifold for e in bm.edges)));bm.free()
- report=dict(status='Private candidate review rendered; self-review pending',model_sha256=digest,mask_domain_pixels=int(mask.sum()),own_first_hit=len(hits),misses=miss,foreign_first_hits=foreign,closed_meshes=records,contacts=contacts,limitations=['Native mask49 maps ring artwork by source evidence; mask50 links roof036/037 explicitly.','Unknown back/underside remains gray; no texture synthesis or approval.','Solid studio lighting is diagnostic, not a calibrated source sun claim.','Well is a separate worker; exact raised terrain086 is read-only context. No bucket/source-shadow geometry inferred yet.']);(D/'review.json').write_text(json.dumps(report,indent=2)+'\n');assert sha(model)==digest;print('COVERAGE',len(hits),int(mask.sum()),'foreign',len(foreign),'miss',len(miss),flush=True)
+ report=dict(status='Private candidate review rendered; self-review pending',model_sha256=digest,mask_domain_pixels=int(mask.sum()),own_first_hit=len(hits),misses=miss,foreign_first_hits=foreign,outside_domain_first_hits=outside,closed_meshes=records,contacts=contacts,limitations=['Native mask49 maps ring artwork by source evidence; mask50 links roof036/037 explicitly.','Unknown back/underside remains gray; no texture synthesis or approval.','Solid studio lighting is diagnostic, not a calibrated source sun claim.','Well is a separate worker; exact raised terrain086 is read-only context. Small pail uses a separately traced inferred source domain; surrounding source shadow is not modeled.']);(D/'review.json').write_text(json.dumps(report,indent=2)+'\n');assert sha(model)==digest;print('COVERAGE',len(hits),int(mask.sum()),'foreign',len(foreign),'miss',len(miss),flush=True)
 if __name__=='__main__':
  acquire()
  try:main()
