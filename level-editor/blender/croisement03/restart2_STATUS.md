@@ -1,3 +1,18 @@
+## Western shelf CPU morphology trace prepared
+
+`bank-morphology-trace-v1/recipe.json` records three paired visible western
+shelf bands and three exposed main-bank crease segments. The annotated source
+sheet was inspected. Short upper/lower face rings retain the traced native
+coordinates exactly; inferred height anchors use the authored ramp53 plane.
+Shallow undulation, bevels and hidden closures are explicitly hypotheses.
+The next recipe replaces long vertical support sides with joined shelf bands,
+without cutting individual image columns to ground or displacing the fixed
+shared crest. Broad top relief is not inferred from RGB noise.
+
+All frozen artifacts and approval galleries remain untouched. This continuation
+used only small CPU source/recipe files and no model/render lane. Full saved
+geometry, contact and source ownership checks are required in the next round.
+
 ## Full-bank saved prototype — private HOLD
 
 `bank-full-prototype-v2/worker.blend` is a bounded complete support prototype
