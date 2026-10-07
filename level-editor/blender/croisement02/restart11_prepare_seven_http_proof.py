@@ -47,6 +47,8 @@ const server=await createServer({configFile:join(root,'level-editor/app/vite.con
     new = "const progress=await evaluate('({status:document.querySelector(\"#result\")?.textContent,title:document.title,readyState:document.readyState,rootBytes:document.querySelector(\"#root\")?.innerHTML.length,viewport:!!window.reviewViewport})');await writeFile(join(out,'progress.json'),JSON.stringify({elapsed_ms:Date.now()-started,...progress},null,2));const status=progress.status;"
     assert old in runner
     runner = runner.replace(old, new)
+    runner = runner.replace("states({ws,nextId,evaluate,out:", "states({ws,nextId,evaluate,commandTimeoutMs:180000,out:")
+    runner = runner.replace("contacts.run({ws,nextId,origin,out:", "contacts.run({ws,nextId,origin,commandTimeoutMs:180000,out:")
     (out / 'run.mjs').write_text(runner)
     inputs = json.loads((out / 'inputs.json').read_text())
     for path in (out / 'editor.tsx', out / 'run.mjs', Path(__file__), ROOT / 'level-editor/app/vite.config.ts'):
