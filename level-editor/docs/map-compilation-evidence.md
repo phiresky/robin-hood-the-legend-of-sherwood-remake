@@ -9940,6 +9940,33 @@ reported inside-anchor support must not be read as proof that the stalled active
 order has a supported route. No candidate asset or runtime behavior changes in
 this diagnostic step.
 
+### Separate gable corner and binding failures (2026-10-07)
+
+Comparing the full-precision exported flight and receiving roof, before runtime
+rounding, confirms 0.001384 square units of unsupported midpoint footprint at
+105 degrees. The corner shortfall is real; the existing rounding closure cannot
+remove it. The asset-authoring helper now permits an explicit seam slide up to
+two local units, retaining its zero default and both planes and collision shapes.
+The candidate remains subject to placement and mesh review.
+
+Stage `york-gable-roof-contact-jLHQwO` uses a 1.25-unit shift. Its focused exports
+`...gable-house-neighbour-placements-faOe2I` compile six placements, reject 36
+disconnected neighbours and pass 8/24 character routes: all 105-degree cases,
+but neither 120 nor 135 degrees. The two-unit stage `york-gable-roof-contact-9D5MvH`
+and exports `...gable-house-neighbour-placements-65EnfX` retain the same compilation
+and disconnect results and pass 18/24 routes. All 105/135-degree routes pass;
+six 120-degree routes still fail. No candidate asset is published.
+
+The retained one-unit candidate's 120-degree trace
+`york-climb-animation-jwt5fyuk/native-120-trace.log` identifies missing upper
+landing bindings. The measured middle-to-support distances are 0.000594924 and
+0.001190428 for the two copies, while both outside anchors lie on support. This
+translation-sensitive binding failure is distinct from the real 105-degree roof
+corner. The loader reconstructs precise motion contours using float32 receiver
+plane coefficients; their precision and the support clipping remain to be
+isolated before changing any acceptance tolerance. The focused candidate results
+do not replace the earlier 152/200 full-sweep measurement.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

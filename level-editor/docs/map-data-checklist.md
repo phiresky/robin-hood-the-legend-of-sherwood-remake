@@ -929,6 +929,12 @@ failure stalls at the upper midpoint: the inside-anchor route is supported, but
 the actual movement-order route is not. The midpoint footprint exposes a small
 unsupported region at the flight/roof contact; precision and contact geometry
 still need diagnosis.
+The full-precision exported flight and roof confirm a real corner shortfall of
+0.001384 square units at 105 degrees. An unpublished two-unit local seam shift
+passes all 16 focused 105/135-degree routes across copies and elevations; the
+120-degree cases pass only 2/8. Their upper landing binding has a separate
+translation-sensitive subpixel gap. This candidate has not passed the full sweep
+or mesh review and is not published.
 The full York candidate still passes 38/40 climbs because its ground entrance lacks
 physical landing support. Neither the contact edits nor the shifted anchors are
 published. The placement checker accepts explicit rotation lists and preserves

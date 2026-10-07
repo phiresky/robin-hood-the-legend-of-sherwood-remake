@@ -12,8 +12,8 @@ assert.ok(
 );
 const upperSeamOffset = offsetFlag ? Number(offsetValue) : 0;
 assert.ok(
-  Number.isFinite(upperSeamOffset) && Math.abs(upperSeamOffset) <= 1,
-  "Upper seam offset requires a reviewed distance within one local game unit",
+  Number.isFinite(upperSeamOffset) && Math.abs(upperSeamOffset) <= 2,
+  "Upper seam offset requires a reviewed distance within two local game units",
 );
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 assert.equal(edits.length, 1);
