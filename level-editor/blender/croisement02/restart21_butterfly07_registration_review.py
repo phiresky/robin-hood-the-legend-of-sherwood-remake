@@ -12,8 +12,8 @@ ROOT=Path(__file__).resolve().parents[3]
 B=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
-    fitpath=B/'butterfly07-global-registration-v2/fit.json';fit=json.loads(fitpath.read_text())
-    out=B/'butterfly07-global-registration-v2/source-review';out.mkdir(exist_ok=False)
+    fitpath=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else B/'butterfly07-global-registration-v2/fit.json';fit=json.loads(fitpath.read_text())
+    out=fitpath.parent/'source-review';assert not (out/'report.json').exists();out.mkdir(exist_ok=True)
     old=json.loads((B/'butterfly07-full-local-registration-v1/fit.json').read_text());assert len(fit['rows'])==99
     for phase,row in enumerate(fit['rows']):
         assert row['phase']==phase and row['source']==old['rows'][phase]['source']
