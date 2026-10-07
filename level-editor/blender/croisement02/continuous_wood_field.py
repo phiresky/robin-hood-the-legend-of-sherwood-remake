@@ -91,7 +91,7 @@ def topology(vertices,faces):
     area=np.linalg.norm(np.cross(vertices[faces[:,1]]-vertices[faces[:,0]],vertices[faces[:,2]]-vertices[faces[:,0]]),axis=1)/2
     return dict(vertices=len(vertices),triangles=len(faces),nonmanifold_edges=sum(v!=2 for v in edges.values()),inconsistent_oriented_edges=sum(v!=0 for v in directions.values()),degenerate_triangles=int((area<1e-9).sum()),minimum_triangle_area=float(area.min()))
 
-def collar(lower,upper,lower_tangent,upper_tangent,steps=16):
+def collar(lower,upper,lower_tangent,upper_tangent,steps=16,parameters=None):
     """Cubic Hermite rows with exact endpoints and explicitly matched tangents.
 
 Inputs must have matching ordered loop correspondence established from real
@@ -100,7 +100,10 @@ assumes a single star-shaped loop.
 """
     arrays=[np.asarray(a,float) for a in [lower,upper,lower_tangent,upper_tangent]]
     if any(a.shape!=arrays[0].shape for a in arrays) or arrays[0].ndim!=2 or arrays[0].shape[1]!=3:raise ValueError('Mismatched boundary loops/tangents')
-    lo,hi,m0,m1=arrays;t=np.linspace(0,1,steps+1)[:,None,None]
+    lo,hi,m0,m1=arrays
+    samples=np.linspace(0,1,steps+1) if parameters is None else np.asarray(parameters,float)
+    if samples[0]!=0 or samples[-1]!=1 or np.any(np.diff(samples)<=0):raise ValueError('Collar parameters must increase from zero to one')
+    t=samples[:,None,None]
     return (2*t**3-3*t**2+1)*lo+(t**3-2*t**2+t)*m0+(-2*t**3+3*t**2)*hi+(t**3-t**2)*m1
 
 def ordered_boundary_loops(edges):
@@ -132,3 +135,39 @@ def collar_quality(rows):
     reference=jacobian[0]+jacobian[-1];reference_length=np.linalg.norm(reference,axis=1)
     dot=np.sum(jacobian*reference[None,:,:],axis=2)
     return dict(minimum_quad_jacobian=float(area.min()),collapsed_quads=int((area<1e-9).sum()),reversed_quads=int((dot<0).sum()),undefined_reference_normals=int((reference_length<1e-9).sum()))
+
+def cut_shell_below(vertices,faces,height):
+    """Open a local shell at a horizontal collar plane without adding a cap."""
+    vertices=np.asarray(vertices,float);points=list(vertices.copy());intersections={};result=[]
+    def intersect(a,b):
+        key=tuple(sorted((int(a),int(b))))
+        if key not in intersections:
+            pa,pb=vertices[a],vertices[b];t=(height-pa[2])/(pb[2]-pa[2])
+            if t<1e-10:intersections[key]=int(a)
+            elif t>1-1e-10:intersections[key]=int(b)
+            else:intersections[key]=len(points);points.append(pa+t*(pb-pa))
+        return intersections[key]
+    for triangle in faces:
+        polygon=[]
+        for a,b in zip(triangle,np.roll(triangle,-1)):
+            inside_a=vertices[a,2]<=height;inside_b=vertices[b,2]<=height
+            if inside_a:polygon.append(int(a))
+            if inside_a!=inside_b:polygon.append(intersect(a,b))
+        polygon=list(dict.fromkeys(polygon))
+        for i in range(1,len(polygon)-1):result.append((polygon[0],polygon[i],polygon[i+1]))
+    points=np.asarray(points);result=np.asarray(result,int)
+    edge_counts=Counter(tuple(sorted((int(a),int(b)))) for face in result for a,b in zip(face,np.roll(face,-1)))
+    boundary=[edge for edge,count in edge_counts.items() if count==1]
+    if any(count>2 for count in edge_counts.values()):raise ValueError('Nonmanifold clipped shell')
+    loops=ordered_boundary_loops(boundary)
+    for loop in loops:
+        if np.max(np.abs(points[loop,2]-height))>1e-6:raise ValueError('Unexpected boundary outside collar plane')
+    return points,result,loops
+
+def boundary_normals(vertices,faces,loop):
+    normals=np.zeros_like(vertices)
+    face_normals=np.cross(vertices[faces[:,1]]-vertices[faces[:,0]],vertices[faces[:,2]]-vertices[faces[:,0]])
+    for column in range(3):np.add.at(normals,faces[:,column],face_normals)
+    normals=normals[np.asarray(loop)];length=np.linalg.norm(normals,axis=1)
+    if np.any(length<1e-10):raise ValueError('Undefined retained boundary normal')
+    return normals/length[:,None]
