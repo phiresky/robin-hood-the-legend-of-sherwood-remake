@@ -9794,6 +9794,46 @@ pass. Physical-space walking-source authorization and supported approach motion
 remain required follow-up work. No navigation behavior or asset definition is
 changed by this diagnostic commit.
 
+### Physical ordinary-floor query infrastructure (2026-10-07)
+
+The failing rotated roof is retained as a small geometry-only regression fixture,
+`stair_navigation/fixtures/rotated-roof-approach.json`. It contains the compiled
+bound receiver, its exclusions and the actor's physical outside point, with no
+mission population or runtime data fallback. Independent configuration-space
+erosion finds no supported projected centers anywhere on that receiver for
+half-footprints [5,2], [6,3] or [6.5,3.5]. Moving the anchor to another projected
+position cannot fix this case.
+
+`PhysicalWalkingSurface` now shares the physical route solver with stairs while
+retaining precise ordinary-floor contours and holes. Queries require endpoints
+on the receiving plane and read an explicit current collision snapshot. Bound
+landing snapshots retain the exact layer and sector filter and rebuild their
+obstacles from live pathfinder state. Disconnected receiver fragments stay
+separate. No lift is synthesized to represent an ordinary floor.
+
+Source recovery first checks the full standing footprint. When correction is
+needed, the result must fit the box expanded by half a unit, remain within a
+caller-specified physical distance, and retain its actual receiving plane. The
+recovery sweep cannot introduce unsupported space beyond the initial overlap;
+off-floor centers and centers inside a solid are rejected. Ordinary routes use
+the normal movement inset, keeping these distinct authorization rules explicit.
+
+All 34 physical-navigation unit tests pass, including six ordinary-floor tests
+covering compressed/edge-on projections, incorrect heights, full-box recovery,
+holes, changing solids, narrow floors, malformed inputs and the compiled roof
+fixture. The fixture recovers within three world units and retains a supported
+walking route back to its doorway. Exact sweep subtraction resolves a tangent
+contact that an independent relation query rejected despite having no unsupported
+region; no clearance or height tolerance is enlarged.
+All 48 regular compiled-navigation tests also pass; the 15 external-fixture
+audits in that group remain explicitly ignored in this run. Rust formatting
+and the game build pass.
+
+This is query infrastructure, not completed actor integration. The movement
+dispatcher, per-tick ordinary movement, dynamic-neighbour snapshots and receiving
+ownership handoffs still need to use it together. The native keep-annex result
+remains 196/200; no asset is published or runtime parity claimed by this change.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

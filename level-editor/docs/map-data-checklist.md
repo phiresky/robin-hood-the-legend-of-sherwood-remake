@@ -891,6 +891,13 @@ inset world-XY movement footprint, but not its projected rectangle; the full
 world-XY source box still has a small uncovered corner. Walking-source recovery and
 approach clearance on steep rotated receiving floors still need physical-space
 handling; changing the climb endpoint or padding the roof is not a proven fix.
+Physical walking floor queries now provide precise routing and bounded source
+recovery with holes and current obstacles. They distinguish the inset walking
+footprint from the full standing box and expanded recovery box. These are query
+infrastructure: ordinary actor movement is not yet wired to them, and the native
+placement result remains 196/200. The entire problematic projected landing has
+no valid center for any of those three footprints, so relocating its outside
+anchor cannot solve the projected clearance problem.
 Reliable new-map placement, rather than matching an existing layout, is the
 acceptance criterion.
 York's central-lane gable-house climb and separate lean-to roof also remain

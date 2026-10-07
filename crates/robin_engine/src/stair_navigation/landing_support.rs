@@ -96,210 +96,237 @@ impl StairRouteGeometry {
             ))
         };
         let floor = convert(&self.boundary)?;
-        // Centers stay on this stair. Only support within one footprint of its
-        // bounds can affect them; distant terrain must not multiply erosion
-        // and visibility work. The full half size leaves one unit beyond the
-        // effective footprint used below, so clipping cannot create a boundary
-        // that excludes otherwise supported stair centers.
-        let bounds = floor.bounding_rect().ok_or("empty physical stair")?;
-        let extent = clearance.iter().fold([1.0_f64; 2], |extent, point| {
-            [
-                extent[0].max(point[0].abs() + 1.0),
-                extent[1].max(point[1].abs() + 1.0),
-            ]
-        });
-        let neighborhood = geo::Rect::new(
-            (bounds.min().x - extent[0], bounds.min().y - extent[1]),
-            (bounds.max().x + extent[0], bounds.max().y + extent[1]),
-        )
-        .to_polygon();
-        let mut support = MultiPolygon::from(vec![floor.clone()]);
-        for landing in landings {
-            if !landing.is_valid() {
-                return Err("physical landing support region is invalid".into());
-            }
-            support = support.union(&landing.intersection(&neighborhood));
-        }
-        // Independently encoded f32 edges can leave sub-ULP cracks between
-        // already bound floors. Close only that representation error, then
-        // remove the expansion before footprint erosion. Actor centers remain
-        // constrained to the stair and live solids are subtracted below.
-        if !landings.is_empty() {
-            let rounding = self
-                .boundary
-                .iter()
-                .flatten()
-                .fold(1.0_f64, |scale, value| scale.max(f64::from(value.abs())))
-                * f64::from(f32::EPSILON);
-            // Bevels keep the correction bounded without creating circular
-            // micro-segments that would multiply visibility-graph vertices.
-            support = support
-                .buffer_with_style(BufferStyle::new(rounding).line_join(LineJoin::Bevel))
-                .buffer_with_style(BufferStyle::new(-rounding).line_join(LineJoin::Bevel));
-        }
-        let sweep = |a: geo::Coord<f64>, b: geo::Coord<f64>| {
-            MultiPoint::from_iter([a, b].into_iter().flat_map(|p| {
-                clearance
-                    .iter()
-                    .map(move |[x, y]| Point::new(p.x + x, p.y + y))
-            }))
-            .convex_hull()
-        };
         let solids = self
             .obstacles
             .iter()
             .map(|ring| convert(ring))
             .chain(precise_obstacles.iter().map(|ring| polygon(ring)))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flat_map(|solid| solid.intersection(&neighborhood).0)
-            .collect::<Vec<_>>();
-        let direct = geo::Line::new(
-            (f64::from(source[0]), f64::from(source[1])),
-            (f64::from(goal[0]), f64::from(goal[1])),
-        );
-        let footprint = sweep(direct.start, direct.end);
-        // A completely supported swept footprint proves a straight route
-        // without constructing all possible actor centers. Boundary/rounding
-        // cases still use the full configuration-space query below.
-        if floor.relate(&direct).is_covers()
-            && support.relate(&footprint).is_contains_properly()
-            && solids.iter().all(|solid| !solid.intersects(&footprint))
-        {
-            return Ok(Some(vec![source, goal]));
+            .collect::<Result<Vec<_>, _>>()?;
+        route_on_surface(&floor, &solids, source, goal, clearance, landings)
+    }
+}
+
+/// Shared physical-coordinate query; the floor can retain precise binding
+/// vertices and holes instead of rounding through compatibility map pixels.
+pub(super) fn route_on_surface(
+    floor: &Polygon<f64>,
+    solids: &[Polygon<f64>],
+    source: [f32; 2],
+    goal: [f32; 2],
+    clearance: &[[f64; 2]],
+    landings: &[Polygon<f64>],
+) -> Result<Option<Vec<[f32; 2]>>, String> {
+    // Centers stay on this stair. Only support within one footprint of its
+    // bounds can affect them; distant terrain must not multiply erosion
+    // and visibility work. The full half size leaves one unit beyond the
+    // effective footprint used below, so clipping cannot create a boundary
+    // that excludes otherwise supported stair centers.
+    let bounds = floor.bounding_rect().ok_or("empty physical stair")?;
+    let extent = clearance.iter().fold([1.0_f64; 2], |extent, point| {
+        [
+            extent[0].max(point[0].abs() + 1.0),
+            extent[1].max(point[1].abs() + 1.0),
+        ]
+    });
+    let neighborhood = geo::Rect::new(
+        (bounds.min().x - extent[0], bounds.min().y - extent[1]),
+        (bounds.max().x + extent[0], bounds.max().y + extent[1]),
+    )
+    .to_polygon();
+    let mut support = MultiPolygon::from(vec![floor.clone()]);
+    for landing in landings {
+        if !landing.is_valid() {
+            return Err("physical landing support region is invalid".into());
         }
-        // Erode real support by the effective, centrally symmetric footprint. Sweeping
-        // every exterior and hole edge removes exactly the centers whose box
-        // crosses a support boundary; no arbitrary padding is introduced.
-        let mut centers = support.clone();
-        for polygon in &support {
-            for ring in std::iter::once(polygon.exterior()).chain(polygon.interiors()) {
-                for edge in ring.lines() {
-                    centers = centers.difference(&sweep(edge.start, edge.end));
-                }
+        support = support.union(&landing.intersection(&neighborhood));
+    }
+    // Independently encoded f32 edges can leave sub-ULP cracks between
+    // already bound floors. Close only that representation error, then
+    // remove the expansion before footprint erosion. Actor centers remain
+    // constrained to the stair and live solids are subtracted below.
+    if !landings.is_empty() {
+        let rounding = floor.exterior().0.iter().fold(1.0_f64, |scale, point| {
+            scale.max(point.x.abs()).max(point.y.abs())
+        }) * f64::from(f32::EPSILON);
+        // Bevels keep the correction bounded without creating circular
+        // micro-segments that would multiply visibility-graph vertices.
+        support = support
+            .buffer_with_style(BufferStyle::new(rounding).line_join(LineJoin::Bevel))
+            .buffer_with_style(BufferStyle::new(-rounding).line_join(LineJoin::Bevel));
+    }
+    let sweep = |a: geo::Coord<f64>, b: geo::Coord<f64>| {
+        MultiPoint::from_iter([a, b].into_iter().flat_map(|p| {
+            clearance
+                .iter()
+                .map(move |[x, y]| Point::new(p.x + x, p.y + y))
+        }))
+        .convex_hull()
+    };
+    let solids = solids
+        .iter()
+        .flat_map(|solid| solid.intersection(&neighborhood).0)
+        .collect::<Vec<_>>();
+    let direct = geo::Line::new(
+        (f64::from(source[0]), f64::from(source[1])),
+        (f64::from(goal[0]), f64::from(goal[1])),
+    );
+    let footprint = sweep(direct.start, direct.end);
+    // A completely supported swept footprint proves a straight route
+    // without constructing all possible actor centers. Boundary/rounding
+    // cases still use the full configuration-space query below.
+    if floor.relate(&direct).is_covers()
+        && support.relate(&footprint).is_contains_properly()
+        && solids.iter().all(|solid| !solid.intersects(&footprint))
+    {
+        return Ok(Some(vec![source, goal]));
+    }
+    // Erode real support by the effective, centrally symmetric footprint. Sweeping
+    // every exterior and hole edge removes exactly the centers whose box
+    // crosses a support boundary; no arbitrary padding is introduced.
+    let mut centers = clearance_centers(&support, &solids, clearance);
+    centers = centers.intersection(floor);
+    let original_source = source;
+    let original_goal = goal;
+    let source = Point::new(f64::from(source[0]), f64::from(source[1]));
+    let goal = Point::new(f64::from(goal[0]), f64::from(goal[1]));
+    // Independently rounded f32 seam points can lie a fraction of an ULP
+    // outside their rounded edge. Normalize only that representational
+    // error; this is not an actor-sized source repair or landing extension.
+    let normalize = |region: &Polygon<f64>, point: Point<f64>| {
+        if region.relate(&point).is_covers() {
+            return Some(point);
+        }
+        match region.closest_point(&point) {
+            Closest::SinglePoint(closest) => {
+                let tolerance =
+                    point.x().abs().max(point.y().abs()).max(1.0) * f64::from(f32::EPSILON) * 2.0;
+                ((closest.x() - point.x()).hypot(closest.y() - point.y()) <= tolerance)
+                    .then_some(closest)
+            }
+            _ => None,
+        }
+    };
+    let Some((region, source, goal)) = centers
+        .iter()
+        .find_map(|region| Some((region, normalize(region, source)?, normalize(region, goal)?)))
+    else {
+        return Ok(None);
+    };
+    if source == goal {
+        return Ok(Some(vec![original_source, original_goal]));
+    }
+    // A committed f32 step can round onto either side of a tangent. Even
+    // the closest-point calculation can leave a sub-ULP residual. Use the
+    // same coordinate-error budget for visibility as for endpoint seating;
+    // otherwise re-planning at an obstacle tangent can strand the actor.
+    let rounding = source
+        .x()
+        .abs()
+        .max(source.y().abs())
+        .max(goal.x().abs())
+        .max(goal.y().abs())
+        .max(1.0)
+        * f64::from(f32::EPSILON)
+        * 2.0;
+    let visibility_region = region.buffer(rounding);
+    // A supported direct segment is already the shortest route. In
+    // particular, continuing along a stair should not rebuild visibility
+    // links to every receiving-boundary vertex on each movement tick.
+    if visibility_region
+        .relate(&geo::Line::new(source.0, goal.0))
+        .is_covers()
+    {
+        return Ok(Some(vec![original_source, original_goal]));
+    }
+    // A polygonal free space has a shortest path through visible boundary
+    // vertices. Retain hole vertices too; they represent blocked footprints.
+    let mut points = vec![source, goal];
+    for ring in std::iter::once(region.exterior()).chain(region.interiors()) {
+        // Drop redundant candidate vertices within the coordinate-error
+        // budget. Visibility still uses the complete region, so this does
+        // not simplify collision or authorize a segment through a solid.
+        let candidates = ring.simplify(rounding * 0.25);
+        points.extend(
+            candidates
+                .points()
+                .take(candidates.0.len().saturating_sub(1)),
+        );
+    }
+    let mut distance = vec![f64::INFINITY; points.len()];
+    let mut previous = vec![None; points.len()];
+    let mut settled = vec![false; points.len()];
+    distance[0] = 0.0;
+    loop {
+        let Some(current) = (0..points.len())
+            .filter(|&i| !settled[i] && distance[i].is_finite())
+            .min_by(|&a, &b| distance[a].total_cmp(&distance[b]))
+        else {
+            return Ok(None);
+        };
+        if current == 1 {
+            break;
+        }
+        settled[current] = true;
+        for next in 0..points.len() {
+            if settled[next] {
+                continue;
+            }
+            let length = (points[current].x() - points[next].x())
+                .hypot(points[current].y() - points[next].y());
+            if distance[current] + length >= distance[next] {
+                continue;
+            }
+            let segment = geo::Line::new(points[current].0, points[next].0);
+            if visibility_region.relate(&segment).is_covers() {
+                distance[next] = distance[current] + length;
+                previous[next] = Some(current);
             }
         }
-        // Expand each live solid by the same footprint, including concave
-        // solids: the solid plus its swept boundary is its footprint dilation.
-        for obstacle in &solids {
-            centers = centers.difference(obstacle);
-            for edge in obstacle.exterior().lines() {
+    }
+    let mut route = Vec::new();
+    let mut current = 1;
+    loop {
+        route.push([points[current].x() as f32, points[current].y() as f32]);
+        if current == 0 {
+            break;
+        }
+        current = previous[current].expect("reachable physical route lost its predecessor");
+    }
+    route.reverse();
+    route[0] = original_source;
+    *route.last_mut().expect("physical route has endpoints") = original_goal;
+    Ok(Some(route))
+}
+
+pub(super) fn clearance_centers(
+    support: &MultiPolygon<f64>,
+    solids: &[Polygon<f64>],
+    clearance: &[[f64; 2]],
+) -> MultiPolygon<f64> {
+    let sweep = |a: geo::Coord<f64>, b: geo::Coord<f64>| {
+        MultiPoint::from_iter([a, b].into_iter().flat_map(|p| {
+            clearance
+                .iter()
+                .map(move |[x, y]| Point::new(p.x + x, p.y + y))
+        }))
+        .convex_hull()
+    };
+    let mut centers = support.clone();
+    for polygon in support {
+        for ring in std::iter::once(polygon.exterior()).chain(polygon.interiors()) {
+            for edge in ring.lines() {
                 centers = centers.difference(&sweep(edge.start, edge.end));
             }
         }
-        centers = centers.intersection(&floor);
-        let original_source = source;
-        let original_goal = goal;
-        let source = Point::new(f64::from(source[0]), f64::from(source[1]));
-        let goal = Point::new(f64::from(goal[0]), f64::from(goal[1]));
-        // Independently rounded f32 seam points can lie a fraction of an ULP
-        // outside their rounded edge. Normalize only that representational
-        // error; this is not an actor-sized source repair or landing extension.
-        let normalize = |region: &Polygon<f64>, point: Point<f64>| {
-            if region.relate(&point).is_covers() {
-                return Some(point);
-            }
-            match region.closest_point(&point) {
-                Closest::SinglePoint(closest) => {
-                    let tolerance = point.x().abs().max(point.y().abs()).max(1.0)
-                        * f64::from(f32::EPSILON)
-                        * 2.0;
-                    ((closest.x() - point.x()).hypot(closest.y() - point.y()) <= tolerance)
-                        .then_some(closest)
-                }
-                _ => None,
-            }
-        };
-        let Some((region, source, goal)) = centers.iter().find_map(|region| {
-            Some((region, normalize(region, source)?, normalize(region, goal)?))
-        }) else {
-            return Ok(None);
-        };
-        if source == goal {
-            return Ok(Some(vec![original_source, original_goal]));
-        }
-        // A committed f32 step can round onto either side of a tangent. Even
-        // the closest-point calculation can leave a sub-ULP residual. Use the
-        // same coordinate-error budget for visibility as for endpoint seating;
-        // otherwise re-planning at an obstacle tangent can strand the actor.
-        let rounding = source
-            .x()
-            .abs()
-            .max(source.y().abs())
-            .max(goal.x().abs())
-            .max(goal.y().abs())
-            .max(1.0)
-            * f64::from(f32::EPSILON)
-            * 2.0;
-        let visibility_region = region.buffer(rounding);
-        // A supported direct segment is already the shortest route. In
-        // particular, continuing along a stair should not rebuild visibility
-        // links to every receiving-boundary vertex on each movement tick.
-        if visibility_region
-            .relate(&geo::Line::new(source.0, goal.0))
-            .is_covers()
-        {
-            return Ok(Some(vec![original_source, original_goal]));
-        }
-        // A polygonal free space has a shortest path through visible boundary
-        // vertices. Retain hole vertices too; they represent blocked footprints.
-        let mut points = vec![source, goal];
-        for ring in std::iter::once(region.exterior()).chain(region.interiors()) {
-            // Drop redundant candidate vertices within the coordinate-error
-            // budget. Visibility still uses the complete region, so this does
-            // not simplify collision or authorize a segment through a solid.
-            let candidates = ring.simplify(rounding * 0.25);
-            points.extend(
-                candidates
-                    .points()
-                    .take(candidates.0.len().saturating_sub(1)),
-            );
-        }
-        let mut distance = vec![f64::INFINITY; points.len()];
-        let mut previous = vec![None; points.len()];
-        let mut settled = vec![false; points.len()];
-        distance[0] = 0.0;
-        loop {
-            let Some(current) = (0..points.len())
-                .filter(|&i| !settled[i] && distance[i].is_finite())
-                .min_by(|&a, &b| distance[a].total_cmp(&distance[b]))
-            else {
-                return Ok(None);
-            };
-            if current == 1 {
-                break;
-            }
-            settled[current] = true;
-            for next in 0..points.len() {
-                if settled[next] {
-                    continue;
-                }
-                let length = (points[current].x() - points[next].x())
-                    .hypot(points[current].y() - points[next].y());
-                if distance[current] + length >= distance[next] {
-                    continue;
-                }
-                let segment = geo::Line::new(points[current].0, points[next].0);
-                if visibility_region.relate(&segment).is_covers() {
-                    distance[next] = distance[current] + length;
-                    previous[next] = Some(current);
-                }
-            }
-        }
-        let mut route = Vec::new();
-        let mut current = 1;
-        loop {
-            route.push([points[current].x() as f32, points[current].y() as f32]);
-            if current == 0 {
-                break;
-            }
-            current = previous[current].expect("reachable physical route lost its predecessor");
-        }
-        route.reverse();
-        route[0] = original_source;
-        *route.last_mut().expect("physical route has endpoints") = original_goal;
-        Ok(Some(route))
     }
+    // Dilate live solids by the same footprint, retaining concave outlines.
+    for obstacle in solids {
+        centers = centers.difference(obstacle);
+        for edge in obstacle.exterior().lines() {
+            centers = centers.difference(&sweep(edge.start, edge.end));
+        }
+    }
+    centers
 }
 
 #[cfg(test)]

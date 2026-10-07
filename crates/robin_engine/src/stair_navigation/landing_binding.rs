@@ -116,6 +116,19 @@ mod tests {
         );
         let mut pathfinder = PathFinder::new();
         pathfinder.states = vec![vec![2], vec![2], vec![0]];
+        assert_eq!(
+            bound.landing_walking_surfaces(&pathfinder, 0, 0)[0]
+                .obstacles
+                .len(),
+            1
+        );
+        assert_eq!(
+            bound.landing_walking_surfaces(&pathfinder, 1, 1)[0]
+                .obstacles
+                .len(),
+            1
+        );
+        assert!(bound.landing_walking_surfaces(&pathfinder, 0, 1).is_empty());
         let route = |pathfinder: &PathFinder| {
             bound
                 .route(
@@ -131,6 +144,17 @@ mod tests {
             "the live lower blocker must stop entry"
         );
         pathfinder.states[0][0] = 0;
+        assert!(
+            bound.landing_walking_surfaces(&pathfinder, 0, 0)[0]
+                .obstacles
+                .is_empty()
+        );
+        assert_eq!(
+            bound.landing_walking_surfaces(&pathfinder, 1, 1)[0]
+                .obstacles
+                .len(),
+            1
+        );
         assert!(
             route(&pathfinder).is_some(),
             "an upper blocker must not block the lower floor"
@@ -970,6 +994,38 @@ mod tests {
 }
 
 impl BoundPhysicalStair {
+    /// Snapshot the actual bound receiver fragments for ordinary walking
+    /// queries. Refresh after motion-state changes; disconnected pieces stay
+    /// separate and cannot grant a route across an unsupported gap.
+    pub fn landing_walking_surfaces(
+        &self,
+        pathfinder: &PathFinder,
+        layer: u16,
+        sector: u16,
+    ) -> Vec<walking_surface::PhysicalWalkingSurface> {
+        self.landings
+            .iter()
+            .filter(|landing| landing.layer == usize::from(layer) && landing.sector == sector)
+            .map(|landing| walking_surface::PhysicalWalkingSurface {
+                boundary: landing.boundary.clone(),
+                holes: landing.holes.clone(),
+                plane: landing.plane,
+                obstacles: landing
+                    .obstacles
+                    .iter()
+                    .filter(|obstacle| {
+                        pathfinder.is_motion_obstacle_active(
+                            landing.layer,
+                            landing.area,
+                            obstacle.state,
+                        )
+                    })
+                    .map(|obstacle| obstacle.polygon.clone())
+                    .collect(),
+            })
+            .collect()
+    }
+
     pub(crate) fn has_landing(&self, layer: u16, sector: u16) -> bool {
         self.landings
             .iter()

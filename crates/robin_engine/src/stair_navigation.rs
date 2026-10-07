@@ -15,6 +15,7 @@ use crate::pathfinder::{MotionArea, MotionObstacle, PathFinder, PathGraph};
 mod clearance;
 mod landing_binding;
 mod landing_support;
+pub mod walking_surface;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
