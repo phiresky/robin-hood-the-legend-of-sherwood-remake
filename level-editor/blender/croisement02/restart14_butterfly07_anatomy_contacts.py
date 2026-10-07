@@ -32,15 +32,16 @@ def triangle_planes(v):
         planes.append(np.r_[n,-n@a])
     return np.array(planes)
 
-def main(fit_path=None):
+def main(fit_path=None, midpoint_hinge_offsets=None):
     assert not OUT.exists(),'Preserve prior evidence'
     fitp=Path(fit_path) if fit_path else B/'butterfly07-pose-fit-v1/fit.json';fit=json.loads(fitp.read_text());rows={r['phase']:r for r in fit['rows']}
     units=[]
-    def vertices(row,mirror=False,t=None,other=None):
+    def vertices(row,mirror=False,t=None,other=None,hinge_offset=None):
         p=np.array(row['parameters']);anchor=np.array(row['fixed_path_anchor_zup'])
         if t is not None:
             q=np.array(other['parameters']);rotation=Slerp([0,1],Rotation.from_euler('xyz',[p[:3],q[:3]],degrees=True))([t])[0]
             p[:3]=rotation.as_euler('xyz',degrees=True);p[3:]=(1-t)*p[3:]+t*q[3:];anchor=(1-t)*anchor+t*np.array(other['fixed_path_anchor_zup'])
+        if hinge_offset is not None:p[3:5]+=hinge_offset
         if mirror:p[[0,1,3,4]]*=-1
         body,wings=geometry(p)
         def world(v):
@@ -62,6 +63,9 @@ def main(fit_path=None):
             a,b=rows[phase],rows[phase+1]
             for name,v,solid in parts(vertices(a,mirrored,.5,b)):
                 add(f'{branch}:midpoint:{phase}-{phase+1}',name,v,ConvexHull(v).equations if solid else triangle_planes(v))
+            for offset in (midpoint_hinge_offsets or {}).get(phase,[]):
+                for name,v,solid in parts(vertices(a,mirrored,.5,b,offset)):
+                    add(f'{branch}:inferred-hinge-midpoint:{phase}-{phase+1}:{offset}',name,v,ConvexHull(v).equations if solid else triangle_planes(v))
             ra=Rotation.from_euler('xyz',a['parameters'][:3],degrees=True);rb=Rotation.from_euler('xyz',b['parameters'][:3],degrees=True)
             angle=(ra.inv()*rb).magnitude();hinges=np.abs(np.deg2rad(np.array(a['parameters'][3:5])-b['parameters'][3:5]));n=8
             for step in range(n):

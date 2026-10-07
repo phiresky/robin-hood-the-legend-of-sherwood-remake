@@ -11,9 +11,11 @@ from restart14_butterfly07_anatomy_contacts import triangle_planes,clip_planes
 from restart14_butterfly07_prism_contacts import alpha_maximum
 B=reader.B;OUT=B/'butterfly07-fit-alternatives-v1'
 
-def main():
+def main(fit_path=None, output=None):
+    global OUT
+    if output is not None:OUT=output
     assert not OUT.exists()
-    fitp=B/'butterfly07-pose-fit-v1/fit.json';fit=json.loads(fitp.read_text());base={r['phase']:r for r in fit['rows']}
+    fitp=Path(fit_path) if fit_path else B/'butterfly07-pose-fit-v1/fit.json';fit=json.loads(fitp.read_text());base={r['phase']:r for r in fit['rows']}
     variants=[];missing=[]
     for phase,row in base.items():
         source=np.asarray(Image.open(row['source']['source']).convert('RGBA'));mask=source[:,:,3]>0;h,w=mask.shape
@@ -63,11 +65,11 @@ def main():
                 x,y=pix['local_xy'];col='#ff5577'if pix['role'].startswith('bright')else'#22ddff';draw.rectangle([ox+20+x*10,oy+40+y*10,ox+29+x*10,oy+49+y*10],outline=col,width=1)
             draw.text((ox+5,oy+5),f"Phase{phase}: missing{len(entry['pixels'])}",fill='white')
             for j,v in enumerate(t for t in variants if t['phase']==phase):
-                c=v['candidate'];contacts=dict(v['contacts']);draw.text((ox+5,oy+220+j*17),f"alt{v['index']}: {c['covered']}/{c['source_pixels']} extra{c['extra']} contacts{sum(contacts.values())}",fill='#ff9999'if contacts else'#99ffbb')
+                c=v['candidate'];contacts=dict(v['contacts']);draw.text((ox+5,oy+220+j*17) if j<4 else (-2000,-2000),f"alt{v['index']}: {c['covered']}/{c['source_pixels']} extra{c['extra']} contacts{sum(contacts.values())}",fill='#ff9999'if contacts else'#99ffbb')
                 rows.append({'phase':phase,'alternative':v['index'],'covered':c['covered'],'missing':c['missing'],'extra':c['extra'],'parameters':c['parameters'],'depth_mirrored':c['depth_mirrored'],'contacts':contacts,'witnesses':v['witnesses']})
         draw.text((5,620),'Missing pixels: pink = bright unresolved body/wing; cyan = dark unresolved filament/edge. Color alone does not identify anatomy.',fill='white')
         sheet.save(OUT/'comparison.png')
-        report={'status':'SOURCE_AND_CONTACT_ALTERNATIVES_NOT_PATH_CLEARANCE','fit_sha256':reader.sha(fitp),'recipe_sha256':reader.sha(Path(__file__)),'map_sha256':reader.sha(map_path),'assets':assets,'model_complexity':'All32 candidates retain exactly the same body ellipsoid, two7vertex wing outlines and10wing triangles. Only body rotation, two hinges and bounded source body registration differ. No extra sections, new dimensions, path changes or material changes.','rows':rows,'missing49_provenance':[{k:v for k,v in e.items()if k not in ('source','mask')}for e in missing],'limits':['Exact discrete posed contacts only; a contact-free pose does not clear temporal sweeps.','Missing49 source pixels have per-pixel provenance and unresolved anatomical roles; none silently discarded.','No image-derived evidence distinguishes depth mirror branches.','No Blender, render or library writes.']}
+        report={'status':'SOURCE_AND_CONTACT_ALTERNATIVES_NOT_PATH_CLEARANCE','fit_sha256':reader.sha(fitp),'recipe_sha256':reader.sha(Path(__file__)),'map_sha256':reader.sha(map_path),'assets':assets,'model_complexity':f'All{len(variants)} candidates retain exactly the same body ellipsoid, two7vertex wing outlines and10wing triangles. Only body rotation, two hinges and bounded source body registration differ. No extra sections, new dimensions, path changes or material changes.','rows':rows,'missing49_provenance':[{k:v for k,v in e.items()if k not in ('source','mask')}for e in missing],'limits':['Exact discrete posed contacts only; a contact-free pose does not clear temporal sweeps.','Missing source pixels have per-pixel provenance and unresolved anatomical roles; none silently discarded.','No image-derived evidence distinguishes depth mirror branches.','No Blender, render or library writes.']}
         (OUT/'report.json').write_text(json.dumps(report,indent=2)+'\n');print([(r['phase'],r['alternative'],r['covered'],r['contacts'])for r in rows],flush=True)
         return report
     reader.main(ray_records=[{'screen':r['source']['alpha_centroid_display'],'hits':[]}for r in base.values()],postprocess=finish,output=OUT,asset_ids={'croisement02-tree-01','croisement02-tree-02'},triangle_callback=inspect,query_margin=15.,output_limit_bytes=2*1024**2)
