@@ -10,7 +10,7 @@ from restart4_stump_final_contact import frame,sheet
 from render_slots import acquire,release
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
- worker=OUT/'restart11-hiding-mound/support-trio-v1';r=json.loads((worker/'validation.json').read_text());model=worker/'model.blend';assert sha(model)==r['model_sha256'];out=worker/'contacts-v1';out.mkdir(exist_ok=False);scene,static,pins,base=load_scene();ground=[o for o in static if o.name.startswith('Croisement02 Terrain')or o.get('asset_group')=='croisement02-north-woodland-bank'];wall=[o for o in static if o.get('asset_group')=='croisement02-southeast-stone-wall-and-gate'];names=[n for row in r['records']for n in row['objects']]
+ name=sys.argv[sys.argv.index('--')+1]if'--'in sys.argv else'support-trio-v1';assert '/'not in name;worker=OUT/'restart11-hiding-mound'/name;r=json.loads((worker/'validation.json').read_text());model=worker/'model.blend';assert sha(model)==r['model_sha256'];out=worker/'contacts-v1';out.mkdir(exist_ok=False);scene,static,pins,base=load_scene();ground=[o for o in static if o.name.startswith('Croisement02 Terrain')or o.get('asset_group')=='croisement02-north-woodland-bank'];wall=[o for o in static if o.get('asset_group')=='croisement02-southeast-stone-wall-and-gate'];names=[n for row in r['records']for n in row['objects']]
  with bpy.data.libraries.load(str(model),link=False)as(src,dst):dst.objects=list(names)
  mapped={}
  for name,obj in zip(names,dst.objects):scene.collection.objects.link(obj);mapped[name]=obj

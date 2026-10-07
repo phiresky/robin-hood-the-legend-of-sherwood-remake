@@ -40,6 +40,21 @@ impl StairRouteGeometry {
         landings: &[Vec<[f64; 2]>],
         precise_obstacles: &[Vec<[f64; 2]>],
     ) -> Result<Option<Vec<[f32; 2]>>, String> {
+        let regions = landings
+            .iter()
+            .map(|ring| polygon(ring))
+            .collect::<Result<Vec<_>, _>>()?;
+        self.route_with_landing_regions(source, goal, half, &regions, precise_obstacles)
+    }
+
+    pub(super) fn route_with_landing_regions(
+        &self,
+        source: [f32; 2],
+        goal: [f32; 2],
+        half: MoveBoxHalfDiagonal,
+        landings: &[Polygon<f64>],
+        precise_obstacles: &[Vec<[f64; 2]>],
+    ) -> Result<Option<Vec<[f32; 2]>>, String> {
         if source.iter().chain(&goal).any(|value| !value.is_finite())
             || !half.x.is_finite()
             || !half.y.is_finite()
@@ -81,7 +96,10 @@ impl StairRouteGeometry {
         .to_polygon();
         let mut support = MultiPolygon::from(vec![floor.clone()]);
         for landing in landings {
-            support = support.union(&polygon(landing)?.intersection(&neighborhood));
+            if !landing.is_valid() {
+                return Err("physical landing support region is invalid".into());
+            }
+            support = support.union(&landing.intersection(&neighborhood));
         }
         // Independently encoded f32 edges can leave sub-ULP cracks between
         // already bound floors. Close only that representation error, then

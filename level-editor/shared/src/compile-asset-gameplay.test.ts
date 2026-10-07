@@ -97,22 +97,25 @@ test("fractional terrain remnants survive floor clipping until navigation union"
   ]);
 });
 
-test("a connected physical stair survives a pinched screen projection in copied placements", () => {
-  const document = parseLevel3D(nearEdgeOnStair.document);
-  assert.ok(document.size);
-  const asset = parseProjectionAssetDescriptor(nearEdgeOnStair.asset);
-  const compiled = compileAssetGameplay(document, new Map([[asset.id, asset]]), [
-    0,
-    0,
-    ...document.size,
-  ]);
-  assert.equal(compiled.lifts?.length, 2);
-  for (const lift of compiled.lifts!) {
-    assert.ok(lift.physical_navigation);
-    assert.equal(lift.physical_navigation.doors.length, 2);
-    assert.equal(lift.physical_navigation.obstacles.length, 0);
-  }
-});
+for (const type of [1, 2, 3] as const)
+  test(`a connected physical lift type ${type} survives a pinched screen projection in copied placements`, () => {
+    const document = parseLevel3D(nearEdgeOnStair.document);
+    assert.ok(document.size);
+    const asset = parseProjectionAssetDescriptor(nearEdgeOnStair.asset);
+    for (const lift of asset.gameplay!.lifts!) lift.type = type;
+    const compiled = compileAssetGameplay(document, new Map([[asset.id, asset]]), [
+      0,
+      0,
+      ...document.size,
+    ]);
+    assert.equal(compiled.lifts?.length, 2);
+    for (const lift of compiled.lifts!) {
+      assert.equal(lift.lift_type, type);
+      assert.ok(lift.physical_navigation);
+      assert.equal(lift.physical_navigation.doors.length, 2);
+      assert.equal(lift.physical_navigation.obstacles.length, 0);
+    }
+  });
 
 test("best-effort collapsed mask boundaries retain independent rules and control bindings", () => {
   for (const obstacles of [true, false]) {
@@ -151,34 +154,36 @@ test("best-effort collapsed mask boundaries retain independent rules and control
   }
 });
 
-test("best-effort collision-split stairs retain solid obstacles and independent floors", () => {
-  const { document, assets, hut } = liftAssetCompilerFixture();
-  hut.gameplay!.movementSolids = ["building-999"];
-  hut.gameplay!.movementBlockers = [
-    {
-      id: "split-ramp",
-      node: "building-999",
-      polygon: [
-        [99, -10],
-        [101, -10],
-        [101, 110],
-        [99, 110],
-      ],
-      height: [45, 55, 55, 45],
-    },
-  ];
-  assert.throws(() => compileAssetGameplay(document, assets, bounds), /connected traversal area/);
-  const compiled = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
-  assert.equal(compiled.lifts?.length ?? 0, 0);
-  assert.ok(compiled.sight_obstacles.some((o) => o.solid));
-  assert.ok(compiled.motion_data.layers.flat().length >= 2);
-  assert.ok(compiled.warnings);
-  assert.ok(
-    compiled.warnings.some(
-      (w) => w.includes("traversal omitted") && w.includes("connected traversal area"),
-    ),
-  );
-});
+for (const type of [1, 2, 3] as const)
+  test(`best-effort collision-split lift type ${type} retains solid obstacles and independent floors`, () => {
+    const { document, assets, hut } = liftAssetCompilerFixture();
+    for (const lift of hut.gameplay!.lifts!) lift.type = type;
+    hut.gameplay!.movementSolids = ["building-999"];
+    hut.gameplay!.movementBlockers = [
+      {
+        id: "split-ramp",
+        node: "building-999",
+        polygon: [
+          [99, -10],
+          [101, -10],
+          [101, 110],
+          [99, 110],
+        ],
+        height: [45, 55, 55, 45],
+      },
+    ];
+    assert.throws(() => compileAssetGameplay(document, assets, bounds), /connected traversal area/);
+    const compiled = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+    assert.equal(compiled.lifts?.length ?? 0, 0);
+    assert.ok(compiled.sight_obstacles.some((o) => o.solid));
+    assert.ok(compiled.motion_data.layers.flat().length >= 2);
+    assert.ok(compiled.warnings);
+    assert.ok(
+      compiled.warnings.some(
+        (w) => w.includes("traversal omitted") && w.includes("connected traversal area"),
+      ),
+    );
+  });
 
 test("changing stair barriers follow translated and rotated traversal areas", () => {
   for (const rotation of [0, 90, 180, 270]) {
@@ -2096,6 +2101,45 @@ test("joined lift assets retain multiple height planes in one traversal sector",
     /type and direction disagree/,
   );
 });
+test("compound climbs retain their piecewise floors after rotation and copying", () => {
+  for (const type of [2, 3] as const) {
+    for (const rotation of [0, 37, 90, 180]) {
+      const { document, assets } = compoundLiftCompilerFixture();
+      for (const asset of assets.values())
+        for (const lift of asset.gameplay?.lifts ?? []) lift.type = type;
+      const groups = [...document.groups];
+      const parts = [...document.objects];
+      for (const group of groups) {
+        group.transform.rot_deg = rotation;
+        group.transform.dx = 800;
+        group.transform.dy = 800;
+        document.groups.push({
+          id: `${group.id}-copy`,
+          transform: { ...group.transform, dx: 1800 },
+        });
+      }
+      for (const part of parts.filter((part) => part.group))
+        document.objects.push({
+          ...structuredClone(part),
+          id: `${part.id}-copy`,
+          group: `${part.group}-copy`,
+        });
+      const compiled = compileAssetGameplay(document, assets, [0, 0, 4000, 4000]);
+      assert.equal(
+        compiled.lifts!.length,
+        2,
+        JSON.stringify({ type, rotation, warnings: compiled.warnings }),
+      );
+      assert.notEqual(compiled.lifts![0]!.motion_area_index, compiled.lifts![1]!.motion_area_index);
+      for (const lift of compiled.lifts!) {
+        assert.equal(lift.lift_type, type);
+        assert.equal(lift.physical_navigation?.floor_patches?.length, 2);
+        assert.equal(lift.doors.length, 2);
+      }
+    }
+  }
+});
+
 test("compound lifts rotate and duplicate with independent geometric joins", () => {
   const { document, assets } = compoundLiftCompilerFixture();
   const groups = [...document.groups];

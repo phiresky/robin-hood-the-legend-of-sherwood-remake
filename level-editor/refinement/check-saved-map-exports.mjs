@@ -65,7 +65,7 @@ for (const file of files) {
     });
     console.log(`${map}: compiled`);
   } catch (error) {
-    results.push({ map, error: String(error) });
+    results.push({ map, error: String(error), stack: error.stack });
     console.error(`${map}: ${error}`);
   }
   await report(false);

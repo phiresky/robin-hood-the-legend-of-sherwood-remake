@@ -76,7 +76,7 @@ fn edge_on_physical_stair_fixture() -> serde_json::Value {
     document
 }
 
-fn joined_physical_stair_fixture() -> serde_json::Value {
+pub(super) fn joined_physical_stair_fixture() -> serde_json::Value {
     let mut document = physical_stair_fixture();
     let geometry = &mut document["asset_geometry"];
     let compiled: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
@@ -142,60 +142,65 @@ fn joined_physical_stair_gates_follow_both_floors_and_live_barriers() {
 
 #[test]
 fn joined_physical_stair_admission_rejects_wrong_coverage_and_seam_heights() {
-    let document = joined_physical_stair_fixture();
-    let lift: crate::level_data::RawLift =
-        serde_json::from_value(document["asset_geometry"]["lifts"][0].clone()).unwrap();
-    let area: crate::level_data::RawMotionArea =
-        serde_json::from_value(document["asset_geometry"]["motion_data"]["layers"][2][0].clone())
-            .unwrap();
-    let physical = lift.physical_navigation.as_ref().unwrap();
-    physical.validate(&lift, &area).unwrap();
-    let mut changed = physical.clone();
-    changed.floor_patches[1].plane[2] += 1.0;
-    assert!(
-        changed
-            .validate(&lift, &area)
-            .unwrap_err()
-            .contains("shared boundary")
-    );
-    let mut changed = physical.clone();
-    for patch in &mut changed.floor_patches {
-        for point in &mut patch.boundary {
-            if point[1] == 400.0 {
-                point[1] = 390.0;
+    for kind in [1, 2, 3] {
+        let mut document = joined_physical_stair_fixture();
+        document["asset_geometry"]["lifts"][0]["lift_type"] = kind.into();
+        let lift: crate::level_data::RawLift =
+            serde_json::from_value(document["asset_geometry"]["lifts"][0].clone()).unwrap();
+        let area: crate::level_data::RawMotionArea = serde_json::from_value(
+            document["asset_geometry"]["motion_data"]["layers"][2][0].clone(),
+        )
+        .unwrap();
+        let physical = lift.physical_navigation.as_ref().unwrap();
+        physical.validate(&lift, &area).unwrap();
+        let mut changed = physical.clone();
+        changed.floor_patches[1].plane[2] += 1.0;
+        assert!(
+            changed
+                .validate(&lift, &area)
+                .unwrap_err()
+                .contains("shared boundary")
+        );
+        let mut changed = physical.clone();
+        for patch in &mut changed.floor_patches {
+            for point in &mut patch.boundary {
+                if point[1] == 400.0 {
+                    point[1] = 390.0;
+                }
             }
         }
+        assert!(
+            changed
+                .validate(&lift, &area)
+                .unwrap_err()
+                .contains("walking boundary")
+        );
+        let mut changed = physical.clone();
+        changed.floor_patches[0].boundary = vec![
+            [390., 300.],
+            [395., 300.],
+            [395., 301.],
+            [395.01, 301.],
+            [395.01, 300.],
+            [400., 300.],
+            [400., 400.],
+            [390., 400.],
+        ];
+        assert!(
+            changed
+                .validate(&lift, &area)
+                .unwrap_err()
+                .contains("walking boundary")
+        );
+        let restored: crate::level_data::RawLift =
+            bitcode::decode(&bitcode::encode(&lift)).unwrap();
+        restored
+            .physical_navigation
+            .as_ref()
+            .unwrap()
+            .validate(&restored, &area)
+            .unwrap();
     }
-    assert!(
-        changed
-            .validate(&lift, &area)
-            .unwrap_err()
-            .contains("walking boundary")
-    );
-    let mut changed = physical.clone();
-    changed.floor_patches[0].boundary = vec![
-        [390., 300.],
-        [395., 300.],
-        [395., 301.],
-        [395.01, 301.],
-        [395.01, 300.],
-        [400., 300.],
-        [400., 400.],
-        [390., 400.],
-    ];
-    assert!(
-        changed
-            .validate(&lift, &area)
-            .unwrap_err()
-            .contains("walking boundary")
-    );
-    let restored: crate::level_data::RawLift = bitcode::decode(&bitcode::encode(&lift)).unwrap();
-    restored
-        .physical_navigation
-        .as_ref()
-        .unwrap()
-        .validate(&restored, &area)
-        .unwrap();
 }
 
 fn physical_walker(

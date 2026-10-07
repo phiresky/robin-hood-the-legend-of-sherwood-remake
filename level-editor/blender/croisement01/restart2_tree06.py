@@ -20,7 +20,7 @@ def main():
  parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,default=1);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);dest=OUT/f'restart2/tree06-v{args.revision}';dest.mkdir(exist_ok=False);acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0;working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-06';wood_node='scenery-tree06-wood';crown_node='foliage-tree06-inferred-crown';name='Northwest Slender Forked Tree'
  native=json.loads((OUT/'baseline/masks/manifest.json').read_text())
  for row in native['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
- row=next(r for r in native['masks'] if r['index']==6);assert row['obstacle_indices']==[];alpha=Image.open(row['png']).convert('L');wood_source=OUT/('restart2/tree06-wood-source-v2' if args.revision>=7 else 'restart2/tree06-wood-source-v1');wood=Image.open(wood_source/'wood-domain.png').convert('L')
+ row=next(r for r in native['masks'] if r['index']==6);assert row['obstacle_indices']==[];alpha=Image.open(row['png']).convert('L');wood_source=OUT/('restart2/tree06-wood-source-v3' if args.revision>=10 else ('restart2/tree06-wood-source-v2' if args.revision>=7 else 'restart2/tree06-wood-source-v1'));wood=Image.open(wood_source/'wood-domain.png').convert('L')
  wood.save(dest/'wood-domain.png');ImageChops.subtract(alpha,wood).save(dest/'deferred-domain.png');native['masks'].append(dict(row,index=206,png=str(dest/'wood-domain.png')))
  base_y=-428/SIN
  def point(x,y):return Vector((x,base_y,(428-y)/COS))
@@ -54,8 +54,14 @@ def main():
   coords=[point(x,y) for x,y,r in branch]+[Vector((branch[-1][0],base_y,690)),Vector((branch[-1][0]+(-40 if label.startswith('Left') else 40),base_y,780))];part=tube(label,coords,[r for x,y,r in branch]+[4,1]);domain=np.asarray(wood)>0
   for sy in range(domain.shape[0]):domain[sy]&=((xx<367) if label.startswith('Left') else (xx>397))&(sy<140)
   fit_native_width(part,domain,'west-cut',x0=334,y0=0);union(body,part)
- root_trace=[(389,365,7),(399,377,5),(411,404,3),(413,423,.5)];root_centers=[point(387,345)]+[root_center(x,y,r) for x,y,r in root_trace];root=tube('Observed descending slender root',root_centers,[9]+[r for x,y,r in root_trace]);domain=np.asarray(wood)>0;domain[:360]=False
+ root_trace=([(389,365,20),(399,377,14),(411,404,3),(413,423,.5)] if args.revision>=10 else [(389,365,7),(399,377,5),(411,404,3),(413,423,.5)])
+ root_centers=[point(387,345)]+[root_center(x,y,r) for x,y,r in root_trace];root=tube('Observed descending rooted flare',root_centers,[22 if args.revision>=10 else 9]+[r for x,y,r in root_trace]);domain=np.asarray(wood)>0;domain[:345 if args.revision>=10 else 360]=False
  tube_helpers.fit_short_root(root,domain,x0=334);union(body,root)
+ if 9<=args.revision<10:
+  # A short continuous flare occupies the fern-hidden basal domain; the thin
+  # observed descending root remains distinct farther down the bank.
+  flare=tube('Inferred continuous fern-hidden basal flare',[point(386,352),point(386,359),point(386,365),point(387,370)],[13,17,21,23])
+  union(body,flare)
  # The native source includes a thin crossing twig between the observed forks.
  branch_trace=[(357,109),(376,104),(396,101),(410,98)]
  twig=tube('Observed crossing twig',[point(x,y)+Vector((0,-COS,SIN))*15 for x,y in branch_trace],[1.8,2.2,1.8,1]);union(body,twig)
@@ -83,10 +89,11 @@ def main():
   skipped.append(dict(point=list(hit),node=owners[index],normal=list(normal)));origin=hit-ray*.01
  anchor_owner=owners[index]
  shift=ray*((hit-anchor).dot(ray)+.2)
+ if args.revision>=9:shift+=Vector((0,20/math.tan(math.radians(35)),-20))
  for target in [obj,crown]:
   for vertex in target.data.vertices:vertex.co+=shift
   target.data.update()
- (dest/'root-centerline.json').write_text(json.dumps(dict(method='Full swept wood tube along a gently descending forward root centerline; native screen trace fixed, soil extension separately required',local_centers=[list(p) for p in root_centers],future_shift=list(future_shift),support_is_archived_hypothesis=True),indent=2)+'\n')
+ (dest/'root-centerline.json').write_text(json.dumps(dict(method='Full swept wood tube along a gently descending forward root centerline; native screen trace fixed, soil extension separately required',local_centers=[list(p) for p in root_centers],future_shift=list(shift),support_is_archived_hypothesis=True),indent=2)+'\n')
  (dest/'support-placement.json').write_text(json.dumps(dict(hit=list(hit),owner=anchor_owner,shift=list(shift),skipped=skipped,claim='Private placement only; contact review required'),indent=2)+'\n')
  keep={o for o in working.all_objects if o.type=='MESH' and (o in [obj,crown] or o.get('source_node') in terrain_nodes)}
  for other in list(bpy.data.objects):

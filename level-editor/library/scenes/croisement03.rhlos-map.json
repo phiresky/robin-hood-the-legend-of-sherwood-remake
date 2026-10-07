@@ -628,7 +628,7 @@
     {
       "id": "croisement03-fern-35",
       "descriptor": "3d-assets/croisement03/croisement03-fern-35/asset.json",
-      "descriptor_sha256": "168adbba1be1159fee6bf74b24001da52d004413425b41b3aed06b97349db303",
+      "descriptor_sha256": "1d4278e75e5683850c91f379a55592bb3c32ea723129e12c70cf73d35a29b4e9",
       "model": "3d-assets/croisement03/croisement03-fern-35/model.glb",
       "model_sha256": "49db5543100f5a28305b3ef72e6f3772458aac36ffe12d82c42c4306db8f3c55",
       "model_scene": "default"
@@ -636,7 +636,7 @@
     {
       "id": "croisement03-fern-76",
       "descriptor": "3d-assets/croisement03/croisement03-fern-76/asset.json",
-      "descriptor_sha256": "bf7e507c1f9a9bf0883105b803ae3365e71bed0f828e4cb965207f7d21ad5ffc",
+      "descriptor_sha256": "9e6b01d3b32db8624ac2d672c5a11d6c172565ff64a52ff3f6eac20b0c1d63d6",
       "model": "3d-assets/croisement03/croisement03-fern-76/model.glb",
       "model_sha256": "a0a2e9d92379486779aac3bc2bb678daedfe652b805260dc83ed8dd5e3954827",
       "model_scene": "default"
@@ -652,7 +652,7 @@
     {
       "id": "croisement03-stream-fallen-log",
       "descriptor": "3d-assets/croisement03/croisement03-stream-fallen-log/asset.json",
-      "descriptor_sha256": "d1446212c8086c780a6601fcaea1f1648a6f4c15464f5cbe1766f34377a3df52",
+      "descriptor_sha256": "e9fdf5b170269be7d716b848f7b20287f7153503f0103f7c7ea3aca6047836f3",
       "model": "3d-assets/croisement03/croisement03-stream-fallen-log/model.glb",
       "model_sha256": "de741427559185cf70fda9ddbeede614c2aceecf2368f7af2f7b2266859a0920",
       "model_scene": "default"

@@ -472,8 +472,43 @@ fn walk_exported_lift_with_tick(
                 .and_then(|(id, index)| engine.seq().get_element(id, index))
                 .map(|element| &element.orders);
             let world_position = engine.ent(owner).position_iface().get_position();
+            let physical_support = assets
+                .navigation
+                .physical_stairs
+                .get(&sector.get())
+                .zip(engine.physical_stair_door(
+                    &assets,
+                    crate::gate::DoorIndex::new(exit as u32).unwrap(),
+                ))
+                .map(|(stair, (_, _, endpoint))| {
+                    let from = [world_position.x, world_position.y];
+                    let to = [endpoint.inside[0], endpoint.inside[1]];
+                    let half = engine.ent(owner).position_iface().get_half_diagonal();
+                    // Endpoint probes distinguish missing support from a corridor
+                    // that is too narrow. The tiny-footprint probe is diagnostic
+                    // only: it never replaces the actor's real movement query.
+                    [
+                        ("source", from, from, half),
+                        ("destination", to, to, half),
+                        ("route", from, to, half),
+                        (
+                            "near-point route",
+                            from,
+                            to,
+                            crate::coordinates::MoveBoxHalfDiagonal { x: 1.001, y: 1.001 },
+                        ),
+                    ]
+                    .map(|(name, from, to, half)| {
+                        (
+                            name,
+                            stair
+                                .route(&engine.world.pathfinder, from, to, half)
+                                .map(|route| route.map(|points| points.len())),
+                        )
+                    })
+                });
             return Err(format!(
-                "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}, world={world_position:?}, orders={selected_orders:?}",
+                "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}, world={world_position:?}, orders={selected_orders:?}, physical_support={physical_support:?}",
                 element.layer(),
                 leave.point_out,
             ));
@@ -549,6 +584,62 @@ fn placed_climbs_support_complete_actor_routes() {
                     Ok(true),
                     "lift={lift_type}, high={high_type}, degrees={degrees}, entrance={entrance}"
                 );
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires ROBIN_CLIMB_RHS"]
+fn joined_climbs_follow_both_floors_and_live_barriers() {
+    let sprite = complete_climb_sprite();
+    for kind in [2, 3] {
+        let mut document = super::compiled_lifts::joined_physical_stair_fixture();
+        document["asset_geometry"]["lifts"][0]["lift_type"] = kind.into();
+        let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+        let sim = crate::sim_rng::test_context();
+        for (step, open) in [false, true, false, true].into_iter().enumerate() {
+            if step > 0 {
+                engine.apply_patch(
+                    TickCtx::new(&sim, &assets),
+                    crate::patch::PatchIndex::new(0).unwrap(),
+                );
+            }
+            for (entrance, exit) in [(0, 1), (1, 0)] {
+                let mut visited = [false; 2];
+                let result =
+                    walk_exported_lift_with_tick(
+                        engine.clone(),
+                        assets.clone(),
+                        entrance,
+                        exit,
+                        Some(&sprite),
+                        |engine, assets, owner| {
+                            let position = engine.ent(owner).position_iface().get_position();
+                            let sector = engine.ent(owner).element_data().sector().unwrap().get();
+                            if let Some(floor) = assets.navigation.physical_stairs.get(&sector) {
+                                assert!(floor.contains_runtime_position([
+                                    position.x, position.y, position.z
+                                ]));
+                                visited[usize::from(position.x >= 400.)] = true;
+                            }
+                        },
+                    );
+                if open {
+                    assert_eq!(result, Ok(true), "kind={kind}, {entrance}->{exit}");
+                    assert_eq!(
+                        visited,
+                        [true, true],
+                        "both authored planes must be traversed"
+                    );
+                } else {
+                    assert!(
+                        result
+                            .as_ref()
+                            .is_err_and(|error| error.starts_with("lift route stalled")),
+                        "closed joined climb kind={kind}: {result:?}"
+                    );
+                }
             }
         }
     }

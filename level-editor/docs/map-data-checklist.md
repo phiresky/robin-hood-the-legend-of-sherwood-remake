@@ -216,21 +216,205 @@ passes sixteen stairs, eight climbs and eleven controls. Published geometry
 exactly matches tested candidates and all ten scenes reopen; rendered actor
 integration remains unverified.
 
-Landing validation now excludes permanently blocked portions of shared stair
-edges on either the flight or landing while retaining their collision.
-Switchable blockers and uncovered edge portions still require matching heights.
-Focused regressions pass, but the
-three-entrance Sherwood candidate still exposes an incompatible unblocked edge;
-its traversal remains unresolved. Generated collinear clipping holes no longer
-disable physical navigation at 37 degrees. The latest unpublished candidate
-emits physical navigation at all eight placements but fails all 48 actor routes,
-including the twelve routes previously using projected navigation.
+Landing binding retains a height-matched doorway when the same platform also
+overlaps a different end of the flight in XY. Incompatible contacts are separated
+from that landing's foot support without changing real collision or accepting
+a height gap at the doorway. Receiving-floor holes and live blockers are removed
+from their own landing before combining support, so an overhead platform cannot
+erase a valid lower floor. A regression proves that an upper overhang alone
+cannot support the lower entrance, a real ground landing restores the route,
+and its live blocker still stops movement. All 23 navigation and 30 physical-lift
+regressions pass, and the game binary builds.
 
-The current library-wide audit (`gameplay-coverage-ieNAcG`) finds 67 of 1,279
-indexed assets without gameplay definitions. Of these, 39 are placed: 35 in
-Croisement02, one in Croisement01, and Croisement03's ferns 35/76 and stream
-fallen log. The timber bridge now has a published draft definition. These counts
+The three-entrance Sherwood candidate remains unpublished and unresolved.
+Before these runtime corrections, all 48 routes failed across eight placements.
+Tracing found both upper landings rejected because another shared edge was
+278 units below them. The corrections restore landing support, but all six
+unrotated routes still fail for both the baseline (`local-stair-placements-tDGWb5`)
+and shorter-contact candidate (`local-stair-placements-Hk8MNp`). The latter now
+supports the lower entrance and right upper endpoint; the left contact and
+actor-sized route through the climbing surface still need correction. Near-point
+diagnostic paths do not certify an actor-sized route. Complex support queries
+also remain expensive: these six-route audits take roughly two minutes.
+No candidate asset metadata was published from this investigation.
+
+Mesh alignment audit `climb-mesh-audit-Ol6GV6` loads the hash-checked live oak model
+and staged climbing surface. Its plane intersects only two of the 28 selected
+rung meshes. Signed normal offsets of rung bounding-box centres range from
+about +4.92 to -12.01 units across the ladder, so this is not a uniform contact
+offset. The surface needs mesh-based reauthoring as well as actor-sized route
+validation; relaxing endpoint checks alone would not establish usable climbing.
+These measurements are alignment diagnostics, not traversal certification.
+Reproduce from `level-editor` with
+`node refinement/audit-climb-mesh.mjs sherwood-ladder-oak-platform gameplay-volume-101-lift rung work/map-compile/three-door-oak-oBXE0a`.
+The helper accepts other assets, lift IDs and mesh-node patterns and records
+descriptor/model/staged-data hashes in its report.
+
+The compiler and native loader now accept connected piecewise floors for ladders
+and climbable walls, removing the previous single-plane restriction. Compiler
+regressions cover both types at 0, 37, 90 and 180 degrees with independent copies.
+A complete-sprite native fixture crosses both floor planes in both directions:
+eight open routes pass and eight closed-barrier requests reject across apply/reset
+cycles. Admission tests still reject mismatched seams and missing floor coverage
+for stairs, ladders and walls. This enables asset-local curved climbing definitions
+where each piece is a valid height surface; it does not resolve vertical surfaces,
+the oak's mesh/contact reconstruction, or its actor-footprint clearance failures.
+The full compiler-to-runtime placement audit (`compound-climb-placements-WPU7G9`)
+passes all 72 directed actor routes through 18 exported descriptors. Of these,
+64 cover connected-plane climbs across 16 descriptors: both
+climb types, the four rotations, elevations 0/40, and two independent assemblies
+per map. Each assembly retains both authored planes. Eight further routes cover
+copied ladder/wall placements whose screen projection pinches apart while their
+physical floor remains connected. The compiler now uses verified physical
+connectivity for all three lift types in that case. Real permanent collision cuts
+still reject traversal, retaining collision and warnings during best-effort export.
+Generate these editor-only
+fixtures with `node refinement/check-compound-climb-placements.mjs`, then run
+`exported_climbs_support_complete_actor_routes` with `ROBIN_ASSET_MAP_DIAGNOSTICS`
+pointing to the reported directory and `ROBIN_CLIMB_RHS` to a complete actor sprite.
+This verifies native descriptor traversal; browser ZIP and rendered checks remain
+separate gates.
+
+Fresh published York and Sherwood exports (`saved-map-exports-vDlOcb`) pass all
+132 native stair routes, 50 climb routes and six control apply/reset checks after
+the runtime corrections, including the final contact-separation geometry.
+Their rendered integration remains unverified.
+
+The current library-wide audit (`gameplay-coverage-S4Wdmj`) finds 28 of 1,279
+indexed assets without gameplay definitions. None is placed in the saved scenes.
+The timber bridge, both ferns, fallen log, upright fences 94/95 and supplemental
+wood 09/44 and Croisement01 tree 03 have published draft definitions. These counts
 reflect the current asset inventory, not gameplay certification.
+
+The asset-only physical-mesh preflight (`physical-mesh-audit-dpmilw`) checks
+welded edge connectivity before collision authoring. Supplemental wood 09 has
+three closed shells, wood 44 has one, the fallen log has one, and tree 03's wood
+has ten. This proves edge topology only: self-intersections, nested shells,
+collision decomposition and gameplay behavior remain unchecked. Wood 44 alone
+has 601,032 triangles, so a direct per-face conversion would need substantial
+size reduction. Both upright fences contain zero-area triangles; their geometry
+needs cleanup that preserves rail gaps before solid conversion. Tree 03's crown
+is open and must not silently become a solid. No new gameplay definitions were
+published from this preflight. Reproduce it with
+`node refinement/audit-physical-meshes.mjs <asset-id> ...` from `level-editor`.
+
+Tree 03 now has a published physical and crown-occlusion draft.
+The error-budget simplifier produces nonmanifold edges at both 0.5 and 0.1
+units; the latter has no coincident float32 positions. Exact opposite-face
+removal also leaves invalid edges, so those candidates remain rejected.
+The alternative `--caps --decimate=0.01` audit (`physical-mesh-audit-7ARdDA`)
+uses Blender collapse decimation for shells above 5,000 triangles and retains
+smaller shells unchanged. The main wood shell reduces from 130,796 to 1,306
+triangles; all ten shells pass closure and cap-decomposition checks, producing
+3,732 capped pieces. Bidirectional vertex, edge-midpoint and face-centroid
+samples measure 1.3973 units source-to-candidate and 0.8884 units
+candidate-to-source (392,390 and 3,920 samples). These are sampled deviations,
+not certified maximum contact errors.
+The audit saves its physical input, candidate and deviation report; visual
+models remain unchanged. `BLENDER_BIN` can select the offline Blender binary.
+
+The tree definition retains 3,698 capped pieces after recording 34 numerical
+slivers with total footprint area 0.00000010782893855813159 square game units.
+Its open crown supplies 1,800 opaque, double-sided mask triangles independently
+of physical wood; no crown solid is invented. The asset-local root receiving
+probes allow up to one unit of embedding, accommodating a 0.7068-unit difference
+in saved Croisement01 without a scene-specific compiler rule. Half-unit burial
+binds; floating and 1.5-unit burial reject. The canopy front envelope remains an
+authored approximation, and steep receiving terrain needs review.
+
+The candidate (`wood-gameplay-wCPFLA`) passes ten rotated/elevated native
+construction cases, twenty movement checks and 1,000 sight/projectile checks.
+Full Croisement01 (`saved-map-exports-FeXcnT`) constructs eight areas, 3,790 sight
+obstacles, sixteen doors, thirteen jump pairs, 4,180 grid blocks and 76 elevation
+boundaries; all six controls apply/reset. Both masks remain present, with no
+missing-definition or missing-receiver warning. One collapsed movement hole
+warning remains. Publication backup: `tree-gameplay-publish-wCPFLA`. Fresh
+published geometry (`saved-map-exports-R4zaCG`) exactly matches the tested
+descriptor, and all ten scenes reopen. Dense collision cost and rendered
+integration remain unverified; this is not full gameplay certification.
+
+The optional `--caps` audit converts a closed shell into convex pieces with
+independent planar bottom/top caps, retaining multiple solid intervals and the
+air between them. It rejects crossing/coincident caps and verifies footprint
+coverage and enclosed volume. Rotated/elevated sloped solids, concave corners,
+stacked rails and invalid intersecting caps have focused tests. Retaining convex
+cap intersections as polygons reduces the fallen log from 1,889 to 1,120 pieces
+without adding triangle seams (`physical-mesh-audit-tCHJKA`). The audit limits conversion
+to 5,000 triangles per shell; dense wood needs an authored physical mesh before
+using this decomposition.
+
+The fallen log now has a published physical draft with 1,103 wood volumes.
+Authoring removed seventeen numerical slivers with total footprint area
+0.00000025926151485335255 square game units, recorded in its review and warning.
+Ten rotated/elevated exports (`log-gameplay-8tyX7n`) pass native construction,
+twenty movement checks and 520 sight/projectile checks. Full Croisement03
+(`saved-map-exports-T9OxL9`) constructs eleven areas, 1,736 sight obstacles,
+fifteen doors, ten jump pairs and 69 elevation boundaries; all nine tested
+controls apply/reset. Fresh published output (`saved-map-exports-VL3r0K`)
+matches the tested descriptor except its additional draft warning. Movement
+compilation still omits 39–60 collapsed grid fragments per isolated placement
+and 69 in the full scene. Dense collision cost, rendered behavior and any
+traversal surface/jump remain unverified. Publication backup:
+`log-gameplay-publish-8tyX7n`; authoring tool:
+`refinement/stage-wood-gameplay.mjs`. All ten saved scenes reopen after publication.
+
+Fence authoring now explicitly records collinear seam faces while retaining
+their edges for closed-shell validation; open surfaces and repeated vertices
+still reject. The two upright fences each contain one such seam face. Their
+unsimplified shells also have intersecting cap faces (`physical-mesh-audit-9e2Z1l`).
+Independent shell simplification with a 0.1-unit approximate error budget
+removes those intersections. This error is an appearance metric, not a certified
+maximum collision displacement. Convex half-plane subtraction avoids numerical
+polygon-sweep failures while retaining air gaps, footprint coverage and enclosed
+volume (`physical-mesh-audit-Lok9hk`). No rail/post components are pruned or
+combined into a whole-fence hull.
+
+Upright fences 94/95 have published draft definitions with 515/1,133 wood volumes
+(`wood-gameplay-DSnD9U`, `wood-gameplay-Wc4Vpa`). Across twenty rotated/elevated
+placements, native construction, forty movement checks and 2,000 sight/projectile
+checks pass, including 960 gap checks. Authoring records 39/67 omitted numerical
+slivers with total footprint areas 0.00000018181093644842008 and
+0.00000037805480106778876 square game units. Dense collision, integer-grid
+fragmentation, rendered contact and traversal authoring still need review.
+Publication backup: `fence-gameplay-publish-GPs4kN`.
+
+Movement-control coverage now uses the same fixed-precision subtraction recovery
+as permanent collision. This fixes a full-scene polygon-sweep failure when the
+fences meet existing navigation, while retaining state bits and permanent
+exclusions. Full Croisement02 (`saved-map-exports-E6S3PE`) constructs five areas,
+1,802 sight obstacles, five doors, four jump pairs, 8,575 grid blocks and 57
+elevation boundaries; all nine controls apply/reset. It still warns about 741
+collapsed movement fragments, seven collapsed holes, seven repaired corners,
+the missing wood 09/44 definitions and shrub 77's unavailable mask receiver.
+These warnings and the unverified rendered behavior remain parity work.
+Fresh published Croisement02 (`saved-map-exports-WtURUm`) exactly matches the
+native-tested descriptor, and all ten saved scenes reopen after publication.
+
+Supplemental wood 09/44 now have published asset-only physical drafts. Wood 09's
+10,116 triangles simplify to 776 across three closed shells with a maximum
+reported approximate error of 0.099032 units (`physical-mesh-audit-FyXkPe`).
+Its definition retains 2,083 capped volumes after recording 29 numerical slivers
+with total footprint area 0.00000024031062583832577 square game units.
+Wood 44's 601,032-triangle shell produces 13,687 capped pieces at a 0.1-unit
+budget; a 0.5-unit budget reduces it to 676 triangles and 1,930 capped pieces
+without discarded cap fragments (`physical-mesh-audit-yIE4Rh`). Its reported
+approximate error is 0.4981 units. These metrics do not certify maximum physical
+displacement or rendered contact; the visual meshes remain unchanged.
+
+Both candidates (`wood-gameplay-G6DBB5`, `wood-gameplay-ZhF0mn`) pass twenty
+rotated/elevated native construction cases, forty movement checks and 2,000
+sight/projectile checks. Full Croisement02 (`saved-map-exports-7GAUMW`) constructs
+five areas, 5,815 sight obstacles, five doors, four jump pairs, 8,575 grid blocks
+and 57 elevation boundaries; all nine controls apply/reset. Missing-definition
+warnings disappear from this scene. It still reports 2,165 collapsed movement
+fragments, seven collapsed holes, seven repaired corners and shrub 77's missing
+mask receiver. Dense collision cost, those warnings and rendered integration
+remain open.
+Publication backup: `wood-gameplay-publish-1Q743w`; both published definitions
+exactly match their tested candidates. Fresh published Croisement02
+(`saved-map-exports-7BFBAu`) exactly matches the native-tested descriptor, and
+all ten saved scenes reopen. Tree 03 has separate opaque wood and open crown
+meshes; its crown must not be treated as a closed physical solid.
 
 Croisement02 ground plants 111–123 now have published draft asset-derived mask
 definitions. All 130 rotated/elevated exports construct native geometry, preserve
@@ -242,7 +426,7 @@ Mask authoring now preserves mixed material sidedness after alpha clipping.
 Shrub 55 passes ten native construction checks, but its browser review exposes
 small mask/texture disagreements, including isolated discrepancies at 0° and
 90°. It is published as a draft with an occlusion-review warning; rendered parity
-is not established. The current saved Croisement02 scene compiles using published
+is not established. That stage compiled Croisement02 using published
 definitions with fourteen masks; native construction and nine control apply/reset
 checks pass. These construction checks do not certify a rendered playthrough.
 
@@ -282,20 +466,19 @@ finds that 32 of these assets have every part
 represented in newer gameplay-bearing assets, often larger state assemblies.
 Their standalone definitions still need restoring with local control dependencies
 and coordinate frames; matching parts alone does not make them interchangeable.
-The four Croisement03 assets and two old ground assets have no component-owner
-match. Definition counts alone do not verify masks, collision or traversal.
-The two fern candidates now derive typed mask coverage from their own GLBs,
+At that audit, the four Croisement03 assets and two old ground assets had no
+component-owner match. Definition counts alone do not verify masks, collision or traversal.
+The two ferns now have published compact mask definitions derived from their own GLBs,
 including clamped alpha sampling. Twenty rotated/elevated exports and twenty
 wrong-height receiver rejections pass; native loading retains their bitmaps and
 layer registration. Their closed canopy masking boundaries still need rendered
-character/projectile review, so they remain unpublished and are still counted
-as missing definitions.
+character/projectile review; publication retains explicit draft warnings.
 Rendered GLB/sprite compositing exposed masks covering invisible backfaces.
 Explicit one-sided mask coverage now removes those faces after placement. Both
 canonical fern views have zero masked transparent pixels in the browser
 diagnostic; quarter-turn views retain 6–17 mismatches. Native construction still
-passes all twenty exports. Remaining rasterization and in-game review keep these
-candidates unpublished.
+passes all twenty exports. Remaining rasterization and in-game review prevent
+claiming rendered parity for these drafts.
 Two-way coverage checks also find 5–12 rendered pixels missing from the rotated
 masks. Some discrepancies are isolated beyond a one-pixel shared edge; the
 browser diagnostic now reports failure instead of treating these as edge noise.
@@ -303,6 +486,18 @@ Full Croisement03 compilation with these staged definitions passes native
 geometry construction and all nine state apply/reset checks. Best-effort export
 now deduplicates repeated draft warnings without changing source assets or
 relaxing geometry validation; strict validation still rejects repeated warnings.
+The latest compact fern stage (`fern-gameplay-BL4YZw`) passes twenty placement
+checks and native construction. Its full-scene export retains three masks,
+including both ferns, and all nine transition checks pass. Shrubs 62–67 are also
+published as compact drafts after sixty placement/native checks and exact bitmap
+comparisons with their previous definitions. Croisement02 retains all six without
+receiver omissions and exports 28 masks.
+The next 25 foliage definitions are also published after 250 placement/native
+checks. The combined Croisement02 export contains 52 masks and passes native
+construction and nine transition checks. Shrub 77 is still omitted with a
+receiving-surface warning in that saved scene, although its isolated terrain
+placements pass. Rendered bitmap edges and approximate canopy boundaries remain
+open; definition presence is not gameplay certification.
 The Croisement03 timber bridge was developed from an asset-only deck candidate.
 Ten rotated/elevated exports join its two end edges to matching terrain and
 reject twenty one-unit height mismatches; all ten native construction checks

@@ -3,7 +3,7 @@
 //! The caller supplies a current collision snapshot, including connected landing
 //! support. Screen projection is deliberately absent from pathfinding.
 
-use geo::{Area, Contains, Intersects, LineString, Point, Polygon, Validation};
+use geo::{Area, BooleanOps, Contains, Intersects, LineString, Point, Polygon, Validation};
 use serde::{Deserialize, Serialize};
 
 use crate::coordinates::{MapBBox, MapPoint, MoveBoxHalfDiagonal};
@@ -194,35 +194,25 @@ impl BoundPhysicalStair {
         if self.landings.is_empty() {
             return geometry.route(source, goal, half_diagonal);
         }
-        let support = self
-            .landings
-            .iter()
-            .map(|landing| landing.boundary.clone())
-            .collect::<Vec<_>>();
-        let mut precise_obstacles = Vec::new();
+        let mut support = Vec::new();
         for landing in &self.landings {
-            precise_obstacles.extend(landing.holes.iter().cloned());
-            precise_obstacles.extend(
-                landing
-                    .obstacles
-                    .iter()
-                    .filter(|obstacle| {
-                        pathfinder.is_motion_obstacle_active(
-                            landing.layer,
-                            landing.area,
-                            obstacle.state,
-                        )
-                    })
-                    .map(|obstacle| obstacle.polygon.clone()),
-            );
+            // These exclusions belong to this receiving floor. Subtract before
+            // union so an upper platform's hole cannot erase real support from
+            // a lower landing at the same XY coordinates. Flight collision and
+            // dynamic neighbours remain authoritative global obstacles above.
+            let mut free = geo::MultiPolygon::from(vec![polygon(&landing.boundary)?]);
+            for hole in &landing.holes {
+                free = free.difference(&polygon(hole)?);
+            }
+            for obstacle in &landing.obstacles {
+                if pathfinder.is_motion_obstacle_active(landing.layer, landing.area, obstacle.state)
+                {
+                    free = free.difference(&polygon(&obstacle.polygon)?);
+                }
+            }
+            support.extend(free.0);
         }
-        geometry.route_with_precise_landing_support(
-            source,
-            goal,
-            half_diagonal,
-            &support,
-            &precise_obstacles,
-        )
+        geometry.route_with_landing_regions(source, goal, half_diagonal, &support, &[])
     }
 }
 

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import clipping from "polygon-clipping";
+import clipping, { type MultiPolygon } from "polygon-clipping";
 import type { NavigationPiece } from "./assemble-navigation-regions.ts";
 import {
   compileTransitionObstacles,
@@ -57,6 +57,66 @@ const blocker: PlacedTransitionBlocker = {
     ],
   ],
 };
+test("a subtraction kernel failure preserves control bits and excludes permanent collision", (t) => {
+  const difference = clipping.difference;
+  let fail = true;
+  t.mock.method(clipping, "difference", (...args: Parameters<typeof difference>) => {
+    if (fail) {
+      fail = false;
+      throw new Error("Unable to find segment in SweepLine tree");
+    }
+    return difference(...args);
+  });
+  const result = compileTransitionObstacles(
+    boundary,
+    [
+      [
+        [40, 0],
+        [60, 0],
+        [60, 100],
+        [40, 100],
+      ],
+    ],
+    [0, 0, 0],
+    [
+      {
+        ...blocker,
+        polygon: [
+          [0, 40],
+          [100, 40],
+          [100, 60],
+          [0, 60],
+        ],
+        holes: [],
+      },
+    ],
+    [],
+  );
+  assert.equal(result.pairs.get("gate"), 0);
+  assert.equal(result.initial.length, 2);
+  assert.ok(result.obstacles.every((obstacle) => obstacle.state_id === 1));
+  const expected: MultiPolygon = [
+    [
+      [
+        [0, 40],
+        [40, 40],
+        [40, 60],
+        [0, 60],
+      ],
+    ],
+    [
+      [
+        [60, 40],
+        [100, 40],
+        [100, 60],
+        [60, 60],
+      ],
+    ],
+  ];
+  const actual = result.obstacles.map((obstacle) => [obstacle.polygon.points]);
+  assert.deepEqual(clipping.xor(actual, expected), []);
+});
+
 test("terrain blockers follow slopes, retain holes and exclude floors beyond their reach", () => {
   const volume: PlacedTransitionBlocker = {
     ...blocker,

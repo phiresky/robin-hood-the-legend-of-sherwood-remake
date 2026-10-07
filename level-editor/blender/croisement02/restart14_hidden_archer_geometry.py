@@ -17,13 +17,16 @@ from tree_geometry import SIN,COS,RAY,material,one_sided,replace_mesh
 
 def main():
     audit=OUT/'restart14-hidden-archer/audit-v1'
-    root=OUT/'restart14-hidden-archer/candidate-v2';root.mkdir(exist_ok=False)
+    root=OUT/'restart14-hidden-archer/candidate-v3';root.mkdir(exist_ok=False)
     states=json.loads((audit/'source-authority.json').read_text())['profiles']
     measured=json.loads((audit/'substrate-first-hit-v1/report.json').read_text())['profiles']
     ray=np.array(RAY)
     for profile in states:
         number=int(profile['profile'][-2:])
         samples=next(p['samples'] for p in measured if p['profile']==profile['profile'])
+        bank_points=[p['world'][2] for p in samples if p['world'] and p['asset']=='croisement02-north-woodland-bank']
+        assert bank_points
+        bank_floor=max(bank_points)+.4
         for state in profile['states']:
             folder=root/f'profile-{number:02d}-{state["state"]}';folder.mkdir()
             source=Path(state['sprite_source']);assert sha(source)==state['sprite_sha256']
@@ -104,14 +107,14 @@ def main():
                 axis/=np.linalg.norm(axis);other=np.cross(normal,axis)
                 radius=float(rng.uniform(1.2,3.2));axis*=radius;other*=radius*.8
                 points=np.array([center-axis-other,center+axis-other,center+axis+other,center-axis+other])
-                if points[:,2].min()<.8:points+=ray*((.8-points[:,2].min())/SIN)
+                if points[:,2].min()<bank_floor:points+=ray*((bank_floor-points[:,2].min())/SIN)
                 projected=np.column_stack([points[:,0]-x0,-points[:,1]*SIN-points[:,2]*COS-y0])
                 l,t=np.floor(projected.min(0)).astype(int);r,b=np.ceil(projected.max(0)).astype(int)
                 depths=front_depth[max(0,t):min(h,b+1),max(0,l):min(w,r+1)]
                 finite=depths[np.isfinite(depths)]
                 if not len(finite):continue
                 retreat=max(0,float((points@ray).max()-finite.min()+1))
-                if (points-ray*retreat)[:,2].min()<.5:continue
+                if (points-ray*retreat)[:,2].min()<bank_floor-.05:continue
                 points-=ray*retreat
                 tx,ty=(n%columns)*tile,(n//columns)*tile
                 u,v=np.meshgrid((np.arange(tile)+.5)/tile,(np.arange(tile)+.5)/tile)
@@ -171,7 +174,7 @@ def main():
                 model_sha256=sha(folder/'model.blend'),source=str(source),source_sha256=state['sprite_sha256'],
                 source_top_left=[x0,y0],source_opaque_centers=int(alpha.sum()),shape=shape,packet_stride=8,
                 geometry_parameters=dict(native_fragment_size=2,fragment_ray_jitter=2.5,interior_attempts=count),
-                interior_leaf_pairs=len(pending),offmap_gray_leaf_pairs=offmap_pairs,ground_fringe_anchor_fragments=anchors,
+                interior_leaf_pairs=len(pending),offmap_gray_leaf_pairs=offmap_pairs,bank_interior_floor=bank_floor,ground_fringe_anchor_fragments=anchors,
                 world_min=pts.min(0).tolist(),world_max=pts.max(0).tolist(),
                 limitations=['Hidden leaves reuse only this endpoint native image; not observed rear artwork.',
                 'Ground fringe anchors are inferred geometry; complete support/contact checks still required.',
