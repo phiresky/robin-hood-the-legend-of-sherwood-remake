@@ -145,10 +145,17 @@ test("late physical attachment samples independent source cursor and never inter
   assert.equal(clocks.snapshot().find((r) => r.id === "animation7")!.tick, 13);
   clocks.advance(1, 1 / 25);
   assert.equal(layer.players.get("physical0")!.player.tick, 0);
+  clocks.setActive("sign0", false);
+  assert.equal(layer.players.get("physical0")!.player.object.visible, false);
+  clocks.advance(2, 1);
+  assert.equal(layer.players.get("physical0")!.player.tick, 0);
+  assert.equal(layer.players.get("physical1")!.player.object.visible, true);
+  clocks.setActive("sign0", true);
+  assert.equal(layer.players.get("physical0")!.player.object.visible, true);
   layer.selectAction("physical0", 211);
   assert.equal(layer.players.get("physical0")!.player.tick, 0);
   layer.clear();
-  clocks.advance(2, 1);
+  clocks.advance(3, 1);
   assert.equal(layer.players.size, 0);
   layer.dispose();
   clocks.dispose();
@@ -205,4 +212,33 @@ test("clear retires in-flight external player loads without publishing or retain
   assert.equal(layer.replacedTargets.size, 0);
   layer.dispose();
   clocks.dispose();
+});
+
+test("inactive physical targets use a bound initial frame or remain hidden without restarting their cursor", async () => {
+  const f = await fixture();
+  const sign = f.native.elements.find((e) => e.id === "sign0")!;
+  sign.initial_frame = { ...sign.frames[0]! };
+  const clocks = new SourceContractClockBinding();
+  await clocks.set(f.native, f.physical, f.source);
+  clocks.seek("sign0", 25);
+  clocks.setActive("sign0", false);
+  const layer = new MissionStateLayer(
+    () => {},
+    (e) => assert.fail(e),
+    () => ({ load: async () => model(), dispose() {} }),
+  );
+  await layer.set(f.physical, {} as FileSystemDirectoryHandle, f.source, clocks);
+  const player = layer.players.get("physical0")!.player;
+  assert.equal(player.object.visible, true);
+  assert.equal(player.tick, 0);
+  assert.equal(clocks.snapshot().find((r) => r.id === "sign0")!.tick, 25);
+  clocks.setActive("sign0", true);
+  assert.equal(player.tick, 25);
+  layer.dispose();
+  clocks.dispose();
+  sign.initial_frame.sha256 = "b".repeat(64);
+  await assert.rejects(
+    new SourceContractClockBinding().set(f.native, f.physical, f.source),
+    /Unbound inactive physical artwork/,
+  );
 });

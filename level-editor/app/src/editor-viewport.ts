@@ -836,7 +836,9 @@ export class EditorViewport {
         this.nativeArt.set(frozen.native, resolvedSource, nativeLibraryReader(library)),
         this.missionStates.set(frozen.physical!, library, resolvedSource, this.loopClocks),
       ]);
-      if (!current() || !ready) return false;
+      if (!current()) return false;
+      if (!ready || this.missionStates.players.size !== frozen.physical!.targets.length)
+        throw new Error("Physical loop resources did not all become ready");
       this.sampleLoopClocks();
       return true;
     } catch (error) {
@@ -893,10 +895,8 @@ export class EditorViewport {
   }
   setStatePresentationMode(mode: "physical" | "native-art") {
     if (mode === "physical") {
-      if (this.loopClocks.ready) {
-        this.loopClocks.setAllPlaying(false);
-        this.sampleLoopClocks();
-      } else this.currentNativeArt.setPlaying(false);
+      if (this.loopClocks.ready) this.sampleLoopClocks();
+      else this.currentNativeArt.setPlaying(false);
       if (this.stateDelivery.ready) this.stateDelivery.selectMode("physical-endpoint");
       this.stateDelivery.physical.visible = false;
       this.deliveryEndpointActive = false;

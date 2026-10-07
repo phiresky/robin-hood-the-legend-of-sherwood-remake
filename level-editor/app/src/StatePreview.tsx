@@ -68,7 +68,7 @@ export default function StatePreview(props: {
       props.viewport.setDeliveredStateMode("physical-endpoint");
       props.viewport.selectDeliveredEndpoint(familyId, view === "initial" ? "initial" : "applied");
     }
-    setPlaying(false);
+    if (!loopContract()) setPlaying(false);
   }
   async function choose(
     entry: MissionStateCatalogEntry,
@@ -305,8 +305,7 @@ export default function StatePreview(props: {
               disabled={(!!loopContract() && !loopContract()?.physical) || !!patchContract()}
               value={mode()}
               onChange={(event) => {
-                if (loopContract()) props.viewport.setNativeArtPlaying(false);
-                else props.viewport.setDeliveredStatePlaying(false);
+                if (!loopContract()) props.viewport.setDeliveredStatePlaying(false);
                 setMode(event.currentTarget.value as "art" | "initial" | "applied");
               }}
             >
