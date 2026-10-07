@@ -11,11 +11,36 @@ sys.path[:0]=[str(HERE),str(HERE.parents[1]/'refinement'),str(HERE.parents[1]/'r
 from catalog import OUT
 from evidence_io import sha,write_json
 from render_slots import acquire,release
-from restart2_check_sign_bend_ground import samples
 
 
-def main():
-    root=OUT/'restart8-hidden-archer-leaf-trial-v1'
+def samples(obj,with_records=False):
+    mesh=obj.data;mesh.calc_loop_triangles();points=[];records=[];images={}
+    world=np.array([obj.matrix_world@v.co for v in mesh.vertices])
+    for tri in mesh.loop_triangles:
+        mat=mesh.materials[tri.material_index]
+        shader=next(n for n in mat.node_tree.nodes if n.type=='BSDF_PRINCIPLED')
+        texture=shader.inputs['Alpha'].links[0].from_node
+        image=texture.image;w,h=image.size
+        uvname=texture.inputs['Vector'].links[0].from_node.uv_map
+        uv=mesh.uv_layers[uvname]
+        if image.name not in images:images[image.name]=np.array(image.pixels[:]).reshape(h,w,4)[:,:,3]
+        alpha=images[image.name];coords=np.array([uv.data[i].uv for i in tri.loops])*[w,h]
+        low=np.maximum(0,np.floor(coords.min(0)).astype(int));high=np.minimum([w,h],np.ceil(coords.max(0)).astype(int))
+        if np.any(high<=low):continue
+        yy,xx=np.mgrid[low[1]:high[1]:2,low[0]:high[0]:2]
+        q=np.column_stack([xx.ravel()+.5,yy.ravel()+.5]);a,b,c=coords
+        basis=np.column_stack([b-a,c-a])
+        if abs(np.linalg.det(basis))<1e-10:continue
+        bc=(q-a)@np.linalg.inv(basis).T
+        inside=(bc[:,0]>=0)&(bc[:,1]>=0)&(bc.sum(1)<=1)&(alpha[yy.ravel(),xx.ravel()]>=.5)
+        bary=np.column_stack([1-bc[inside].sum(1),bc[inside]])
+        points.extend(bary@world[list(tri.vertices)])
+        records.extend([(tri.polygon_index,) for _ in range(int(inside.sum()))])
+    return (np.array(points),records) if with_records else np.array(points)
+
+
+def main(root=None):
+    root=Path(root) if root else OUT/'restart8-hidden-archer-leaf-trial-v1'
     authority=OUT/'restart8-hidden-archer-receiver-audit-v1/current-first-hit-v1/report.json'
     hits=json.loads(authority.read_text())
     for folder in sorted(root.glob('profile-*')):
@@ -35,7 +60,7 @@ def main():
         packet_points={}
         for point,entry in zip(points,records):
             face=obj.data.polygons[entry[0]]
-            packet=int(min(face.vertices)//16)
+            packet=int(min(face.vertices)//record.get('packet_stride',16))
             packet_points.setdefault(packet,[]).append(point)
         packets=[]
         for packet,values in packet_points.items():

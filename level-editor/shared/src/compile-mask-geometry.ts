@@ -1,6 +1,7 @@
 import type { Mask, Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
 import { encodeMaskBitmap } from "./encode-mask-bitmap.ts";
+import { decodeMaskAlphaCoverage, type MaskAlphaCoverage } from "./mask-alpha-sampler.ts";
 
 export type MaskTriangle = [Vec3, Vec3, Vec3];
 
@@ -68,8 +69,10 @@ export function rasterizeMaskGeometry(
     "layer" | "mask_type" | "character_polyline" | "projectile_polyline" | "obstacle_indices"
   >,
   cullBackfaces = false,
+  alphaCoverage?: MaskAlphaCoverage,
 ): Mask[] {
   if (!triangles.length) throw new Error("Mask coverage requires triangles");
+  const acceptsAlpha = alphaCoverage && decodeMaskAlphaCoverage(alphaCoverage, triangles.length);
   // Scene/game matrix roundoff must not add a whole empty border row or column.
   const snap = (n: number) => (Math.abs(n - Math.round(n)) < 1e-7 ? Math.round(n) : n);
   const projected = triangles.map((triangle) =>
@@ -101,14 +104,18 @@ export function rasterizeMaskGeometry(
       const width = Math.min(1024, maxX - left),
         height = Math.min(1024, maxY - top);
       const pixels = new Uint8Array(width * height);
-      for (const triangle of projected) {
+      for (const [index, triangle] of projected.entries()) {
         const a = triangle[0]!,
           b = triangle[1]!,
           c = triangle[2]!;
         const area = cross(a, b, c[0], c[1]),
           sign = Math.sign(area);
         // Projected map Y points downward: front-facing mesh winding is negative.
-        if (Math.abs(area) < 1e-10 || (cullBackfaces && area > 0)) continue;
+        if (
+          Math.abs(area) < 1e-10 ||
+          (cullBackfaces && area > 0 && !alphaCoverage?.triangles[index]?.doubleSided)
+        )
+          continue;
         const x1 = Math.max(left, Math.floor(Math.min(a[0], b[0], c[0]))),
           x2 = Math.min(left + width, Math.ceil(Math.max(a[0], b[0], c[0]))),
           y1 = Math.max(top, Math.floor(Math.min(a[1], b[1], c[1]))),
@@ -119,7 +126,14 @@ export function rasterizeMaskGeometry(
             if (
               cross(a, b, x + 0.5, y + 0.5) * sign >= -1e-8 &&
               cross(b, c, x + 0.5, y + 0.5) * sign >= -1e-8 &&
-              cross(c, a, x + 0.5, y + 0.5) * sign >= -1e-8
+              cross(c, a, x + 0.5, y + 0.5) * sign >= -1e-8 &&
+              (!acceptsAlpha ||
+                acceptsAlpha(
+                  index,
+                  cross(b, c, x + 0.5, y + 0.5) / area,
+                  cross(c, a, x + 0.5, y + 0.5) / area,
+                  cross(a, b, x + 0.5, y + 0.5) / area,
+                ))
             )
               pixels[(y - top) * width + x - left] = 1;
           }

@@ -1,5 +1,6 @@
 """Reopen private leaf endpoints for complete alpha coverage and native-first views."""
 import json
+import hashlib
 import math
 import sys
 from pathlib import Path
@@ -18,8 +19,8 @@ from refinement_review import _tree
 from tree_geometry import SIN, COS, RAY
 
 
-def main():
-    root = OUT / 'restart8-hidden-archer-leaf-trial-v1'
+def main(root=None):
+    root = Path(root) if root else OUT / 'restart8-hidden-archer-leaf-trial-v1'
     for folder in sorted(root.glob('profile-*')):
         record = json.loads((folder / 'construction.json').read_text())
         model = folder / 'model.blend'
@@ -29,11 +30,14 @@ def main():
         bpy.ops.wm.open_mainfile(filepath=str(model))
         scene = bpy.context.scene
         objects = [o for o in scene.objects if o.type == 'MESH']
+        assert len(objects)==1 and not objects[0].modifiers
+        mesh=objects[0].data;mesh.calc_loop_triangles()
         tree, owners, _ = _tree(objects)
         source = np.array(Image.open(record['source']).convert('RGBA'))
         h,w = source.shape[:2]
         x0,y0 = record['source_top_left']
-        missing, extra, z = [], [], []
+        missing, extra, z, low_hits = [], [], [], []
+        uv_mismatches=[];nonobserved_hits=0
         for y in range(-2,h+2):
             for x in range(-2,w+2):
                 origin = Vector((x0+x+.5,-(y0+y+.5)/SIN,0))+RAY*6000
@@ -41,10 +45,31 @@ def main():
                 expected = 0<=y<h and 0<=x<w and source[y,x,3]>=128
                 if expected and point is None: missing.append([x0+x,y0+y])
                 if not expected and point is not None: extra.append([x0+x,y0+y])
-                if expected and point is not None: z.append(float(point.z))
+                if expected and point is not None:
+                    z.append(float(point.z))
+                    if point.z<=2:low_hits.append(dict(pixel=[x0+x,y0+y],world=list(point)))
+                    tri=mesh.loop_triangles[index]
+                    mat=mesh.materials[tri.material_index]
+                    nonobserved_hits+=not bool(mat.get('foliage_observed'))
+                    shader=next(n for n in mat.node_tree.nodes if n.type=='BSDF_PRINCIPLED')
+                    tex=shader.inputs['Base Color'].links[0].from_node
+                    image=tex.image
+                    image_exact=bool(image.packed_file and hashlib.sha256(image.packed_file.data).hexdigest()==record['source_sha256'])
+                    layer=mesh.uv_layers[tex.inputs['Vector'].links[0].from_node.uv_map]
+                    a,b,c=[objects[0].matrix_world@mesh.vertices[v].co for v in tri.vertices]
+                    ab,ac,ap=b-a,c-a,point-a
+                    aa,bb,cc=ab.dot(ab),ab.dot(ac),ac.dot(ac);denom=aa*cc-bb*bb
+                    u=(cc*ap.dot(ab)-bb*ap.dot(ac))/denom
+                    v=(aa*ap.dot(ac)-bb*ap.dot(ab))/denom
+                    coords=[layer.data[i].uv for i in tri.loops]
+                    sample=coords[0]*(1-u-v)+coords[1]*u+coords[2]*v
+                    sx,sy=math.floor(sample.x*w),h-1-math.floor(sample.y*h)
+                    if not image_exact or (sx,sy)!=(x,y):uv_mismatches.append(dict(pixel=[x0+x,y0+y],sample=[sx,sy],image_exact=image_exact))
         write_json(destination/'native-coverage.json',dict(model_sha256=sha(model),
             source_sha256=record['source_sha256'], expected_opaque=record['source_opaque_centers'],
             missing=missing,extra=extra,occupied_height_range=[min(z),max(z)],
+            native_first_hits_within_two_units_of_flat_ground=low_hits,
+            native_rgb_uv_mismatches=uv_mismatches,nonobserved_native_first_hits=nonobserved_hits,
             limitations=['Independent silhouette center test, not color or neighbor support proof.']))
         scene.render.engine='CYCLES'
         scene.cycles.samples=8
@@ -107,6 +132,9 @@ def main():
             solid_sheet_sha256=sha(destination/'solid-eight.png'),
             coverage_sha256=sha(destination/'native-coverage.json'),
             status='Private actual/solid review ready for author inspection; support still pending'))
+    if root.name in ['restart8-hidden-archer-leaf-trial-v2','restart8-hidden-archer-leaf-trial-v3']:
+        from restart8_hidden_archer_leaf_support import main as support
+        support(root)
 
 
 if __name__=='__main__':

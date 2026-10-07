@@ -3,7 +3,11 @@ import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { loadSceneModel } from "../pipeline/src/scene-assets.ts";
-import { maskRecoveryMesh, maskRecoveryTextures } from "../pipeline/src/mask-recovery-mesh.ts";
+import {
+  maskRecoveryMesh,
+  maskRecoveryTextures,
+  maskRecoveryTexturedMesh,
+} from "../pipeline/src/mask-recovery-mesh.ts";
 import { maskCoverage } from "../pipeline/src/mask-roundtrip.ts";
 import { sceneToGame, gltfToScene } from "../shared/src/geometry.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
@@ -35,12 +39,14 @@ function hull(points) {
   return [...chain(sorted), ...chain(sorted.toReversed())];
 }
 const requested = process.argv.slice(2);
+const compact = requested.includes("--compact");
 assert.ok(
-  requested.every((arg) => arg.startsWith("--asset=")),
-  "Use --asset=<library-id>",
+  requested.every((arg) => arg.startsWith("--asset=") || arg === "--compact"),
+  "Use --asset=<library-id> [--compact]",
 );
-const selected = requested.length
-  ? requested.map((arg) => arg.slice("--asset=".length))
+const assets = requested.filter((arg) => arg.startsWith("--asset="));
+const selected = assets.length
+  ? assets.map((arg) => arg.slice("--asset=".length))
   : ["croisement03-fern-35", "croisement03-fern-76"];
 assert.equal(new Set(selected).size, selected.length, "Duplicate selected foliage asset");
 for (const id of selected) {
@@ -69,11 +75,10 @@ for (const id of selected) {
       .listMaterials()
       .every(
         (material) =>
-          !material.getDoubleSided() &&
           material.getAlphaMode() === "MASK" &&
           material.getExtras().foliage_physical_opacity === true,
       ),
-    "Rooted foliage authoring requires one-sided physical-alpha materials",
+    "Rooted foliage authoring requires physical-alpha materials",
   );
   const textures = await maskRecoveryTextures(model);
   const triangles = maskRecoveryMesh(
@@ -81,9 +86,16 @@ for (const id of selected) {
     node,
     (p) => sceneToGame(camera, gltfToScene(p)),
     textures,
+    undefined,
+    { preserveMaterialSidedness: true },
   );
   assert.ok(triangles.length);
   const points = triangles.flat();
+  // Keep the established alpha-covered footprint while evaluating compact
+  // serialization. The temporary clipped mesh is not saved in compact mode.
+  const textured = compact
+    ? maskRecoveryTexturedMesh(model, node, (p) => sceneToGame(camera, gltfToScene(p)), textures)
+    : undefined;
   // These rooted plants were authored on scene Z=0, with their origin just above
   // it. Store that ground contact locally so terrain placement preserves it.
   const ground = sceneToGame(camera, [0, 0, -descriptor.source_origin_scene[2]])[2];
@@ -101,7 +113,8 @@ for (const id of selected) {
       {
         id: "foliage-cover",
         node,
-        triangles,
+        triangles: textured?.triangles ?? triangles,
+        ...(textured ? { alphaCoverage: textured.alphaCoverage } : {}),
         cullBackfaces: true,
         anchor: [0, 0, ground],
         view: true,
@@ -117,11 +130,19 @@ for (const id of selected) {
     },
   };
   validateAssetGameplay(descriptor.gameplay, descriptor);
-  edits.push({ asset: id, descriptorSha256: hash(bytes), gameplay: descriptor.gameplay });
+  edits.push({
+    asset: id,
+    descriptorSha256: hash(bytes),
+    modelSha256: reference.model_sha256,
+    gameplay: descriptor.gameplay,
+  });
   reviews.push({
     asset: id,
     modelSha256: reference.model_sha256,
     triangles: triangles.length,
+    storedTriangles: textured?.triangles.length ?? triangles.length,
+    serializedMaskBytes: Buffer.byteLength(JSON.stringify(descriptor.gameplay.masks)),
+    coverageFormat: compact ? "textured-triangles" : "clipped-triangles",
     boundary,
     ground,
     scope: "Alpha coverage retained; closed canopy boundary is not a recovered native polyline",

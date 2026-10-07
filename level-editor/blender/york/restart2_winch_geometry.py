@@ -1,7 +1,7 @@
 """Private source-led winch components; no runtime coupling or source material assignment."""
 import hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/winch-geometry-v5'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/winch-geometry-v6'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -34,7 +34,8 @@ for y in (1055,1064):
  beam('Frame top saddle',world(2397,y,top),world(2407,y,top),2.0)
  beam('Frame foot rail',world(2390,y,91),world(2413,y,91),1.7)
 center=world(2410,1064,104);rear=world(2402,1050,104);axle=(center-rear).normalized();lateral=axle.cross(Vector((0,0,1))).normalized()
-beam('Broad timber winding drum',rear,center,4.3)
+# Shorter, fuller drum stays exactly coaxial with the retained pin and crank.
+beam('Broad timber winding drum',rear+(center-rear)*(2/14),center,7.5)
 beam('Crank axle pin',rear-axle*2,center+axle*2,1.8,iron)
 for i in range(8):
  angle=i*math.tau/8;end=center+(lateral*math.cos(angle)+Vector((0,0,1))*math.sin(angle))*17;crank.append(beam('Crank spoke',center,end,.9))
@@ -46,7 +47,7 @@ for y,centers,base_x in ((1059,[-43.5,-36.5,-29.5,-22.5,-15.5,-8.5,-1.5,5.5,12.5
  for sy,edge in entries:
   x=base_x+(0.5 if y==1059 else 1.0)*max(0,min(1,(sy-28)/25))
   z=y-(882+sy)
-  bpy.ops.mesh.primitive_torus_add(major_segments=16,minor_segments=6,major_radius=1.45,minor_radius=.55,location=world(x,y,z))
+  bpy.ops.mesh.primitive_torus_add(major_segments=16,minor_segments=6,major_radius=1.5,minor_radius=.75,location=world(x,y,z))
   o=own(bpy.context.object,'Suspended chain link',iron)
   # Torus local XY becomes vertical; its smaller edge profile leaves the
   # adjacent front-facing opening visible from the native camera.
@@ -79,6 +80,6 @@ for state,drop,show in [('transition-00',0,True),('transition-44',72,True)]:
  for o in context:o.hide_render=True
  review(p/'isolated',iso,ir)
  for o in context:o.hide_render=False
- review(p/'contact',joint,jr)
+ if '--skip-context' not in sys.argv:review(p/'contact',joint,jr)
  records.append({'state':state,'model_sha256':sha(p/'model.blend')})
 (OUT/'proposal.json').write_text(json.dumps({'status':'HOLD first geometry hypothesis, needs native comparison and self-review','states':records,'source_sha256':sha(source),'floor':{'obstacle':98,'sector':106,'layer':2,'height':90.00101},'scope':'Winch frame, rotating crank, two chains, separately descending round part. No patch000 coupling.','inferences':['Hidden frame depth and spoke plane inferred; source tests pending.','Transparent initial sprite has no mesh in initial appearance; transition00 is not initial state.','Early round part height206 and upper chain continuation are inferred behind the arch; native22/33/44 positions constrain subsequent descent. Both endpoints keep complete geometry; motion interpolation and upper anchor contacts remain pending.','Other gatehouse and floor proxies remain unrefined context.']},indent=2)+'\n');print('WINCH CANDIDATE COMPLETE',flush=True)

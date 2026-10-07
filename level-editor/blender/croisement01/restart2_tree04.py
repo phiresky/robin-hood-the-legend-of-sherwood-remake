@@ -43,8 +43,12 @@ def main():
     elif label=='Right high fork':domain[sy]&=(xx>240)&(sy<225)
     else:domain[sy]&=(xx<190)&(sy>=265)&(sy<348)
    fit_native_width(branch_obj,domain,'west-cut',x0=81,y0=0)
+  if args.revision>=5:
+   branch_obj.data.update()
+   for vertex in branch_obj.data.vertices:vertex.co+=vertex.normal*.8
+   branch_obj.data.update()
   union(body,branch_obj)
- for angle in [.5,2.4,4.4]:
+ for angle in ([] if args.revision>=5 else [.5,2.4,4.4]):
   base=point(215,588);tip=base+Vector((math.cos(angle)*39,math.sin(angle)*45,0));tip.z=.1
   union(body,tube('Natural low buttress',[point(214,565),base.lerp(tip,.6)+Vector((0,0,3)),tip],[9,5,.6]))
  for i in range(12):
@@ -79,7 +83,7 @@ def main():
  for target in [obj,crown]:
   for vertex in target.data.vertices:vertex.co+=shift
   target.data.update()
- if args.revision>=3:
+ if 3<=args.revision<6:
   changes=[]
   original_volume=BVHTree.FromPolygons([obj.matrix_world@v.co for v in obj.data.vertices],[tuple(face.vertices) for face in obj.data.polygons])
   for vertex in obj.data.vertices:

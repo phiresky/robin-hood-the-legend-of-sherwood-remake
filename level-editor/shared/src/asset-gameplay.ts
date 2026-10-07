@@ -1,6 +1,7 @@
 import type { LightSector, MaterialSector, Point, SightObstacle, SoundSource } from "./level.ts";
 import type { ProjectionAssetDescriptor } from "./projection-assets.ts";
 import { safeLibraryPath } from "./projection-assets.ts";
+import { decodeMaskAlphaCoverage, type MaskAlphaCoverage } from "./mask-alpha-sampler.ts";
 import type { Vec3 } from "./scene.ts";
 
 /** All coordinates belong to the named mesh part's local game frame. No level indices. */
@@ -202,6 +203,8 @@ export interface AssetOcclusionMask {
   node: string;
   /** Explicit local 3D coverage, including cutouts between triangles. */
   triangles: import("./compile-mask-geometry.ts").MaskTriangle[];
+  /** Optional nearest-sampled alpha for the original, unexpanded mesh triangles. */
+  alphaCoverage?: MaskAlphaCoverage;
   /** Match one-sided mesh faces after placement; omitted masks remain two-sided. */
   cullBackfaces?: boolean;
   /** Local point on the receiving navigation surface; may lie inside a blocker. */
@@ -669,6 +672,8 @@ export function validateAssetGameplay(
       new Set(mask.obstacles).size !== mask.obstacles.length
     )
       fail(`invalid mask ${mask.id}`);
+    if (mask.alphaCoverage !== undefined)
+      decodeMaskAlphaCoverage(mask.alphaCoverage, mask.triangles.length);
     for (const [boundary, closed] of [
       [mask.characterBoundary, mask.characterBoundaryClosed],
       [mask.projectileBoundary, mask.projectileBoundaryClosed],

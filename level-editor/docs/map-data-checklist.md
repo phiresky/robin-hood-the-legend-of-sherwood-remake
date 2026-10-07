@@ -226,18 +226,37 @@ disable physical navigation at 37 degrees. The latest unpublished candidate
 emits physical navigation at all eight placements but fails all 48 actor routes,
 including the twelve routes previously using projected navigation.
 
-The current library-wide audit (`gameplay-coverage-spEhsn`) finds 89 of 1,279
-indexed assets without gameplay definitions. Of these, 61 are placed: 57 in
+The current library-wide audit (`gameplay-coverage-io9QXo`) finds 75 of 1,279
+indexed assets without gameplay definitions. Of these, 47 are placed: 43 in
 Croisement02, one in Croisement01, and Croisement03's ferns 35/76 and stream
 fallen log. The timber bridge now has a published draft definition. These counts
 reflect the current asset inventory, not gameplay certification.
 
-Croisement02 ground plants 111–123 now have unpublished asset-derived mask
-candidates. All 130 rotated/elevated exports construct native geometry, preserve
+Croisement02 ground plants 111–123 now have published draft asset-derived mask
+definitions. All 130 rotated/elevated exports construct native geometry, preserve
 typed mask coverage, reject wrong-height ground and introduce no movement
 collision. Their authored canopy boundary and rendered character/projectile
 contact still require review. Mixed-sided shrubs and wooden objects need their
 own treatment; they are not assigned empty gameplay to reduce missing counts.
+Mask authoring now preserves mixed material sidedness after alpha clipping.
+Shrub 55 passes ten native construction checks, but its browser review exposes
+small mask/texture disagreements, including isolated discrepancies at 0° and
+90°. It is published as a draft with an occlusion-review warning; rendered parity
+is not established. The current saved Croisement02 scene compiles using published
+definitions with fourteen masks; native construction and nine control apply/reset
+checks pass. These construction checks do not certify a rendered playthrough.
+
+The broader shrub batch exposed a storage problem: fourteen successful draft
+definitions occupy about 469 MB before publication, with one shrub alone at
+127 MB. The batch was stopped and those shrubs were not published. A compact
+mesh/UV/alpha representation is now implemented and staged for shrub 69: its
+mask occupies 18.1 MB with 24,334 triangles, and all ten rotated/elevated exports
+match the prior bitmap coverage exactly and pass native construction. This
+format is not yet published; migration, further size reduction and rendered
+verification remain before scaling this authoring path. The experimental
+authoring command still computes clipped geometry temporarily for the footprint.
+Shrubs 73/74 also expose unsupported UV/sampler cases. Geometry-derived
+publication now supports reviewed model hashes in addition to descriptor hashes.
 
 The earlier library-wide audit found 38 of 1,297 indexed assets without gameplay
 definitions, including the composite Derby keep, several Nottingham buildings,

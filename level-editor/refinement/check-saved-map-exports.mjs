@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { readStoredMap, pinnedDescriptors } from "../pipeline/src/stored-map.ts";
 import { compileMap } from "../app/src/map-compile.ts";
+import { savedMapBakeBounds } from "../app/tests/saved-map-bounds.mjs";
 
 // Compile the actual saved scenes, including authored terrain and spline walls.
 // Descriptors exercise native geometry; this does not replace a browser ZIP bake.
@@ -50,19 +51,16 @@ for (const file of files) {
       if (asset) asset.gameplay = edit.gameplay;
     }
     console.log(`${map}: loaded`);
-    const compiled = compileMap(
-      document,
-      document.exportBounds ?? [0, 0, ...document.size],
-      assets,
-      {
-        bestEffort: true,
-      },
-    );
+    const bounds = await savedMapBakeBounds(document);
+    const compiled = compileMap(document, bounds, assets, {
+      bestEffort: true,
+    });
     await fs.writeFile(`${output}/${map}.level.json`, JSON.stringify(compiled.descriptor));
     results.push({
       map,
       file: `${map}.level.json`,
       warnings: compiled.warnings,
+      bounds,
       elapsedMs: performance.now() - start,
     });
     console.log(`${map}: compiled`);

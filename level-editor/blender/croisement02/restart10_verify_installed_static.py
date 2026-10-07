@@ -1,5 +1,6 @@
 """Bind the installed HTTP Editor check to unchanged published files and code."""
 import hashlib
+import argparse
 import json
 from pathlib import Path
 import subprocess
@@ -28,6 +29,17 @@ def snapshot():
     for row in manifest['files']:
         path = Path(row['target'])
         expected = row['source_sha256'] if row['source'] is not None else None
+        if str(path) == manifest['index_generation']['target']:
+            # Other maps can publish after this map's transaction. Its own
+            # catalog entries must remain exact; pin the full current index.
+            before = json.loads(Path(row['source']).read_text())
+            after = json.loads(path.read_text())
+            def scoped(index):
+                return [entry for entry in index['assets']
+                        if entry.get('source_map', '').lower() == 'croisement02']
+            if before['version'] != after['version'] or scoped(before) != scoped(after):
+                raise ValueError('Installed Crossings02 catalog changed')
+            expected = sha(path)
         if sha(path) != expected:
             raise ValueError('Installed publication changed: ' + str(path))
         pins[str(path)] = expected
@@ -47,6 +59,12 @@ def snapshot():
 
 
 def main():
+    global FIXTURE, RUNNER
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--fixture', type=Path, default=FIXTURE)
+    parser.add_argument('--runner', type=Path, default=RUNNER)
+    args = parser.parse_args()
+    FIXTURE, RUNNER = args.fixture.resolve(), args.runner.resolve()
     acquire()
     try:
         output = FIXTURE / 'runtime'

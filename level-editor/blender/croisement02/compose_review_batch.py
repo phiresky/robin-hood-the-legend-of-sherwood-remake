@@ -101,7 +101,7 @@ def main():
                 model_paths = []
                 for filename,digest in item['evidence'].items():
                     p = Path(filename)
-                    if p.suffix == '.blend':
+                    if p.suffix in ('.blend', '.glb'):
                         if sha(p) != digest:
                             raise ValueError(f'Model binding mismatch: {p}')
                         if digest == model_hash: model_paths.append(p)

@@ -472,6 +472,50 @@ test("wall masks deform coverage, front boundaries and obstacle ownership togeth
   assert.ok(compileAssetGameplay(document, assets, bounds).masks!.length > 0);
 });
 
+test("spline mask splitting interpolates compact UVs and alpha with the geometry", () => {
+  const { document, asset, assets, bounds } = wallMaterialFixture();
+  document.splines![0]!.points = [
+    [100, 200, 0],
+    [345, 200, 0],
+  ];
+  const mask = asset.gameplay!.masks![0]!;
+  mask.anchor = sceneToGame(document.camera, [-49, 0, 0]);
+  delete mask.receiverSegment;
+  mask.alphaCoverage = {
+    textures: [{ width: 2, height: 1, alphaBase64: "/wA=" }],
+    triangles: mask.triangles.map(() => ({
+      uv: [
+        [0, 0],
+        [1, 0],
+        [1, 1],
+      ],
+      alpha: [0, 1, 1],
+      cutoff: 0.5,
+      texture: 0,
+      wrap: ["clamp", "clamp"],
+      doubleSided: true,
+    })),
+  };
+  const before = structuredClone(mask);
+  const generated = wallSplineGameplay(document, assets, false);
+  let interpolated = false;
+  for (const descriptor of generated.descriptors)
+    for (const output of descriptor.gameplay!.masks!) {
+      assert.equal(output.alphaCoverage!.triangles.length, output.triangles.length);
+      assert.deepEqual(output.alphaCoverage!.textures, mask.alphaCoverage.textures);
+      for (const rule of output.alphaCoverage!.triangles) {
+        assert.equal(rule.doubleSided, true);
+        for (let i = 0; i < 3; i++) {
+          assert.ok(Math.abs(rule.uv[i]![0] - rule.alpha[i]!) < 1e-10);
+          if (rule.alpha[i]! > 0 && rule.alpha[i]! < 1) interpolated = true;
+        }
+      }
+    }
+  assert.ok(interpolated, "Clipped vertices must retain interpolated sampling coordinates");
+  assert.ok(compileAssetGameplay(document, assets, bounds).masks!.length > 0);
+  assert.deepEqual(mask, before);
+});
+
 test("a surviving mask probe retains a cropped repeat when its point anchor is trimmed", () => {
   const { document, asset, assets, bounds } = wallMaterialFixture();
   const mask = asset.gameplay!.masks![0]!;

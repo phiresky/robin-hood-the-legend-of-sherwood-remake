@@ -9921,3 +9921,84 @@ and no generated movement obstacles. These definitions remain unpublished:
 rendered character/projectile occlusion is unverified, and the closed canopy
 boundary is an explicit approximation. The library missing-definition count has
 not been reduced by these staged candidates.
+
+Mixed-sided shrub authoring now opts into `preserveMaterialSidedness` during
+mesh extraction. Double-sided materials receive opposite-winding copies of the
+alpha-clipped triangles; one-sided materials retain one winding. The default
+recovery path remains unchanged. Thirteen mesh/rasterization tests pass,
+including mixed opaque primitives and partial-alpha reverse-face coverage.
+Focused lint/format checks pass; pipeline typechecking still fails in unrelated
+`shared/src/state-delivery.test.ts` fixtures.
+
+Shrub 55 stage `fern-gameplay-pW8Bcl` passes ten native construction checks and
+ten wrong-height rejections. Its browser point-mask review completes sixteen
+cases at four rotations but fails the edge-consistency criterion at 0° and 90°.
+Rendered leaf pixels without CPU mask coverage number 6/5/2/4 at 0/90/180/270°.
+Clipped GPU versus CPU coverage differs at 2/12/9/27 pixels; clipped GPU versus
+textured mesh differs at 8/15/5/26. This separates remaining extraction/rendering
+and rasterization differences; it does not certify native compositing. The
+candidate remains unpublished. The review sheet and reported case count now
+scale to the selected asset list rather than assuming two ferns.
+
+Ground plants 111–123 and shrub 55 are now published as best-effort drafts via
+`ground-plants-publish-wS3DZB` and `shrub55-publish-pW8Bcl`. Reviewed model hashes
+were checked against the current library before publication; descriptor pins
+were refreshed without replacing scene content. The local canopy approximation
+and rendered character/projectile review warning remain in each definition.
+Pixel-level mismatches are retained as open evidence rather than treated as a
+reason to omit otherwise usable draft foliage from exports.
+
+Current Croisement02 omits its optional size. `check-saved-map-exports.mjs` now
+derives static-model bounds from pinned placed vertices using the editor's
+`contentBakeBounds` function and border convention. Generated terrain/splines
+without explicit bounds still require browser verification. A focused fixture
+checks placement, explicit frames, missing-size behavior and changed-model pins.
+Export `saved-map-exports-FBLYbR` uses bounds [-231, -282, 2177, 1929], includes all
+fourteen new masks and has no omission warning for the published plants/shrub.
+Native construction passes with five areas, 154 sight obstacles, five doors,
+four jump pairs, 8,575 grid blocks and 57 elevation boundaries. All nine native
+control apply/reset checks pass. This remains geometry verification, not a
+complete native rendered ZIP playthrough.
+
+Fresh inventory `gameplay-coverage-io9QXo` finds 75 missing definitions among
+1,279 assets and 47 missing placed definitions: 43 in Croisement02, one in
+Croisement01 and three in Croisement03.
+
+Batch `shrub-batch-erzjxjez` was intentionally stopped with `complete: false`:
+sixteen assets passed ten native construction cases each; two authoring attempts
+failed. Shrub 73 has UV values outside the supported sampler domain; shrub 74
+fails the nearest-sampling/no-texture-transform precondition. Neither failure
+was converted to empty gameplay.
+
+More seriously, the first fourteen successful explicit-triangle definitions
+total 468,916,952 bytes. Shrub 69 alone contains 719,673 triangles and occupies
+127,141,905 bytes. These candidates were not published. Mesh UVs and compact
+alpha coverage need to replace per-texel geometric expansion for a practical
+library; successful native construction does not make this storage cost viable.
+The already-published foliage drafts also need migration to that representation.
+
+`configureAssetGameplay` now accepts a reviewed `modelSha256` for full gameplay
+edits. It checks model bytes before staging and again before installation;
+foliage authoring emits that hash. Five publication tests pass, including changed
+model bytes with an unchanged descriptor. Focused lint and formatting pass;
+pipeline typechecking remains blocked by unrelated state-delivery test types.
+
+### Compact foliage alpha coverage candidate
+
+`stage-fern-gameplay.mjs --compact --asset=croisement02-shrub-69` produced
+`fern-gameplay-hQfhNB`. Asset definitions retain mesh triangles, UV coordinates,
+material sidedness, cutoff, vertex alpha and texture alpha. The compiler samples
+these after placement; exported native masks retain their existing bitmap format.
+Spline splitting carries UVs and alpha through the same interpolation as geometry.
+
+The staged mask occupies 18,106,822 bytes with 24,334 stored triangles, compared
+with the previous 719,673 clipped triangles and roughly 127 MB definition.
+All ten cases (0/37/90/180/270 degrees at elevations 0/40) have exactly the same
+covered pixels as `fern-gameplay-SCMH3E`: no added or removed pixels. Each passes
+native geometry construction and rejects a receiving ground one unit lower.
+This measures representation fidelity, not rendered character/projectile parity.
+
+The candidate is not published. Authoring still computes the clipped mesh
+temporarily for its established canopy footprint; this does not yet solve the
+unsupported sampler cases or authoring memory cost. Published foliage migration,
+browser review support for compact coverage and further storage reduction remain.

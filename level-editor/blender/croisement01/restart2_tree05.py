@@ -7,7 +7,16 @@ from mathutils.bvhtree import BVHTree
 from PIL import Image,ImageDraw,ImageChops
 sys.path.insert(0,str(Path(__file__).parent))
 from restart2_tree18 import OUT,SIN,COS,union,assign_mesh,fit_native_width
-from restart2_tree71 import tube
+from restart2_tree71 import tube as base_tube
+DENSE=False
+def tube(name,centers,radii):
+ if not DENSE:return base_tube(name,centers,radii)
+ points=[];sizes=[]
+ for a,b,ra,rb in zip(centers,centers[1:],radii,radii[1:]):
+  steps=max(1,math.ceil((b-a).length/2))
+  for i in range(steps):
+   t=i/steps;points.append(a.lerp(b,t));sizes.append(ra+(rb-ra)*t)
+ points.append(centers[-1]);sizes.append(radii[-1]);return base_tube(name,points,sizes)
 from refinement_workspace import prepare,modified,validate
 from refinement_inventory import inventory
 from evidence_io import sha
@@ -34,8 +43,9 @@ def fit_short_root(obj,domain):
  obj.data.update()
 
 def main():
+ global DENSE
  if shutil.disk_usage(OUT).free<35*1024**3:raise ValueError('Disk floor35GiB')
- parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,default=1);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);dest=OUT/f'restart2/tree05-v{args.revision}';dest.mkdir(exist_ok=False);acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0;working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-05';wood_node='scenery-tree05-wood';crown_node='foliage-tree05-inferred-crown';name='Northwest Rear Forked Tree'
+ parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,default=1);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);DENSE=args.revision>=7;dest=OUT/f'restart2/tree05-v{args.revision}';dest.mkdir(exist_ok=False);acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0;working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-05';wood_node='scenery-tree05-wood';crown_node='foliage-tree05-inferred-crown';name='Northwest Rear Forked Tree'
  native=json.loads((OUT/'baseline/masks/manifest.json').read_text())
  for row in native['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
  row=next(r for r in native['masks'] if r['index']==5);assert row['obstacle_indices']==[];alpha=Image.open(row['png']).convert('L');wood=alpha.copy()
@@ -66,7 +76,7 @@ def main():
    fit_native_width(part,domain,'west-cut',x0=265,y0=0)
   union(body,part)
  if args.revision>=2:
-  roots=[(282,201),(296,220),(344,219),(360,204)]
+  roots=[(282,201),(296,220),(347 if args.revision>=7 else 344,219),(360,204)]
   for n,(x,y) in enumerate(roots):
    root=tube('Source-supported tapered root',[point(329,190),point((329+x)/2,(190+y)/2),point(x,y)],[8,4,.5])
    if args.revision>=3:
@@ -115,7 +125,7 @@ def main():
  for target in [obj,crown]:
   for vertex in target.data.vertices:vertex.co+=shift
   target.data.update()
- if args.revision>=3:
+ if 3<=args.revision<6:
   original_volume=BVHTree.FromPolygons([obj.matrix_world@v.co for v in obj.data.vertices],[tuple(face.vertices) for face in obj.data.polygons]);changes=[]
   for vertex in obj.data.vertices:
    p=obj.matrix_world@vertex.co;sy=-p.y*SIN-p.z*COS
