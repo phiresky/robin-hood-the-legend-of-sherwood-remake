@@ -5,6 +5,7 @@ import { nearestSplineSection } from "./spline-insertion.ts";
 import { TerrainControls, type TerrainEditMode } from "./terrain-controls.ts";
 import { MissionLayer } from "./mission-layer.ts";
 import { MissionEntities } from "./mission.ts";
+import { EditorActorPreview, type EditorActorBinding } from "./editor-actor-preview.ts";
 import { MissionStateLayer, type MissionStateSource } from "./mission-state-layer.ts";
 import type { MissionStateContract } from "../../shared/src/mission-state.ts";
 import type { NativeStatePresentationContract } from "../../shared/src/native-state-presentation.ts";
@@ -587,6 +588,88 @@ export class EditorViewport {
   private readonly missionMarkers = new MissionLayer();
   private stateMission = "";
   private readonly nativeArt = new NativeStatePresentation();
+  private actorPreview: EditorActorPreview | undefined;
+  private actorPreviewEpoch = 0;
+  private actorPreviewError: string | undefined;
+  private actorPreviewReceipt: { identities: string[]; actors: unknown[] } | undefined;
+  /** Explicit bounded editor-preview bindings; no mission script execution. */
+  async setNativeActorPreview(source: MissionStateSource, bindings: readonly EditorActorBinding[]) {
+    this.clearNativeActorPreview();
+    this.actorPreviewError = undefined;
+    const epoch = this.actorPreviewEpoch;
+    if (this.bindings.document()?.mission?.importedFrom !== source.name)
+      throw new Error("Actor source does not match the current editable mission");
+    const preview = await EditorActorPreview.bind(source, this.currentNativeArt, epoch, bindings);
+    if (this.disposed || epoch !== this.actorPreviewEpoch) {
+      preview.dispose();
+      return false;
+    }
+    try {
+      preview.snapshot(this.currentNativeArt.tick, this.currentActorFrames());
+      if (!this.renderer) throw new Error("Actor compositor renderer is not ready");
+      preview.compose(
+        this.renderer,
+        this.currentNativeArt.loopDrawSnapshot(),
+        this.currentNativeArt.tick,
+        this.currentActorFrames(),
+      );
+    } catch (error) {
+      preview.dispose();
+      throw error;
+    }
+    this.actorPreview = preview;
+    this.nativeSurface?.setActorPreview(true);
+    this.nativeSurface?.update(this.nativePreviewPixels());
+    return true;
+  }
+  clearNativeActorPreview() {
+    this.actorPreviewEpoch++;
+    this.actorPreview?.dispose();
+    this.actorPreview = undefined;
+    this.actorPreviewReceipt = undefined;
+    this.nativeSurface?.setActorPreview(false);
+    if (this.nativeSurface && this.currentNativeArt.ready)
+      this.nativeSurface.update(this.currentNativeArt.pixels());
+  }
+  currentActorFrames() {
+    return {
+      editable: this.missionMarkers.previewSprites(true),
+      source: this.entities instanceof MissionEntities ? this.entities.previewSprites(true) : [],
+    };
+  }
+  setActorPreviewMaskMembership(active: readonly boolean[]) {
+    if (!this.actorPreview) throw new Error("Actor preview is not bound");
+    this.actorPreview.setMaskMembership(active);
+    this.nativeSurface?.update(this.nativePreviewPixels());
+  }
+  actorPreviewStatus() {
+    return {
+      ready: !!this.actorPreview,
+      epoch: this.actorPreviewEpoch,
+      scope: "explicit-editor-preview",
+      receipt: this.actorPreviewReceipt,
+      error: this.actorPreviewError,
+    };
+  }
+  nativePreviewPixels() {
+    if (!this.actorPreview) return this.currentNativeArt.pixels();
+    if (!this.renderer) throw new Error("Actor compositor renderer is not ready");
+    try {
+      const result = this.actorPreview.compose(
+        this.renderer,
+        this.currentNativeArt.loopDrawSnapshot(),
+        this.currentNativeArt.tick,
+        this.currentActorFrames(),
+      );
+      this.actorPreviewReceipt = { identities: result.identities, actors: result.actors };
+      return result.pixels;
+    } catch (error) {
+      this.clearNativeActorPreview();
+      this.actorPreviewError = `Actor preview retired: ${String(error)}`;
+      this.bindings.onError?.(this.actorPreviewError);
+      return this.currentNativeArt.pixels();
+    }
+  }
   private readonly stateDelivery = new StateDelivery();
   private aperturePreview: StateAperturePreview | undefined;
   private readonly apertureResourceRoots = new Set<THREE.Object3D>();
@@ -891,12 +974,12 @@ export class EditorViewport {
       throw new Error("Invalid native patch seek");
     this.nativeArt.seek(tick);
     this.nativeArt.setPatchState(id, phase, tick);
-    this.nativeSurface?.update(this.nativeArt.pixels());
+    this.nativeSurface?.update(this.nativePreviewPixels());
   }
   setStatePresentationMode(mode: "physical" | "native-art") {
     if (mode === "physical") {
       if (this.loopClocks.ready) this.sampleLoopClocks();
-      else this.currentNativeArt.setPlaying(false);
+      else if (!this.actorPreview) this.currentNativeArt.setPlaying(false);
       if (this.stateDelivery.ready) this.stateDelivery.selectMode("physical-endpoint");
       this.stateDelivery.physical.visible = false;
       this.deliveryEndpointActive = false;
@@ -926,9 +1009,11 @@ export class EditorViewport {
     if (this.orbit) this.orbit.enabled = false;
     if (this.gizmo) this.gizmo.enabled = false;
     this.nativeSurface = new NativeArtworkSurface(this.container);
-    this.nativeSurface.update(this.currentNativeArt.pixels());
+    this.nativeSurface.setActorPreview(!!this.actorPreview);
+    this.nativeSurface.update(this.nativePreviewPixels());
   }
   clearNativeArtPresentation() {
+    this.clearNativeActorPreview();
     this.loopEpoch++;
     this.setStatePresentationMode("physical");
     if (this.loopClocks.ready) this.missionStates.clear();
@@ -962,7 +1047,7 @@ export class EditorViewport {
       else for (const row of this.loopClocks.snapshot()) this.loopClocks.seek(row.id, tick);
       this.sampleLoopClocks();
     } else this.currentNativeArt.seek(tick, id);
-    this.nativeSurface?.update(this.currentNativeArt.pixels());
+    this.nativeSurface?.update(this.nativePreviewPixels());
   }
   private readonly missionStates = new MissionStateLayer(
     (indices) => {
@@ -1568,12 +1653,18 @@ export class EditorViewport {
         this.loopClocks.advance(this.loopSequence++, elapsed);
         if (this.sampleLoopClocks()) {
           this.clippingBoundsDirty = true;
-          this.nativeSurface?.update(this.nativeArt.pixels());
+          this.nativeSurface?.update(this.nativePreviewPixels());
         }
       }
+      const actorAdvanced =
+        !!this.actorPreview && !this.loopClocks.ready && this.currentNativeArt.advance(elapsed);
       if (this.nativeSurface) {
-        if (!this.loopClocks.ready && this.currentNativeArt.advance(elapsed))
-          this.nativeSurface.update(this.currentNativeArt.pixels());
+        if (
+          this.actorPreview ||
+          actorAdvanced ||
+          (!this.loopClocks.ready && this.currentNativeArt.advance(elapsed))
+        )
+          this.nativeSurface.update(this.nativePreviewPixels());
         return;
       }
       if (this.missionStates.advance(elapsed)) this.clippingBoundsDirty = true;

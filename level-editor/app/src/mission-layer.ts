@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { gameToScene, type Level3D } from "@rle/shared";
 import { disposeObjectResources } from "./resources.ts";
-import { MissionEntities } from "./mission.ts";
+import { MissionEntities, type MissionSpritePreview } from "./mission.ts";
 import type { MissionCharacterProfile } from "./mission-character-catalog.ts";
 
 interface Actor {
@@ -153,6 +153,19 @@ export class MissionLayer {
   update(camera: THREE.Camera, lockOrientations: boolean) {
     if (!this.spritesRoot.visible) return;
     for (const actor of this.actors.values()) actor.view?.update(camera, lockOrientations);
+  }
+
+  /** Editable identity stays separate from any verified source-member binding. */
+  previewSprites(
+    nativeDirection = false,
+  ): { editorId: string; epoch: number; sprite: MissionSpritePreview }[] {
+    return [...this.actors].flatMap(([editorId, actor]) =>
+      (actor.view?.previewSprites(nativeDirection) ?? []).map((sprite) => ({
+        editorId,
+        epoch: this.epoch,
+        sprite: { ...sprite, visible: this.spritesRoot.visible && sprite.visible },
+      })),
+    );
   }
 
   hit(raycaster: THREE.Raycaster): string | undefined {

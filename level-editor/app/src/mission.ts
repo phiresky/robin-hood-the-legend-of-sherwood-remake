@@ -19,6 +19,7 @@ import {
 } from "./sprite-profiles.ts";
 
 import { SpriteAtlasImages, spriteAtlasRect } from "./sprite-atlas.ts";
+import type { NativePixels } from "./native-state-presentation.ts";
 
 class MissingSpriteError extends Error {}
 
@@ -81,17 +82,40 @@ interface SpriteFrame {
   geometry: THREE.BufferGeometry;
   shadow: THREE.Texture | null;
   bounds: { left: number; top: number; width: number; height: number };
+  source: {
+    resourceId: number;
+    filename: string;
+    profile: string;
+    action: number;
+    direction: number;
+    frame: number;
+    legacy: boolean;
+    pixels: NativePixels;
+  };
+}
+export interface MissionSpritePreview {
+  /** Index local to this loader, never a script handle or construction rank. */
+  localIndex: number;
+  sourceMember?: { family: string; index: number };
+  position: [number, number, number];
+  direction: number;
+  visible: boolean;
+  frame: SpriteFrame["source"];
+  bounds: SpriteFrame["bounds"];
 }
 interface ActorView {
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   frames: Map<number, SpriteFrame>;
   direction: number;
   shadow: THREE.Mesh | null;
+  selected?: SpriteFrame;
+  sourceMember?: { family: string; index: number };
 }
 
 /** A mission preview owns every loaded texture, geometry, and material, including
  * directions that are currently invisible. It never writes mission files. */
 export class MissionEntities {
+  private static nextResourceId = 0;
   readonly root = new THREE.Group();
   readonly warnings: string[] = [];
   private actors: ActorView[] = [];
@@ -112,6 +136,29 @@ export class MissionEntities {
   private atlasImages = new SpriteAtlasImages();
   get count() {
     return this.root.children.length;
+  }
+  /** Snapshot of the currently displayed editor frame; advances no animation. */
+  previewSprites(nativeDirection = false): MissionSpritePreview[] {
+    if (this.disposed) throw new Error("Mission sprite preview is disposed");
+    return this.actors.map((actor, localIndex) => {
+      const frame =
+        (!nativeDirection ? actor.selected : undefined) ??
+        actor.frames.get(actor.direction) ??
+        actor.frames.get(-1);
+      if (!frame) throw new Error("No selected preview frame");
+      return {
+        localIndex,
+        ...(actor.sourceMember ? { sourceMember: { ...actor.sourceMember } } : {}),
+        position: actor.mesh.position.toArray(),
+        direction: actor.direction,
+        visible: this.root.visible && actor.mesh.visible,
+        frame: {
+          ...frame.source,
+          pixels: { ...frame.source.pixels, data: frame.source.pixels.data.slice() },
+        },
+        bounds: { ...frame.bounds },
+      };
+    });
   }
   /** Load the same decoded directional frames used by mission previews for an authored actor. */
   static async loadCharacter(
@@ -177,6 +224,7 @@ export class MissionEntities {
       const direction = viewedDirection(actor.direction, azimuth);
       const frame = actor.frames.get(direction) ?? actor.frames.get(-1);
       if (!frame) throw new Error("Missing validated entity direction");
+      actor.selected = frame;
       actor.mesh.geometry = frame.geometry;
       actor.mesh.material.map = frame.texture;
       // Prone bodies keep their ground orientation between frame transitions.
@@ -324,7 +372,13 @@ export class MissionEntities {
         mesh.position.copy(position(entity));
         const shadow = this.attachShadow(mesh, frame, entity, level, camera, ambiance);
         this.root.add(mesh);
-        this.actors.push({ mesh, frames, direction, shadow });
+        this.actors.push({
+          mesh,
+          frames,
+          direction,
+          shadow,
+          sourceMember: { family: group, index: i },
+        });
       }
     }
     const addSprite = async (
@@ -335,6 +389,7 @@ export class MissionEntities {
       kind: SpriteKind,
       action: number,
       at = position(entity),
+      sourceMember?: { family: string; index: number },
     ) => {
       if (!current()) throw new Error("Mission load superseded");
       const key = `${kind}/${filename}/${profileName}/${action}`;
@@ -367,7 +422,7 @@ export class MissionEntities {
         mesh.position.copy(at);
         const shadow = this.attachShadow(mesh, frame, entity, level, camera, ambiance);
         this.root.add(mesh);
-        this.actors.push({ mesh, frames, direction, shadow });
+        this.actors.push({ mesh, frames, direction, shadow, sourceMember });
       } catch (error) {
         if (!(error instanceof MissingSpriteError)) throw error;
         const message = `${filename}: sprite missing from datadir (magenta marker)`;
@@ -380,7 +435,16 @@ export class MissionEntities {
       const quantity = number(entity.quantity, "bonus quantity");
       if (!Number.isInteger(quantity) || quantity < 1 || quantity > 5)
         throw new Error("Bonus quantity must be 1–5");
-      await addSprite(entity, `bonus ${i + 1}: ${file}`, file, profile, "pickup", 189 + quantity);
+      await addSprite(
+        entity,
+        `bonus ${i + 1}: ${file}`,
+        file,
+        profile,
+        "pickup",
+        189 + quantity,
+        position(entity),
+        { family: "bonuses", index: i },
+      );
     }
     for (const [i, entity] of rows(mission.data.scrolls ?? [], "scrolls").entries()) {
       await addSprite(
@@ -390,6 +454,8 @@ export class MissionEntities {
         "BONUS Parchemin",
         "pickup",
         number(entity.action, "scroll action"),
+        position(entity),
+        { family: "scrolls", index: i },
       );
     }
     for (const [i, entity] of rows(mission.data.targets ?? [], "targets").entries()) {
@@ -401,6 +467,8 @@ export class MissionEntities {
         string(entity.profile_name, "target profile"),
         "scenery",
         number(entity.action, "target action"),
+        position(entity),
+        { family: "targets", index: i },
       );
       for (const node of this.root.children.slice(first)) node.userData.nativeTargetIndex = i;
     }
@@ -594,6 +662,11 @@ export class MissionEntities {
       )
         throw new Error(`${filename}: unsupported pixel format`);
       const legacy = manifest.pixel_format !== "rgba";
+      const sourcePixels: NativePixels = {
+        width,
+        height: heightPx,
+        data: new Uint8Array(pixels.data),
+      };
       const shadowPixels = spriteShadowPixels(pixels.data, legacy);
       let shadow: THREE.Texture | null = null;
       if (shadowPixels) {
@@ -647,6 +720,16 @@ export class MissionEntities {
         geometry,
         shadow,
         bounds: { left, top, width, height: heightPx },
+        source: {
+          resourceId: ++MissionEntities.nextResourceId,
+          filename,
+          profile: profileName,
+          action: number(row.action_id, "sprite action"),
+          direction: number(row.direction, "sprite direction"),
+          frame: 0,
+          legacy,
+          pixels: sourcePixels,
+        },
       });
     }
     return frames;

@@ -21,6 +21,20 @@ export interface NativePixels {
   height: number;
   data: Uint8Array;
 }
+export interface NativeLoopDrawSnapshot {
+  revision: number;
+  mission: string;
+  origin: [number, number];
+  background: NativePixels;
+  draws: {
+    element: NativePresentationElement;
+    frame: number;
+    pixels: NativePixels;
+    x: number;
+    y: number;
+    shadow?: NativeShadowKey;
+  }[];
+}
 export type NativeResourceReader = (
   resource: Pick<NativeImageResource, "path" | "sha256">,
 ) => Promise<Uint8Array>;
@@ -512,6 +526,57 @@ export class NativeStatePresentation {
     this.revision++;
     return true;
   }
+  /** Borrowed decoded resources for an explicit ordered-loop compositor. No clock advancement. */
+  loopSourceBinding() {
+    if (
+      !this.contract ||
+      this.contract.patch_states?.length ||
+      this.contract.background_states?.length
+    )
+      throw new Error("Native loop source is not ready or has unsupported patch ownership");
+    const contract = this.contract;
+    return {
+      mission: contract.mission,
+      mission_data_sha256: contract.mission_data_sha256,
+      level_data_sha256: contract.level_data_sha256,
+      background: { ...contract.background },
+    };
+  }
+  loopDrawSnapshot(): NativeLoopDrawSnapshot {
+    const contract = this.contract;
+    if (!contract) throw new Error("Native artwork preview is not loaded");
+    if (contract.patch_states?.length || contract.background_states?.length)
+      throw new Error("Actor loop composition cannot infer patch or background state ownership");
+    const draws: NativeLoopDrawSnapshot["draws"] = [];
+    for (const original of contract.elements) {
+      const active = this.activeElements.get(original.id) ?? original.active;
+      const element =
+        !active && original.initial_frame
+          ? { ...original, active: true, frames: [original.initial_frame], loop: false }
+          : { ...original, active };
+      const frame = nativePresentationFrame(
+        element,
+        Math.max(0, this.currentTick + (this.offsets.get(element.id) ?? 0)),
+      );
+      if (frame < 0) continue;
+      const image = element.frames[frame]!;
+      draws.push({
+        element,
+        frame,
+        pixels: this.images.get(image.path)!,
+        x: element.display_position[0] + image.offset[0] - contract.origin[0],
+        y: element.display_position[1] + image.offset[1] - contract.origin[1],
+        shadow: image.shadow_key,
+      });
+    }
+    return {
+      revision: this.revision,
+      mission: contract.mission,
+      origin: [...contract.origin],
+      background: this.images.get(contract.background.path)!,
+      draws,
+    };
+  }
   pixels(): NativePixels {
     if (!this.contract) throw new Error("Native artwork preview is not loaded");
     if (this.cached?.revision === this.revision) return this.cached.pixels;
@@ -611,6 +676,7 @@ export class NativeArtworkSurface {
   readonly element: HTMLDivElement;
   readonly canvas: HTMLCanvasElement;
   private readonly source = document.createElement("canvas");
+  private readonly label = document.createElement("span");
   private readonly listeners = new AbortController();
   private readonly observer: ResizeObserver;
   private image: NativePixels | undefined;
@@ -630,7 +696,7 @@ export class NativeArtworkSurface {
     this.canvas.tabIndex = 0;
     this.canvas.setAttribute("aria-label", "Original artwork preview; pan and zoom");
     this.canvas.style.cssText = "width:100%;height:100%;display:block;touch-action:none";
-    const label = document.createElement("span");
+    const label = this.label;
     label.textContent = "Original artwork · map animation and mission effects";
     label.style.cssText =
       "position:absolute;left:8px;top:8px;padding:4px 8px;background:#111d;color:white;font:12px sans-serif;pointer-events:none";
@@ -696,6 +762,15 @@ export class NativeArtworkSurface {
     this.canvas.addEventListener("contextmenu", (e) => e.preventDefault(), { signal });
     this.observer = new ResizeObserver(() => this.draw());
     this.observer.observe(parent);
+  }
+  setActorPreview(enabled: boolean) {
+    this.label.textContent = enabled
+      ? "Editor actor preview · original artwork"
+      : "Original artwork · map animation and mission effects";
+    this.canvas.setAttribute(
+      "aria-label",
+      enabled ? "Editor actor preview; pan and zoom" : "Original artwork preview; pan and zoom",
+    );
   }
   update(image: NativePixels) {
     if (this.image === image) return;
