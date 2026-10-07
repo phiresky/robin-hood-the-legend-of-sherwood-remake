@@ -22,7 +22,8 @@ def main():
     expected = '493eb8afa1f3e60f433ee2faa5e018d65552292fe5e2dfb63e96a5eb32acfd68'
     assert sha(source) == expected
     root = OUT / 'restart8-hidden-archer-receiver-audit-v1'
-    output = root / 'baseline-first-hit-v1'
+    current = '--current' in sys.argv
+    output = root / ('current-first-hit-v1' if current else 'baseline-first-hit-v1')
     output.mkdir(exist_ok=False)
     report = json.loads((root / 'report.json').read_text())
     bpy.ops.wm.open_mainfile(filepath=str(source))
@@ -31,6 +32,26 @@ def main():
     bpy.context.view_layer.update()
     all_objects = [o for o in bpy.data.collections['Croisement02 Working'].all_objects
                    if o.type == 'MESH' and not o.hide_render]
+    replacements = []
+    if current:
+        for number, batch in [(18, 16), (19, 15), (24, 16), (25, 15)]:
+            asset = f'croisement02-tree-{number:02d}'
+            folder = OUT / f'restart3-review-batches/batch-v{batch}'
+            approval = json.loads((folder / 'user-approval.json').read_text())
+            assert sha(folder / 'evidence.json') == approval['evidence_sha256']
+            member = next(m for c in approval['cards'] for m in c['members'] if m['asset_id'] == asset)
+            assert sha(member['model']) == member['model_sha256']
+            prior = set(bpy.data.objects)
+            with bpy.data.libraries.load(member['model'], link=False) as (src, dst):
+                dst.objects = src.objects
+            added = [o for o in bpy.data.objects if o not in prior and o.type == 'MESH' and o.get('asset_group') == asset]
+            assert added, asset
+            for obj in added:
+                scene.collection.objects.link(obj)
+            all_objects = [o for o in all_objects if o.get('asset_group') != asset] + added
+            replacements.append(dict(asset=asset, model=member['model'], model_sha256=member['model_sha256'],
+                                     approval_sha256=sha(folder / 'user-approval.json'), objects=[o.name for o in added]))
+        bpy.context.view_layer.update()
     records = []
     for row in report['profiles']:
         number = int(row['profile'][-2:])
@@ -62,11 +83,11 @@ def main():
         print(row['profile'], dict(counts), flush=True)
     assert sha(source) == expected
     write_json(output / 'report.json', dict(
-        status='Measured frozen baseline, not current endpoint completion', source=str(source),
+        status='Measured scoped approved replacements; physical state endpoints still absent' if current else 'Measured frozen baseline, not current endpoint completion', source=str(source),
         source_sha256=expected, method='Native center rays; shared material/UV alpha-aware one-sided BVH',
-        profiles=records, limits=[
-            'This approved linked baseline predates later scoped Tree18/25/ground/bank derivatives.',
-            'Receiver identity informs construction; latest relevant workers require a second exact audit before review.',
+        replacements=replacements, profiles=records, limits=[
+            'Scoped tree replacements are recorded above; other baseline receivers may predate later ground/bank derivatives.',
+            'Receiver identity informs construction; unchanged sprite centers and full neighbor support still require endpoint audits.',
             'No source mask or existing model has been changed; no physical endpoint state is yet constructed.']))
 
 
