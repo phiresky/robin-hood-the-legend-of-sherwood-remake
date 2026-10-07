@@ -55,7 +55,20 @@ for _ in range(max(len(xs),len(ys))):
  for i,j in pending:
   near=[(labels[ii,jj],z0[ii,jj]) for ii,jj in [(i-1,j),(i+1,j),(i,j-1),(i,j+1)] if 0<=ii<len(xs) and 0<=jj<len(ys) and labels[ii,jj]>=0]
   if near:labels[i,j]=collections.Counter(x[0] for x in near).most_common(1)[0][0];z0[i,j]=sum(x[1] for x in near)/len(near)
-assert not np.any(closed&(labels<0));domain=closed;boundary=domain&~erode(domain);z=z0.copy();fixed=boundary.copy();caps=np.full_like(z,np.inf);root_constraints=[];native=json.loads((R.parent/'baseline/masks/manifest.json').read_text());sine,cosine=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-cosine,sine))
+assert not np.any(closed&(labels<0));domain=closed;boundary=domain&~erode(domain)
+if a.revision>=3:
+ # Match the outside support height instead of retaining tall proxy walls.
+ context=[o for o in collection.all_objects if o.type=='MESH' and o not in banks and o.get('source_node') in {'ground'}|{f'building-{i:03d}' for i in range(10)}]
+ context_bvh,_=make_bvh(context)
+ for i,j in np.argwhere(boundary):
+  heights=[]
+  for di,dj in [(1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)]:
+   ii,jj=i+di,j+dj
+   if not (0<=ii<len(xs) and 0<=jj<len(ys)) or domain[ii,jj]:continue
+   hit,_,_,_=context_bvh.ray_cast(Vector((xs[ii],ys[jj],5000)),Vector((0,0,-1)),10000)
+   if hit is not None:heights.append(hit.z)
+  if heights:z0[i,j]=min(heights)
+z=z0.copy();fixed=boundary.copy();caps=np.full_like(z,np.inf);root_constraints=[];native=json.loads((R.parent/'baseline/masks/manifest.json').read_text());sine,cosine=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-cosine,sine))
 def constrain(objects,mask_id,mask_path,label):
  global caps,z,fixed
  bvh,verts=make_bvh(objects);low=min(p.z for p in verts);root_fixed=0
