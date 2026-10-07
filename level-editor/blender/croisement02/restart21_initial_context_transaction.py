@@ -12,10 +12,10 @@ BASE = proposal.BASE
 LIB = proposal.LIB
 INDEX = proposal.INDEX
 PROPOSAL = BASE / 'restart17-initial-context-publication-v3'
-PROOF = BASE / 'restart20-initial-context-browser-v3'
-OUTPUT = BASE / 'restart21-initial-context-transaction-v1'
+PROOF = BASE / 'restart20-initial-context-browser-v6'
+OUTPUT = BASE / 'restart21-initial-context-transaction-v2'
 PROPOSAL_SHA = '8d44a7e6d5d2d8f5c1e6514acaed2de4f4a9b61adb1f2d36f4cf96f04d3df0f4'
-PROOF_SHA = '875c62ffda043c6eeedfd0bd58626fd7eff861bf975888870b71417920642af8'
+PROOF_SHA = '3ff86384a4b97ef02404632ad77ec1f1eb61ccc8eac81c4c53654556a88a5aab'
 require, sha, read, safe = proposal.require, proposal.sha, proposal.read, proposal.safe
 
 
@@ -66,6 +66,7 @@ def prepare():
             'baseline_index': original['baseline_index'], 'proposed_index': original['proposed_index'],
             'records': original['records'], 'runtime_files': read(PROOF / 'runtime-baseline.json')['source_files'],
             'input_files': inputs['files'], 'runtime_deltas': read(PROOF / 'preparation.json')['runtime_changes_since_v3'],
+            'shared_catalog_delta': read(PROOF / 'preparation.json').get('shared_catalog_delta'),
             'scope': original['scope'], 'old_contracts_preserved': True,
             'after_switch': 'Root must run installed normal-HTTP verification before final acceptance.'}
     OUTPUT.mkdir(exist_ok=False)
@@ -89,6 +90,7 @@ def verify(plan):
     require(plan['runtime_files'] == doc('runtime-baseline.json')['source_files'], 'Runtime pin inventory differs')
     require(set(proposal.runtime_paths(plan['runtime_files'])) == set(plan['runtime_files']), 'New runtime module not covered by browser proof')
     require(plan['runtime_deltas'] == doc('preparation.json')['runtime_changes_since_v3'], 'Runtime delta review scope differs')
+    require(plan['shared_catalog_delta'] == doc('preparation.json').get('shared_catalog_delta'), 'Shared catalog delta review scope differs')
     require(not doc('browser/live-runtime-drift.json')['changed'] and not doc('browser/live-drift.json')['changed'], 'Browser drift')
     require(doc('browser/process-final.json') == {'exitCode': 0, 'signalCode': None, 'serverClosed': True}, 'Browser did not close cleanly')
     require(plan['records'] == original['records'], 'Replacement file membership differs')
@@ -132,6 +134,7 @@ def verify_gate(path, digest, plan, plan_sha):
     require(gate.get('status') == 'PASS_ROOT_READY_FOR_INITIAL_CONTEXT_PUBLICATION', 'Root publication review missing')
     require(gate.get('transaction_plan_sha256') == plan_sha and gate.get('browser_proof_sha256') == PROOF_SHA, 'Gate binds other proposal')
     require(gate.get('reviewed_runtime_deltas') == plan['runtime_deltas'], 'Current runtime deltas not reviewed')
+    require(gate.get('reviewed_shared_catalog_delta') == plan['shared_catalog_delta'], 'Current shared catalog delta not reviewed')
     require(gate.get('scope') == 'raw-pre-script-initial-context' and gate.get('publication_authorized') is True, 'Publication scope/authorization missing')
     return gate
 

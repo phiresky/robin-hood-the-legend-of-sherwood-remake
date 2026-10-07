@@ -107,7 +107,7 @@ class TransactionTests(unittest.TestCase):
         gate.write_text(json.dumps({'status': 'PASS_ROOT_READY_FOR_INITIAL_CONTEXT_PUBLICATION', 'transaction_plan_sha256': self.plan_sha,
                                     'browser_proof_sha256': tx.PROOF_SHA, 'reviewed_runtime_deltas': [], 'scope': 'all-gameplay', 'publication_authorized': True}))
         with self.assertRaisesRegex(ValueError, 'scope/authorization'):
-            tx.verify_gate(gate, tx.sha(gate), {'runtime_deltas': []}, self.plan_sha)
+            tx.verify_gate(gate, tx.sha(gate), {'runtime_deltas': [], 'shared_catalog_delta': None}, self.plan_sha)
 
     def test_missing_or_failed_browser_assertion_rejected(self):
         checks = [{'name': f'irrelevant{i}', 'pass': True} for i in range(68)]
