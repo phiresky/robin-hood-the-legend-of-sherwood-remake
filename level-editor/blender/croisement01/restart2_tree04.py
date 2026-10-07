@@ -83,7 +83,7 @@ def main():
  for target in [obj,crown]:
   for vertex in target.data.vertices:vertex.co+=shift
   target.data.update()
- if args.revision>=3:
+ if 3<=args.revision<6:
   changes=[]
   original_volume=BVHTree.FromPolygons([obj.matrix_world@v.co for v in obj.data.vertices],[tuple(face.vertices) for face in obj.data.polygons])
   for vertex in obj.data.vertices:
