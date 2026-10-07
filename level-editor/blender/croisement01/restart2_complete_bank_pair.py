@@ -4,7 +4,7 @@ from pathlib import Path
 import bpy,bmesh,numpy as np
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
-from PIL import Image
+from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 from review_evidence import sha
@@ -34,9 +34,22 @@ def erode(m):return ~dilate(~m)
 closed=domain.copy()
 for _ in range(2):closed=dilate(closed)
 for _ in range(2):closed=erode(closed)
+if tree_id==4 and a.revision>=2:
+ # The selected banks are disconnected archaeological proxy footprints.
+ # Bridge their intervening soil with a separately reviewed inferred slope.
+ coords=sorted(set((int(i),int(j)) for i,j in np.argwhere(domain)))
+ def cross(o,a,b):return (a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0])
+ lower=[];upper=[]
+ for point in coords:
+  while len(lower)>=2 and cross(lower[-2],lower[-1],point)<=0:lower.pop()
+  lower.append(point)
+ for point in reversed(coords):
+  while len(upper)>=2 and cross(upper[-2],upper[-1],point)<=0:upper.pop()
+  upper.append(point)
+ hull=lower[:-1]+upper[:-1];image=Image.new('L',(len(ys),len(xs)));ImageDraw.Draw(image).polygon([(j,i) for i,j in hull],fill=255);closed=np.asarray(image)>0
 closed[[0,-1]]=False;closed[:,[0,-1]]=False
 filled=closed&~domain
-for _ in range(10):
+for _ in range(max(len(xs),len(ys))):
  pending=np.argwhere(closed&(labels<0))
  if not len(pending):break
  for i,j in pending:
