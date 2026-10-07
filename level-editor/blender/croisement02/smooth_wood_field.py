@@ -40,21 +40,27 @@ def constrained_rim(body, weight=32., padding=8):
                        model_validated=False)
 
 
-def smooth_shell(body, thickness, origin, ground, sigma=.8, step=.5):
+def smooth_shell(body, thickness, origin, ground, sigma=.8, step=.5, local_rim_weight=None):
     """Clip triangles against a continuous positive thickness field.
 
 The threshold retains all observed body pixel centers. Front and back meet on
 the interpolated zero contour, rather than following each binary pixel edge.
 This function does not read or modify the retained trunk.
 """
-    padding = 4
+    padding = 8 if local_rim_weight is not None else 4
     potential = gaussian_filter(np.pad(thickness**2/2, padding), sigma)
     padded_body = np.pad(body, padding)
     distance = distance_transform_edt(padded_body)-distance_transform_edt(~padded_body)
-    field = gaussian_filter(distance, sigma)
-    interior = field[padding:-padding,padding:-padding][body]
-    bias = max(0., .1-float(interior.min()))
-    field += bias
+    if local_rim_weight is None:
+        field = gaussian_filter(distance, sigma)
+        interior = field[padding:-padding,padding:-padding][body]
+        bias = max(0., .1-float(interior.min()))
+        field += bias
+        constrained_report = None
+    else:
+        field, constrained_report = constrained_rim(body, local_rim_weight, padding)
+        interior = field[padding:-padding,padding:-padding][body]
+        bias = 0.
     h, w = body.shape
     ys = np.arange(-padding, h+padding+step/2, step)
     xs = np.arange(-padding, w+padding+step/2, step)
@@ -105,4 +111,7 @@ This function does not read or modify the retained trunk.
     lattice_positive = field[padding:-padding,padding:-padding]>0
     if np.any(body & ~lattice_positive): raise ValueError('Continuous rim excludes observed pixel centers')
     report=dict(method='Smoothed signed-distance rim with independent Poisson thickness and interpolated zero contour',sigma=sigma,grid_step=step,conservative_rim_bias=bias,minimum_observed_signed_distance=float(interior.min()+bias),observed_centers_preserved=int(body.sum()),missing_observed_centers=0,pixel_center_silhouette_iou=float((body&lattice_positive).sum()/(body|lattice_positive).sum()),extra_center_pixels=int((lattice_positive&~body).sum()),limits=['A center-coverage guard is not a rasterized pixel-area/terrain proof.','Source mask is unchanged; additional inferred silhouette margin requires visual review.'])
+    if constrained_report is not None:
+        report['method'] = 'Locally constrained curvature rim with independent Poisson thickness'
+        report['constrained_rim'] = constrained_report
     return np.asarray(vertices),np.asarray(faces,int),report

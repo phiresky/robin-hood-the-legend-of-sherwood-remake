@@ -63,8 +63,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--smooth-rim', action='store_true')
+    parser.add_argument('--local-rim-weight', type=float)
+    parser.add_argument('--collar-tangent-mode', choices=['up-projection','boundary-cross'], default='up-projection')
     parser.add_argument('--tree', type=int, choices=[32,38])
     args = parser.parse_args()
+    if args.local_rim_weight is not None and (not args.smooth_rim or args.local_rim_weight <= 0):
+        raise ValueError('Local rim weight requires smooth rim and a positive weight')
     if args.output.exists():
         raise FileExistsError(args.output)
     retained_path = STUDY / 'retained-collars-v1.json'
@@ -87,7 +91,7 @@ def main():
         rim_report = None
         if args.smooth_rim:
             from smooth_wood_field import smooth_shell
-            vertices, faces, rim_report = smooth_shell(body, thickness, box[:2], ground[index])
+            vertices, faces, rim_report = smooth_shell(body, thickness, box[:2], ground[index], local_rim_weight=args.local_rim_weight)
         else:
             vertices, faces = shell(body, thickness, box[:2], ground[index])
         vertices, faces, loops = cut_shell_below(vertices, faces, lower_z)
@@ -109,11 +113,11 @@ def main():
             available.remove(upper_index)
             hi_ids = upper['ordered_loops'][upper_index]
             hi = dict(positions=[upper['vertices'][str(v)]['position'] for v in hi_ids], normals=[upper['vertices'][str(v)]['geometric_normal'] for v in hi_ids])
-            fitted = fit(lo, hi, include_geometry=True, tangent_mode="up-projection",tangent_smoothing=.5 if args.smooth_rim else 0.,validate_float32=args.smooth_rim)
+            fitted = fit(lo, hi, include_geometry=True, tangent_mode=args.collar_tangent_mode,tangent_smoothing=.5 if args.smooth_rim else 0.,validate_float32=args.smooth_rim)
             if args.smooth_rim and not fitted['eligible_for_bounded_integration']:
                 initial_phase=fitted['lower_phase'];phase_attempts=[]
                 for offset in [v/1024 for i in [1,2,4,8,16,32] for v in [i,-i]]:
-                    trial=fit(lo,hi,include_geometry=True,tangent_mode='up-projection',forced_phase=initial_phase+offset,tangent_smoothing=.5,validate_float32=True)
+                    trial=fit(lo,hi,include_geometry=True,tangent_mode=args.collar_tangent_mode,forced_phase=initial_phase+offset,tangent_smoothing=.5,validate_float32=True)
                     phase_attempts.append(dict(offset=offset,passed=trial['eligible_for_bounded_integration'],quality=trial['quality']))
                     if trial['eligible_for_bounded_integration']:
                         fitted=trial;fitted['phase_search']=phase_attempts;break
