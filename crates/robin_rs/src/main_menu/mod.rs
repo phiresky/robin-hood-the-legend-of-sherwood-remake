@@ -635,8 +635,32 @@ impl MainMenuState {
             // Exit and saving the profile manager.
             if matches!(action, ClickAction::Return(MainMenuChoice::Exit)) {
                 exit_requested = true;
-            } else if let Some(choice) = dispatch_click(action, io, session).await? {
-                return Ok(Some(choice));
+            } else {
+                match dispatch_click(action, io, session).await {
+                    Ok(Some(choice)) => return Ok(Some(choice)),
+                    Ok(None) => {}
+                    Err(error) if browsing_campaign => {
+                        tracing::warn!(%error, "Cannot open Campaign Manager");
+                        let mut notice = crate::save_recovery::ErrorNotice::new(format!(
+                            "Cannot open Campaign Manager. Select OK to return to the main menu.\n\n{error}"
+                        ));
+                        loop {
+                            let cursor =
+                                ModalCursor::new(io.cursor_renderer, MOUSE_OPACITY_DEFAULT, 0);
+                            if notice.tick(&mut ModalScreenIo {
+                                window: io.window,
+                                renderer: io.renderer,
+                                resources: io.resources,
+                                cursor: Some(&cursor),
+                            }) {
+                                break;
+                            }
+                            session.application_context.poll_leaderboard_receipts();
+                            crate::window::sleep_ui_frame().await;
+                        }
+                    }
+                    Err(error) => return Err(error),
+                }
             }
             if browsing_campaign {
                 // The browser consumed pointer releases; do not carry its
@@ -821,8 +845,9 @@ fn move_keyboard_selection(frame: &FrameWnd, selection: &mut u32, direction: i32
 fn campaign_browser_profiles(
     profiles: &engine_profiles::ProfileManager,
     campaign: &Campaign,
-    descriptor: &robin_engine::mission_assets::MissionAssetDescriptor,
+    header: &crate::save_file::SaveHeader,
 ) -> Result<engine_profiles::ProfileManager, String> {
+    let descriptor = &header.mission_assets;
     let mission = campaign
         .current_mission_idx
         .and_then(|index| campaign.missions.get(index))
@@ -832,6 +857,9 @@ fn campaign_browser_profiles(
         .ok_or_else(|| "saved current mission has no profile index".to_owned())?
         as usize;
     let mut view = profiles.clone();
+    header
+        .restore_mission_profiles(&mut view)
+        .map_err(|error| error.to_string())?;
     if index == view.missions.len() {
         view.add_forced_mission(
             descriptor.proto_level_filename.clone(),
@@ -867,7 +895,7 @@ async fn dispatch_click(
                 view_profiles = campaign_browser_profiles(
                     session.profiles,
                     save.engine.campaign(),
-                    &save.header.mission_assets,
+                    &save.header,
                 )?;
                 crate::game_session::install_and_validate_saved_profile(&mut view_profiles, &save)
                     .map_err(|error| error.to_string())?;
@@ -1354,18 +1382,48 @@ mod tests {
             "OpenBattlefield",
         )
         .unwrap();
-        let view = campaign_browser_profiles(&profiles, &campaign, &descriptor).unwrap();
+        let mut header = crate::save_file::SaveHeader::new(
+            1,
+            descriptor,
+            "test".into(),
+            crate::save_file::SaveProvenance::new("test".into(), 0, "player".into()).unwrap(),
+        )
+        .unwrap();
+        let view = campaign_browser_profiles(&profiles, &campaign, &header).unwrap();
         assert_eq!(profiles.missions.len(), 1);
         assert_eq!(view.missions.len(), 2);
         assert_eq!(view.missions[1].id, 1);
         assert_eq!(view.missions[1].mission_filename, "Fabri18SpriteGallery");
         assert_eq!(view.missions[1].proto_level_filename, "OpenBattlefield");
-        let existing = campaign_browser_profiles(&view, &campaign, &descriptor).unwrap();
+        let existing = campaign_browser_profiles(&view, &campaign, &header).unwrap();
         assert_eq!(existing.missions.len(), 2);
         campaign.missions[0].profile_idx = Some(2);
-        assert!(campaign_browser_profiles(&profiles, &campaign, &descriptor).is_err());
+        assert!(campaign_browser_profiles(&profiles, &campaign, &header).is_err());
+        let mut recorded = view.clone();
+        recorded.add_forced_mission(
+            "AnotherMap".into(),
+            "AnotherMission".into(),
+            "AnotherMission".into(),
+        );
+        header.mission_id = 2;
+        header.mission_assets = robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+            "AnotherMission",
+            "AnotherMap",
+            "AnotherMap",
+        )
+        .unwrap();
+        header.mission_profiles = Some(recorded.missions.clone());
+        let restored = campaign_browser_profiles(&profiles, &campaign, &header).unwrap();
+        assert_eq!(restored.missions, recorded.missions);
+        assert_eq!(
+            profiles.missions.len(),
+            1,
+            "browsing must not modify the runtime catalog"
+        );
+        header.mission_profiles.as_mut().unwrap()[0].mission_name = "Altered base".into();
+        assert!(campaign_browser_profiles(&profiles, &campaign, &header).is_err());
         campaign.current_mission_idx = None;
-        assert!(campaign_browser_profiles(&profiles, &campaign, &descriptor).is_err());
+        assert!(campaign_browser_profiles(&profiles, &campaign, &header).is_err());
     }
 
     #[cfg(not(target_arch = "wasm32"))]

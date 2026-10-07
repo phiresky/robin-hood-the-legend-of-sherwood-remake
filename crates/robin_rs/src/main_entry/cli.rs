@@ -1254,6 +1254,43 @@ mod tests {
             Some(20),
             "numeric mission equality must not authorize different immutable assets"
         );
+        let mut recorded_profiles = profiles.clone();
+        recorded_profiles.add_forced_mission(
+            "ExtraMap".into(),
+            "ExtraMission".into(),
+            "ExtraMission".into(),
+        );
+        let mut recorded_campaign = save.engine.campaign().clone();
+        recorded_campaign.missions.push(Mission {
+            profile_idx: Some(2),
+            ..Default::default()
+        });
+        assets.profile_manager = std::sync::Arc::new(recorded_profiles.clone());
+        save.engine = Engine::new_for_test(800.0, 600.0, recorded_campaign, &mut assets).unwrap();
+        assert!(
+            validate_save_mission(&save, &profiles).is_err(),
+            "the saved history needs the missing profile"
+        );
+        save.header.mission_profiles = Some(recorded_profiles.missions.clone());
+        assert_eq!(
+            validated_save_reload_target(&save, &profiles, 20, &mission_20_assets, None).unwrap(),
+            Some(20),
+            "catalog restoration needs a mission reload even when its numeric ID and assets match"
+        );
+        assert_eq!(
+            validated_save_reload_target(&save, &recorded_profiles, 20, &mission_20_assets, None)
+                .unwrap(),
+            None
+        );
+        save.header.mission_profiles.as_mut().unwrap()[0].mission_name = "Altered base".into();
+        assert!(
+            validated_save_reload_target(&save, &profiles, 20, &mission_20_assets, None).is_err()
+        );
+        assert_eq!(
+            profiles.missions.len(),
+            2,
+            "routing cannot mutate the running catalog"
+        );
         save.header.mission_id = 0;
         assert_eq!(
             validated_save_reload_target(&save, &profiles, 10, &mission_10_assets, None)

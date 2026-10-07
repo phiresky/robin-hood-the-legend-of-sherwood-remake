@@ -727,7 +727,20 @@ pub(crate) fn validated_save_reload_target(
     {
         return Ok(Some(save.header.mission_id));
     }
-    validate_save_mission(save, profiles)?;
+    if save.header.mission_profiles.is_some() {
+        let mut restored = profiles.clone();
+        save.header
+            .restore_mission_profiles(&mut restored)
+            .map_err(|error| MissionError::save(format!("{error:#}")))?;
+        validate_save_mission(save, &restored)?;
+        if restored.missions.len() != profiles.missions.len() {
+            // Even the same mission needs fresh immutable assets when a saved
+            // campaign references additional session-generated profiles.
+            return Ok(Some(save.header.mission_id));
+        }
+    } else {
+        validate_save_mission(save, profiles)?;
+    }
     Ok(None)
 }
 
