@@ -13,6 +13,9 @@ BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation'
 def usage():return sum(p.stat().st_size for p in DEST.rglob('*')if p.is_file())+sum(p.stat().st_size for p in BASE.glob('tree42-v5-*.log'))
 def guard(expected=4*MIB):
  free=shutil.disk_usage(BASE).free;used=usage();assert free-expected>=FLOOR,('Bounded trial free-space floor',free,expected);assert used+expected<=CAP,('Bounded trial output cap',used,expected)
+ resume=DEST/'resume-inputs.json'
+ if resume.exists():
+  cap=json.loads(resume.read_text());assert used+expected<=cap['existing_trial_bytes']+cap['additional_output_cap_bytes'],('Resume output cap',used,expected)
 def finish(name):
  guard(MIB);(DEST/f'{name}-resources.json').write_text(json.dumps({'peak_rss_kib':resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,'threads':2,'output_bytes':usage(),'free_bytes':shutil.disk_usage(BASE).free,'output_cap_bytes':CAP,'model_cap_bytes':MODEL_CAP,'free_floor_bytes':FLOOR},indent=2)+'\n')
 def install_write_guards():
