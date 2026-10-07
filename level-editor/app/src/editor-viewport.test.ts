@@ -1736,3 +1736,91 @@ test("native patch seeking uses one clock, rejects before mutation, and retires 
   assert.throws(() => viewport.seekNativePatch("cover", "initial"), /not ready/);
   viewport.dispose();
 });
+
+async function apertureDeliveredFixture() {
+  const f = await deliveredFixture();
+  const { missionStateDataHash } = await import("./mission-state-layer.ts");
+  f.source.data.targets.push(structuredClone(f.source.data.targets[0]!));
+  f.contract.native.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  f.contract.native.elements.push({
+    ...structuredClone(f.contract.native.elements[0]!),
+    id: "target-two",
+    creation_order: 1,
+    source: { ...f.contract.native.elements[0]!.source, index: 1 },
+  });
+  f.contract.families.push({
+    ...structuredClone(f.contract.families[0]!),
+    id: "trap-two",
+    element_ids: ["target-two"],
+  });
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(), new THREE.MeshBasicMaterial());
+  f.viewport.replaceMap(new THREE.Group(), ground, new Map());
+  await f.viewport.setStateDelivery(f.contract, f.library, f.source);
+  const root = new THREE.Group();
+  const parts = ["trap", "trap-two"].map((family) => {
+    const cap = new THREE.Mesh(ground.geometry, ground.material);
+    const parent = new THREE.Group(),
+      initial = new THREE.Group(),
+      applied = new THREE.Group();
+    cap.userData.reveal_hide_when_applied = [family];
+    initial.userData.reveal_hide_when_applied = [family];
+    applied.userData.reveal_show_when_applied = [family];
+    parent.add(initial, applied);
+    root.add(cap, parent);
+    return { family, cap, parent, initial, applied };
+  });
+  f.viewport.setStateAperturePreview({
+    root,
+    originalReceivers: [ground],
+    bindings: parts.map((p) => ({
+      family: p.family,
+      mission: "test",
+      patches: [p.family],
+      endpointParent: p.parent,
+    })),
+  });
+  return { ...f, root, ground, parts };
+}
+
+test("delivered aperture callbacks keep simultaneous endpoints and restore the selected cap on reset", async () => {
+  const f = await apertureDeliveredFixture();
+  f.viewport.setDeliveredStateMode("physical-endpoint");
+  f.viewport.selectDeliveredEndpoint("trap", "applied");
+  f.viewport.selectDeliveredEndpoint("trap-two", "applied");
+  assert.equal(f.ground.visible, false);
+  assert.equal(
+    f.delivery.physical.visible,
+    false,
+    "exclusive endpoint copy must not duplicate apertures",
+  );
+  assert.ok(f.parts.every((p) => !p.cap.visible && p.applied.visible));
+  f.viewport.resetDeliveredState("trap");
+  assert.equal(f.parts[0]!.cap.visible, true);
+  assert.equal(f.parts[1]!.cap.visible, false);
+  assert.equal(f.parts[1]!.applied.visible, true);
+  f.viewport.setEntitiesVisible(false);
+  assert.equal(f.ground.visible, true);
+  assert.equal(f.root.visible, false);
+  f.viewport.setEntitiesVisible(true);
+  assert.equal(f.ground.visible, false);
+  assert.equal(f.parts[1]!.cap.visible, false);
+  f.viewport.setStatePresentationMode("physical");
+  assert.equal(f.ground.visible, true);
+  f.viewport.dispose();
+});
+
+test("mission retirement restores aperture receivers and shared resources dispose once with the map", async () => {
+  const f = await apertureDeliveredFixture();
+  let disposed = 0;
+  f.ground.geometry.addEventListener("dispose", () => disposed++);
+  f.viewport.setDeliveredStateMode("physical-endpoint");
+  f.viewport.selectDeliveredEndpoint("trap", "applied");
+  f.viewport.replaceEntities(null);
+  assert.equal(f.ground.visible, true);
+  assert.equal(f.root.parent, null);
+  assert.equal(disposed, 0, "clearing a preview must not dispose shared map textures/geometry");
+  f.viewport.replaceMap(new THREE.Group(), null, new Map());
+  assert.equal(disposed, 1);
+  f.viewport.dispose();
+  assert.equal(disposed, 1);
+});

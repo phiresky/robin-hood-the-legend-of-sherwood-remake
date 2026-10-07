@@ -16,7 +16,7 @@ for(const [id,target] of next as any){
  if(!target.gameplay?.movementTransitions?.length || !expected.has(id))continue;
  const node='scenery-gameplay-'+id;
  const part={node,name:'State gameplay frame',scenery:true,gameplay_only:true};
- const existing=target.parts.find((p:any)=>p.node===node);if(existing)assert.deepEqual(existing,part);else target.parts.push(part);frames.push({id,part,glb_node:{name:node,extras:{gameplay_only:true}},contract:'Empty identity node in default GLB scene; no mesh, skin, transform, or hidden flag. Existing mesh nodes and placement overrides unchanged.'});
+ const existing=target.parts.find((p:any)=>p.node===node);if(existing)assert.deepEqual(existing,part);else target.parts.push(part);frames.push({id,part,glb_node:{name:node,extras:{gameplay_only:true,scenery:true}},contract:'Empty identity child of the sole logical group below the map wrapper; no mesh, skin, transform, or hidden flag. Existing mesh nodes and placement overrides unchanged.'});
 }
 fs.writeFileSync(path.join(folder,'required-gameplay-frames.json'),JSON.stringify(frames,null,2)+'\n');
 for(const[label,raw,assets]of[['before',before,old],['after',after,next]]as const){

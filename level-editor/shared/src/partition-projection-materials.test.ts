@@ -10,6 +10,32 @@ const square = (low: number, high: number): Point[] => [
   [high, high],
   [low, high],
 ];
+test("equivalent adjacent ground triangles produce no internal receiving seam", () => {
+  const boundary: Point[] = [
+    [0.25, 0.75],
+    [80.5, 20.125],
+    [100.75, 90.5],
+    [20.5, 71.125],
+  ];
+  const base = { defaultMaterial: 3, materialIndices: [], explicit: true, owner: "terrain" };
+  const supports = [
+    { ...base, polygon: [boundary[0]!, boundary[1]!, boundary[2]!] },
+    { ...base, polygon: [boundary[0]!, boundary[2]!, boundary[3]!] },
+  ];
+  const before = structuredClone(supports);
+  const pieces = partitionProjectionMaterials(boundary, supports);
+  assert.equal(pieces.length, 1);
+  assert.equal(pieces[0]!.polygon.length, 4);
+  assert.deepEqual(clipping.xor([pieces[0]!.polygon], [boundary]), []);
+  assert.deepEqual(supports, before);
+  const differentMaterial = supports.map((s, i) => ({ ...s, defaultMaterial: i + 1 }));
+  assert.equal(partitionProjectionMaterials(boundary, differentMaterial).length, 2);
+  const physical = supports.map((s, i) => ({ ...s, obstacleIndex: i }));
+  assert.deepEqual(
+    partitionProjectionMaterials(boundary, physical).map((s) => s.obstacleIndex),
+    [0, 1],
+  );
+});
 test("overlap priority follows authored height then tie precedence across placements", () => {
   const boundary = square(0, 100);
   const base = {

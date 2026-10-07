@@ -16,7 +16,7 @@
       "model": "3d-assets/croisement03/croisement03-terrain/model.glb",
       "model_sha256": "ab505cb2bcc3d4b27c4179518b489a7e69a199299c96fb6e34ce1743fbff1a82",
       "descriptor": "3d-assets/croisement03/croisement03-terrain/asset.json",
-      "descriptor_sha256": "fa5ba3a478f4f635bb4fc880ab789019fc2c6a5389234334453c27dab83a3473"
+      "descriptor_sha256": "06d2b9fdbf8801874b57eb84cbde10416be7fce1049df9e2825480fa299725df"
     }
   ],
   "provenance": {
@@ -660,7 +660,7 @@
     {
       "id": "croisement03-timber-bridge",
       "descriptor": "3d-assets/croisement03/croisement03-timber-bridge/asset.json",
-      "descriptor_sha256": "2df7d2fdb91eb73c66695fd5a1f10987bac424a4e4b4d250ec9dabd0462ad2b4",
+      "descriptor_sha256": "47654add948543113a45c530cbea0da81319fc6033474ddc3a365c32b17666ff",
       "model": "3d-assets/croisement03/croisement03-timber-bridge/model.glb",
       "model_sha256": "ae661c35e3b06214620f25e236b9202a3026a0366361be694e813d6d79fc96d6",
       "model_scene": "default"

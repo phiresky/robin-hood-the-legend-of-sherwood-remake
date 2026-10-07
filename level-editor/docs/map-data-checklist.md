@@ -226,7 +226,20 @@ disable physical navigation at 37 degrees. The latest unpublished candidate
 emits physical navigation at all eight placements but fails all 48 actor routes,
 including the twelve routes previously using projected navigation.
 
-The latest library-wide audit finds 38 of 1,297 indexed assets without gameplay
+The current library-wide audit (`gameplay-coverage-spEhsn`) finds 89 of 1,279
+indexed assets without gameplay definitions. Of these, 61 are placed: 57 in
+Croisement02, one in Croisement01, and Croisement03's ferns 35/76 and stream
+fallen log. The timber bridge now has a published draft definition. These counts
+reflect the current asset inventory, not gameplay certification.
+
+Croisement02 ground plants 111–123 now have unpublished asset-derived mask
+candidates. All 130 rotated/elevated exports construct native geometry, preserve
+typed mask coverage, reject wrong-height ground and introduce no movement
+collision. Their authored canopy boundary and rendered character/projectile
+contact still require review. Mixed-sided shrubs and wooden objects need their
+own treatment; they are not assigned empty gameplay to reduce missing counts.
+
+The earlier library-wide audit found 38 of 1,297 indexed assets without gameplay
 definitions, including the composite Derby keep, several Nottingham buildings,
 and York market props. Four are placed in the current Croisement03 scene:
 ferns 35/76, the stream fallen log and the timber bridge. Exporting these or
@@ -259,15 +272,36 @@ Full Croisement03 compilation with these staged definitions passes native
 geometry construction and all nine state apply/reset checks. Best-effort export
 now deduplicates repeated draft warnings without changing source assets or
 relaxing geometry validation; strict validation still rejects repeated warnings.
-The Croisement03 timber bridge now has an unpublished asset-only deck candidate.
+The Croisement03 timber bridge was developed from an asset-only deck candidate.
 Ten rotated/elevated exports join its two end edges to matching terrain and
 reject twenty one-unit height mismatches; all ten native construction checks
 pass. The expanded deck-only candidate passes 40 directed actor crossings,
 including 20 over a gap whose banks are disconnected without the bridge.
-A separate solid-deck candidate passes 240 sight/projectile probes but fails
-actor receiver tracking at a 270-degree bank seam. Rail/pier collision and
-rendered actor occlusion remain unfinished; this asset is still unpublished
-and counted as missing.
+The solid-deck candidate now also passes all 40 actor crossings and 240
+sight/projectile probes after fitting the nominal deck plane within 0.000016
+height units and retaining fractional terrain fragments through compiler
+clipping. The newer full-structure candidate adds mesh-derived rail/pier solids
+and passes 3,120 sight/projectile checks and all 40 directed actor crossings.
+Terrain retains fractional coordinates until navigation assembly, fixing the
+90-degree disconnection; equivalent generated ground receivers now merge before
+partitioning, fixing the 180-degree receiver seam. Full Croisement03 with the
+candidate passes native construction and state apply/reset checks. Rendered
+actor occlusion remains unverified. The original-scene crossing check exposed
+overlapping bridge/background navigation areas. The corrected ownership
+candidate removes the deck footprint from background metadata and gives the
+bridge local exterior sockets. Asset ground can now opt into accepting these
+sockets with `acceptsNavigationJoins`, using current placement and height.
+Five interior samples have exactly one walkable owner with the bridge and none
+after its removal. The saved scene passes both native actor crossing directions,
+construction and all nine state controls. A moved-deck compiler regression keeps
+the new floor walkable and restores the old gap. Native actor movement also
+passes forty directions over twenty asset-ground exports at five rotations and
+two elevations; 3,120 sight/projectile probes pass and forty wrong-height
+attachments reject. The deck removes 0.000146 units of mesh-export contact drift.
+Bridge and background corrections are now published, with refreshed scene pins;
+both saved-scene native crossings pass using only published assets. Rendered
+actor occlusion and shadows remain explicitly warned as unverified in the
+bridge's draft metadata.
 An unpublished mesh-derived bridge deck candidate passes ten complete native
 crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes

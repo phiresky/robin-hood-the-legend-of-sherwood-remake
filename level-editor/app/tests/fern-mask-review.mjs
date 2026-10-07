@@ -70,7 +70,7 @@ try {
   };
   const cases = [];
   let row = 0;
-  for (const id of ["croisement03-fern-35", "croisement03-fern-76"])
+  for (const { asset: id } of edits)
     for (const rotation of [0, 90, 180, 270]) {
       result.textContent = `RUNNING ${id} ${rotation}`;
       const file = `${id}-0-${rotation}.level.json`;

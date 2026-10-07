@@ -1,0 +1,82 @@
+"""Bind the installed HTTP Editor check to unchanged published files and code."""
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
+from render_slots import acquire, release
+
+WORK = ROOT / 'level-editor/work/croisement02-refinement/restart2-textures'
+STAGE = WORK / 'post-batch15-static-candidate-v6'
+FIXTURE = WORK / 'installed-static-v1'
+RUNNER = WORK / 'review_installed_static_v1.mjs'
+
+
+def sha(path):
+    return hashlib.file_digest(path.open('rb'), 'sha256').hexdigest() if path.is_file() else None
+
+
+def snapshot():
+    manifest_path = STAGE / 'promotion.json'
+    manifest = json.loads(manifest_path.read_text())
+    if manifest['status'] != 'APPLIED':
+        raise ValueError('Static publication is not applied')
+    pins = {str(manifest_path): sha(manifest_path)}
+    for row in manifest['files']:
+        path = Path(row['target'])
+        expected = row['source_sha256'] if row['source'] is not None else None
+        if sha(path) != expected:
+            raise ValueError('Installed publication changed: ' + str(path))
+        pins[str(path)] = expected
+    for row in manifest['protected_files']:
+        path = Path(row['path'])
+        if sha(path) != row['sha256']:
+            raise ValueError('Protected publication changed: ' + str(path))
+        pins[str(path)] = row['sha256']
+    for directory in ('app/src', 'shared/src'):
+        for path in (ROOT / 'level-editor' / directory).rglob('*'):
+            if path.is_file():
+                pins[str(path)] = sha(path)
+    for path in (RUNNER, FIXTURE / 'editor-review.html', FIXTURE / 'editor-review.tsx',
+                 ROOT / 'level-editor/app/vite.config.ts'):
+        pins[str(path)] = sha(path)
+    return pins
+
+
+def main():
+    acquire()
+    try:
+        output = FIXTURE / 'runtime'
+        if output.exists() and any(output.iterdir()):
+            raise ValueError('Retain existing browser evidence; choose a fresh fixture for a retry')
+        pins = snapshot()
+        (FIXTURE / 'prelaunch-pins.json').write_text(json.dumps(pins, indent=2) + '\n')
+        subprocess.run(['node', str(RUNNER)], cwd=ROOT, check=True)
+        if snapshot() != pins:
+            raise ValueError('Inputs changed during installed-library check')
+        result_path = output / 'result.json'
+        result = json.loads(result_path.read_text())
+        if not result['status'].startswith('PASS'):
+            raise ValueError('Installed browser proof did not pass')
+        map_path = ROOT / 'level-editor/library/scenes/croisement02.rhlos-map.json'
+        proof = {
+            'status': 'PASS',
+            'scope': 'Installed production Editor via normal HTTP library, without resource interception',
+            'map_sha256': sha(map_path),
+            'inputs': pins,
+            'result': str(result_path),
+            'result_sha256': sha(result_path),
+            'screenshots': {name: sha(output / name) for name in ('loaded.png', 'rotated.png')},
+            'visual_review': 'Pending independent root inspection',
+        }
+        (FIXTURE / 'verification.json').write_text(json.dumps(proof, indent=2) + '\n')
+        print('PASS installed normal HTTP proof; exact inputs unchanged')
+    finally:
+        release()
+
+
+if __name__ == '__main__':
+    main()

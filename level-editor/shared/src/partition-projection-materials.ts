@@ -120,8 +120,34 @@ export function partitionProjectionMaterials(
       (b.support.priority ?? 0) - (a.support.priority ?? 0) ||
       (b.support.tiePriority ?? 0) - (a.support.tiePriority ?? 0),
   );
-  let remaining: MultiPolygon = [shape(boundary)];
+  // Adjacent equivalent generated supports have no material/height boundary.
+  // Union them before subtracting coverage: cutting each terrain triangle in
+  // turn can leave subpixel seams that become false elevation boundaries.
+  const partitions: typeof members = [];
   for (const member of members) {
+    const previous = partitions.at(-1);
+    const a = previous?.support,
+      b = member.support;
+    if (
+      previous &&
+      a &&
+      a.obstacleIndex === undefined &&
+      b.obstacleIndex === undefined &&
+      a.owner === b.owner &&
+      a.explicit === b.explicit &&
+      (a.priority ?? 0) === (b.priority ?? 0) &&
+      (a.tiePriority ?? 0) === (b.tiePriority ?? 0) &&
+      a.defaultMaterial === b.defaultMaterial &&
+      equivalentProjectionPlanes(a.planePoints, b.planePoints) &&
+      (a.materialSignature ?? JSON.stringify(a.materialIndices)) ===
+        (b.materialSignature ?? JSON.stringify(b.materialIndices))
+    ) {
+      previous.geometry = clipping.union(previous.geometry, member.geometry);
+      previous.bounds = geometryBounds(previous.geometry);
+    } else partitions.push({ ...member });
+  }
+  let remaining: MultiPolygon = [shape(boundary)];
+  for (const member of partitions) {
     member.geometry = clipping.intersection(remaining, member.geometry);
     remaining = clipping.difference(remaining, member.geometry);
   }
@@ -130,7 +156,7 @@ export function partitionProjectionMaterials(
   // the absence of an explicit receiver (which must remain uncovered).
   const implicit = supports.filter((support) => !support.explicit);
   if (implicit.length)
-    members.push({
+    partitions.push({
       support: { polygon: boundary, defaultMaterial: 0, materialIndices: [], explicit: false },
       bounds: geometryBounds([shape(boundary)]),
       geometry: clipping.intersection(
@@ -141,7 +167,7 @@ export function partitionProjectionMaterials(
         ),
       ),
     });
-  return members.flatMap(({ support, geometry }) =>
+  return partitions.flatMap(({ support, geometry }) =>
     geometry.flatMap((polygon) => {
       const rings = polygon.map((ring) => simplifyMotionRing(ring));
       if (rings[0]!.length < 3) {

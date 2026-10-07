@@ -1,0 +1,317 @@
+{
+  "document": {
+    "version": 1,
+    "map": "Rotated bridge bank with one rail solid",
+    "camera": {
+      "kind": "oblique-orthographic",
+      "elevation_deg": 35
+    },
+    "size": [
+      1000,
+      1000
+    ],
+    "objects": [
+      {
+        "id": "croisement03-timber-bridge-instance1:scenery-croisement03-timber-bridge",
+        "node": "asset:croisement03-timber-bridge:scenery-croisement03-timber-bridge",
+        "kind": "scenery",
+        "source": {
+          "map": "Croisement03"
+        },
+        "transform": {
+          "dx": 0,
+          "dy": 0,
+          "dz": 0,
+          "rot_deg": 0
+        },
+        "group": "croisement03-timber-bridge-instance1",
+        "name": "Deck, rails and pier"
+      }
+    ],
+    "groups": [
+      {
+        "id": "croisement03-timber-bridge-instance1",
+        "name": "Timber Bridge",
+        "transform": {
+          "dx": 500.25,
+          "dy": 500.75,
+          "dz": -51.91725487309467,
+          "rot_deg": 90
+        }
+      }
+    ],
+    "sceneAssets": [],
+    "assetSources": [
+      {
+        "id": "croisement03-timber-bridge",
+        "role": "objects",
+        "model": "3d-assets/croisement03/croisement03-timber-bridge/model.glb",
+        "model_sha256": "ae661c35e3b06214620f25e236b9202a3026a0366361be694e813d6d79fc96d6",
+        "descriptor": "3d-assets/croisement03/croisement03-timber-bridge/asset.json",
+        "descriptor_sha256": "2df7d2fdb91eb73c66695fd5a1f10987bac424a4e4b4d250ec9dabd0462ad2b4",
+        "model_scene": "default",
+        "resources": []
+      }
+    ],
+    "terrain": {
+      "version": 1,
+      "spacing": 100,
+      "vertices": [
+        {
+          "id": "bank-0-0",
+          "position": [
+            388.927978515625,
+            520.4433394451821,
+            0
+          ]
+        },
+        {
+          "id": "bank-0-1",
+          "position": [
+            436.0009765625,
+            565.7558779169148,
+            0
+          ]
+        },
+        {
+          "id": "bank-0-2",
+          "position": [
+            357.7144721992738,
+            603.7320708701242,
+            0
+          ]
+        },
+        {
+          "id": "bank-0-3",
+          "position": [
+            310.6414741523988,
+            558.4195323983915,
+            0
+          ]
+        },
+        {
+          "id": "bank-1-0",
+          "position": [
+            613.83251953125,
+            483.1608710823641,
+            0
+          ]
+        },
+        {
+          "id": "bank-1-1",
+          "position": [
+            552.8118896484375,
+            437.2747561742804,
+            0
+          ]
+        },
+        {
+          "id": "bank-1-2",
+          "position": [
+            631.0983940116637,
+            399.29856322107094,
+            0
+          ]
+        },
+        {
+          "id": "bank-1-3",
+          "position": [
+            692.1190238944762,
+            445.18467812915463,
+            0
+          ]
+        }
+      ],
+      "cells": [
+        {
+          "id": "bank-0",
+          "material": "grass_short",
+          "vertices": [
+            0,
+            1,
+            2,
+            3
+          ]
+        },
+        {
+          "id": "bank-1",
+          "material": "grass_short",
+          "vertices": [
+            4,
+            5,
+            6,
+            7
+          ]
+        }
+      ]
+    }
+  },
+  "descriptor": {
+    "version": 1,
+    "kind": "projection-mapped-asset",
+    "id": "croisement03-timber-bridge",
+    "name": "Timber Bridge",
+    "source_map": "Croisement03",
+    "model": "model.glb",
+    "parts": [
+      {
+        "node": "scenery-croisement03-timber-bridge",
+        "name": "Deck, rails and pier",
+        "scenery": true,
+        "default_hidden": false
+      }
+    ],
+    "source_origin_scene": [
+      950.6657104492188,
+      -1208.4671630859375,
+      -63.37944412231445
+    ],
+    "model_scene": "default",
+    "resources": [],
+    "gameplay": {
+      "version": 1,
+      "collision": "none",
+      "placementGroundHeight": 51.91725487309467,
+      "volumes": [
+        {
+          "id": "timber-12-face-13-cell-3",
+          "node": "scenery-croisement03-timber-bridge",
+          "movementHeadroom": 80,
+          "shape": {
+            "points": [
+              {
+                "x": -106.41887621790102,
+                "y": -29.991988268893692,
+                "z_bottom": 67.21381509400125,
+                "z_top": 73.21381383539575
+              },
+              {
+                "x": -108.66575569111319,
+                "y": -28.85173184973337,
+                "z_bottom": 67.2138150940041,
+                "z_top": 73.21381383539371
+              },
+              {
+                "x": -110.66570954548297,
+                "y": -30.148253665374796,
+                "z_bottom": 55.91726392927538,
+                "z_top": 81.25051219076201
+              },
+              {
+                "x": -108.41883007226988,
+                "y": -31.28851008453512,
+                "z_bottom": 55.917263929274824,
+                "z_top": 81.25051219076235
+              }
+            ],
+            "solid": true,
+            "opaque": true,
+            "mouse": true,
+            "show_shadow_polygon": true,
+            "default_material": 1
+          }
+        }
+      ],
+      "surfaces": [
+        {
+          "id": "deck-face-0",
+          "node": "scenery-croisement03-timber-bridge",
+          "polygon": [
+            [
+              -110.66571044921875,
+              -30.148261352427717
+            ],
+            [
+              34.33428955078125,
+              63.8516883704024
+            ],
+            [
+              113.33428955078125,
+              36.85172590231608
+            ]
+          ],
+          "height": [
+            51.91725487309467,
+            51.91725487309467,
+            51.91725487309467
+          ],
+          "navigationRegion": "bridge-deck",
+          "preserveMovementPrecision": true,
+          "projectionMaterials": {
+            "defaultMaterial": 1,
+            "regions": [],
+            "priority": 1
+          },
+          "navigationJoins": [
+            [
+              [
+                34.33428955078125,
+                63.8516883704024,
+                51.91725487309467
+              ],
+              [
+                113.33428955078125,
+                36.85172590231608,
+                51.91725487309467
+              ]
+            ]
+          ],
+          "navigationJoinMinimumOverlap": 12,
+          "navigationJoinHeightTolerance": 0.001
+        },
+        {
+          "id": "deck-face-1",
+          "node": "scenery-croisement03-timber-bridge",
+          "polygon": [
+            [
+              -110.66571044921875,
+              -30.148261352427717
+            ],
+            [
+              113.33428955078125,
+              36.85172590231608
+            ],
+            [
+              -30.66571044921875,
+              -65.14825678450747
+            ]
+          ],
+          "height": [
+            51.91725487309467,
+            51.91725487309467,
+            51.91725487309467
+          ],
+          "navigationRegion": "bridge-deck",
+          "preserveMovementPrecision": true,
+          "projectionMaterials": {
+            "defaultMaterial": 1,
+            "regions": [],
+            "priority": 1
+          },
+          "navigationJoins": [
+            [
+              [
+                -30.66571044921875,
+                -65.14825678450747,
+                51.91725487309467
+              ],
+              [
+                -110.66571044921875,
+                -30.148261352427717,
+                51.91725487309467
+              ]
+            ]
+          ],
+          "navigationJoinMinimumOverlap": 12,
+          "navigationJoinHeightTolerance": 0.001
+        }
+      ],
+      "doors": [],
+      "draft": {
+        "issues": [
+          "Bridge deck candidate only: rail/pier collision, receiving seams and rendered actor occlusion still require authoring and native route review."
+        ]
+      }
+    }
+  }
+}

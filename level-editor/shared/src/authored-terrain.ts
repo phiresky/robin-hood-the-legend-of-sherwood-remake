@@ -693,6 +693,9 @@ export function terrainGameplay(document: Level3D): GameplayAssetDescriptor | un
       polygon: points.map((p) => [p[0], p[1]]),
       height: points.map((p) => p[2]),
       navigationRegion: "terrain",
+      // Keep terrain and placed floor seams in the same continuous frame until
+      // their collision cuts and navigation unions have been assembled.
+      preserveMovementPrecision: true,
       projectionMaterials: { defaultMaterial: material.gameplayMaterial, regions: [] },
     };
     surfaces.push(surface);

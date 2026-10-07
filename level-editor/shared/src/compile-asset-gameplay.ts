@@ -358,6 +358,7 @@ function compileAssetGameplayAttempt(
     worldHoles: Point[][];
     lift?: string;
     navigationRegion?: string;
+    acceptsNavigationJoins?: boolean;
     preserveMovementBoundary?: boolean;
     holeContours?: string[];
     movementContour?: string;
@@ -949,6 +950,8 @@ function compileAssetGameplayAttempt(
       const minimumArea = continuous ? 1e-8 : 0.5;
       const placed = {
         owner: placement.id,
+        acceptsNavigationJoins:
+          surface.acceptsNavigationJoins || placement.id === "authored-terrain",
         preserveMovementBoundary: surface.preserveMovementBoundary,
         holeContours: surface.holeContours,
         movementContour: surface.movementContour,
@@ -1132,9 +1135,9 @@ function compileAssetGameplayAttempt(
   }
   // Placed floors own their coverage. Cut it out of authored ground at the
   // same height so door endpoints never resolve to two overlapping areas.
-  if (terrain) {
-    const placed = surfaces.filter((s) => s.owner !== "authored-terrain");
-    const ground = surfaces.filter((s) => s.owner === "authored-terrain");
+  if (surfaces.some((s) => s.acceptsNavigationJoins)) {
+    const placed = surfaces.filter((s) => !s.acceptsNavigationJoins);
+    const ground = surfaces.filter((s) => s.acceptsNavigationJoins);
     const replacement: typeof surfaces = [];
     for (const surface of ground) {
       const cuts = placed
@@ -1145,7 +1148,13 @@ function compileAssetGameplayAttempt(
       for (const polygon of remaining)
         replacement.push({
           ...surface,
-          polygon: ring(polygon[0]!),
+          // Changed ground becomes generated navigation. Its previous contour
+          // labels no longer describe the clipped footprint.
+          preserveMovementBoundary: cuts.length ? false : surface.preserveMovementBoundary,
+          holeContours: cuts.length ? undefined : surface.holeContours,
+          // Boolean clipping creates fractional remnants even when the input
+          // terrain was quantized. Retain them until navigation union/rounding.
+          polygon: ring(polygon[0]!, "Clipped terrain surface", 1e-8),
           worldPolygon: polygon[0]!.map(([x, y]): Point => [
             x,
             y + planeHeight(surface.plane, [x, y]),
@@ -1155,7 +1164,7 @@ function compileAssetGameplayAttempt(
             .map((hole) =>
               hole.map(([x, y]): Point => [x, y + planeHeight(surface.plane, [x, y])]),
             ),
-          holes: polygon.slice(1).map((h) => ring(h)),
+          holes: polygon.slice(1).map((h) => ring(h, "Clipped terrain hole", 1e-8)),
         });
     }
     surfaces.splice(0, surfaces.length, ...placed, ...replacement);
@@ -1179,14 +1188,14 @@ function compileAssetGameplayAttempt(
           !s.holes.some((h) => inside(probe, h)) &&
           !movementBlockers.some(
             (blocker) =>
-              blocker.owner === "authored-terrain" &&
+              blocker.owner === s.owner &&
               Math.abs(planeHeight(blocker.plane, probe) - planeHeight(s.plane, probe)) < 1e-4 &&
               inside(probe, blocker.polygon),
           ),
       );
       if (groundSurface?.navigationRegion)
         navigationJoins.push({
-          owner: "authored-terrain",
+          owner: groundSurface.owner,
           region: groundSurface.navigationRegion,
           edge: [b, a],
         });
@@ -1402,6 +1411,7 @@ function compileAssetGameplayAttempt(
     // beyond the frame and must not authorize movement into the invisible area.
     const preserve =
       group.some((s) => s.preserveMovementBoundary) &&
+      !(group.length > 1 && group.some((s) => s.acceptsNavigationJoins)) &&
       !group.some((s) => s.polygon.some(outsideFrame));
     if (preserve && (group.length !== 1 || lift))
       throw new Error(

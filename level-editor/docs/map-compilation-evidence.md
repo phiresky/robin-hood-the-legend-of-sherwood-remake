@@ -9756,3 +9756,168 @@ coplanar receiver conflicts and then a quantized collision sliver; that
 experiment was removed. No collision padding, actor-test relaxation or library
 publication was performed. The solid candidate remains explicit and unverified;
 rail/pier collision and rendered integration are still required.
+
+Further inspection shows the solid cuts were separating one bank's receiving
+area, rather than an isolated renderer issue. Candidate `--solid-deck
+--flat-deck` fits the nominally horizontal deck and underside independently;
+the maximum height change is 0.0000151033 game units. Wood has explicit material
+priority over coplanar ground. A compiler bug previously prevented this case:
+terrain fragments produced by subtracting placed floors were subjected to a
+half-pixel area threshold before navigation union. The compiler now preserves
+these fractional polygons and holes at its existing continuous-geometry
+threshold until final navigation processing. A regression test leaves a
+0.02-square-unit terrain corner and verifies the final full square is retained.
+
+Candidate `croisement-bridge-gameplay-axLNH0` passes all 40 native directed actor
+crossings and 240 sight/projectile probes, with twenty wrong-height rejections.
+All 146 affected compiler/navigation/terrain tests pass. The application
+typecheck passes; the pipeline typecheck encountered unrelated concurrent
+`state-delivery.test.ts` errors. This resolves the tested solid-deck crossing
+failure, not rail/pier collision or rendered actor integration. Publication is
+still pending those requirements.
+
+`author-croisement-bridge-structure.py` now derives the five non-deck timber
+components from the asset mesh. Four vertical extrusions are fitted within
+0.000084652 scene units, keeping their front-profile openings. The brace retains
+its convex mesh vertices. Adjacent cap triangles merge only when their union is
+convex; per-component volume error stays below 0.0031%. Merging caps and coplanar
+hull faces reduces the runtime representation from 2,835 to 526 solids,
+including the deck. Partition volume conservation is checked independently.
+
+Seventy-two ray probes use triangle intersections against the entire asset mesh
+as their oracle, including 32 clear openings and 40 wood hits. With the deck
+probes, five rotations and two elevations, candidate
+`croisement-bridge-gameplay-20Dvs0` passes all 3,120 native sight/projectile
+queries. Independent actor runs (`actor-case-report.json`) pass both directions
+in 18 of 20 scenes. The 180-degree gap scenes at elevations zero and forty still
+fail receiver tracking; all continuous-terrain cases pass. This is not full
+traversal certification or publication.
+
+The preceding structured candidate exposed a distinct 90-degree disconnection:
+terrain rounded its shared edge before precise asset floors and rail collision
+were assembled. Terrain surfaces now preserve fractional coordinates through
+assembly. The minimized regression contains one rail solid, two deck triangles
+and two terrain banks, with no model or level-data loading. Previously it
+compiled into two navigation regions; now it compiles into one, while removing
+the bridge still leaves two. All 146 existing compiler/navigation/terrain tests
+and the additional regression pass. Application typechecking passes; pipeline
+typechecking still encounters the separately modified state-delivery tests.
+Full rendered occlusion and the remaining 180-degree receiver failure are open.
+
+The 180-degree failure was an artificial internal seam between adjacent
+generated ground receivers with identical material and receiving plane.
+`partitionProjectionMaterials` now unions adjacent equivalent generated supports
+before subtracting their coverage. It preserves physical receiver identities,
+different materials/planes and ordering between non-equivalent supports. A
+focused regression checks a fractional quadrilateral made from two triangles,
+unchanged input metadata, separate material boundaries and physical identities.
+All 156 affected terrain, compiler, navigation and partition tests pass, along
+with application typechecking and focused lint/format checks.
+
+Structured candidate `croisement-bridge-gameplay-59LmI4` passes all forty native
+directed actor crossings and 3,120 sight/projectile queries, retaining all twenty
+wrong-height landing rejections. Exporting the complete saved Croisement03 with
+the bridge candidate (`saved-map-exports-6W8tQm`) passes native construction:
+12 areas, 633 sight obstacles, 15 doors, ten jump pairs, 5,434 grid blocks and
+68 elevation boundaries. All nine state apply/reset checks pass. This verifies
+loading and control construction, not original-scene bridge crossings or rendered
+actor occlusion. The bridge remains unpublished pending that integration review.
+
+`check-saved-bridge-contact.mjs` now compiles the saved Croisement03 scene from
+its pinned editor assets, transforms the bridge's end sockets and emits both
+contact diagnostics and a native actor-crossing manifest. Unlike the isolated
+fixtures, this scene uses `croisement03-terrain` as a background asset rather
+than an authored terrain grid. Its ground still includes the old bridge's
+walking footprint.
+
+The asset's nominal deck plane is scene Z=0; averaging exported vertex heights
+had placed it 0.000146346 game units below that plane at its saved placement.
+Staging now converts that authored contact into asset-local coordinates, with
+an explicit 0.001-unit maximum fit error, instead of retaining the export drift.
+`croisement-bridge-gameplay-pT76XG` still passes all forty isolated actor crossings
+and 3,120 ray checks. Its saved-scene contacts now have exactly zero height.
+This authoring correction does not introduce level-data access in the compiler.
+
+Saved-scene candidate `saved-bridge-contact-GKNHyl` exposes the remaining issue:
+inside both bridge ends, layer zero has two overlapping areas (bridge sector
+zero and background sector one); outside, only background sector one remains.
+The native crossing fails on entry at [1024.1682, 743.276]: it acquires bridge
+receiver 632 while the actor remains in background sector one. This is an
+integration failure, not a successful original-scene roundtrip. Floor ownership
+and connections to background terrain need correction; moving the bridge must
+not leave its old crossing embedded in the terrain asset. Publication and
+rendered occlusion verification remain pending.
+
+`stage-bridge-ground-ownership.mjs` now authors a candidate terrain hole from
+the placed asset's own deck geometry and two asset-local open end passages.
+Candidate `bridge-ground-ownership-5HJmCM` checks five interior centerline
+samples: each has exactly one navigation owner when placed and none when the
+bridge is removed. Each passage has unique endpoints in distinct ground/deck
+areas. Native construction passes for both exports: placed has 12 areas, 633
+sight obstacles and 17 doors; removed has 11 areas, 106 sight obstacles and 15
+doors. Both construct 10 jump pairs and 5,016 grid blocks.
+
+These are ownership and construction checks only. The existing direct-walking
+endpoint helper keeps a fixed sector and cannot verify a route through the two
+open passages. Native pathfinding/actor traversal, alternate background
+placements, rendered occlusion and publication remain pending. The terrain hole
+is an asset-authoring correction; compilation still reads only editor assets.
+
+The two-passage candidate is superseded: both banks share a sector, and the
+native gate planner returns an empty route between identical sector identities.
+An artificial forced gate route would not demonstrate a normal map click.
+Asset surfaces now explicitly opt into ground attachment with
+`acceptsNavigationJoins`. Matching exterior sockets join placed floors directly
+to current ground geometry; coplanar floors own their coverage. Changed or
+joined preserved ground is rebuilt as generated navigation. Ordinary boundaries
+without exterior sockets remain separate.
+
+Candidate `bridge-ground-ownership-zS6rzH` and contact export
+`saved-bridge-contact-q9AzRp` now pass both native actor crossings across the
+saved scene's bridge, including ground/deck receiver handoffs. Native loading
+constructs 11 areas, 633 sight obstacles and 15 doors with the bridge; removal
+constructs 13 areas, 106 sight obstacles and 15 doors. Both retain 10 jump pairs
+and 5,016 grid blocks and pass all nine native control apply/reset checks.
+Five interior removal probes still find no walkable area. A compiler regression
+moves a deck away from a ground hole: the old gap becomes impassable while the
+new floor remains connected, without adding ground sockets for either location.
+151 affected tests, application typecheck and focused lint pass. Native moved
+placements, rendered review and publication remain pending.
+
+`check-bridge-asset-ground.mjs` converts the twenty rotated/elevated bridge
+fixtures into asset-owned ground and removes editor terrain before compilation.
+Stage `bridge-asset-ground-RnigNG` passes all forty native actor crossings and
+3,120 sight/projectile queries. Forty one-unit height mismatches reject; ten
+separated-bank removal checks retain disconnected banks. This tests arbitrary
+bridge orientation on continuous ground and fitted banks, not native rendered
+playthroughs of every possible placement.
+
+Publication `bridge-publish-8TtzAK` installs the bridge and corrected background
+definitions and refreshes Croisement03's descriptor pins. The bridge remains a
+draft with explicit rendered actor occlusion/shadow warnings. Running
+`check-saved-bridge-contact.mjs --published` produces
+`saved-bridge-contact-dKPC8h`; both native actor directions pass using published
+definitions without staged overrides.
+
+Fresh inventory `gameplay-coverage-spEhsn` finds 1,279 indexed assets, 89 missing
+definitions and 61 missing placed definitions: 57 Croisement02 assets, one
+Croisement01 asset and Croisement03's two ferns and stream fallen log. The bridge
+is no longer missing. The previous four-missing-placement count is historical;
+the current library has changed. Definition presence is not proof of gameplay
+completeness.
+
+The foliage authoring script now accepts explicit `--asset=<id>` selections and
+requires one-sided MASK materials with physical foliage opacity semantics.
+Opaque wooden geometry and mixed-sided foliage do not silently enter that path.
+The browser mask review now reads candidate IDs from the stage edits instead of
+hardcoding two ferns.
+
+Stage `fern-gameplay-wS3DZB` contains Croisement02 ground plants 111–123. Each
+uses its own mesh alpha coverage, local ground contact and authored closed
+canopy boundary. All 130 exports (thirteen assets, five rotations, two heights)
+pass native construction. The authoring checks require nonempty typed masks,
+coverage-spanning boundary polylines, rejection of a one-unit ground mismatch
+and no generated movement obstacles. These definitions remain unpublished:
+rendered character/projectile occlusion is unverified, and the closed canopy
+boundary is an explicit approximation. The library missing-definition count has
+not been reduced by these staged candidates.

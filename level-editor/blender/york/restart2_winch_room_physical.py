@@ -1,7 +1,7 @@
 """Private physical arch opening proposal through separately scoped room receivers."""
 import json,math,sys,hashlib
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/winch-room-physical-v5'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/winch-room-physical-v6'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -11,7 +11,8 @@ from mathutils import Vector
 from PIL import Image
 import numpy as np
 from collections import deque
-source=WORK/'restart2/winch-geometry-v3/transition-44/model.blend';bpy.ops.wm.open_mainfile(filepath=str(source));scene=bpy.context.scene;wall=next(o for o in scene.objects if o.get('source_node')=='building-776')
+initial_source=WORK/'restart2/winch-geometry-v5/transition-00/model.blend';bpy.ops.wm.open_mainfile(filepath=str(initial_source));bpy.context.view_layer.update();initial_pose={o.name:([list(r) for r in o.matrix_world],o.hide_render) for o in bpy.context.scene.objects if o.get('native_patch')=='patch-004'}
+source=WORK/'restart2/winch-geometry-v5/transition-44/model.blend';bpy.ops.wm.open_mainfile(filepath=str(source));scene=bpy.context.scene;wall=next(o for o in scene.objects if o.get('source_node')=='building-776')
 a=np.array(Image.open(WORK/'baseline/masks/000615.png').convert('L'))>0;seed=(150,40);assert not a[seed];q=deque([seed]);seen={seed}
 while q:
  y,x=q.popleft()
@@ -63,4 +64,11 @@ bpy.data.objects.remove(cut,do_unlink=True)
 for name,digest in protected.items():
  o=bpy.data.objects[name];assert hashlib.sha256(json.dumps([list(o.matrix_world@v.co) for v in o.data.vertices]).encode()).hexdigest()==digest
 OUT.mkdir(parents=True);(OUT/'transition-44').mkdir();bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'transition-44/model.blend'),compress=True)
-(OUT/'proposal.json').write_text(json.dumps({'status':'HOLD physical cavity proposal requires source/contact review','changed_nodes':sorted(nodes),'source_mask':615,'source_hole_pixels':5699,'source_profile':profile,'protected_meshes':protected,'purpose':'Source arch traced onto physical front wall776 footprint, horizontally extruded through four overlapping room proxies. Hidden depth120game and front padding12game are explicit inference; native floor90 retained; source foreground sill remains separate ownership to reconcile.'},indent=2)+'\n');print('ROOM PROBE SAVED')
+from mathutils import Matrix
+for name,(matrix,hidden) in initial_pose.items():
+ o=scene.objects[name];o.matrix_world=Matrix(matrix);o.hide_render=hidden
+bpy.context.view_layer.update()
+for name,(matrix,hidden) in initial_pose.items():
+ o=scene.objects[name];assert max(abs(o.matrix_world[r][c]-matrix[r][c]) for r in range(4) for c in range(4))<1e-6;assert o.hide_render==hidden
+(OUT/'transition-00').mkdir();bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'transition-00/model.blend'),compress=True)
+(OUT/'proposal.json').write_text(json.dumps({'status':'HOLD physical cavity proposal requires source/contact review','changed_nodes':sorted(nodes),'source_mask':615,'source_hole_pixels':5699,'source_profile':profile,'protected_meshes':protected,'protection_scope':'Final-state carving changes only4room nodes; initial endpoint then restores exact authored initial mechanism transforms.','initial_pose_source_sha256':hashlib.sha256(initial_source.read_bytes()).hexdigest(),'final_pose_source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'states':{state:hashlib.sha256((OUT/state/'model.blend').read_bytes()).hexdigest() for state in ('transition-00','transition-44')},'purpose':'Source arch traced onto physical front wall776 footprint, horizontally extruded through four overlapping room proxies. Hidden depth120game and front padding12game are explicit inference; native floor90 retained; source foreground sill remains separate ownership to reconcile.'},indent=2)+'\n');print('ROOM PROBE SAVED')

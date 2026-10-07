@@ -2666,3 +2666,10 @@ separately; switching missions or leaving the preview retires playback.
 Gameplay options display the current difficulty. During a mission this uses the
 running mission settings, including the host-selected difficulty on multiplayer
 clients.
+
+Prepared physical state previews can replace terrain with matching receiver
+fragments and independently hide each applied aperture cap. Reset restores the
+selected cap, mission changes restore the original receivers, and shared render
+resources retire once with the map. The Croisement02 hole integration remains a
+private geometry review fixture; no new terrain derivative is published by this
+runtime support.

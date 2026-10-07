@@ -3,6 +3,7 @@
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { fixedPolygonBoolean } from "../shared/src/fixed-polygon-boolean.ts";
 import { sceneToGame, applyAffineMatrix, signedPolygonArea } from "../shared/src/geometry.ts";
 import { gameToScene } from "../shared/src/scene.ts";
 import { partMatrix } from "../shared/src/level3d.ts";
@@ -11,7 +12,10 @@ import { insertProjectionAsset } from "../app/src/asset-commands.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 
 const id = "croisement03-timber-bridge";
-const solidDeck = process.argv.includes("--solid-deck");
+const structure = process.argv.includes("--structure");
+const solidDeck = structure || process.argv.includes("--solid-deck");
+const flatDeck = structure || process.argv.includes("--flat-deck");
+let structureRays = [];
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json")).assets;
@@ -75,7 +79,26 @@ for (let face = 0; face < indices.length / 3; face++) {
 }
 assert.equal(faces.length, 2, "Review changed deck topology");
 assert.equal(underside.length, 2, "Review changed deck underside topology");
-const ground = faces.flatMap((face) => face.points).reduce((sum, p) => sum + p[2], 0) / 6;
+const measuredGround = faces.flatMap((face) => face.points).reduce((sum, p) => sum + p[2], 0) / 6;
+// The authored deck lies on scene Z=0. Retain that contact in asset-local
+// coordinates rather than averaging mesh-export noise into its placement.
+const ground = flatDeck
+  ? -descriptor.source_origin_scene[2] * Math.cos((35 * Math.PI) / 180)
+  : measuredGround;
+assert.ok(Math.abs(ground - measuredGround) < 0.001, "Review changed deck contact height");
+let planeFitError = 0;
+if (flatDeck)
+  for (const triangles of [faces, underside]) {
+    const height =
+      triangles === faces
+        ? ground
+        : triangles.flatMap((f) => f.points).reduce((sum, p) => sum + p[2], 0) / 6;
+    for (const p of triangles.flatMap((f) => f.points)) {
+      planeFitError = Math.max(planeFitError, Math.abs(p[2] - height));
+      p[2] = height;
+    }
+    assert.ok(planeFitError < 0.001, "Deck plane fit exceeds export rounding");
+  }
 descriptor.gameplay = {
   version: 1,
   collision: "none",
@@ -108,7 +131,7 @@ descriptor.gameplay = {
     height: points.map((p) => p[2]),
     navigationRegion: "bridge-deck",
     preserveMovementPrecision: true,
-    projectionMaterials: { defaultMaterial: 1, regions: [] },
+    projectionMaterials: { defaultMaterial: 1, regions: [], ...(flatDeck ? { priority: 1 } : {}) },
     navigationJoins: points.flatMap((a, i) => {
       const b = points[(i + 1) % 3];
       const sceneLength = Math.hypot(b[0] - a[0], (b[1] - a[1]) / Math.sin((35 * Math.PI) / 180));
@@ -125,6 +148,106 @@ descriptor.gameplay = {
   },
 };
 if (!solidDeck) delete descriptor.gameplay.volumes;
+if (structure) {
+  const timber = JSON.parse(await fs.readFile("work/map-compile/croisement-bridge-structure.json"));
+  assert.equal(timber.modelSha256, hash(bytes));
+  structureRays = timber.rayProbes;
+  for (const piece of timber.pieces) {
+    const planarFaces = [];
+    for (const face of piece.faces) {
+      let group = planarFaces.find((g) =>
+        g.plane.every((n, i) => Math.abs(n - face.plane[i]) < 1e-8),
+      );
+      if (!group) {
+        group = { plane: face.plane, indices: [] };
+        planarFaces.push(group);
+      }
+      group.indices.push(...face.indices);
+    }
+    for (const face of planarFaces) {
+      const sorted = [...new Set(face.indices)].sort(
+        (a, b) =>
+          piece.vertices[a][0] - piece.vertices[b][0] ||
+          piece.vertices[a][1] - piece.vertices[b][1],
+      );
+      const chain = (indices) => {
+        const result = [];
+        for (const index of indices) {
+          while (
+            result.length >= 2 &&
+            signedPolygonArea(
+              [result.at(-2), result.at(-1), index].map((i) => piece.vertices[i].slice(0, 2)),
+            ) <= 0
+          )
+            result.pop();
+          result.push(index);
+        }
+        return result.slice(0, -1);
+      };
+      face.indices = [...chain(sorted), ...chain(sorted.toReversed())];
+    }
+    const top = planarFaces.filter((f) => f.plane[2] > 1e-8);
+    const bottom = planarFaces.filter((f) => f.plane[2] < -1e-8);
+    const footprint = (face) => [face.indices.map((i) => piece.vertices[i].slice(0, 2))];
+    const height = (face, [x, y]) =>
+      -(face.plane[0] * x + face.plane[1] * y + face.plane[3]) / face.plane[2];
+    let volume = 0,
+      index = 0;
+    for (const upper of top)
+      for (const lower of bottom)
+        for (const polygon of fixedPolygonBoolean(
+          "intersection",
+          [footprint(upper)],
+          [[footprint(lower)]],
+          2 ** 40,
+        )) {
+          assert.equal(polygon.length, 1);
+          const ring = polygon[0].slice(0, -1);
+          if (Math.abs(signedPolygonArea(ring)) < 1e-7) continue;
+          const points = ring.map(([x, y]) => {
+            const z_bottom = height(lower, [x, y]),
+              z_top = height(upper, [x, y]);
+            assert.ok(
+              z_top >= z_bottom - 1e-6,
+              JSON.stringify({
+                piece: piece.id,
+                x,
+                y,
+                z_top,
+                z_bottom,
+                upper: upper.plane,
+                lower: lower.plane,
+              }),
+            );
+            return { x, y, z_bottom, z_top: Math.max(z_bottom, z_top) };
+          });
+          for (let i = 1; i + 1 < points.length; i++) {
+            const indices = [0, i, i + 1];
+            volume +=
+              (Math.abs(signedPolygonArea(indices.map((j) => ring[j]))) *
+                indices.reduce((sum, j) => sum + points[j].z_top - points[j].z_bottom, 0)) /
+              3;
+          }
+          descriptor.gameplay.volumes.push({
+            id: `${piece.id}-cell-${index++}`,
+            node: node.name,
+            movementHeadroom: 80,
+            shape: {
+              points,
+              solid: true,
+              opaque: true,
+              mouse: true,
+              show_shadow_polygon: true,
+              default_material: 1,
+            },
+          });
+        }
+    assert.ok(
+      Math.abs(volume - piece.volume) < Math.max(1e-7, piece.volume * 1e-6),
+      `Timber partition changed volume: ${piece.id}`,
+    );
+  }
+}
 assert.equal(descriptor.gameplay.surfaces.flatMap((surface) => surface.navigationJoins).length, 2);
 const reference = {
   id,
@@ -137,6 +260,9 @@ const reference = {
   resources: descriptor.resources ?? [],
 };
 const output = await fs.mkdtemp("work/map-compile/croisement-bridge-gameplay-");
+console.log(
+  JSON.stringify({ output, structure, volumes: descriptor.gameplay.volumes?.length ?? 0 }),
+);
 const results = [];
 const receiverAreas = (compiled, material) =>
   new Set(
@@ -148,7 +274,11 @@ const receiverAreas = (compiled, material) =>
       .map((obstacle) => JSON.stringify(obstacle.projection_area)),
   );
 for (const elevation of [0, 40])
-  for (const rotation of [0, 37, 90, 180, 270]) {
+  for (const rotation of [0, 37, 90, 180, 270].filter(
+    (r) =>
+      !process.argv.some((arg) => arg.startsWith("--rotation=")) ||
+      process.argv.includes(`--rotation=${r}`),
+  )) {
     const empty = {
       version: 1,
       map: id,
@@ -242,40 +372,45 @@ for (const elevation of [0, 40])
     await fs.writeFile(`${output}/${gapFile}`, JSON.stringify(gap.descriptor));
     await fs.writeFile(`${output}/${gapFile}.scene.json`, JSON.stringify(gapDocument));
     const [sector, layer] = JSON.parse(shared[0]);
-    const ray_probes = (descriptor.gameplay.volumes ?? []).flatMap((volume) => {
-      const points = volume.shape.points;
-      const mean = (key) => points.reduce((sum, p) => sum + p[key], 0) / points.length;
-      const x = mean("x"),
-        y = mean("y"),
-        top = mean("z_top"),
-        bottom = mean("z_bottom");
-      return [
-        {
-          name: `${volume.id}-through`,
-          clear: false,
-          endpoints: [
-            [x, y, bottom - 5],
-            [x, y, top + 5],
-          ].map(world),
-        },
-        {
-          name: `${volume.id}-above`,
-          clear: true,
-          endpoints: [
-            [x - 2, y, top + 5],
-            [x + 2, y, top + 5],
-          ].map(world),
-        },
-        {
-          name: `${volume.id}-below`,
-          clear: true,
-          endpoints: [
-            [x - 2, y, bottom - 5],
-            [x + 2, y, bottom - 5],
-          ].map(world),
-        },
-      ];
-    });
+    const ray_probes = (descriptor.gameplay.volumes ?? [])
+      .filter((v) => v.id.startsWith("deck-body-"))
+      .flatMap((volume) => {
+        const points = volume.shape.points;
+        const mean = (key) => points.reduce((sum, p) => sum + p[key], 0) / points.length;
+        const x = mean("x"),
+          y = mean("y"),
+          top = mean("z_top"),
+          bottom = mean("z_bottom");
+        return [
+          {
+            name: `${volume.id}-through`,
+            clear: false,
+            endpoints: [
+              [x, y, bottom - 5],
+              [x, y, top + 5],
+            ].map(world),
+          },
+          {
+            name: `${volume.id}-above`,
+            clear: true,
+            endpoints: [
+              [x - 2, y, top + 5],
+              [x + 2, y, top + 5],
+            ].map(world),
+          },
+          {
+            name: `${volume.id}-below`,
+            clear: true,
+            endpoints: [
+              [x - 2, y, bottom - 5],
+              [x + 2, y, bottom - 5],
+            ].map(world),
+          },
+        ];
+      });
+    ray_probes.push(
+      ...structureRays.map((probe) => ({ ...probe, endpoints: probe.endpoints.map(world) })),
+    );
     results.push({
       file: gapFile,
       map: gapFile,
@@ -287,6 +422,7 @@ for (const elevation of [0, 40])
       ray_probes,
       banksDisconnectedWithoutBridge: true,
     });
+    console.log(JSON.stringify({ rotation, elevation, exports: results.length }));
   }
 await fs.writeFile(
   `${output}/edits.json`,
@@ -301,6 +437,9 @@ await fs.writeFile(
     faces: faces.map((f) => f.face),
     ground,
     solidDeck,
+    structure,
+    flatDeck,
+    planeFitError,
     scope: "Unpublished deck construction only; collision and connectivity incomplete",
   }),
 );

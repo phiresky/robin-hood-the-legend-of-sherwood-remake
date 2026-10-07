@@ -44,8 +44,58 @@ import {
 } from "../test-fixtures/asset-gameplay.ts";
 
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
+import { pointInGameplayPolygon } from "./navigation-anchor.ts";
 import { parseLevel3D, parseProjectionAssetDescriptor } from "./validation.ts";
 import nearEdgeOnStair from "../test-fixtures/near-edge-on-placed-stair.json" with { type: "json" };
+import rotatedTerrainBridge from "../test-fixtures/rotated-terrain-bridge-seam.json" with { type: "json" };
+
+test("a rail cut cannot disconnect a fractional terrain bank from its rotated bridge", () => {
+  const document = parseLevel3D(rotatedTerrainBridge.document);
+  const asset = parseProjectionAssetDescriptor(rotatedTerrainBridge.descriptor);
+  const compiled = compileAssetGameplay(document, new Map([[asset.id, asset]]), [0, 0, 1000, 1000]);
+  assert.equal(compiled.motion_data.layers.flat().length, 1);
+  const banks = compileAssetGameplay(
+    { ...document, objects: [], groups: [], assetSources: [] },
+    new Map(),
+    [0, 0, 1000, 1000],
+  );
+  assert.equal(banks.motion_data.layers.flat().length, 2);
+});
+
+test("fractional terrain remnants survive floor clipping until navigation union", () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  document.terrain = createTerrainGrid([300, 300, 100, 100], 100, 0);
+  hut.gameplay = {
+    version: 1,
+    collision: "none",
+    doors: [],
+    surfaces: [
+      {
+        id: "inset-floor",
+        node: "building-999",
+        height: 0,
+        preserveMovementPrecision: true,
+        polygon: [
+          [0.2, 0],
+          [100, 0],
+          [100, 100],
+          [0, 100],
+          [0, 0.2],
+        ],
+        projectionMaterials: { defaultMaterial: 3, regions: [] },
+      },
+    ],
+  };
+  const compiled = compileAssetGameplay(document, assets, [0, 0, 1000, 1000]);
+  const areas = compiled.motion_data.layers.flat();
+  assert.equal(areas.length, 1);
+  assert.deepEqual(areas[0]!.polygon.points, [
+    [300, 300],
+    [400, 300],
+    [400, 400],
+    [300, 400],
+  ]);
+});
 
 test("a connected physical stair survives a pinched screen projection in copied placements", () => {
   const document = parseLevel3D(nearEdgeOnStair.document);
@@ -1841,6 +1891,93 @@ test("separate navigation assets reproduce one continuous region and detach afte
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /outer surface edge/);
   delete hut.gameplay!.surfaces[0]!.navigationRegion;
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /navigation joins/);
+});
+
+test("asset ground accepts placed exterior sockets without location-specific ground sockets", () => {
+  const { document, assets, hut, upper } = joinedNavigationCompilerFixture();
+  const ground = upper.gameplay!.surfaces[0]!;
+  delete ground.navigationJoins;
+  ground.acceptsNavigationJoins = true;
+  ground.preserveMovementBoundary = true;
+  const original = structuredClone(upper.gameplay);
+  assert.equal(compileAssetGameplay(document, assets, bounds).motion_data.layers.flat().length, 1);
+  assert.deepEqual(upper.gameplay, original, "compilation must not rewrite asset ground");
+  ground.acceptsNavigationJoins = false;
+  assert.equal(compileAssetGameplay(document, assets, bounds).motion_data.layers.flat().length, 2);
+  ground.acceptsNavigationJoins = true;
+  document.groups.find((g) => g.id === "upper")!.transform.dx = 20;
+  assert.equal(compileAssetGameplay(document, assets, bounds).motion_data.layers.flat().length, 2);
+  document.groups.find((g) => g.id === "upper")!.transform.dx = 0;
+  delete hut.gameplay!.surfaces[0]!.navigationJoins;
+  assert.equal(
+    compileAssetGameplay(document, assets, bounds).motion_data.layers.flat().length,
+    2,
+    "ground must not bypass an ordinary boundary without an exterior socket",
+  );
+});
+
+test("coplanar asset ground rejoins a moved deck while retaining its authored gap", () => {
+  const { document, assets, hut, upper } = joinedNavigationCompilerFixture();
+  const ground = upper.gameplay!.surfaces[0]!;
+  delete ground.navigationJoins;
+  ground.acceptsNavigationJoins = true;
+  ground.preserveMovementBoundary = true;
+  ground.height = 0;
+  ground.polygon = [
+    [0, 0],
+    [300, 0],
+    [300, 200],
+    [0, 200],
+  ];
+  ground.holes = [
+    [
+      [90, 40],
+      [110, 40],
+      [110, 160],
+      [90, 160],
+    ],
+  ];
+  ground.holeContours = ["stream"];
+  const deck = hut.gameplay!.surfaces[0]!;
+  deck.height = 0;
+  deck.polygon = [
+    [70, 80],
+    [130, 80],
+    [130, 120],
+    [70, 120],
+  ];
+  deck.navigationJoins = [
+    [
+      [70, 80, 0],
+      [70, 120, 0],
+    ],
+    [
+      [130, 80, 0],
+      [130, 120, 0],
+    ],
+  ];
+  const snapshot = structuredClone([ground, deck]);
+  for (const dx of [0, 80]) {
+    document.groups[0]!.transform.dx = dx;
+    const compiled = compileAssetGameplay(document, assets, bounds);
+    assert.equal(compiled.motion_data.layers.flat().length, 1);
+    assert.ok(!compiled.warnings?.some((warning) => warning.includes("no matching boundary")));
+    const walkable = (point: [number, number]) =>
+      compiled.motion_data.layers
+        .flat()
+        .some(
+          (area) =>
+            pointInGameplayPolygon(point, area.polygon.points) &&
+            !area.obstacles.some((obstacle) =>
+              pointInGameplayPolygon(point, obstacle.polygon.points),
+            ),
+        );
+    assert.equal(walkable([400, 400]), dx === 0, "moving the deck must reopen the original gap");
+    assert.ok(walkable([400 + dx, 400]), "the moved deck must retain its walkable floor");
+  }
+  assert.deepEqual([ground, deck], snapshot);
+  ground.acceptsNavigationJoins = false;
+  assert.equal(compileAssetGameplay(document, assets, bounds).motion_data.layers.flat().length, 2);
 });
 
 test("explicit height steps join projected navigation boundaries and reject invalid tolerances", () => {
