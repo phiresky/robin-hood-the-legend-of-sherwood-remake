@@ -9720,3 +9720,20 @@ CPU/clipped-GPU differences to 3/4/7 and 7/3/5 pixels using a 1/16-pixel grid;
 one software renderer, not a portable precision contract. Production sampling
 is unchanged. A subsequent edge-rule experiment did not produce fixture results
 before the browser observation failed; its unverified code was removed.
+
+`stage-croisement-bridge-gameplay.mjs` constructs an unpublished Croisement03
+timber-bridge deck definition from the published GLB alone. It checks descriptor
+hashes and mesh frames, selects the two large upward-facing deck triangles, and
+stores their local heights and two short end-edge connections. The local ground
+contact is 51.917254873 game-height units; placing the asset at terrain height
+therefore aligns its deck rather than its pier foot. The mesh's small export
+roundoff is retained, with an explicit 0.001-unit end-connection tolerance.
+
+Candidate `croisement-bridge-gameplay-4Ui7JF` passes ten strict exports at
+rotations 0/37/90/180/270 and elevations 0/40. Every matching placement shares
+one navigation region with terrain; all twenty terrain offsets of minus/plus
+one unit remain disconnected. All ten native descriptor construction checks
+pass (one navigation area per scene). These fixtures have continuous terrain:
+they prove end-region matching, not actor crossings over a gap. Rail/pier solids,
+gap crossings, character masking and publication remain unfinished. No source
+level data is loaded by the authoring script or compiler.

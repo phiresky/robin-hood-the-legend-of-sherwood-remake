@@ -259,6 +259,11 @@ Full Croisement03 compilation with these staged definitions passes native
 geometry construction and all nine state apply/reset checks. Best-effort export
 now deduplicates repeated draft warnings without changing source assets or
 relaxing geometry validation; strict validation still rejects repeated warnings.
+The Croisement03 timber bridge now has an unpublished asset-only deck candidate.
+Ten rotated/elevated exports join its two end edges to matching terrain and
+reject twenty one-unit height mismatches; all ten native construction checks
+pass. Rail/pier collision, crossings over a terrain gap and rendered actor
+occlusion remain unverified, so this asset is still counted as missing.
 An unpublished mesh-derived bridge deck candidate passes ten complete native
 crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes
