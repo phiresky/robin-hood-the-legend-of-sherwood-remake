@@ -10117,6 +10117,51 @@ the corrected stair floors and their existing local clearances. The candidate
 remains unpublished; the structurally unchanged published descriptor retains
 its previously verified 130/130 stair routes.
 
+### Published stair flight movement volumes (2026-10-07)
+
+The four terrain-experiment stair failures above came from part-solid footprints
+that no longer matched the corrected authored flight floors. The authoring helper
+`refinement/stage-stair-movement-volumes.mjs` constructs an explicit movement
+volume from each planar floor and the part's bottom plane. It replaces only that
+flight's movement-solid reference, leaving visual and sight geometry intact.
+The helper verifies descriptor pins, validates the gameplay definition and stages
+the result for review. `--standalone` retains the published asset's unrelated
+collision choices rather than inheriting a larger experiment's extra solids.
+
+Broad candidate `saved-map-exports-c4boWH` now passes **130/130 native stair
+routes**, **40/40 climbs** and all **six geometry control apply/reset checks**.
+It remains unpublished with 45 omission warnings. An initial stair-only subset
+still enabled unrelated wall solids and introduced two new feature omissions;
+that subset was rejected. Final stage `stair-flight-volumes-only-avx6SQ`, also
+reproduced by the helper in `stair-movement-volumes-sDnYnL`, preserves those
+unrelated collision choices. Its export `saved-map-exports-zcJVpZ` retains the
+baseline eight omissions and 28 doors, with no new feature warnings. Native
+audits pass **130/130 stairs**, **40/40 climbs** and all **six controls**.
+
+Independent placement batches
+`york-east-riverside-curtain-wall-neighbour-placements-aq2Ckf` and
+`york-market-southwest-connecting-stairs-neighbour-placements-02EmgP` each test
+eight exports, sixteen copied placements and 48 disconnected-neighbour
+rejections. Each passes **32/32 complete-character native stair routes**. The
+neighbour fixture also supports terrain assets that own a physical floor:
+removing that terrain must still reject the connection, while removing unrelated
+editor ground no longer needs to break an independently supported landing.
+
+The two flight-volume definitions are now in the main local library, with its
+generated catalog refreshed and the saved York descriptor pins updated. Backup
+and publication hashes are in `york-stair-volume-publication-5jvncsnw`. All ten
+saved scenes reopen. Fresh published export `saved-map-exports-4SB13a` is
+structurally identical to the native-verified candidate apart from draft-warning
+wording. Four fresh published placement exports at two elevations also match
+their native-verified candidates apart from warnings, and reject all 24 checked
+disconnected-neighbour cases. Rendered integration warnings remain explicit; the gable, lean-to and
+broader terrain experiment remain unpublished.
+
+The native stair audit accepts optional `ROBIN_LIFT_AUDIT_SECTORS=616,619` for
+focused diagnosis and records the filter in its report. Unfiltered full audits
+above still test every stair. Focused lint/format checks, Cargo formatting and
+the game build pass.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

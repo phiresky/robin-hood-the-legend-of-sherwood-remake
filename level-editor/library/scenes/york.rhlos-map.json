@@ -416,7 +416,7 @@
       "model": "3d-assets/york/york-east-riverside-curtain-wall/model.glb",
       "model_sha256": "400a1b186937c3e83422741677213bd85b04284854e9a433150b93543985fc1a",
       "descriptor": "3d-assets/york/york-east-riverside-curtain-wall/asset.json",
-      "descriptor_sha256": "1277c980f434fe142bf40d33705318ab013bdd2e6dca8cb820b13b2268cbc22c",
+      "descriptor_sha256": "8d90df6af4a3a8bdaeefc99139cf30e855f8c725eb4dd8d131faacf018b24186",
       "id": "york-east-riverside-curtain-wall"
     },
     {
@@ -563,7 +563,7 @@
       "model": "3d-assets/york/york-market-southwest-connecting-stairs/model.glb",
       "model_sha256": "b1c7a0392c5eee9f812cf6020c66815fe1a3a855e86be54ef3703aa95626c395",
       "descriptor": "3d-assets/york/york-market-southwest-connecting-stairs/asset.json",
-      "descriptor_sha256": "a5323ffeae8d3cc867bb161ab9f2aae8b519172ce8dd5b3ff46cc4993d77349d",
+      "descriptor_sha256": "c7a2f2079cdcb4f5ddb2d346f4e9d4e14781c1e2ca156ffcdfd30d896360b179",
       "id": "york-market-southwest-connecting-stairs"
     },
     {

@@ -151,6 +151,11 @@ const entranceCounts = assemblies.flatMap(({ id, identities, lifts }) =>
 );
 const northWall = stair === "nottingham-north-wall-stair";
 const market = stair === "york-market-southwest-connecting-stairs";
+// A projection-only terrace borrows the editor ground's graph. An authored
+// physical terrace owns its floor; removing that separate asset is the relevant
+// unsupported-landing check, without inventing a dependency on ground below it.
+const marketNeedsTerrain =
+  market && assets.get("york-west-town-raised-terrain").gameplay.surfaces.length === 0;
 const outerWall = [
   "york-central-lane-stone-gable-house",
   "york-precinct-southwest-wall-ramp",
@@ -229,7 +234,7 @@ for (const originOffset of originOffsets)
         assetSources: source.assetSources.filter((asset) => ids.includes(asset.id)),
         ...(["nottingham-southwest-wall-stair", "nottingham-north-wall-stair"].includes(stair) ||
         (riverside && !physicalTerrace) ||
-        market ||
+        marketNeedsTerrain ||
         outerWall ||
         bridgeNeedsTerrain ||
         (westLane && !physicalTerrace)
@@ -296,7 +301,7 @@ for (const originOffset of originOffsets)
       );
       if (
         (riverside && !physicalTerrace) ||
-        market ||
+        marketNeedsTerrain ||
         outerWall ||
         bridgeNeedsTerrain ||
         (westLane && !physicalTerrace)

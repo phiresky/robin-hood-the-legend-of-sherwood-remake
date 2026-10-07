@@ -1121,12 +1121,23 @@ fn audit_exported_lifts(
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
             .unwrap();
     assert_eq!(manifest["complete"], true);
+    let sector_filter = std::env::var("ROBIN_LIFT_AUDIT_SECTORS").ok().map(|value| {
+        value
+            .split(',')
+            .map(|part| {
+                part.trim()
+                    .parse::<u16>()
+                    .expect("ROBIN_LIFT_AUDIT_SECTORS must contain comma-separated sector numbers")
+            })
+            .collect::<Vec<_>>()
+    });
     let report_path = directory.join(report_name);
     let mut report = serde_json::json!({
         "scope": "initial-state-directed-lift-walks-between-every-entrance-pair",
         "lift_types": types, "complete_sprite": sprite.is_some(),
         "input_snapshot_notes": manifest.get("snapshot_notes"),
         "map_filter": std::env::var("ROBIN_LIFT_AUDIT_MAP").ok(),
+        "sector_filter": sector_filter,
         "complete": false, "audit_finished": false, "results": []
     });
     let mut total_checked = 0;
@@ -1154,6 +1165,11 @@ fn audit_exported_lifts(
         let doors = &engine.script_domains.interactables.doors;
         for (sector_index, sector) in engine.world.fast_grid.level.sectors.iter().enumerate() {
             if !sector.lift_type.is_some_and(|kind| types.contains(&kind)) {
+                continue;
+            }
+            if sector_filter.as_ref().is_some_and(|selected| {
+                !selected.contains(&u16::try_from(sector.sector_number.get()).unwrap())
+            }) {
                 continue;
             }
             let entrances: Vec<_> = doors

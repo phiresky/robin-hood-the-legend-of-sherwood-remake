@@ -929,12 +929,17 @@ came from a rounded collision wedge at the lower handoff, not insufficient mesh
 width. The regression preserves unrelated collision through four turned and
 translated placements, without changing the integer navigation contour or actor
 tolerances. The experiment still raises omission warnings from 8 to 45 and is
-not ready for publication. The freshly compiled published York descriptor is
-unchanged. The experiment's stair audit passes **126/130 routes**; the east-riverside
-curtain-wall stair and market southwest connecting stair each fail both
-directions at their lower contact. Their newly enabled solid collision needs
-comparison against the authored floors; the published descriptor retains its
-previous 130/130 stair result. The experiment also exposed
+not ready for publication. Correcting the east-riverside curtain-wall and market
+southwest connecting stair movement volumes to match their authored flights now
+raises the experiment's stair audit from **126/130 to 130/130 routes**, with
+**40/40 climbs** and all six geometry controls passing. The two flight-volume
+corrections are published independently, preserving the other library collision
+choices: the published candidate retains eight omissions, **130/130 stairs**,
+**40/40 climbs** and all six controls. Each asset also passes **32/32 native
+routes** across copied, rotated and elevated placements, with 48 rejected
+disconnected-neighbour cases. All ten saved scenes reopen after publication;
+fresh published York geometry matches the native-verified candidate. These
+checks do not establish rendered parity. The experiment also exposed
 and fixed a collinear obstacle-triangulation crash, with coverage preserved by a
 captured regression. The mesh review has 596/602 sampled
 flight hits, maximum nearest-mesh height residual 0.872101 and maximum uncovered
@@ -943,7 +948,7 @@ regressions retain all 84 climbs and 192 stairs across five saved maps. Failed
 native audits retain the actual movement-order route, bound landing geometry and
 initial collision states; `audit-lift-support.py` measures contact support.
 Passing the placement sweep does not certify the remaining full-scene or visual
-behavior, and no candidate asset is published from this work.
+behavior; the gable, lean-to and broader physical-terrain candidate remain unpublished.
 The receiving-plane loader now propagates f32 rounding through both the plane
 anchors and each receiver vertex. Steep valid planes no longer fail loading
 merely because assets are translated; the regression still rejects explicit

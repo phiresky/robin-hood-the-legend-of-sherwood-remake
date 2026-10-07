@@ -1,5 +1,13 @@
 # Post-port Features
 
+- **Stair collision derived from authored flights.** Two York library stairs now
+  carry movement volumes matching their corrected walking surfaces, so their
+  lower contacts also work against independently authored physical terrain.
+  Other collision and visual geometry retain their existing definitions. The
+  authoring helper stages these changes explicitly from asset-local geometry;
+  copied, rotated and elevated placements pass native character traversal.
+  Rendered integration remains unverified.
+
 - **Physical walking on receiving floors (integration in progress).** Precise receiving
   floors support world-coordinate routes and bounded source recovery, retaining
   holes and current collision. Walking clearance uses its normal inset; source
