@@ -11,6 +11,20 @@ not certification of every library asset or gameplay case. Best-effort exports
 warn about omissions and preserve initial states where possible; warnings are
 not evidence that an omitted feature works.
 
+The current ten-scene export batch (`saved-map-exports-EdJxua`) compiles and passes
+native construction plus all 71 control apply/reset checks. That batch exposed a
+verification-script gap: it omitted the editor's mesh-derived spline calibration.
+The script now loads pinned wall meshes and runs the editor's calibration before
+compilation. Fresh Wychford output (`saved-map-exports-4KKPYc`) includes its ridge
+curtain without the previous missing-calibration warning and passes native
+construction (153 motion areas, 15,140 sight obstacles) and all three controls.
+This is descriptor-level evidence, not a complete browser bake or playthrough.
+Wychford's floating church-tower approach remains disconnected, and York's
+unbound appearance variants remain in their initial visual states with warnings.
+Five wall calibration/rendering tests pass, but three existing native-fixture
+equality checks in `wall-gameplay.test.ts` differ in terrain receiver output and
+remain unresolved; they do not exercise the new diagnostic mesh loader.
+
 Rounded landing contours now repair crossed subpixel corners consistently in
 the compiler and native validator while retaining their exact contours. The
 southern York stair candidate passes 32 directed actor routes across eight
