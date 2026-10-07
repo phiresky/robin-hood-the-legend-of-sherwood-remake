@@ -33,3 +33,26 @@ The workflow checks versions before compiling. Promotion repeats the check on
 the actual packaged feeds and requires matching platform versions. A shared
 publication concurrency group serializes promotion across branches and tags.
 API errors and malformed feeds fail the check rather than removing the floor.
+
+## Windows application manifest
+
+The game build embeds `crates/robin_rs/windows/robin.manifest` as process
+manifest resource 1. It declares `asInvoker` privileges and Windows 10/11
+compatibility so Windows need not infer legacy compatibility behavior.
+Resource compilation failures fail the build. Other target platforms skip
+resource compilation.
+
+The release workflow uses `pefile==2024.8.26` to check the staged executable
+and both the root launcher and real executable in Velopack's portable ZIP:
+
+```sh
+python3 scripts/release/verify_windows_manifest.py path/to/robin.exe
+python3 scripts/release/verify_windows_manifest.py path/to/Portable.zip \
+  --main-exe "Robin Hood - The Legend of Sherwood.exe"
+```
+
+These checks inspect embedded PE resources, not loose manifest files. They
+do not replace installing/updating under a standard Windows user and checking
+that the install hook, first launch, and shortcuts work without elevation.
+An existing user-selected "Run as administrator" compatibility setting may
+still require removal on the affected machine.
