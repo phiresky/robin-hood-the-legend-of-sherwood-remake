@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test src/*.test.ts src/refinement/*.test.ts",
+    "test": "node --test src/*.test.ts src/*.test.mjs src/refinement/*.test.ts",
     "volumes": "node src/volumes.ts",
     "bake": "node src/bake.ts",
     "bundle-states": "node src/bundle-library-states.ts"

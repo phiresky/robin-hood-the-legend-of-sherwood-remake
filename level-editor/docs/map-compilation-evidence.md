@@ -9939,3 +9939,27 @@ textured mesh differs at 8/15/5/26. This separates remaining extraction/renderin
 and rasterization differences; it does not certify native compositing. The
 candidate remains unpublished. The review sheet and reported case count now
 scale to the selected asset list rather than assuming two ferns.
+
+Ground plants 111–123 and shrub 55 are now published as best-effort drafts via
+`ground-plants-publish-wS3DZB` and `shrub55-publish-pW8Bcl`. Reviewed model hashes
+were checked against the current library before publication; descriptor pins
+were refreshed without replacing scene content. The local canopy approximation
+and rendered character/projectile review warning remain in each definition.
+Pixel-level mismatches are retained as open evidence rather than treated as a
+reason to omit otherwise usable draft foliage from exports.
+
+Current Croisement02 omits its optional size. `check-saved-map-exports.mjs` now
+derives static-model bounds from pinned placed vertices using the editor's
+`contentBakeBounds` function and border convention. Generated terrain/splines
+without explicit bounds still require browser verification. A focused fixture
+checks placement, explicit frames, missing-size behavior and changed-model pins.
+Export `saved-map-exports-FBLYbR` uses bounds [-231, -282, 2177, 1929], includes all
+fourteen new masks and has no omission warning for the published plants/shrub.
+Native construction passes with five areas, 154 sight obstacles, five doors,
+four jump pairs, 8,575 grid blocks and 57 elevation boundaries. All nine native
+control apply/reset checks pass. This remains geometry verification, not a
+complete native rendered ZIP playthrough.
+
+Fresh inventory `gameplay-coverage-io9QXo` finds 75 missing definitions among
+1,279 assets and 47 missing placed definitions: 43 in Croisement02, one in
+Croisement01 and three in Croisement03.
