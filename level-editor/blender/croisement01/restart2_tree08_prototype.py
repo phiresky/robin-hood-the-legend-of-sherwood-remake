@@ -76,6 +76,10 @@ if revision>=4:
  guard(32*1024**2)
  bpy.data.objects.remove(obj,do_unlink=True);bpy.data.meshes.remove(mesh)
  obj=consolidate(bpy,scene.collection,corrected);mesh=obj.data
+ if revision>=5:
+  # Reduce the remeshed surface before serialization, retaining voxel shape
+  # detail for a subsequent source-ray audit rather than coarsening the field.
+  bpy.context.view_layer.objects.active=obj;modifier=obj.modifiers.new('Bounded prototype surface simplification','DECIMATE');modifier.ratio=.35;bpy.ops.object.modifier_apply(modifier=modifier.name);mesh=obj.data
  obj['source_node']='scenery-tree08-wood-prototype';obj['scope']='Initial wood trial; coherent main volume, held crossings unmerged, source and terrain review pending'
  verts=[v.co.copy() for v in mesh.vertices];faces=[tuple(f.vertices) for f in mesh.polygons]
  section_ranges=[dict(trace_id=q['trace_id'],held_crossing=q['held_crossing']) for q in corrected]
