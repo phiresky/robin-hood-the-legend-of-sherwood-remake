@@ -45,7 +45,8 @@ def atomic_absent(target,data,expected):
   except FileExistsError:require(sha(target)==expected,'Concurrent immutable destination differs');return False
   fsync_dir(target.parent);return True
  finally:os.unlink(name)
-def switch_index(index,data,expected):
+def switch_index(index,data,expected,replacement_sha):
+ require(hashlib.sha256(data).hexdigest()==replacement_sha,'Exact replacement index bytes drifted')
  require(sha(index)==expected,'Concurrent index change')
  fd,name=tempfile.mkstemp(prefix='.state-index-',dir=index.parent)
  try:
@@ -104,14 +105,16 @@ def verify_gate(gate_path,gate_sha,plan):
  normal=evidence(gate['static_normal_http']);require(normal['status']=='PASS'and normal['map_sha256']==final['map_sha256'],'Normal-library proof mismatch')
  return gate
 
-def rollback_owned(index,baseline,new,installation):
+def rollback_owned(index,baseline,new,installation,old):
+ require(hashlib.sha256(baseline).hexdigest()==old,'Pinned rollback baseline bytes differ')
+ require(installation['baseline_index_sha256']==old,'Installation baseline binding differs')
  require(installation['status']in ['INSTALLED_PENDING_NORMAL_HTTP_PROOF','TRANSACTION_PREPARED','INDEX_SWITCHED_PENDING_RECOVERY']and installation['plan_sha256']==PLAN_SHA and installation['index_sha256']==new,'No matching owned installation receipt')
  require(sha(index)==new,'Rollback refuses another current index')
- switch_index(index,baseline,new)
+ switch_index(index,baseline,new,old)
 
 def main():
  ap=argparse.ArgumentParser(description=__doc__);mode=ap.add_mutually_exclusive_group();mode.add_argument('--execute',action='store_true');mode.add_argument('--rollback',action='store_true');ap.add_argument('--plan-sha',default=PLAN_SHA);ap.add_argument('--gate',type=Path);ap.add_argument('--gate-sha');ap.add_argument('--receipt',type=Path);ap.add_argument('--installation',type=Path);ap.add_argument('--installation-sha');args=ap.parse_args()
- require(args.plan_sha==PLAN_SHA==sha(PLAN/'plan.json'),'Plan drift');plan=read(PLAN/'plan.json');manifest=evidence(plan['manifest'])
+ require(args.plan_sha==PLAN_SHA==sha(PLAN/'plan.json'),'Plan drift');plan=read(PLAN/'plan.json');manifest=None if args.rollback else evidence(plan['manifest'])
  if not(args.execute or args.rollback):
   before=sha(LIB/INDEX);verify_package(plan,manifest)
   if args.gate:verify_gate(args.gate,args.gate_sha,plan)
@@ -123,7 +126,7 @@ def main():
   require(sha(PLAN/'plan.json')==PLAN_SHA,'Plan changed before lock')
   if args.rollback:
    require(args.installation is not None and args.installation_sha==sha(args.installation),'Exact installation receipt required')
-   old,new=verify_package(plan,manifest,installed=False);rollback_owned(LIB/INDEX,(PLAN/'installed34-index.json').read_bytes(),new,read(args.installation));record=dict(status='ROLLED_BACK_INDEX_ONLY',restored_sha256=sha(LIB/INDEX),immutable_resources_retained=True)
+   old=plan['installed_index_sha256'];new=plan['staged_index']['sha256'];require(old==plan['baseline_index']['sha256'],'Plan baseline bindings differ');rollback_owned(LIB/INDEX,(PLAN/'installed34-index.json').read_bytes(),new,read(args.installation),old);record=dict(status='ROLLED_BACK_INDEX_ONLY',restored_sha256=sha(LIB/INDEX),immutable_resources_retained=True)
   else:
    old,new=verify_package(plan,manifest);gate=verify_gate(args.gate,args.gate_sha,plan);created=[]
    intent_path=args.receipt.with_name(args.receipt.name+'.intent.json');intent=dict(status='TRANSACTION_PREPARED',index_sha256=new,baseline_index_sha256=old,plan_sha256=PLAN_SHA,gate_sha256=args.gate_sha,script_sha256=sha(Path(__file__)),receipt_path=str(args.receipt.resolve()))
@@ -133,7 +136,7 @@ def main():
      if atomic_absent(checked(LIB,row['path']),checked(STAGE,row['path']).read_bytes(),row['sha256']):created.append(row['path'])
     verify_package(plan,manifest);verify_gate(args.gate,args.gate_sha,plan)
     for row in manifest['files']:require(sha(checked(LIB,row['path']))==row['sha256'],'Installed immutable file mismatch')
-    switch_index(LIB/INDEX,(STAGE/INDEX).read_bytes(),old);require(sha(LIB/INDEX)==new,'Switched index mismatch')
+    switch_index(LIB/INDEX,(STAGE/INDEX).read_bytes(),old,new);require(sha(LIB/INDEX)==new,'Switched index mismatch')
    except Exception as error:
     record=dict(intent,status='INDEX_SWITCHED_PENDING_RECOVERY'if sha(LIB/INDEX)==new else'FAILED_BEFORE_SWITCH_OR_EXTERNAL_INDEX',error=str(error),observed_index_sha256=sha(LIB/INDEX),created=created)
     data=(json.dumps(record,indent=2)+'\n').encode();atomic_absent(args.receipt,data,hashlib.sha256(data).hexdigest());raise
