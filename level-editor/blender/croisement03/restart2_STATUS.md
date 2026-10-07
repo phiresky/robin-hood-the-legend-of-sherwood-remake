@@ -1,3 +1,7 @@
+## North woodland continuation
+
+Tree08 is root-reviewed and frozen at geometry-round9-tree08-v1. Its frozen model retains nine legacy Tree09 stem/fork group labels; preserve it and bind a metadata-only normalization derivative before export, with exact surface/material/image/transform checks. Tree07 geometry44354db8 has a complete root request3eb1717f and accepted2546 bark samples. Tree06 private construction is underway from a narrower bark proposal excluding ivy and the uncertain rock transition. No new user approval or live installation is implied. All texture APIs remain gated on pending user geometry/input decisions.
+
 ## Additional checkpoint: Tree09 frozen and Tree08 reviewed privately
 
 Tree09 root-reviewed model a1f42a5d is frozen at restart2/geometry-round8-tree09-v2-correct-id; the older packet retained a wrong card ID and is obsolete. Only the corrected card belongs in the next pool. Tree08 private model1d778f8c has370 proposed bark and1127 frame0 leaf samples unchanged, complete actual/alpha-aware eight views, source comparison, joint context and converged transparency. Root request0293c605 is pending. No API, browser or live writes; the existing trio terrain/publication hold and pending user scopes remain unchanged.
