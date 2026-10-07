@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).parent
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'tree11-crown-prototype-v3';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN));UP=Vector((0,SIN,COS))
+B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'tree11-crown-prototype-v4';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN));UP=Vector((0,SIN,COS))
 def leafmaterial(im,name):
  m=bpy.data.materials.new(name);m.use_nodes=True;n=m.node_tree.nodes;n.clear();l=m.node_tree.links;t=n.new('ShaderNodeTexImage');t.image=im;t.interpolation='Closest';t.extension='CLIP';e=n.new('ShaderNodeEmission');e.inputs[1].default_value=1;tr=n.new('ShaderNodeBsdfTransparent');mix=n.new('ShaderNodeMixShader');out=n.new('ShaderNodeOutputMaterial');l.new(t.outputs['Color'],e.inputs[0]);l.new(t.outputs['Alpha'],mix.inputs[0]);l.new(tr.outputs[0],mix.inputs[1]);l.new(e.outputs[0],mix.inputs[2]);l.new(mix.outputs[0],out.inputs[0]);return m
 
@@ -83,7 +83,7 @@ def main():
   # Complete clipped fragment edges behind every observed native leaf cell.
   # Each small lobe is irregular in three dimensions and tied to a lower support.
   boundary_lobes=((855,27,22,24),(947,34,21,23),(847,65,18,26),(944,73,24,25),(862,105,22,23),(938,108,24,27),(911,120,20,19))
-  boundary_faces=0
+  by,bx=np.nonzero(np.array(Image.open(B/'tree11-bark-proposal-v2/proposed-bark.png'))>0);bark_centers=np.column_stack((bx+.5,by+.5));boundary_faces=0;boundary_bark_exclusions=0
   for li,(gx,gy,rw,rh) in enumerate(boundary_lobes):
    for k in range(170):
     dx,dy,dz=(rng.uniform(-1,1) for _ in range(3))
@@ -94,7 +94,11 @@ def main():
     u=Vector((math.cos(a),math.sin(a),b)).normalized()*size
     v=u.cross(Vector((rng.uniform(-1,1),rng.uniform(-1,1),1))).normalized()*size*rng.uniform(.7,1.2)
     tx,ty=rng.choice(patches);ids=[]
-    for p,t in zip((center-u/2-v/2,center+u/2-v/2,center+u/2+v/2,center-u/2+v/2),((tx/96,1-(ty+7)/135),((tx+7)/96,1-(ty+7)/135),((tx+7)/96,1-ty/135),(tx/96,1-ty/135))):
+    quad=(center-u/2-v/2,center+u/2-v/2,center+u/2+v/2,center-u/2+v/2)
+    projected=np.array([(p.x,-p.y*SIN-p.z*COS) for p in quad]);low=projected.min(axis=0)-.01;high=projected.max(axis=0)+.01
+    if np.any(np.all((bark_centers>=low)&(bark_centers<=high),axis=1)):
+     boundary_bark_exclusions+=1;continue
+    for p,t in zip(quad,((tx/96,1-(ty+7)/135),((tx+7)/96,1-(ty+7)/135),((tx+7)/96,1-ty/135),(tx/96,1-ty/135))):
      ids.append(len(vertices));vertices.append(tuple(p));uvs.append(t)
     faces.append(ids);boundary_faces+=1
   mesh=bpy.data.meshes.new('Arbre06 fragment native cells and inferred crown clusters');mesh.from_pydata(vertices,[],faces);mesh.update();uv=mesh.uv_layers.new(name='UVMap')
@@ -129,6 +133,6 @@ def main():
    for i in range(8):
     p=Image.open(OUT/'actual'/f'view-{i}-{mode}.png').convert('RGBA');bg=Image.new('RGBA',p.size,'#333333');bg.alpha_composite(p);sheet.paste(bg.convert('RGB'),((i%4)*384,(i//4)*384))
    sheet.save(OUT/'actual'/f'{mode}.png')
-  write_json(OUT/'receipt.json',dict(status='PRIVATE prototype only; full native/contact audit and neighbouring context pending',model_sha256=sha(OUT/'worker.blend'),source_model_sha256=sha(src),records=records,inferred_branches=branch_records,inferred_lower_supports=support_records,original_image_rgba_exact=True,provisional_native_leaf_pixels=int(np.count_nonzero(pixels[:,:,3])),native_faces=native_faces,native_14frame_union_pixels=int(native_union.sum()),crossing_raster_ambiguities_omitted=crossing_raster_ambiguities_omitted,inferred_leaf_faces=len(foliage.data.polygons)-native_faces,boundary_completion_faces=boundary_faces,boundary_lobes=boundary_lobes,native_view_index=0,limits=['Exact dynamic frame0 spatial fragment, not static exclusive ownership; complete runtime Arbre06 untouched.','Unknown bark remains gray.','Fourteen-frame union supports native-facing cells; wind and global dynamic ordering remain unproven. Adjacent trees10/12 and ivy remain separate context.','Short inferred forks support complete off-map crown. Native/context/convergence review required; no geometry approval implied.']))
+  write_json(OUT/'receipt.json',dict(status='PRIVATE prototype only; full native/contact audit and neighbouring context pending',model_sha256=sha(OUT/'worker.blend'),source_model_sha256=sha(src),records=records,inferred_branches=branch_records,inferred_lower_supports=support_records,original_image_rgba_exact=True,provisional_native_leaf_pixels=int(np.count_nonzero(pixels[:,:,3])),native_faces=native_faces,native_14frame_union_pixels=int(native_union.sum()),crossing_raster_ambiguities_omitted=crossing_raster_ambiguities_omitted,inferred_leaf_faces=len(foliage.data.polygons)-native_faces,boundary_completion_faces=boundary_faces,boundary_bark_exclusions=boundary_bark_exclusions,boundary_lobes=boundary_lobes,native_view_index=0,limits=['Exact dynamic frame0 spatial fragment, not static exclusive ownership; complete runtime Arbre06 untouched.','Unknown bark remains gray.','Fourteen-frame union supports native-facing cells; wind and global dynamic ordering remain unproven. Adjacent trees10/12 and ivy remain separate context.','Short inferred forks support complete off-map crown. Native/context/convergence review required; no geometry approval implied.']))
  finally:release()
 if __name__=='__main__':main()
