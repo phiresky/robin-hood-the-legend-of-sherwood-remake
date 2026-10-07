@@ -238,6 +238,18 @@ diagnostic paths do not certify an actor-sized route. Complex support queries
 also remain expensive: these six-route audits take roughly two minutes.
 No candidate asset metadata was published from this investigation.
 
+Mesh alignment audit `climb-mesh-audit-Ol6GV6` loads the hash-checked live oak model
+and staged climbing surface. Its plane intersects only two of the 28 selected
+rung meshes. Signed normal offsets of rung bounding-box centres range from
+about +4.92 to -12.01 units across the ladder, so this is not a uniform contact
+offset. The surface needs mesh-based reauthoring as well as actor-sized route
+validation; relaxing endpoint checks alone would not establish usable climbing.
+These measurements are alignment diagnostics, not traversal certification.
+Reproduce from `level-editor` with
+`node refinement/audit-climb-mesh.mjs sherwood-ladder-oak-platform gameplay-volume-101-lift rung work/map-compile/three-door-oak-oBXE0a`.
+The helper accepts other assets, lift IDs and mesh-node patterns and records
+descriptor/model/staged-data hashes in its report.
+
 Fresh published York and Sherwood exports (`saved-map-exports-vDlOcb`) pass all
 132 native stair routes, 50 climb routes and six control apply/reset checks after
 the runtime corrections, including the final contact-separation geometry.
