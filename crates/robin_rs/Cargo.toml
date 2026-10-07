@@ -252,6 +252,7 @@ naga = { version = "30", features = ["wgsl-in", "glsl-out"] }
 robin_engine = { workspace = true, features = ["test-helpers", "test-support"] }
 
 [build-dependencies]
+embed-resource = "3.0"
 cc = "1"
 
 [features]

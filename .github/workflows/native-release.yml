@@ -246,6 +246,12 @@ jobs:
             "${{ matrix.runtime }}" "${{ matrix.target }}" \
             "${{ matrix.executable }}" "${{ matrix.pack_executable }}"
 
+      - name: Verify Windows executable manifest
+        if: matrix.runtime == 'win-x64'
+        run: |
+          python3 -m pip install pefile==2024.8.26
+          python3 scripts/release/verify_windows_manifest.py "target/package-input/${{ matrix.pack_executable }}"
+
       - name: Build Windows Velopack installers
         if: matrix.runtime == 'win-x64'
         run: |
@@ -264,6 +270,13 @@ jobs:
             --packTitle "Robin Hood - The Legend of Sherwood" \
             --runtime win-x64 \
             --outputDir target/velopack
+
+      - name: Verify packaged Windows launcher manifests
+        if: matrix.runtime == 'win-x64'
+        run: |
+          python3 scripts/release/verify_windows_manifest.py \
+            target/velopack/io.github.phiresky.robinhood-win-Portable.zip \
+            --main-exe "${{ matrix.pack_executable }}"
 
       - name: Build Linux Velopack AppImage
         if: matrix.runtime == 'linux-x64'
