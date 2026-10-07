@@ -925,7 +925,10 @@ An unpublished one-unit slide of the upper doorway along the equal-height seam
 does not solve that contact: the wider sweep now passes 152/200 routes after
 physical walking integration, up from 144/200. The 90-degree approaches pass;
 105/120/135 and 285/300/315 degrees still fail at both elevations. A sampled
-failure stalls during the climbing sequence despite supported physical routes.
+failure stalls at the upper midpoint: the inside-anchor route is supported, but
+the actual movement-order route is not. The midpoint footprint exposes a small
+unsupported region at the flight/roof contact; precision and contact geometry
+still need diagnosis.
 The full York candidate still passes 38/40 climbs because its ground entrance lacks
 physical landing support. Neither the contact edits nor the shifted anchors are
 published. The placement checker accepts explicit rotation lists and preserves

@@ -484,6 +484,28 @@ fn walk_exported_lift_with_tick(
                 .and_then(|(id, index)| engine.seq().get_element(id, index))
                 .map(|element| &element.orders);
             let world_position = engine.ent(owner).position_iface().get_position();
+            let sprite = engine.ent(owner).sprite();
+            let animation = (
+                sprite.current_row,
+                sprite.current_frame,
+                sprite.current_frame_distance(),
+                sprite.last_motion_state,
+                sprite.position_iface.get_direction(),
+                sprite.position_iface.get_direction_goal(),
+                sprite.position_iface.get_forecasted_movement(),
+            );
+            let animation_rows = (0..16)
+                .map(|direction| {
+                    let row = sprite.current_row
+                        - u16::from(sprite.position_iface.get_direction().as_u8())
+                        + direction;
+                    let frames = sprite.num_frames_for_row(row);
+                    let distances = (0..frames)
+                        .map(|frame| sprite.distance(row, frame))
+                        .collect::<Vec<_>>();
+                    (direction, distances)
+                })
+                .collect::<Vec<_>>();
             let physical_support = assets
                 .navigation
                 .physical_stairs
@@ -499,7 +521,7 @@ fn walk_exported_lift_with_tick(
                     // Endpoint probes distinguish missing support from a corridor
                     // that is too narrow. The tiny-footprint probe is diagnostic
                     // only: it never replaces the actor's real movement query.
-                    [
+                    let mut probes = vec![
                         ("source", from, from, half),
                         ("destination", to, to, half),
                         ("route", from, to, half),
@@ -509,18 +531,31 @@ fn walk_exported_lift_with_tick(
                             to,
                             crate::coordinates::MoveBoxHalfDiagonal { x: 1.001, y: 1.001 },
                         ),
-                    ]
-                    .map(|(name, from, to, half)| {
-                        (
-                            name,
-                            stair
-                                .route(&engine.world.pathfinder, from, to, half)
-                                .map(|route| route.map(|points| points.len())),
-                        )
-                    })
+                    ];
+                    if let Some(order) = selected_orders.and_then(|orders| orders.front())
+                        && order.physical_stair.is_some()
+                    {
+                        probes.push((
+                            "active order route",
+                            from,
+                            [order.destination_3d[0], order.destination_3d[1]],
+                            half,
+                        ));
+                    }
+                    probes
+                        .into_iter()
+                        .map(|(name, from, to, half)| {
+                            (
+                                name,
+                                stair
+                                    .route(&engine.world.pathfinder, from, to, half)
+                                    .map(|route| route.map(|points| points.len())),
+                            )
+                        })
+                        .collect::<Vec<_>>()
                 });
             return Err(format!(
-                "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}, world={world_position:?}, orders={selected_orders:?}, physical_support={physical_support:?}",
+                "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}, world={world_position:?}, orders={selected_orders:?}, physical_support={physical_support:?}, animation={animation:?}, animation_rows={animation_rows:?}",
                 element.layer(),
                 leave.point_out,
             ));

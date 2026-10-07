@@ -9917,10 +9917,28 @@ improves from 144 to **152 passing routes**: the 90-degree approach cases now
 pass, while 105/120/135 and 285/300/315 degrees fail for both copies at both
 elevations. A sampled 105-degree failure has a supported source, destination and
 physical route but stalls inside the climbing sequence after entry. This needs
-execution diagnosis rather than an assumed clearance change. The corresponding
+the active movement goal checked separately, as detailed below. The corresponding
 full-scene candidate in `physical-walking-york-scene-u66e7h2r` retains its two
 failed climbs (38/40 pass). These candidate assets remain unpublished; they are
 distinct from the passing saved-map baseline above.
+
+### Gable climb active-order diagnosis (2026-10-07)
+
+The native stalled-route report now includes the active physical order's route
+and animation row/frame/distance, facing, forecast and directional distance rows.
+`york-climb-animation-jwt5fyuk` repeats the four failing 105-degree routes. The
+inside-to-inside probe succeeds for the upward route, but its active order targets
+the upper **middle** point and that route returns no path. All sixteen climbing
+directions have three-unit distance entries; missing sprite movement data is
+ruled out. A zero-distance sample alone was insufficient evidence about animation.
+
+The contact-area diagnostic finds 0.001830 and 0.002487 square units of unsupported
+upper-midpoint footprint for the two copies, with no overlapping solid. The
+nearest free centers are about 0.154 units away. Flight and landing contact
+precision need review before changing any geometry or tolerances. The previously
+reported inside-anchor support must not be read as proof that the stalled active
+order has a supported route. No candidate asset or runtime behavior changes in
+this diagnostic step.
 
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
