@@ -9626,6 +9626,33 @@ The movement-box review confirms that climbing posture does not select a smaller
 box: the posture-taking accessor returns the same box, as does the runtime.
 No footprint reduction or entrance expansion was applied to the house candidate.
 
+The current authoring recipe was replayed against the footprint-reconstructed
+flight (`local-stair-seams-uyZmNW`), producing `york-gable-roof-contact-dEjYkG`.
+Fresh `york-central-lane-stone-gable-house-neighbour-placements-5s3m76` compiles
+eight placements, rejects 48 disconnected neighbours and still fails all 32
+complete-profile actor routes. Failed native audit results now retain their
+bound physical navigation and initial motion states, once per failing sector.
+`uv run --with shapely python refinement/audit-lift-support.py REPORT --file FILE`
+measures inside/middle footprint support independently with polygon operations.
+It subtracts each landing's own holes and active collision before combining
+support, and measures active flight collision separately. It does not repair
+rounding cracks, validate mesh contact or certify a complete route.
+
+The zero-degree contact report reproduces 8.511748 unsupported and 1.469696
+blocked square units at the first copy's upper inside point; the midpoint has
+2.598869 unsupported and 1.570729 blocked square units. Its flight spans heights
+90.000–225.005. Extrapolating the flight plane over the inside point's full
+effective footprint reaches 263.586; the midpoint's reaches 246.304. This
+identifies support extending beyond the finite climbing surface, not permission
+to extend that surface or shrink the actor. The earlier non-reconstructed flight
+candidate (`...neighbour-placements-1DspZ5`) has no slab overlap at the upper
+inside point, but still lacks about 8.293 square units of support and fails all
+32 routes. Neither candidate is published.
+
+The diagnostic's three focused tests cover landing-only exclusions, active
+flight/landing obstacles, unchanged inputs and explicit height extrapolation.
+All 23 stair-navigation tests, Rust formatting and the main game build pass.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

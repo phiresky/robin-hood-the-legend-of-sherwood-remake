@@ -1103,6 +1103,7 @@ fn audit_exported_lifts(
         let mut checked = 0;
         let mut skipped = 0;
         let mut failures = vec![];
+        let mut failed_physical_navigation = std::collections::BTreeMap::new();
         let doors = &engine.script_domains.interactables.doors;
         for (sector_index, sector) in engine.world.fast_grid.level.sectors.iter().enumerate() {
             if !sector.lift_type.is_some_and(|kind| types.contains(&kind)) {
@@ -1127,6 +1128,10 @@ fn audit_exported_lifts(
                         Ok(false) => skipped += 1,
                         Err(message) => {
                             checked += 1;
+                            let number = u16::try_from(sector.sector_number.get()).unwrap();
+                            if let Some(bound) = assets.navigation.physical_stairs.get(&number) {
+                                failed_physical_navigation.insert(number, bound);
+                            }
                             failures.push(serde_json::json!({
                                 "sector": sector.sector_number, "entrance": entrance, "exit": exit, "error": message
                             }));
@@ -1142,7 +1147,9 @@ fn audit_exported_lifts(
             failures.len()
         );
         report["results"].as_array_mut().unwrap().push(serde_json::json!({
-            "file": file, "checked": checked, "skipped_permissions": skipped, "failures": failures
+            "file": file, "checked": checked, "skipped_permissions": skipped, "failures": failures,
+            "failed_physical_navigation_initial_state": failed_physical_navigation,
+            "initial_motion_states": engine.world.pathfinder.states
         }));
         std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     }
