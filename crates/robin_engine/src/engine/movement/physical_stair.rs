@@ -73,10 +73,17 @@ impl EngineInner {
         );
 
         let half = entity.position_iface().get_half_diagonal();
+        let clearance = stair.clearance_bounds_half(half);
         let mut bounds = MapBBox::new();
         for point in &stair.definition.boundary {
-            bounds.expand_point(MapPoint::new(point[0] - half.x, point[1] - half.y));
-            bounds.expand_point(MapPoint::new(point[0] + half.x, point[1] + half.y));
+            bounds.expand_point(MapPoint::new(
+                point[0] - clearance[0],
+                point[1] - clearance[1],
+            ));
+            bounds.expand_point(MapPoint::new(
+                point[0] + clearance[0],
+                point[1] + clearance[1],
+            ));
         }
         let mut mover = super::super::anti_collision::CollisionMover::new(owner, entity);
         mover.position_map = MapPoint::new(position.x, position.y);

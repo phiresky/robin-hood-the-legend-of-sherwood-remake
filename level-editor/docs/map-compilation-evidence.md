@@ -9653,6 +9653,50 @@ The diagnostic's three focused tests cover landing-only exclusions, active
 flight/landing obstacles, unchanged inputs and explicit height extrapolation.
 All 23 stair-navigation tests, Rust formatting and the main game build pass.
 
+### Climbing clearance along the physical surface (2026-10-07)
+
+The contact diagnostic now compares ground, surface and screen frames and
+measures straight swept footprints and connected free-center components.
+For a planar floor with gradient `g`, the surface frame uses the positive square
+root of `I + g*gᵀ`. This preserves distances on the lifted 3D plane. The gable
+candidate's upper inside anchors become supported at every tested rotation in
+this frame, while the direct crossing still hits the roof slab. Configuration
+space finds a supported detour between both inside anchors in every placement.
+Screen clearance instead loses connectivity at 180 degrees, so it is not a
+rotation-independent substitute. These polygon experiments alone do not prove
+native actor traversal or rendered contact.
+
+Physical ladder and wall queries now apply the inverse surface metric to the
+actor's existing footprint. They preserve its width, depth and angles along the
+plane; profile dimensions and the normal one-unit movement inset are unchanged.
+Ordinary stairs retain their prior horizontal clearance. Sweeping the resulting
+centrally symmetric footprint checks real support and live obstacles without
+padding geometry. Closing-obstacle intersection and neighbour-query bounds use
+the corresponding full footprint. Compound climbs use a conservative convex
+envelope of their per-patch footprints, so a seam cannot under-check either
+floor; narrow compound layouts still need broader verification.
+
+The same `...gable-house-neighbour-placements-5s3m76` descriptors now complete
+24/32 actor routes instead of 0/32. Both copies pass at 0, 37 and 180 degrees,
+at both elevations. All eight 90-degree cases still fail at the upper door
+handoff; the main inside-to-inside climb succeeds. Its first midpoint has
+0.005525 square units of unsupported projected footprint and no slab overlap.
+The unnormalized diagnostic puts it 0.181216 world-XY units from the nearest
+free-center region; this is not a tolerance recommendation. No landing tolerance
+was relaxed, and neither asset candidate is published.
+
+Regression snapshot `surface-clearance-regression-ib6a1geu` passes all 84 existing
+climbs: Derby 4, Leicester 22, Lincoln 8, Sherwood 10 and York 40. The other five
+maps have no climbs in these descriptors. All 47 regular compiled-navigation
+tests pass, as do moved-climb, compound-climb and copied-barrier actor tests and
+all four changing-climb tests, including 72 mid-climb reopening checks. The 28
+stair-navigation tests include metric length preservation, narrow-contact
+rejection, real barriers, full-footprint crushing, neighbour bounds, compound
+envelopes and invalid inputs. Eight diagnostic tests pass. Truly vertical and
+overhanging surfaces remain outside the current height-field representation.
+All 66 enabled map-compilation integration tests, Rust formatting and the main
+game build also pass with the final clearance implementation.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

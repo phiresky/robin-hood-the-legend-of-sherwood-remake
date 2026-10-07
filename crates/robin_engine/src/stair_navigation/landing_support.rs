@@ -55,6 +55,25 @@ impl StairRouteGeometry {
         landings: &[Polygon<f64>],
         precise_obstacles: &[Vec<[f64; 2]>],
     ) -> Result<Option<Vec<[f32; 2]>>, String> {
+        self.route_with_clearance_regions(
+            source,
+            goal,
+            half,
+            &super::clearance::rectangle_offsets(half, 1.0),
+            landings,
+            precise_obstacles,
+        )
+    }
+
+    pub(super) fn route_with_clearance_regions(
+        &self,
+        source: [f32; 2],
+        goal: [f32; 2],
+        half: MoveBoxHalfDiagonal,
+        clearance: &[[f64; 2]],
+        landings: &[Polygon<f64>],
+        precise_obstacles: &[Vec<[f64; 2]>],
+    ) -> Result<Option<Vec<[f32; 2]>>, String> {
         if source.iter().chain(&goal).any(|value| !value.is_finite())
             || !half.x.is_finite()
             || !half.y.is_finite()
@@ -83,15 +102,15 @@ impl StairRouteGeometry {
         // effective footprint used below, so clipping cannot create a boundary
         // that excludes otherwise supported stair centers.
         let bounds = floor.bounding_rect().ok_or("empty physical stair")?;
+        let extent = clearance.iter().fold([1.0_f64; 2], |extent, point| {
+            [
+                extent[0].max(point[0].abs() + 1.0),
+                extent[1].max(point[1].abs() + 1.0),
+            ]
+        });
         let neighborhood = geo::Rect::new(
-            (
-                bounds.min().x - f64::from(half.x),
-                bounds.min().y - f64::from(half.y),
-            ),
-            (
-                bounds.max().x + f64::from(half.x),
-                bounds.max().y + f64::from(half.y),
-            ),
+            (bounds.min().x - extent[0], bounds.min().y - extent[1]),
+            (bounds.max().x + extent[0], bounds.max().y + extent[1]),
         )
         .to_polygon();
         let mut support = MultiPolygon::from(vec![floor.clone()]);
@@ -118,14 +137,11 @@ impl StairRouteGeometry {
                 .buffer_with_style(BufferStyle::new(rounding).line_join(LineJoin::Bevel))
                 .buffer_with_style(BufferStyle::new(-rounding).line_join(LineJoin::Bevel));
         }
-        let half = [f64::from(half.x - 1.0), f64::from(half.y - 1.0)];
         let sweep = |a: geo::Coord<f64>, b: geo::Coord<f64>| {
             MultiPoint::from_iter([a, b].into_iter().flat_map(|p| {
-                [-half[0], half[0]].into_iter().flat_map(move |x| {
-                    [-half[1], half[1]]
-                        .into_iter()
-                        .map(move |y| Point::new(p.x + x, p.y + y))
-                })
+                clearance
+                    .iter()
+                    .map(move |[x, y]| Point::new(p.x + x, p.y + y))
             }))
             .convex_hull()
         };
@@ -152,7 +168,7 @@ impl StairRouteGeometry {
         {
             return Ok(Some(vec![source, goal]));
         }
-        // Erode real support by the effective rectangular footprint. Sweeping
+        // Erode real support by the effective, centrally symmetric footprint. Sweeping
         // every exterior and hole edge removes exactly the centers whose box
         // crosses a support boundary; no arbitrary padding is introduced.
         let mut centers = support.clone();
@@ -164,7 +180,7 @@ impl StairRouteGeometry {
             }
         }
         // Expand each live solid by the same footprint, including concave
-        // solids: the solid plus its swept boundary is its rectangular dilation.
+        // solids: the solid plus its swept boundary is its footprint dilation.
         for obstacle in &solids {
             centers = centers.difference(obstacle);
             for edge in obstacle.exterior().lines() {

@@ -1,14 +1,20 @@
 # Post-port Features
 
-- **Physical ladder navigation.** Compatible planar ladders export world-space
+- **Physical ladder and wall navigation.** Compatible planar climbs export world-space
   floors and live collision alongside stairs. Ladder entry/exit climbing orders
   retain exact endpoints after placement, while transition animations keep their
   posture and membership effects. Landing surfaces retain precision until final
   grid rounding. Physical routes can resume when a barrier reopens before their
   blocked-motion timeout; projected routes retain their existing failed-request
   behavior. Steep-floor validation accounts for independently rounded runtime
-  coordinates without accepting real height gaps. Climbable walls and complete
-  rendered climbing integration remain unfinished.
+  coordinates without accepting real height gaps. Asset contact corrections and
+  complete rendered climbing integration remain unfinished.
+  Climbing clearance preserves the actor's dimensions along the supporting plane,
+  avoiding the oversized uphill footprint caused by applying horizontal walking
+  clearance to a steep surface. Routes, closing obstacles and neighbour bounds
+  use the same surface footprint. Compound climbs conservatively include every
+  patch's footprint; ordinary stairs retain horizontal clearance. This does not
+  yet support truly vertical or overhanging floors, or certify every asset contact.
   Clipped landing obstacles retain their computed precision through routing and
   footprint collision, avoiding self-intersecting contours after float rounding.
   Raised receiving volumes can supply a ladder landing when their point anchor

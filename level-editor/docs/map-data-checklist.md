@@ -882,11 +882,16 @@ eight of 32 copied/rotated climb routes fail at 90 degrees. Reliable new-map
 placement, rather than matching an existing layout, is the acceptance criterion.
 York's central-lane gable-house climb and separate lean-to roof also remain
 unpublished. Fresh candidate exports compile eight moved/copied placements and
-reject 48 disconnected neighbours, but fail all 32 complete-character routes.
-The upper inside anchor has about 8.512 square units of unsupported footprint
-and 1.470 square units overlapping the roof slab. Failed native audits now save
+reject 48 disconnected neighbours. Surface-aware climbing clearance now completes
+24 of 32 complete-character routes, up from zero; eight upper-door handoffs at
+90 degrees remain blocked. Applying horizontal walking clearance had left about
+8.512 square units unsupported at the upper inside point and 1.470 overlapping
+the slab. Climbing now preserves actor dimensions along the floor plane instead;
+routes, closing barriers and neighbour bounds share that footprint. All 84
+existing climb routes across ten saved-map snapshots still pass, along with
+copied-asset isolation and barrier close/reopen tests. Failed native audits save
 bound landing geometry and initial collision states; `audit-lift-support.py`
-reproduces these measurements without editing assets or reducing actor clearance.
+compares runtime, horizontal, surface and screen clearance without editing assets.
 Connection registration alone does not prove usable character passage.
 The receiving-plane loader now propagates f32 rounding through both the plane
 anchors and each receiver vertex. Steep valid planes no longer fail loading
