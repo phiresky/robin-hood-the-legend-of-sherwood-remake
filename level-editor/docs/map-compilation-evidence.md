@@ -9847,3 +9847,18 @@ integration failure, not a successful original-scene roundtrip. Floor ownership
 and connections to background terrain need correction; moving the bridge must
 not leave its old crossing embedded in the terrain asset. Publication and
 rendered occlusion verification remain pending.
+
+`stage-bridge-ground-ownership.mjs` now authors a candidate terrain hole from
+the placed asset's own deck geometry and two asset-local open end passages.
+Candidate `bridge-ground-ownership-5HJmCM` checks five interior centerline
+samples: each has exactly one navigation owner when placed and none when the
+bridge is removed. Each passage has unique endpoints in distinct ground/deck
+areas. Native construction passes for both exports: placed has 12 areas, 633
+sight obstacles and 17 doors; removed has 11 areas, 106 sight obstacles and 15
+doors. Both construct 10 jump pairs and 5,016 grid blocks.
+
+These are ownership and construction checks only. The existing direct-walking
+endpoint helper keeps a fixed sector and cannot verify a route through the two
+open passages. Native pathfinding/actor traversal, alternate background
+placements, rendered occlusion and publication remain pending. The terrain hole
+is an asset-authoring correction; compilation still reads only editor assets.

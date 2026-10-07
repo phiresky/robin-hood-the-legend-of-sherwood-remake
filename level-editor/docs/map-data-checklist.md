@@ -273,12 +273,15 @@ Terrain retains fractional coordinates until navigation assembly, fixing the
 90-degree disconnection; equivalent generated ground receivers now merge before
 partitioning, fixing the 180-degree receiver seam. Full Croisement03 with the
 candidate passes native construction and state apply/reset checks. Rendered
-actor occlusion remains unverified. The new original-scene crossing check fails:
-the background terrain retains walking coverage beneath the bridge, producing
-overlapping navigation areas. The staged deck's contact height now removes
-0.000146 units of mesh-export drift, but terrain/bridge ownership and connection
-integration remain unresolved. This asset is still unpublished and counted as
-missing.
+actor occlusion remains unverified. The original-scene crossing check exposed
+overlapping bridge/background navigation areas. A new unpublished ownership
+candidate removes the deck footprint from background metadata and gives the
+bridge two local open passages. Five interior samples have exactly one walkable
+owner with the bridge and none after its removal; both passage endpoints resolve
+uniquely. Native construction passes with and without the bridge. Actual actor
+paths through those passages and rearranged background placements remain
+unverified. The staged deck also removes 0.000146 units of mesh-export contact
+drift. This asset is still unpublished and counted as missing.
 An unpublished mesh-derived bridge deck candidate passes ten complete native
 crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes
