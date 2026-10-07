@@ -23,7 +23,7 @@ def main():
  def append(path,expected,source_rows):
   check(site_root,total);assert digest(path)==expected
   with bpy.data.libraries.load(str(path),link=False)as(src,dst):
-   resolved=[source_name(r['name'],src.objects)for r in source_rows];assert len(set(resolved))==len(resolved);dst.objects=resolved
+   resolved=tuple(source_name(r['name'],src.objects)for r in source_rows);assert len(set(resolved))==len(resolved);dst.objects=list(resolved)
   records=[]
   for rec,name,obj in zip(source_rows,resolved,dst.objects):
    assert obj is not None and obj.type=='MESH';scene.collection.objects.link(obj);obj.parent=None;obj.matrix_world=Matrix(rec['matrix_world']);obj.hide_render=False;receivers.append(obj);records.append(dict(source_name=name,name=obj.name,matrix_world=rec['matrix_world'],vertices=len(obj.data.vertices),polygons=len(obj.data.polygons)))
