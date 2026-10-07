@@ -19,10 +19,14 @@ def guard(reserve=1024**2):
 
 guard();world_origin=Vector((552.,-672.,235.));audit=json.loads((source/'report.json').read_text());assert not audit['lost_prior_core_pixels'] and audit['remaining_core_misses']==0
 assert hashlib.sha256((source/'mesh.npz').read_bytes()).hexdigest()==audit['mesh_sha256']
-packets=[R/'tree08-v12-remaining-group0-stitched-v3-conformed',R/'tree08-v12-remaining-group1-stitched-v2']
+packets=[R/'tree08-v12-remaining-group0-stitched-v3-conformed-stable-depth-corrected',R/'tree08-v12-remaining-group1-stitched-v2-stable']
 union_receipts=[]
 for packet in packets:
- proof=json.loads((packet/'source-and-intersections-planar.json').read_text());assert proof['status']=='PASS_LOCAL_DIAGNOSTICS' and proof['intersection_count']==0
+ checkpoint=json.loads((packet/'saved-precision-checkpoint.json').read_text())
+ for file,digest in checkpoint['files'].items():assert hashlib.sha256(Path(file).read_bytes()).hexdigest()==digest
+ proof=json.loads((packet/'source-and-intersections-planar.json').read_text());assert proof['status']=='PASS_LOCAL_DIAGNOSTICS' and not proof['intersections']
+ if packet==packets[1]:
+  saved_proof=json.loads((packet/'float32-proof/source-and-intersections-planar.json').read_text());assert saved_proof['status']=='PASS_LOCAL_DIAGNOSTICS' and not saved_proof['intersections']
  union_receipts.append(dict(packet=str(packet),mesh_sha256=hashlib.sha256((packet/'candidate.npz').read_bytes()).hexdigest(),proof_sha256=hashlib.sha256((packet/'source-and-intersections-planar.json').read_bytes()).hexdigest(),proof=proof))
 core_proof=json.loads((packets[0]/'full-assembly-core-float32.json').read_text());assert core_proof['covered_core_pixels']==core_proof['core_pixels']==6276 and not core_proof['missing']
 acquire();guard();out.mkdir(exist_ok=False)

@@ -119,6 +119,8 @@ def main():
     parser.add_argument('--group', type=int, choices=[0, 1])
     parser.add_argument('--conformed', action='store_true')
     parser.add_argument('--float32', action='store_true')
+    parser.add_argument('--stable', action='store_true')
+    parser.add_argument('--depth-corrected', action='store_true')
     args = parser.parse_args()
     suffix = '' if args.section == 29 else f'-{args.section}'
     root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
@@ -131,6 +133,10 @@ def main():
         packet = root / f'tree08-v12-remaining-group{args.group}-stitched-v{args.revision}'
     if args.conformed:
         packet = packet.with_name(packet.name + '-conformed')
+    if args.stable:
+        packet = packet.with_name(packet.name + '-stable')
+    if args.depth_corrected:
+        packet = packet.with_name(packet.name + '-depth-corrected')
     mesh = np.load(packet / 'candidate.npz')
     vertices, faces = mesh['vertices'], mesh['faces']
     if args.float32:

@@ -137,7 +137,7 @@ def preflight(experiment):
 
 
 def run(experiment, output=None, review_path=None, texels_per_unit=2., view_selection=None,
-        foliage_sample_grid=0, reconciliation_gain_mode=None, reconciliation_fade_pixels=None, reconciliation_minimum_gain=None):
+        foliage_sample_grid=0, reconciliation_gain_mode=None, reconciliation_fade_pixels=None, reconciliation_minimum_gain=None, sampling_overrides=None):
     experiment = experiment.resolve(strict=True)
     acquire()
     try:
@@ -177,13 +177,18 @@ def run(experiment, output=None, review_path=None, texels_per_unit=2., view_sele
             Image.open(raw).crop((box['left'], box['top'], box['left'] + box['width'], box['top'] + box['height'])).save(raw_content)
         evidence = {str(path): sha(path) for path in [review_path, raw, generated, experiment / 'views.json', experiment / 'approved-model.blend']}
         bake_manifest = experiment / 'views.json'
-        if view_selection is not None or foliage_sample_grid or reconciliation_gain_mode is not None or reconciliation_fade_pixels is not None or reconciliation_minimum_gain is not None:
+        if view_selection is not None or foliage_sample_grid or reconciliation_gain_mode is not None or reconciliation_fade_pixels is not None or reconciliation_minimum_gain is not None or sampling_overrides:
             require(reconciliation_gain_mode in (None, 'rgb', 'luminance'), 'Unsupported reconciliation gain mode')
             require(view_selection in (None, 'best-facing-single'), 'Unsupported diagnostic sampling policy')
             require(foliage_sample_grid in (0, 4, 8), 'Unsupported foliage sample grid')
             bake_manifest = experiment / (output.name + '-sampling-views.json')
             require(not bake_manifest.exists(), 'Diagnostic sampling manifest already exists')
             sampling = dict(manifest)
+            if sampling_overrides:
+                require(set(sampling_overrides)=={'texture_two_sided_object_names'}, 'Unsupported private sampling override')
+                selected=sampling_overrides['texture_two_sided_object_names']
+                require(isinstance(selected,list) and selected and set(selected)<=names and len(set(selected))==len(selected), 'Two-sided sampling exceeds receiver scope')
+                sampling.update(sampling_overrides)
             if manifest['asset_id']=='croisement01-tree-01' and not (experiment/'wood-scope.json').exists():
                 sampling['texture_generated_support_mask']={'path':str(experiment/'mask.png'),'sha256':sha(experiment/'mask.png')}
                 sampling['texture_generated_background_max_rgb']=.008
