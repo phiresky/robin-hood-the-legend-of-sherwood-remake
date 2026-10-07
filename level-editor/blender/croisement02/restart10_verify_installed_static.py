@@ -53,6 +53,16 @@ def snapshot():
             # catalog entries must remain exact; pin the full current index.
             before = json.loads(Path(row['source']).read_text())
             after = json.loads(path.read_text())
+            for entry in before['assets']:
+                descriptor = path.parent / entry['descriptor']
+                replacement = replacements.get(str(descriptor))
+                if replacement is not None:
+                    if entry['descriptor_sha256'] != replacement['previous_sha256']:
+                        raise ValueError('Catalog supplement baseline mismatch')
+                    if sha(descriptor) != replacement['sha256']:
+                        raise ValueError('Catalog supplement descriptor changed')
+                    entry['descriptor_sha256'] = replacement['sha256']
+                    entry['editor'] = json.loads(descriptor.read_text())
             def scoped(index):
                 return [entry for entry in index['assets']
                         if entry.get('source_map', '').lower() == 'croisement02']
