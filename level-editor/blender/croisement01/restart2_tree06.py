@@ -22,8 +22,8 @@ def main():
  for row in native['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
  row=next(r for r in native['masks'] if r['index']==6);assert row['obstacle_indices']==[];alpha=Image.open(row['png']).convert('L');wood=Image.open(OUT/'restart2/tree06-wood-source-v1/wood-domain.png').convert('L')
  wood.save(dest/'wood-domain.png');ImageChops.subtract(alpha,wood).save(dest/'deferred-domain.png');native['masks'].append(dict(row,index=206,png=str(dest/'wood-domain.png')))
- base_y=-356/SIN
- def point(x,y):return Vector((x,base_y,(356-y)/COS))
+ base_y=-428/SIN
+ def point(x,y):return Vector((x,base_y,(428-y)/COS))
  trace=[(386,358,22),(380,332,19),(381,290,17),(382,240,15),(382,190,14),(380,145,14),(377,100,13),(380,45,13),(383,-35,12)]
  body=tube('Slender continuous native trunk',[point(x,y) for x,y,r in trace]+[Vector((382,base_y,690)),Vector((375,base_y,785))],[r for x,y,r in trace]+[10,3]);body['defer_union']=True;rng=random.Random(106)
  domain=np.asarray(wood)>0;xx=np.arange(domain.shape[1])+334
