@@ -299,7 +299,10 @@ impl HeadlessMission {
                 .timeline
                 .multiplayer()
                 .timing()
-                .deadline_ms(self.runtime.timeline.frame_number())
+                .pacing_deadline_ms(
+                    self.runtime.timeline.frame_number(),
+                    crate::window::process_uptime_ms(),
+                )
         } else {
             None
         };

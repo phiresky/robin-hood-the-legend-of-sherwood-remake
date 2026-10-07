@@ -99,8 +99,6 @@ pub(crate) enum SessionProtocolFailure {
     /// anyhow keeps its context chain only in the alternate format.
     #[error("multiplayer snapshot transition current schema is invalid: {0:#}")]
     TransitionSchema(anyhow::Error),
-    #[error("multiplayer snapshot transition could not be re-encoded: {0}")]
-    TransitionReencode(#[source] serde_json::Error),
     #[error("multiplayer campaign snapshot is invalid: {0}")]
     CampaignSnapshotDecode(String),
     #[error("multiplayer campaign snapshot cannot be adopted: {0}")]
@@ -616,6 +614,13 @@ impl NetDrain<'_> {
                 frame,
                 start_epoch_ms,
             } => {
+                if self.host.transport.has_snapshot_transition() {
+                    // A reconnect can carry a cached start barrier after the
+                    // transition prepare. Only its matching commit may release
+                    // the prepared payload; this old mission must stay paused.
+                    tracing::debug!(frame, "ignoring cached BeginSim during snapshot transition");
+                    return Ok(());
+                }
                 self.host.transport.begin_simulation();
                 tracing::info!(
                     frame,
@@ -891,12 +896,9 @@ impl NetDrain<'_> {
                 // session exits, drops its old mount, restores the
                 // exact descriptor, and only then validates/rebuilds
                 // the saved profile before constructing an Engine.
-                let reencoded = serde_json::to_vec(&save)
-                    .map_err(SessionProtocolFailure::TransitionReencode)?;
-                require_protocol(
-                    reencoded == save_bytes,
-                    "snapshot transition bytes changed during validation",
-                )?;
+                // Typed decoding preserves the received values. Property maps
+                // have no canonical wire order, so re-encoding is not a valid
+                // identity check for the immutable payload just validated.
                 crate::host::PendingSnapshotTransitionPayload::Save {
                     load: crate::host::SnapshotSave::Remote(Box::new(save)),
                 }
@@ -916,11 +918,12 @@ impl NetDrain<'_> {
                 )?;
                 let decoded = Engine::decode_native_snapshot(&engine_bytes)
                     .map_err(SessionProtocolFailure::CampaignSnapshotDecode)?;
+                let received_hash = robin_engine::replay::state_hash(&decoded);
                 let adopted = Engine::adopt_authoritative_snapshot(decoded, assets)
                     .map_err(SessionProtocolFailure::CampaignSnapshotAdopt)?;
                 require_protocol(
-                    adopted.encode_native_snapshot() == engine_bytes,
-                    "campaign transition bytes changed during validation",
+                    robin_engine::replay::state_hash(&adopted) == received_hash,
+                    "campaign transition state changed during level attachment",
                 )?;
                 crate::host::PendingSnapshotTransitionPayload::CampaignExit {
                     exit_code,
@@ -1244,7 +1247,11 @@ pub(super) fn drain_mission_network(
         {
             let now_ms = crate::window::process_uptime_ms();
             let until_frame_ms = deadline_ms - i64::from(now_ms);
-            if until_frame_ms > 0 {
+            let prediction_limit_reached = timeline
+                .multiplayer()
+                .timing()
+                .prediction_limit_reached(timeline.frame_number());
+            if until_frame_ms > 0 || prediction_limit_reached {
                 clock_pause = true;
                 if timeline
                     .multiplayer_mut()
@@ -1255,7 +1262,8 @@ pub(super) fn drain_mission_network(
                         scheduled_frame = timeline.multiplayer().timing().schedule_frame(),
                         local_frame = timeline.frame_number(),
                         until_frame_ms,
-                        "multiplayer: local frame is ahead of host schedule; holding sim"
+                        prediction_limit_reached,
+                        "multiplayer: waiting for host frame schedule"
                     );
                 }
             }
@@ -1284,7 +1292,15 @@ pub(super) fn drain_mission_network(
                 host.effects.modals.push(kind);
             }
         }
-        drain.pause_simulation |= net.story_barrier_pending();
+        let story_pending = net.story_barrier_pending();
+        if local_is_peer && story_pending {
+            let frame = timeline.frame_number();
+            timeline
+                .multiplayer_mut()
+                .timing_mut()
+                .hold_story_clock(frame, crate::window::process_uptime_ms());
+        }
+        drain.pause_simulation |= story_pending;
         net.set_gameplay_input_enabled(!admission_pause && !host.transport.reconnecting());
     }
 
@@ -1776,6 +1792,162 @@ mod tests {
             .expect_err("disabled Spellforge must reject host package");
         assert!(error.contains("disabled in Gameplay settings"));
         assert!(peer_assets.attachments.spellforge_runtime.is_none());
+    }
+
+    fn transition_engine_with_property_maps(engine: &Engine) -> Engine {
+        use robin_engine::element::SendMessageCommand;
+        use robin_engine::sequence::{Sequence, SequenceElement, SequenceManager};
+        let mut sequences = SequenceManager::new();
+        for index in 0..16 {
+            let mut sequence = Sequence::new();
+            sequence.append_element(SequenceElement::new_send_message(
+                1,
+                None,
+                SendMessageCommand::new(7, index, index + 1),
+            ));
+            sequences.insert_sequence(sequence);
+        }
+        let mut state = serde_json::to_value(engine).unwrap();
+        state["orders"]["sequence_manager"] = serde_json::to_value(sequences).unwrap();
+        serde_json::from_value(state).unwrap()
+    }
+
+    #[test]
+    fn snapshot_transition_accepts_property_maps_without_requiring_wire_order() {
+        use crate::host::{PendingSnapshotTransitionPayload, SnapshotSave};
+        use robin_engine::game_operation::GameCode;
+        use robin_engine::multiplayer::{
+            MultiplayerSessionId, SnapshotTransitionId, SnapshotTransitionPayload,
+        };
+        for campaign_exit in [false, true] {
+            let (mut host, mut manager, mut assets, incoming, outgoing) = network_drain_fixture();
+            let session_id = MultiplayerSessionId([41; 32]);
+            host.transport
+                .net()
+                .unwrap()
+                .install_session_id(session_id)
+                .unwrap();
+            let id = SnapshotTransitionId {
+                session_id,
+                sequence: 1,
+            };
+            let engine = transition_engine_with_property_maps(&manager.engine);
+            let hash = robin_engine::replay::state_hash(&engine);
+            let payload = if campaign_exit {
+                SnapshotTransitionPayload::CampaignExit {
+                    exit_code: GameCode::LevelSucceeded,
+                    engine_bytes: engine.encode_native_snapshot(),
+                }
+            } else {
+                let save =
+                    crate::save_file::GameSaveFile::capture(&engine, &host, 1, "Checkpoint".into());
+                SnapshotTransitionPayload::Save {
+                    mission_id: 1,
+                    save_bytes: serde_json::to_vec(&save).unwrap(),
+                }
+            };
+            incoming
+                .send(NetEvent::PrepareSnapshotTransition { id, payload })
+                .unwrap();
+            let mut network =
+                super::super::runtime::reconciliation::NetworkReconciliation::default();
+            let mut rewind = RewindBuffer::new();
+            let _result = drain_net_inputs(
+                &mut host,
+                &mut manager,
+                0,
+                &mut network,
+                &mut assets,
+                &mut rewind,
+            )
+            .expect("valid state does not require canonical map serialization");
+            assert!(host.transport.reconnecting());
+            assert!(
+                matches!(outgoing.try_recv().unwrap(), NetOutbound::SnapshotTransitionReady { id: ack } if ack == id)
+            );
+            assert!(
+                host.transport
+                    .take_committed_snapshot_transition()
+                    .is_none()
+            );
+            incoming
+                .send(NetEvent::CommitSnapshotTransition { id })
+                .unwrap();
+            drain_net_inputs(
+                &mut host,
+                &mut manager,
+                0,
+                &mut network,
+                &mut assets,
+                &mut rewind,
+            )
+            .unwrap();
+            let committed = host.transport.take_committed_snapshot_transition().unwrap();
+            let restored = match committed.into_payload() {
+                PendingSnapshotTransitionPayload::CampaignExit {
+                    engine: Some(engine),
+                    ..
+                } => *engine,
+                PendingSnapshotTransitionPayload::Save {
+                    load: SnapshotSave::Remote(save),
+                } => save.engine,
+                _ => panic!("expected the validated remote payload"),
+            };
+            assert_eq!(robin_engine::replay::state_hash(&restored), hash);
+            assert!(
+                host.transport
+                    .take_committed_snapshot_transition()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_transition_keeps_its_hold_when_cached_begin_arrives() {
+        use crate::host::{PendingSnapshotTransition, PendingSnapshotTransitionPayload};
+        use robin_engine::game_operation::GameCode;
+        use robin_engine::multiplayer::{MultiplayerSessionId, SnapshotTransitionId};
+        let (mut host, mut manager, mut assets, incoming, _) = network_drain_fixture();
+        let id = SnapshotTransitionId {
+            session_id: MultiplayerSessionId([42; 32]),
+            sequence: 1,
+        };
+        host.transport
+            .prepare_snapshot_transition(PendingSnapshotTransition::new(
+                id,
+                PendingSnapshotTransitionPayload::CampaignExit {
+                    exit_code: GameCode::LevelSucceeded,
+                    engine: None,
+                },
+            ));
+        incoming
+            .send(NetEvent::BeginSim {
+                frame: 17,
+                start_epoch_ms: 0,
+            })
+            .unwrap();
+        incoming
+            .send(NetEvent::CommitSnapshotTransition { id })
+            .unwrap();
+        let result = drain_net_inputs(
+            &mut host,
+            &mut manager,
+            0,
+            &mut super::super::runtime::reconciliation::NetworkReconciliation::default(),
+            &mut assets,
+            &mut RewindBuffer::new(),
+        )
+        .unwrap();
+        assert!(host.transport.reconnecting());
+        assert!(result.admission_events.is_empty());
+        assert_eq!(result.adopted_frame, None);
+        assert_eq!(
+            host.transport
+                .take_committed_snapshot_transition()
+                .unwrap()
+                .id(),
+            id
+        );
     }
 
     #[test]

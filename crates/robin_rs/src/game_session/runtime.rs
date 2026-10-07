@@ -687,7 +687,10 @@ impl FrameClock {
         pacing
             .host_deadline_ms
             .map_or(local_sleep_ms, |deadline_ms| {
-                (deadline_ms - i64::from(now_ms)).max(0) as u32
+                // Recheck the clock and service incoming control messages at
+                // least once per tick, even when the peer is far ahead.
+                (deadline_ms - i64::from(now_ms))
+                    .clamp(0, i64::from(robin_engine::engine::FRAME_TIME_MS)) as u32
             })
     }
 }
@@ -4532,6 +4535,28 @@ mod tests {
             ),
             13
         );
+    }
+
+    #[test]
+    fn multiplayer_clock_corrections_never_block_a_whole_second_of_ingress() {
+        let mut clock = FrameClock::new();
+        clock.begin(5_000);
+        for deadline in [5_964, 6_308, 65_000] {
+            assert_eq!(
+                clock.plan(
+                    5_000,
+                    FramePacing {
+                        fast_forward_requested: false,
+                        headless: false,
+                        engine_fast_forward: false,
+                        slow_motion: false,
+                        host_deadline_ms: Some(deadline),
+                    }
+                ),
+                robin_engine::engine::FRAME_TIME_MS,
+                "the next iteration must service control messages before continuing the wait"
+            );
+        }
     }
 
     #[test]

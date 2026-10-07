@@ -335,6 +335,47 @@ fn current_peer_dispatch_publishes_input_and_ready_but_old_generation_cannot() {
 }
 
 #[test]
+fn prepared_transition_suppresses_new_and_cached_simulation_barriers() {
+    let (context, events) = dispatch_test_context();
+    let (sender, mut wire) = unbounded_channel();
+    let claim = context
+        .peers
+        .lock()
+        .sessions
+        .claim_seat(PeerOwner::Native([1; 32]), "peer", sender)
+        .unwrap();
+    {
+        let mut peers = context.peers.lock();
+        peers.sessions.connect_sim_seat(claim.seat);
+        peers.readiness.host_frame = Some(10);
+        peers.transitions.begin(PendingSnapshotTransition {
+            id: robin_engine::multiplayer::SnapshotTransitionId {
+                session_id: context.session_id,
+                sequence: 1,
+            },
+            payload: robin_engine::multiplayer::SnapshotTransitionPayload::Save {
+                mission_id: 7,
+                save_bytes: vec![1],
+            },
+            awaiting: HashSet::from([claim.seat]),
+        });
+    }
+    super::dispatch_server_peer_message(
+        &context,
+        PlayerId(claim.seat),
+        claim.generation,
+        super::NetMsg::ReadyToSim { frame: 10 },
+    )
+    .unwrap();
+    assert!(context.peers.lock().readiness.begun.is_none());
+    context.peers.lock().readiness.begun = Some((10, 500));
+    super::finish_seat_connections(&context, &[claim.seat]);
+    assert!(events.try_recv().is_err());
+    assert!(wire.try_recv().is_err());
+    assert!(context.peers.lock().transitions.pending().is_some());
+}
+
+#[test]
 fn current_snapshot_ack_commits_once_and_detaches_authority() {
     let (context, events) = dispatch_test_context();
     let (sender, mut wire) = unbounded_channel();

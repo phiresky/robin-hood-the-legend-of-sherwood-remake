@@ -275,6 +275,9 @@ pub(super) fn commit_snapshot_transition(
 pub(super) fn maybe_begin_sim_locked(
     peers: &mut ServerPeers,
 ) -> Result<Option<(u32, u64, Vec<UnboundedSender<NetMsg>>)>, MultiplayerError> {
+    if peers.transitions.pending().is_some() {
+        return Ok(None);
+    }
     let Some(begin_frame) = peers.readiness.candidate(
         peers.sessions.expected_players(),
         peers.sessions.readiness(),
@@ -730,6 +733,9 @@ pub(super) fn retry_begin_sim(context: &ServerContext) {
 pub(super) fn finish_seat_connections(context: &ServerContext, seats: &[u8]) {
     let cached_begin = {
         let peers = context.peers.lock();
+        if peers.transitions.pending().is_some() {
+            return;
+        }
         peers.readiness.begun.map(|(frame, start_epoch_ms)| {
             let senders = seats
                 .iter()
@@ -1028,7 +1034,9 @@ pub(super) fn prepare_peer_session(
             // seat also receives the cached BeginSim from
             // `connect_all_provisional_seats` below, so it sees it twice. Clients
             // tolerate the repeat; consider sending it from one place only.
-            if let Some((frame, start_epoch_ms)) = p.readiness.begun {
+            if p.transitions.pending().is_none()
+                && let Some((frame, start_epoch_ms)) = p.readiness.begun
+            {
                 let begin_frame =
                     snapshot_frame.map_or(frame, |snapshot_frame| snapshot_frame.max(frame));
                 let begin_start_epoch_ms = if begin_frame != frame {
