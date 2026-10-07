@@ -216,26 +216,32 @@ passes sixteen stairs, eight climbs and eleven controls. Published geometry
 exactly matches tested candidates and all ten scenes reopen; rendered actor
 integration remains unverified.
 
-Landing validation now excludes permanently blocked portions of shared stair
-edges on either the flight or landing while retaining their collision.
-Switchable blockers and uncovered edge portions still require matching heights.
-Focused regressions pass, but the
-three-entrance Sherwood candidate still exposes an incompatible unblocked edge;
-its traversal remains unresolved. Generated collinear clipping holes no longer
-disable physical navigation at 37 degrees. The latest unpublished candidate
-emits physical navigation at all eight placements but fails all 48 actor routes,
-including the twelve routes previously using projected navigation.
-Fresh compilation and native replay (`local-stair-placements-tDGWb5`) reproduce
-all 48 failures. Failure reports now query current physical source support,
-destination support and complete routing using the actual actor footprint.
-All sixteen ascending requests have supported lower entrances but unsupported
-upper destinations; near-point diagnostic routes exist for those requests.
-The other thirty-two requests stall at upper seams and still reject with a
-near-point footprint. This rules out stale exports and shows that shrinking
-the actor footprint alone is insufficient. Upper contacts and their connected
-landing support require correction before publication. The independent
-fractional-receiver ladder regression still passes. Diagnostic probes do not
-change runtime movement or turn failed routes into passing results.
+Landing binding retains a height-matched doorway when the same platform also
+overlaps a different end of the flight in XY. Incompatible contacts are separated
+from that landing's foot support without changing real collision or accepting
+a height gap at the doorway. Receiving-floor holes and live blockers are removed
+from their own landing before combining support, so an overhead platform cannot
+erase a valid lower floor. A regression proves that an upper overhang alone
+cannot support the lower entrance, a real ground landing restores the route,
+and its live blocker still stops movement. All 23 navigation and 30 physical-lift
+regressions pass, and the game binary builds.
+
+The three-entrance Sherwood candidate remains unpublished and unresolved.
+Before these runtime corrections, all 48 routes failed across eight placements.
+Tracing found both upper landings rejected because another shared edge was
+278 units below them. The corrections restore landing support, but all six
+unrotated routes still fail for both the baseline (`local-stair-placements-tDGWb5`)
+and shorter-contact candidate (`local-stair-placements-Hk8MNp`). The latter now
+supports the lower entrance and right upper endpoint; the left contact and
+actor-sized route through the climbing surface still need correction. Near-point
+diagnostic paths do not certify an actor-sized route. Complex support queries
+also remain expensive: these six-route audits take roughly two minutes.
+No candidate asset metadata was published from this investigation.
+
+Fresh published York and Sherwood exports (`saved-map-exports-vDlOcb`) pass all
+132 native stair routes, 50 climb routes and six control apply/reset checks after
+the runtime corrections, including the final contact-separation geometry.
+Their rendered integration remains unverified.
 
 The current library-wide audit (`gameplay-coverage-S4Wdmj`) finds 28 of 1,279
 indexed assets without gameplay definitions. None is placed in the saved scenes.

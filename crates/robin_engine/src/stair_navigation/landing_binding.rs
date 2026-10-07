@@ -1,6 +1,7 @@
 //! Landing geometry comes from the current motion area and its actual receiver.
 
 use super::*;
+use geo::algorithm::buffer::{BufferStyle, LineCap, LineJoin};
 use geo::{BooleanOps, BoundingRect, Buffer, MapCoords};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +25,118 @@ pub(super) struct BoundLandingObstacle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overhanging_landing_keeps_its_door_without_supporting_a_lower_edge() {
+        let boundary = vec![
+            [1980., 1700.],
+            [2020., 1700.],
+            [2020., 1800.],
+            [2050., 1800.],
+            [2050., 1810.],
+            [1950., 1810.],
+            [1950., 1800.],
+            [1980., 1800.],
+        ];
+        let mut bound = BoundPhysicalStair {
+            floor: None,
+            definition: robin_level_data::physical_stair::PhysicalStairNavigation {
+                floor_patches: vec![],
+                plane: [0., 1., -1700.],
+                boundary: boundary.clone(),
+                obstacles: vec![],
+                doors: vec![
+                    robin_level_data::physical_stair::PhysicalStairDoor {
+                        inside: [2000., 1705., 5.],
+                        middle: [2000., 1700., 0.],
+                        outside: [2000., 1690., 0.],
+                    },
+                    robin_level_data::physical_stair::PhysicalStairDoor {
+                        inside: [2035., 1805., 105.],
+                        middle: [2035., 1800., 100.],
+                        outside: [2035., 1790., 100.],
+                    },
+                ],
+            },
+            layer: 2,
+            area: 0,
+            obstacle_states: vec![],
+            landings: vec![],
+        };
+        let upper = serde_json::from_value(serde_json::json!({
+            "is_lift": false, "state_id": 0, "flags": 0, "skeleton_segments": [],
+            "obstacles": [{"state_id": 2, "polygon": {"points": [[1990,1590],[2010,1590],[2010,1600],[1990,1600]]}}],
+            "polygon": {"points": [[1940,1590],[2060,1590],[2060,1700],[1940,1700]]}
+        }))
+        .unwrap();
+        bound
+            .bind_landing(1, &upper, 1, 0, 1, [0., 0., 100.], None)
+            .unwrap();
+        let geometry = StairRouteGeometry {
+            boundary,
+            obstacles: vec![],
+        };
+        let query = |bound: &BoundPhysicalStair, from, to| {
+            geometry
+                .route_with_precise_landing_support(
+                    from,
+                    to,
+                    MoveBoxHalfDiagonal::new(6., 3.),
+                    &bound
+                        .landings
+                        .iter()
+                        .map(|l| l.boundary.clone())
+                        .collect::<Vec<_>>(),
+                    &bound
+                        .landings
+                        .iter()
+                        .flat_map(|l| l.holes.clone())
+                        .collect::<Vec<_>>(),
+                )
+                .unwrap()
+        };
+        assert!(query(&bound, [2035., 1800.], [2035., 1805.]).is_some());
+        assert!(
+            query(&bound, [2000., 1701.], [2000., 1701.]).is_none(),
+            "the overhanging upper floor must not support the lower entrance"
+        );
+        let lower = serde_json::from_value(serde_json::json!({
+            "is_lift": false, "state_id": 0, "flags": 0, "skeleton_segments": [],
+            "obstacles": [{"state_id": 2, "polygon": {"points": [[1990,1690],[2010,1690],[2010,1700],[1990,1700]]}}],
+            "polygon": {"points": [[1970,1680],[2030,1680],[2030,1700],[1970,1700]]}
+        }))
+        .unwrap();
+        bound
+            .bind_landing(0, &lower, 0, 0, 0, [0., 0., 0.], None)
+            .unwrap();
+        assert!(
+            query(&bound, [2000., 1701.], [2035., 1805.]).is_some(),
+            "the real lower landing must restore support and the complete route"
+        );
+        let mut pathfinder = PathFinder::new();
+        pathfinder.states = vec![vec![2], vec![2], vec![0]];
+        let route = |pathfinder: &PathFinder| {
+            bound
+                .route(
+                    pathfinder,
+                    [2000., 1701.],
+                    [2035., 1805.],
+                    MoveBoxHalfDiagonal::new(6., 3.),
+                )
+                .unwrap()
+        };
+        assert!(
+            route(&pathfinder).is_none(),
+            "the live lower blocker must stop entry"
+        );
+        pathfinder.states[0][0] = 0;
+        assert!(
+            route(&pathfinder).is_some(),
+            "an upper blocker must not block the lower floor"
+        );
+        pathfinder.states[1][0] = 0;
+        assert!(route(&pathfinder).is_some());
+    }
 
     #[test]
     fn steep_wall_landing_accepts_coordinate_roundoff_but_not_a_height_gap() {
@@ -255,6 +368,56 @@ mod tests {
                 }]
             }))
             .unwrap();
+        let assert_safe_support = |bound: &BoundPhysicalStair| {
+            // Query with removable blockers open. Their state must not be what
+            // prevents a false height connection at the lower edge.
+            let geometry = StairRouteGeometry {
+                boundary: bound.definition.boundary.clone(),
+                obstacles: bound
+                    .definition
+                    .obstacles
+                    .iter()
+                    .filter(|o| bound.obstacle_states[usize::from(o.motion_obstacle)] == 0)
+                    .map(|o| o.polygon.clone())
+                    .collect(),
+            };
+            let support = bound
+                .landings
+                .iter()
+                .map(|l| l.boundary.clone())
+                .collect::<Vec<_>>();
+            let collision = bound
+                .landings
+                .iter()
+                .flat_map(|l| {
+                    l.holes.iter().cloned().chain(
+                        l.obstacles
+                            .iter()
+                            .filter(|o| o.state == 0)
+                            .map(|o| o.polygon.clone()),
+                    )
+                })
+                .collect::<Vec<_>>();
+            let query = |a, b| {
+                geometry
+                    .route_with_precise_landing_support(
+                        a,
+                        b,
+                        MoveBoxHalfDiagonal::new(6., 3.),
+                        &support,
+                        &collision,
+                    )
+                    .unwrap()
+            };
+            assert!(
+                query([70., 100.], [70., 110.]).is_some(),
+                "retain the valid upper door"
+            );
+            assert!(
+                query([55., 1.], [55., 1.]).is_none(),
+                "retain the unsupported lower edge"
+            );
+        };
         let mut bound = stair.clone();
         bound
             .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], None)
@@ -264,35 +427,34 @@ mod tests {
             "the hole retains collision"
         );
         assert_eq!(bound.landings[0].obstacles[0].state, 0);
-        // A removable blocker cannot hide incompatible floor heights.
+        assert_safe_support(&bound);
+        // A removable blocker cannot expose incompatible floor heights.
         motion.obstacles[0].state_id = 2;
-        assert!(
-            stair
-                .clone()
-                .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], None)
-                .is_err()
-        );
-        // Partial coverage must still validate the uncovered edge.
+        let mut bound = stair.clone();
+        bound
+            .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], None)
+            .unwrap();
+        assert_safe_support(&bound);
+        // Partial coverage must still exclude the uncovered incompatible edge.
         motion.obstacles[0].state_id = 0;
         motion.obstacles[0].polygon.points[1].0 = 50;
         motion.obstacles[0].polygon.points[2].0 = 50;
-        assert!(
-            stair
-                .clone()
-                .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], None)
-                .is_err()
-        );
+        let mut bound = stair.clone();
+        bound
+            .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], None)
+            .unwrap();
+        assert_safe_support(&bound);
 
         // The same inaccessible contact can be blocked on the flight instead
         // of the landing. Removable or partial collision must not hide a gap.
         motion.obstacles.clear();
-        for (state, right, allowed) in [
-            (0, 60., true),
-            (0, 60_f32.next_down(), true),
-            (2, 60., false),
-            (2, 60_f32.next_down(), false),
-            (0, 59.98, false),
-            (0, 50., false),
+        for (state, right) in [
+            (0, 60.),
+            (0, 60_f32.next_down()),
+            (2, 60.),
+            (2, 60_f32.next_down()),
+            (0, 59.98),
+            (0, 50.),
         ] {
             let mut bound = stair.clone();
             bound.obstacle_states = vec![state];
@@ -302,12 +464,10 @@ mod tests {
                     polygon: vec![[30., -10.], [right, -10.], [right, 100.], [30., 100.]],
                 }];
             let collision = bound.definition.obstacles.clone();
-            let result = bound.bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], None);
-            assert_eq!(
-                result.is_ok(),
-                allowed,
-                "state={state}, right={right}: {result:?}"
-            );
+            bound
+                .bind_landing(0, &motion, 0, 0, 0, [0., 0., 100.], None)
+                .unwrap_or_else(|error| panic!("state={state}, right={right}: {error}"));
+            assert_safe_support(&bound);
             assert_eq!(bound.definition.obstacles.len(), collision.len());
             assert_eq!(
                 bound.definition.obstacles[0].polygon, collision[0].polygon,
@@ -988,7 +1148,7 @@ impl BoundPhysicalStair {
             .fold(1.0_f64, |scale, value| scale.max(f64::from(value.abs())))
             * f64::from(f32::EPSILON)
             * 2.0;
-        let Some(support) = support.iter().find(|patch| {
+        let reaches_door = |patch: &Polygon<f64>| {
             [physical.middle, physical.outside].iter().all(|point| {
                 patch.intersects(&Point::new(f64::from(point[0]), f64::from(point[1])))
                     || patch.exterior().lines().any(|edge| {
@@ -996,7 +1156,8 @@ impl BoundPhysicalStair {
                             <= tolerance
                     })
             })
-        }) else {
+        };
+        let Some(support) = support.iter().find(|patch| reaches_door(patch)) else {
             let gaps = support
                 .iter()
                 .map(|patch| {
@@ -1051,6 +1212,7 @@ impl BoundPhysicalStair {
             }
         }
         let mut door_seam = false;
+        let mut incompatible_contacts = Vec::new();
         for stair_edge in stair.exterior().lines() {
             for landing_edge in support.exterior().lines() {
                 if let Some(intersection) = rounded_shared_edge_precise(
@@ -1083,14 +1245,13 @@ impl BoundPhysicalStair {
                         }
                     }
                     for intersection in contacts.iter().flat_map(|line| line.lines()) {
-                        for p in [intersection.start, intersection.end] {
-                            let difference = (sa - a) * p.x + (sb - b) * p.y + sc - c;
-                            if difference.abs() > height_tolerance(p) {
-                                return Err(format!(
-                                    "landing and stair heights disagree along their shared edge at ({}, {}): difference {}",
-                                    p.x, p.y, difference,
-                                ));
-                            }
+                        if [intersection.start, intersection.end]
+                            .iter()
+                            .any(|&p| difference(p.x, p.y).abs() > height_tolerance(p))
+                        {
+                            incompatible_contacts
+                                .push(LineString::from(vec![intersection.start, intersection.end]));
+                            continue;
                         }
                         door_seam |= point_edge_distance(
                             [f64::from(physical.middle[0]), f64::from(physical.middle[1])],
@@ -1103,6 +1264,26 @@ impl BoundPhysicalStair {
         if !door_seam {
             return Err("landing and stair have no shared edge at the door".into());
         }
+        // An elevated landing can overlap another end of this flight in XY.
+        // That unrelated edge must provide no foot support, but must not erase
+        // the height-matched doorway. Separate incompatible contacts by more
+        // than the coordinate-roundoff closure used by route queries. A real
+        // matching landing may still supply support across that separation.
+        let compatible = if incompatible_contacts.is_empty() {
+            geo::MultiPolygon::from(vec![support.clone()])
+        } else {
+            support.difference(
+                &geo::MultiLineString(incompatible_contacts).buffer_with_style(
+                    BufferStyle::new(tolerance.max(1e-6) * 4.0)
+                        .line_cap(LineCap::Butt)
+                        .line_join(LineJoin::Bevel),
+                ),
+            )
+        };
+        let support = compatible
+            .iter()
+            .find(|patch| reaches_door(patch))
+            .ok_or("incompatible landing contacts disconnect the physical door")?;
         let ring =
             |line: &LineString<f64>| line.points().map(|p| [p.x(), p.y()]).collect::<Vec<_>>();
         let mut obstacles = Vec::new();
