@@ -880,6 +880,14 @@ runtime traversal are supported, but these wall asset contacts remain unfinished
 The keep-annex candidate remains unpublished: its saved-map routes pass, but
 eight of 32 copied/rotated climb routes fail at 90 degrees. Reliable new-map
 placement, rather than matching an existing layout, is the acceptance criterion.
+York's central-lane gable-house climb and separate lean-to roof also remain
+unpublished. Fresh candidate exports compile eight moved/copied placements and
+reject 48 disconnected neighbours, but fail all 32 complete-character routes.
+The upper inside anchor has about 8.512 square units of unsupported footprint
+and 1.470 square units overlapping the roof slab. Failed native audits now save
+bound landing geometry and initial collision states; `audit-lift-support.py`
+reproduces these measurements without editing assets or reducing actor clearance.
+Connection registration alone does not prove usable character passage.
 The receiving-plane loader now propagates f32 rounding through both the plane
 anchors and each receiver vertex. Steep valid planes no longer fail loading
 merely because assets are translated; the regression still rejects explicit
