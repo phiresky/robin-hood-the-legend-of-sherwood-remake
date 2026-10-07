@@ -1699,7 +1699,7 @@ function compileAssetGameplayAttempt(
       break;
     } catch (error) {
       if (!(error instanceof DisconnectedLiftRegion)) throw error;
-      const lift = lifts.find((lift) => lift.id === error.lift && lift.type === 1);
+      const lift = lifts.find((lift) => lift.id === error.lift);
       let physical: ReturnType<typeof compilePhysicalStairRegion> | undefined;
       if (lift) {
         try {
@@ -1711,7 +1711,7 @@ function compileAssetGameplayAttempt(
             [candidate.navigation.boundary],
             permanent.map((obstacle) => [obstacle.polygon]),
           );
-          // A real collision cut must still disconnect a stair. Only a valid,
+          // A real collision cut must still disconnect a lift. Only a valid,
           // connected physical floor can replace a pinched screen projection.
           if (free.length === 1) physical = candidate;
         } catch (physicalError) {

@@ -2,6 +2,8 @@ import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { compileMap } from "../app/src/map-compile.ts";
 import { compoundLiftCompilerFixture } from "../shared/test-fixtures/asset-gameplay.ts";
+import { parseLevel3D, parseProjectionAssetDescriptor } from "../shared/src/validation.ts";
+import nearEdgeOnStair from "../shared/test-fixtures/near-edge-on-placed-stair.json" with { type: "json" };
 
 // Synthetic editor documents exercise reusable joined assets, without level input.
 const output = await fs.mkdtemp("work/map-compile/compound-climb-placements-");
@@ -42,6 +44,19 @@ for (const type of [2, 3]) {
       results.push({ file, type, height, rotation, warnings: compiled.warnings });
     }
   }
+}
+for (const type of [2, 3]) {
+  const document = parseLevel3D(nearEdgeOnStair.document);
+  const asset = parseProjectionAssetDescriptor(nearEdgeOnStair.asset);
+  for (const lift of asset.gameplay.lifts) lift.type = type;
+  const compiled = compileMap(document, [0, 0, ...document.size], new Map([[asset.id, asset]]));
+  const lifts = compiled.descriptor.asset_geometry.lifts;
+  assert.equal(lifts.length, 2, JSON.stringify(compiled.warnings));
+  assert.ok(lifts.every((lift) => lift.lift_type === type && lift.physical_navigation));
+  const file = `pinched-climb-${type}.level.json`;
+  await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
+  await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
+  results.push({ file, type, pinchedProjection: true, warnings: compiled.warnings });
 }
 await fs.writeFile(`${output}/diagnostics.json`, JSON.stringify({
   scope: "compiled-placement-fixtures-not-native-traversal-certification",
