@@ -1667,6 +1667,7 @@ pub(super) fn handle_pause_menu_events(
                     resources,
                     OptionsSeed {
                         profile_id,
+                        difficulty: engine.sim_config().difficulty,
                         graphic: graphic_config,
                         gameplay: gameplay_config,
                         profile_gameplay: profile_gameplay_config,

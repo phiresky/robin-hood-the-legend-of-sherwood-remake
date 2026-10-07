@@ -31,7 +31,7 @@ use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::player_command::PlayerInput;
 use robin_engine::sim_timeline::{
     CheckpointPolicy, RestorePolicy, RetentionPolicy, SimSnapshot as Snapshot, SnapshotHistory,
-    TimelineHistory, replay_authoritative_frame,
+    TimelineHistory, try_replay_authoritative_frame,
 };
 
 /// Ten seconds at the simulation rate of 25 frames per second.
@@ -229,7 +229,13 @@ impl RewindBuffer {
                 tracing::error!(boundary, %error, "rewind paused input admission failed");
                 return None;
             }
-            let output = replay_authoritative_frame(&mut snapshot, assets, frame).output;
+            let output = match try_replay_authoritative_frame(&mut snapshot, assets, frame) {
+                Ok(replayed) => replayed.output,
+                Err(error) => {
+                    tracing::error!(boundary, %error, "rewind frame admission failed");
+                    return None;
+                }
+            };
             observe(boundary, &output);
             // Cache the state we just produced — it's the pre-tick
             // state for `frame + 1`.

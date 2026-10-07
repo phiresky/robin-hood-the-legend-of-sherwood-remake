@@ -115,6 +115,7 @@ pub async fn show_options(
         io.resources,
         controller,
         OptionsScope {
+            difficulty: application_context.sim_config().difficulty,
             allow_language_switching: targets.allow_language_switching,
             sherwood_trading_editable: targets.sherwood_trading_editable,
             host_gameplay_rules_editable: true,
@@ -137,6 +138,7 @@ pub async fn show_options(
 /// The owner decides which rules and locale may be changed; presentation is shared.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OptionsScope {
+    pub(crate) difficulty: robin_engine::player_profile::DifficultyLevel,
     pub(crate) allow_language_switching: bool,
     pub(crate) sherwood_trading_editable: bool,
     pub(crate) host_gameplay_rules_editable: bool,
@@ -331,6 +333,7 @@ impl OptionsModalState {
                         &self.controller.gameplay,
                         self.scope.sherwood_trading_editable,
                     )
+                    .with_difficulty(self.scope.difficulty)
                     .with_host_authority(
                         self.scope.host_gameplay_rules_editable,
                         application_context,

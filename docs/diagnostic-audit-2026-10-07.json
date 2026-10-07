@@ -36,8 +36,8 @@
     },
     {
       "issue": "transition",
-      "status": "open",
-      "finding": "Authoritative campaign-exit snapshot changes bytes during decode/adoption/re-encode. Shared snapshot preparation rebuilds serialized sequence indices; exact cause still needs reproduction.",
+      "status": "exact_adoption_fixed_report_retest_pending",
+      "finding": "Network adoption was rebuilding a serialized sequence index. Index repair now runs only for save loading. A regression verifies native snapshot byte identity and state hash with an index awaiting repair. No affected-session snapshot was attached, so the precise reporter case remains unverified.",
       "report_ids": [
         "4be551a09ffb",
         "80bd45c89ddb",
@@ -55,8 +55,8 @@
     },
     {
       "issue": "sound",
-      "status": "open",
-      "finding": "Authoritative sound result references a request no longer pending. Requires reconstruction of the recorded sound/input boundary.",
+      "status": "client_crash_mitigated_by_snapshot_recovery",
+      "finding": "Report shows client H01_Lin_VL frame 688 with a corrected history rejecting a speech completion at replay frame 649. Failed dense or sparse reconstruction now returns an error instead of panicking; the client retains its live engine, pauses and requests an authoritative host snapshot. FIFO validation is unchanged; divergence is not silently accepted. Host reconstruction failure returns a session error.",
       "report_ids": [
         "79e1ba08b6ac"
       ]
@@ -93,12 +93,12 @@
     {
       "issue": "Single-character mission startup and starting scrolls missing for clients",
       "status": "open",
-      "finding": "Existing modal announcement regression passes but does not reproduce the full startup path."
+      "finding": "Existing modal announcement regression passes but does not reproduce the full startup path. The new S02_Lei_MP client report bbee9921ae4d logs a host-announced starting popup at frame zero and later gameplay, so this failure is not universal on that build. User cannot identify the build used for that report."
     },
     {
       "issue": "Non-host gesture combat only recognizes spin",
-      "status": "open",
-      "finding": "Existing recognition and dispatch regressions pass; interactive reproduction still needed."
+      "status": "sparse_gesture_capture_fixed_report_retest_pending",
+      "finding": "Drag capture omitted the press position. Two move events yielded only two samples and rejected a short D/E attack. Capture now seeds the press position; a down/move/move/up regression recognizes ThrustD. A real non-host session still needs confirmation."
     },
     {
       "issue": "Tying an already tied enemy unties it",
@@ -107,12 +107,13 @@
     },
     {
       "issue": "Difficulty indicator in gameplay rules",
-      "status": "open"
+      "status": "implemented",
+      "finding": "Gameplay options show the localized difficulty. In-mission options use the running simulation difficulty, including on non-host clients."
     },
     {
       "issue": "Mission requires four/five selected characters",
-      "status": "open",
-      "finding": "Need distinguish mission-specific required abilities from unnecessarily strict roster size."
+      "status": "mission_requirement_policy_reviewed",
+      "finding": "No blanket four/five-character minimum exists. Lobby validation checks named required heroes and contextual abilities from the mission profile. Some missions need more heroes to satisfy those requirements; removing the checks without validating their scripts could create unwinnable missions."
     },
     {
       "issue": "S02_Lei_MP leaderboard unavailable",
@@ -131,6 +132,9 @@
     "cargo build -p robin_rs --bin robin: passed",
     "cargo fmt and git diff --check: passed",
     "MultiTeamTwentyRobins headless with full GOG data and scripting disabled: reproduced archer panic before change; after change continued for 45-second smoke run without that panic, until timeout. Hero AI still logs unsupported voice/looking-animation warnings.",
-    "Indoor render branch checked against expected sector behavior; visual gameplay verification remains pending."
+    "Indoor render branch checked against expected sector behavior; visual gameplay verification remains pending.",
+    "Second batch: full robin_engine and robin_rs audio,multiplayer suites passed, including rejected rollback recovery, exact snapshot preservation, and sparse gesture capture regressions.",
+    "Difficulty label layout is implemented but visual verification remains pending.",
+    "Second batch native build passed; no deployment performed by this worktree."
   ]
 }

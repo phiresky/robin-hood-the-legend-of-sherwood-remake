@@ -2662,3 +2662,7 @@ Mission-state previews can play, seek and reset an individual source-artwork
 patch while retaining its mission context. These previews validate pinned source
 resources and expose no 3D endpoint controls unless physical states are supplied
 separately; switching missions or leaving the preview retires playback.
+
+Gameplay options display the current difficulty. During a mission this uses the
+running mission settings, including the host-selected difficulty on multiplayer
+clients.

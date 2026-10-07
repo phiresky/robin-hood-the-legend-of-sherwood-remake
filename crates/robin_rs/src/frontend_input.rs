@@ -41,6 +41,9 @@ impl FrontendPointerSequence {
     ) {
         input.press_left_pointer(point, clicks);
         self.mouse_way.clear();
+        // Include the press position even when the window supplies only a
+        // few move events during a short stroke.
+        self.mouse_way.add_point(point);
     }
     pub(crate) fn release_left(&mut self, input: &mut robin_engine::engine::InputState) -> bool {
         // Keep the path until release dispatch has evaluated the gesture.
@@ -277,7 +280,24 @@ mod tests {
         assert!(!sequence.mouse_way().is_empty());
         assert!(!sequence.release_left(&mut input));
         sequence.begin_left(&mut input, Default::default(), 1);
-        assert!(sequence.mouse_way().is_empty());
+        assert_eq!(sequence.mouse_way().len(), 1);
+    }
+
+    #[test]
+    fn short_sword_stroke_keeps_its_press_position_until_release() {
+        use robin_engine::coordinates::{ScreenPoint, ScreenVec};
+        let mut sequence = FrontendPointerSequence::default();
+        let mut input = robin_engine::engine::InputState::default();
+        sequence.begin_left(&mut input, ScreenPoint::new(280.0, 360.0), 1);
+        sequence.add_point(ScreenPoint::new(320.0, 360.0));
+        sequence.add_point(ScreenPoint::new(360.0, 360.0));
+        sequence.release_left(&mut input);
+        assert_eq!(
+            sequence
+                .mouse_way()
+                .evaluate(ScreenPoint::new(320.0, 400.0), ScreenVec::new(0.0, -1.0),),
+            crate::mouse_way::MouseWayPattern::ThrustD
+        );
     }
 
     #[test]

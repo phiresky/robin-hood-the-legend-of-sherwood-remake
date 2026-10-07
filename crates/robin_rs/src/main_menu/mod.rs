@@ -1238,7 +1238,7 @@ fn build_profile_info_lines(
 }
 
 /// Returns the localised difficulty label via the menu text table.
-fn difficulty_to_string(
+pub(crate) fn difficulty_to_string(
     menu_text: &crate::ingame_menu::resources::MenuText,
     level: DifficultyLevel,
 ) -> String {

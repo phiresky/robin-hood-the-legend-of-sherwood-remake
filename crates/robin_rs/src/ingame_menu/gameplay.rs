@@ -293,6 +293,7 @@ pub async fn show_gameplay(
 /// Owned, one-frame state for the gameplay settings page.
 pub struct GameplayScreenState {
     localized: LocalizedGameplayText,
+    difficulty: robin_engine::player_profile::DifficultyLevel,
     working: GameplayConfig,
     original: GameplayConfig,
     page: usize,
@@ -326,6 +327,7 @@ impl GameplayScreenState {
 
         Self {
             localized: LocalizedGameplayText::from_application_context(application_context),
+            difficulty: application_context.sim_config().difficulty,
             working,
             original: *config,
             page,
@@ -336,6 +338,14 @@ impl GameplayScreenState {
             content_requested: false,
             host_authority: true,
         }
+    }
+
+    pub(crate) fn with_difficulty(
+        mut self,
+        difficulty: robin_engine::player_profile::DifficultyLevel,
+    ) -> Self {
+        self.difficulty = difficulty;
+        self
     }
 
     fn rebuild_page(
@@ -426,6 +436,17 @@ impl GameplayScreenState {
         let resources = io.resources;
         widget_bridge::draw_titled_background(&screen, renderer, resources, 0, "Gameplay", 490);
         if let Some(font) = resources.label_font_any() {
+            let difficulty = format!(
+                "{}: {}",
+                resources
+                    .menu_text
+                    .get(super::resources::MT_STR_DIFFICULTY_LEVEL),
+                crate::main_menu::difficulty_to_string(&resources.menu_text, self.difficulty),
+            );
+            let difficulty = elide_to_width_by(&difficulty, OPTION_COLUMN_WIDTH_LIMIT, |text| {
+                font.text_width(text)
+            });
+            render_text_virt_font(renderer, font, transform, &difficulty, 30, 52);
             render_text_virt_font(renderer, font, transform, "Gameplay Tweaks", 30, 80);
         }
 

@@ -9,7 +9,7 @@ use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::player_command::PlayerInput;
-use robin_engine::sim_timeline::{RestorePolicy, replay_authoritative_frame_profiled};
+use robin_engine::sim_timeline::{RestorePolicy, try_replay_authoritative_frame};
 use robin_engine::spellforge::SpellforgeRuntime;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -1063,9 +1063,28 @@ impl NetDrain<'_> {
                 self.rollback_telemetry = Some(telemetry);
                 self.rewrote_sim_state = true;
             } else {
-                panic!(
-                    "multiplayer rollback failed: canonical journal accepted {late_input_count} late input(s) from frame {earliest}, but no retained snapshot can reconstruct authoritative frame {effective_frame}"
+                let reason = format!(
+                    "multiplayer rollback failed: accepted {late_input_count} late input(s) from frame {earliest}, but retained history cannot reconstruct frame {effective_frame}"
                 );
+                if !local_is_peer {
+                    return Err(channel_failure("authoritative rollback failed", reason));
+                }
+                // Late commands can invalidate facts sampled from a client's
+                // abandoned prediction. Keep the live engine untouched and
+                // recover from the host instead of crashing during replay.
+                host.transport
+                    .net()
+                    .expect("rollback retains its session")
+                    .reconnect_for_snapshot(host.transport.local_seat(), reason.clone())
+                    .map_err(|error| {
+                        channel_failure("failed to request rollback recovery", error)
+                    })?;
+                host.transport.await_authoritative_snapshot();
+                network.discard_pending_inputs();
+                self.admission_events
+                    .push(MultiplayerAdmissionEvent::Disconnected);
+                tracing::warn!(%reason, "multiplayer: waiting for authoritative rollback recovery");
+                return Ok(());
             }
             if !local_is_peer {
                 let admission = host
@@ -1283,7 +1302,13 @@ fn rewind_from_recent_timeline_history(
             tracing::error!(boundary, %error, "rollback paused input admission failed");
             return None;
         }
-        let replayed_frame = replay_authoritative_frame_profiled(&mut snapshot, assets, frame);
+        let replayed_frame = match try_replay_authoritative_frame(&mut snapshot, assets, frame) {
+            Ok(replayed) => replayed,
+            Err(error) => {
+                tracing::error!(boundary, %error, "rollback frame admission failed");
+                return None;
+            }
+        };
         replay_apply += duration_from_micros(replayed_frame.timing.apply_us);
         replay_tick += duration_from_micros(replayed_frame.timing.tick_us);
         collect_reconstructed_stories(boundary, &replayed_frame.output, reconstructed_stories);
@@ -2073,6 +2098,66 @@ mod tests {
             robin_engine::replay::state_hash(&manager.engine),
             published_hash
         );
+    }
+
+    #[test]
+    fn rejected_rollback_sound_fact_recovers_peer_without_mutating_live_engine() {
+        use robin_engine::engine::{ExternalFacts, SimulationFrameInput, SoundBoundary};
+        for dense_checkpoint in [false, true] {
+            let (mut host, mut manager, mut assets, incoming, outgoing) = network_drain_fixture();
+            let before = manager.engine.encode_native_snapshot();
+            let mut rewind = RewindBuffer::new();
+            for frame in 0..2 {
+                rewind.begin_frame(frame, &manager.engine);
+                let input = if frame == 1 {
+                    SimulationFrameInput::default().with_external_facts(
+                        ExternalFacts::default().with_sound_boundary(SoundBoundary::live(vec![
+                            robin_engine::sound::ResolvedExclamation {
+                                actor_id: 74,
+                                exclamation_id: 8,
+                                identifier: 8,
+                                duration_frames: 1,
+                            },
+                        ])),
+                    )
+                } else {
+                    SimulationFrameInput::default()
+                };
+                rewind.end_frame_input(input);
+            }
+            if !dense_checkpoint {
+                rewind.clear_recent_checkpoints();
+            }
+            incoming
+                .send(NetEvent::Input {
+                    server_frame: 2,
+                    origin_frame: 0,
+                    target_frame: 0,
+                    input: PlayerInput::new(PlayerId::HOST, PlayerCommand::CrouchDown),
+                })
+                .unwrap();
+            let mut pending =
+                super::super::runtime::reconciliation::NetworkReconciliation::default();
+            let drain = drain_net_inputs(
+                &mut host,
+                &mut manager,
+                2,
+                &mut pending,
+                &mut assets,
+                &mut rewind,
+            )
+            .expect("peer can recover from rejected predicted history");
+            assert_eq!(manager.engine.encode_native_snapshot(), before);
+            assert!(host.transport.reconnecting());
+            assert_eq!(
+                drain.admission_events,
+                [MultiplayerAdmissionEvent::Disconnected]
+            );
+            assert!(matches!(outgoing.try_recv().unwrap(),
+                NetOutbound::ReconnectForSnapshot { player_id: PlayerId(1), reason }
+                if reason.contains("retained history cannot reconstruct")
+            ));
+        }
     }
 
     #[test]

@@ -282,6 +282,7 @@ pub(super) struct OptionsTaskState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct OptionsSeed {
     pub(super) profile_id: u32,
+    pub(super) difficulty: robin_engine::player_profile::DifficultyLevel,
     pub(super) graphic: GraphicConfig,
     /// Gameplay rows seeded from the active mission's simulation config.
     pub(super) gameplay: GameplayConfig,
@@ -312,6 +313,7 @@ impl OptionsTaskState {
                 resources,
                 controller,
                 crate::ingame_menu::options::OptionsScope {
+                    difficulty: seed.difficulty,
                     allow_language_switching: false,
                     sherwood_trading_editable: seed.host_gameplay_rules_editable,
                     host_gameplay_rules_editable: seed.host_gameplay_rules_editable,
@@ -518,6 +520,7 @@ mod tests {
     fn options_fixture() -> (OptionsSeed, crate::options_model::OptionsController) {
         let seed = OptionsSeed {
             profile_id: 1,
+            difficulty: robin_engine::player_profile::DifficultyLevel::Medium,
             graphic: GraphicConfig::default(),
             sound: SoundConfig::default(),
             profile_sound: SoundConfig::default(),

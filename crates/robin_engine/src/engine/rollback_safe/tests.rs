@@ -2587,6 +2587,41 @@ fn try_restore_rejects_world_parallel_mismatch_before_mutating_live_engine() {
 }
 
 #[test]
+fn network_adoption_preserves_serialized_sequence_index_without_save_repair() {
+    let (mut source, assets) = frame_api_fixture();
+    let owner = source
+        .inner
+        .add_test_entity(crate::engine::test_support::actors::make_test_pc(
+            crate::element::Posture::Upright,
+        ));
+    let id = source.inner.orders.sequence_manager.insert_element(
+        crate::sequence::SequenceElement::new_generic(
+            1,
+            crate::element::Command::Generic,
+            Some(owner),
+        ),
+    );
+    // Keep the manager's serialized index at the captured dispatch boundary.
+    // Rebuilding it from the element's newer state changes the wire payload.
+    source
+        .inner
+        .orders
+        .sequence_manager
+        .get_sequence_mut(id)
+        .unwrap()
+        .elements[0]
+        .state = crate::sequence::SequenceState::Done;
+    let bytes = source.encode_native_snapshot();
+    let decoded = Engine::decode_native_snapshot(&bytes).unwrap();
+    let adopted = Engine::adopt_authoritative_snapshot(decoded, &assets).unwrap();
+    assert_eq!(adopted.encode_native_snapshot(), bytes);
+    assert_eq!(
+        crate::replay::state_hash(&adopted),
+        crate::replay::state_hash(&source)
+    );
+}
+
+#[test]
 fn network_adoption_is_fully_attached_and_preserves_hash_and_sequences() {
     let (source, assets, program, sequence_id) = scripted_snapshot_fixture();
     let source_hash = crate::replay::state_hash(&source);

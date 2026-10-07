@@ -1871,6 +1871,7 @@ impl Engine {
         post_fixup_observer: impl FnOnce(&EngineInner),
     ) -> Result<Self, SnapshotRestoreError> {
         let mut inner = Self::prepare_snapshot(saved, assets)?;
+        inner.orders.sequence_manager.rebuild_indices();
         inner.post_load_fixups(display);
         post_fixup_observer(&inner);
         Ok(Self {
@@ -1904,7 +1905,8 @@ impl Engine {
         // Attachment preflight above covers every static lookup, so this phase
         // cannot partially fail. The candidate is still detached from `self`.
         inner.attach_preflighted_level_assets(assets);
-        inner.orders.sequence_manager.rebuild_indices();
+        // The sequence index is serialized simulation state. Save loading may
+        // repair it, but network adoption must preserve the host's exact state.
         Ok(inner)
     }
 
