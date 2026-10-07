@@ -1,5 +1,50 @@
 # Croisement03 restart2 status
 
+## Current checkpoint — 2026-10-07
+
+Nine logical static assets are installed: the initial bridge, fallen log,
+firewood and two ferns, followed by the wall, central boulder, eastern rocks
+and Tree25. The map is unfinished. This supersedes the older checkpoint below.
+
+Trees12/13/14 have separately approved original geometry and appearances and
+passed a private actual Editor check (85 groups,124 parts,91 standalone Adds,
+save/reload and576 pinned files). That check exercised zero patch/state controls.
+The prepared live transaction remains blocked by retained painted ground
+foliage; `trio-tree-integration-v1/stage-v1/publication-hold.json` is enforced
+before any transaction mutation. Do not apply the stale transaction.
+
+The revised receiver input removes17,447 exact pixels of supported trio art,
+temporal source union and prior generated footprints, while protecting neighbor
+and fern/root domains. Independent review passed its classification; grouped
+user input approval and compatible revised geometry approval are still required.
+The immutable input packet is `texture-input-round1-trio-ground-v5/`.
+No new ground texture has been generated.
+
+Tree12 and Tree14 now have private added static foliage source surfaces. Their
+current versions are `tree12-static-leaf-crown-v3/` and
+`tree14-static-leaf-crown-v3/`. They retain all original approved mesh vertices,
+images and UVs. Added static source samples are3,034 and2,371 respectively;
+all native samples pass first-hit checks with zero changes or misses.
+Native/reverse transparency converges exactly at32 and64 bounces.
+The consolidated independent geometry request is
+`static-crown-pair-review-v3/root-review-request.json`.
+These new static surfaces must not receive future shared animation image swaps.
+
+Tree11 static geometry20426a89 and Tree10 static geometry380a4e79 passed saved
+actual/alpha-aware geometry, native source and neighboring contact review.
+They are frozen for grouped user review in `geometry-round5-tree11-v4/` and
+`geometry-round6-tree10-v3/`. Their inferred bark still needs approved fill.
+Their separate14-frame source-substitution diagnostics are not animation
+playback, runtime membership or global ordering proof. Tree09 is a private
+source/geometry prototype with no approval.
+
+All current work stays inside the sandbox. No host browser or escalation is
+permitted. Shared catalog publication and browser windows require coordinator
+serialization. Use the shared four-slot FIFO for all Blender work, preserve
+frozen artifacts and rollback payloads, and stop new large outputs below25GiB.
+
+## Earlier checkpoint (historical)
+
 Five exactly approved assets are published: timber bridge, stream fallen log,
 southwest firewood stack, fern 35, and fern 76. The map remains unfinished.
 The bridge, log and ferns add previously absent scenery; the firewood replaces
