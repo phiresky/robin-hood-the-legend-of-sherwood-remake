@@ -16,7 +16,8 @@ acquire()
 import bpy
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
-from PIL import Image,ImageFilter
+from PIL import Image,ImageFilter,ImageOps
+from collections import deque
 
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 s,c=math.sin(math.radians(35)),math.cos(math.radians(35))
@@ -32,7 +33,7 @@ for state,row,index in [('transition-44',1,44)]:
         start=len(verts);verts.extend(o.matrix_world@v.co for v in o.data.vertices)
         for p in o.data.polygons:polys.append(tuple(start+i for i in p.vertices));owners.append(o.get('source_node',o.name) if o.get('native_patch')=='patch-004' else o.name)
     tree=BVHTree.FromPolygons(verts,polys)
-    frame=record['rows'][row]['frames'][index];alpha=Image.open(source/frame['image']).getchannel('A');core=alpha.filter(ImageFilter.MinFilter(3))
+    frame=record['rows'][row]['frames'][index];alpha=Image.open(source/frame['image']).getchannel('A');core=ImageOps.expand(alpha,border=1,fill=0).filter(ImageFilter.MinFilter(3)).crop((1,1,alpha.width+1,alpha.height+1))
     counts={};misses=[];core_misses=[];rows=[]
     for y in range(alpha.height):
         for x in range(alpha.width):
@@ -46,9 +47,23 @@ for state,row,index in [('transition-44',1,44)]:
             if owner!='scenery-york-castle-winch':
                 misses.append([int(sx),int(sy),owner])
                 if core.getpixel((x,y))>=128:core_misses.append([int(sx),int(sy),owner])
+    remaining={(x,y) for y in range(alpha.height) for x in range(alpha.width) if alpha.getpixel((x,y))<128};holes=[]
+    while remaining:
+        seed=remaining.pop();q=deque([seed]);part=[seed]
+        while q:
+            x,y=q.popleft()
+            for n in ((x-1,y),(x+1,y),(x,y-1),(x,y+1)):
+                if n in remaining:remaining.remove(n);part.append(n);q.append(n)
+        if any(x in (0,alpha.width-1) or y in (0,alpha.height-1) for x,y in part):continue
+        if len(part)<3:continue
+        cx=sum(x for x,y in part)/len(part);cy=sum(y for x,y in part)/len(part)
+        x,y=min(part,key=lambda p:((p[0]-cx)**2+(p[1]-cy)**2,p));sx,sy=frame['bbox'][0]+x+.5,frame['bbox'][1]+y+.5
+        point,normal,face,distance=tree.ray_cast(Vector((sx,-sy/s,0))+back*10000,-back)
+        owner=owners[face] if face is not None else 'NO_HIT'
+        holes.append({'native_pixel':[int(sx),int(sy)],'area':len(part),'first_owner':owner,'preserved':owner!='scenery-york-castle-winch'})
     assert sha(path)==digest
     states.append({'state':state,'model_sha256':digest,'source_frame_sha256':sha(source/frame['image']),
-                   'pixel_center_first_hits':counts,'not_winch':misses,'eroded_core_not_winch':core_misses})
+                   'source_hole_centers':holes,'core_rule':'zero-padded3x3erosion','pixel_center_first_hits':counts,'not_winch':misses,'eroded_core_not_winch':core_misses})
 DEST.write_text(json.dumps({'scope':'Opaque saved triangle first hits at exact native source pixel centers; no material alpha, no coverage waiver, no mutations.',
                            'states':states},indent=2)+'\n')
 print(json.dumps([{'state':r['state'],'first_hits':r['pixel_center_first_hits'],'not_winch':len(r['not_winch']),'core_not_winch':len(r['eroded_core_not_winch'])} for r in states]))

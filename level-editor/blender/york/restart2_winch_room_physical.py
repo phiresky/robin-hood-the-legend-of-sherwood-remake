@@ -1,7 +1,7 @@
 """Private physical arch opening proposal through separately scoped room receivers."""
 import json,math,sys,hashlib
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/winch-room-physical-v5'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/winch-room-physical-v6'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -11,7 +11,7 @@ from mathutils import Vector
 from PIL import Image
 import numpy as np
 from collections import deque
-source=WORK/'restart2/winch-geometry-v3/transition-44/model.blend';bpy.ops.wm.open_mainfile(filepath=str(source));scene=bpy.context.scene;wall=next(o for o in scene.objects if o.get('source_node')=='building-776')
+source=WORK/'restart2/winch-geometry-v5/transition-44/model.blend';bpy.ops.wm.open_mainfile(filepath=str(source));scene=bpy.context.scene;wall=next(o for o in scene.objects if o.get('source_node')=='building-776')
 a=np.array(Image.open(WORK/'baseline/masks/000615.png').convert('L'))>0;seed=(150,40);assert not a[seed];q=deque([seed]);seen={seed}
 while q:
  y,x=q.popleft()
