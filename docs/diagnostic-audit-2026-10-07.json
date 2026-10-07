@@ -93,7 +93,7 @@
     {
       "issue": "Single-character mission startup and starting scrolls missing for clients",
       "status": "open",
-      "finding": "Existing modal announcement regression passes but does not reproduce the full startup path. The new S02_Lei_MP client report bbee9921ae4d logs a host-announced starting popup at frame zero and later gameplay, so this failure is not universal on that build. User cannot identify the build used for that report."
+      "finding": "Existing modal announcement regression passes but does not reproduce the full startup path. The new S02_Lei_MP client report bbee9921ae4d logs a host-announced starting popup at frame zero and later gameplay, but its shared-control team has four heroes (82, 74, 77, 84). It does not establish that one-character startup works. User cannot identify the build used for the reported freeze."
     },
     {
       "issue": "Non-host gesture combat only recognizes spin",
