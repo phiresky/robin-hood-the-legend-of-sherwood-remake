@@ -8,7 +8,7 @@ from PIL import Image
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 from review_evidence import sha
-p=argparse.ArgumentParser();p.add_argument('worker',type=Path);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);w=a.worker.resolve();out=w/'inspection/neighbor-source-proof-v2.json';assert not out.exists();R=ROOT/'level-editor/work/croisement01-refinement/restart2';construction=json.loads((w.parents[1]/'construction.json').read_text());acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'));cfg=json.loads((w/'workspace.json').read_text());objects=list(bpy.data.collections[cfg['collection_name']].all_objects)
+p=argparse.ArgumentParser();p.add_argument('worker',type=Path);p.add_argument('--output-name',default='neighbor-source-proof-v2.json');p.add_argument('--tree06-domain',type=Path);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);w=a.worker.resolve();out=w/'inspection'/a.output_name;assert Path(a.output_name).name==a.output_name;assert not out.exists();R=ROOT/'level-editor/work/croisement01-refinement/restart2';construction=json.loads((w.parents[1]/'construction.json').read_text());acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'));cfg=json.loads((w/'workspace.json').read_text());objects=list(bpy.data.collections[cfg['collection_name']].all_objects)
 def bvh(objects):
  points=[];faces=[]
  for o in objects:
@@ -21,7 +21,7 @@ if any(row['mask']==4 for row in construction['root_constraints']):
 if any(row['mask']==6 for row in construction['root_constraints']):
  row=next(row for row in construction['root_constraints'] if row['mask']==6);neighbors.append((6,row.get('model_path','tree06-v6/assets/croisement01-tree-06/model.blend'),row.get('domain_path','tree06-v6/wood-domain.png')))
 for n,path,mask_path in neighbors:
- path=R/path;mask_path=R/mask_path
+ path=R/path;mask_path=(a.tree06_domain.resolve() if n==6 and a.tree06_domain else R/mask_path)
  with bpy.data.libraries.load(str(path),link=False) as (src,dst):dst.objects=list(src.objects)
  loaded=[o for o in dst.objects if o is not None]
  for imported in loaded:bpy.context.scene.collection.objects.link(imported)
