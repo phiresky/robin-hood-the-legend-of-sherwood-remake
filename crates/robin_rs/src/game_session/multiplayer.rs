@@ -9,7 +9,7 @@ use robin_engine::engine::{Engine, LevelAssets};
 use robin_engine::engine_manager as engine_manager_api;
 use robin_engine::player_command::PlayerCommand;
 use robin_engine::player_command::PlayerInput;
-use robin_engine::sim_timeline::{RestorePolicy, try_replay_authoritative_frame};
+use robin_engine::sim_timeline::RestorePolicy;
 use robin_engine::spellforge::SpellforgeRuntime;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -1031,9 +1031,16 @@ impl NetDrain<'_> {
                 self.rewrote_sim_state = true;
             } else if let Some(new_engine) = {
                 reconstructed_stories.clear();
-                rewind_buffer.rewind_to_observe(assets, effective_frame, |frame, output| {
-                    collect_reconstructed_stories(frame, output, &mut reconstructed_stories);
-                })
+                rewind_buffer.rewind_to_corrected_observe(
+                    assets,
+                    effective_frame,
+                    |engine, frame| {
+                        super::tick::reconstruct_live_sound_boundary(engine, assets, frame)
+                    },
+                    |frame, output| {
+                        collect_reconstructed_stories(frame, output, &mut reconstructed_stories);
+                    },
+                )
             } {
                 let telemetry = MultiplayerRollbackTelemetry {
                     path: "rewind-buffer",
@@ -1300,6 +1307,7 @@ fn rewind_from_recent_timeline_history(
     // reconstruction.
     let mut corrected_history = rewind_buffer.recent_checkpoints().clone();
     corrected_history.truncate_after(start_frame);
+    let mut corrected_frames = Vec::new();
     let mut replay_remember = Duration::ZERO;
     let mut replay_command_lookup = Duration::ZERO;
     let mut replay_apply = Duration::ZERO;
@@ -1311,23 +1319,17 @@ fn rewind_from_recent_timeline_history(
         replay_remember += remember_start.elapsed();
         let command_lookup_start = web_time::Instant::now();
         let boundary = snapshot.frame;
-        let frame = rewind_buffer.frame_for(boundary)?;
-        replay_command_lookup += command_lookup_start.elapsed();
-        if let Err(error) = robin_engine::sim_timeline::replay_paused_inputs(
-            &mut snapshot.engine,
-            assets,
-            rewind_buffer.paused_inputs_for(boundary),
-        ) {
-            tracing::error!(boundary, %error, "rollback paused input admission failed");
-            return None;
-        }
-        let replayed_frame = match try_replay_authoritative_frame(&mut snapshot, assets, frame) {
-            Ok(replayed) => replayed,
-            Err(error) => {
-                tracing::error!(boundary, %error, "rollback frame admission failed");
-                return None;
-            }
-        };
+        let (replayed_frame, corrected) =
+            rewind_buffer.reconstruct_frame(&mut snapshot, assets, |engine, frame| {
+                super::tick::reconstruct_live_sound_boundary(engine, assets, frame)
+            })?;
+        corrected_frames.push(corrected);
+        replay_command_lookup +=
+            command_lookup_start
+                .elapsed()
+                .saturating_sub(duration_from_micros(
+                    replayed_frame.timing.apply_us + replayed_frame.timing.tick_us,
+                ));
         replay_apply += duration_from_micros(replayed_frame.timing.apply_us);
         replay_tick += duration_from_micros(replayed_frame.timing.tick_us);
         collect_reconstructed_stories(boundary, &replayed_frame.output, reconstructed_stories);
@@ -1336,6 +1338,7 @@ fn rewind_from_recent_timeline_history(
     corrected_history.remember(snapshot.clone());
     replay_remember += remember_start.elapsed();
     let replay = replay_start.elapsed();
+    rewind_buffer.publish_reconstructed_frames(corrected_frames);
     rewind_buffer.replace_recent_checkpoints(corrected_history);
 
     Some((
@@ -2120,11 +2123,10 @@ mod tests {
     }
 
     #[test]
-    fn rejected_rollback_sound_fact_recovers_peer_without_mutating_live_engine() {
+    fn rollback_rebuilds_stale_speech_facts_and_retains_replayable_history() {
         use robin_engine::engine::{ExternalFacts, SimulationFrameInput, SoundBoundary};
         for dense_checkpoint in [false, true] {
             let (mut host, mut manager, mut assets, incoming, outgoing) = network_drain_fixture();
-            let before = manager.engine.encode_native_snapshot();
             let mut rewind = RewindBuffer::new();
             for frame in 0..2 {
                 rewind.begin_frame(frame, &manager.engine);
@@ -2142,8 +2144,15 @@ mod tests {
                 } else {
                     SimulationFrameInput::default()
                 };
+                if frame == 1 {
+                    rewind.end_paused_input(frame, input.clone().with_hourglass(false));
+                }
                 rewind.end_frame_input(input);
             }
+            assert!(
+                rewind.rewind_to(&assets, 2).is_none(),
+                "ordinary rewind must not reinterpret recorded speech facts"
+            );
             if !dense_checkpoint {
                 rewind.clear_recent_checkpoints();
             }
@@ -2166,46 +2175,193 @@ mod tests {
                 &mut rewind,
             )
             .expect("peer can recover from rejected predicted history");
-            assert_eq!(manager.engine.encode_native_snapshot(), before);
-            assert!(host.transport.reconnecting());
-            assert_eq!(
-                drain.admission_events,
-                [MultiplayerAdmissionEvent::Disconnected]
+            assert!(!host.transport.reconnecting());
+            assert!(drain.rollback.is_some());
+            assert!(drain.admission_events.is_empty());
+            assert!(outgoing.try_recv().is_err());
+            assert!(
+                rewind.paused_inputs_for(1)[0]
+                    .external_facts
+                    .sound_boundary
+                    .is_none()
             );
-            assert!(matches!(outgoing.try_recv().unwrap(),
-                NetOutbound::ReconnectForSnapshot { player_id: PlayerId(1), reason }
-                if reason.contains("retained history cannot reconstruct")
-            ));
+            assert!(
+                rewind
+                    .frame_for(1)
+                    .unwrap()
+                    .external_facts
+                    .sound_boundary
+                    .is_none()
+            );
+            let replayed = rewind
+                .rewind_to(&assets, 2)
+                .expect("corrected history supports strict replay without another correction");
+            assert_eq!(
+                replayed.encode_native_snapshot(),
+                manager.engine.encode_native_snapshot()
+            );
         }
     }
 
     #[test]
-    fn failed_recent_history_rebuild_does_not_publish_partial_checkpoints() {
-        let (_host, manager, assets, _incoming, _outgoing) = network_drain_fixture();
-        let mut rewind = RewindBuffer::new();
-        for frame in 0..2 {
-            rewind.begin_frame(frame, &manager.engine);
-            rewind.end_frame_input(robin_engine::engine::SimulationFrameInput::default());
+    fn late_speech_command_resolves_at_previously_silent_boundary() {
+        use robin_engine::engine::{
+            SimulationFrameInput, SpeechTimingCatalog, SpeechTimingGroup, SpeechTimingVariant,
+        };
+        use std::sync::Arc;
+        for dense_checkpoint in [false, true] {
+            let (_, mut manager, mut assets, _, _) = network_drain_fixture();
+            let pc = crate::host::test_support::add_pc_with_status(
+                &mut manager.engine,
+                10.0,
+                10.0,
+                robin_engine::element::Posture::Upright,
+                true,
+                100,
+            );
+            let assets_mut = Arc::make_mut(&mut assets);
+            Arc::make_mut(&mut assets_mut.profile_manager).characters =
+                vec![robin_engine::profiles::CharacterProfile {
+                    exclamation_id: 0x5742_0000,
+                    ..Default::default()
+                }];
+            assets_mut
+                .audio
+                .publish_timing(
+                    Default::default(),
+                    Arc::new(SpeechTimingCatalog {
+                        groups: [(
+                            0x5742_000e,
+                            SpeechTimingGroup {
+                                gaps: 0,
+                                variants: vec![SpeechTimingVariant {
+                                    sample_identity: "fixture.wav".into(),
+                                    duration_frames: Some(25),
+                                }],
+                            },
+                        )]
+                        .into_iter()
+                        .collect(),
+                    }),
+                    Default::default(),
+                )
+                .unwrap();
+            let mut rewind = RewindBuffer::new();
+            for frame in 0..2 {
+                rewind.begin_frame(frame, &manager.engine);
+                // Keep the synthetic PC out of world ticking; speech commands and
+                // sound boundary admission still run through the production engine.
+                let mut input = SimulationFrameInput::default();
+                input.simulation_body_allowed = false;
+                manager
+                    .engine
+                    .advance_frame(&assets, input.clone())
+                    .unwrap();
+                rewind.end_frame_input(input);
+            }
+            assert!(rewind.splice_late_input(
+                0,
+                PlayerInput::new(
+                    PlayerId::HOST,
+                    PlayerCommand::HeroSpeak {
+                        pc_id: pc,
+                        expression: 14
+                    }
+                )
+            ));
+            if !dense_checkpoint {
+                rewind.clear_recent_checkpoints();
+            }
+            let corrected = if dense_checkpoint {
+                rewind_from_recent_timeline_history(2, &assets, &mut rewind, 0, 1, &mut Vec::new())
+                    .unwrap()
+                    .0
+            } else {
+                rewind
+                    .rewind_to_corrected_observe(
+                        &assets,
+                        2,
+                        |engine, frame| {
+                            super::super::tick::reconstruct_live_sound_boundary(
+                                engine, &assets, frame,
+                            )
+                        },
+                        |_, _| {},
+                    )
+                    .unwrap()
+            };
+            let speech = rewind
+                .frame_for(1)
+                .unwrap()
+                .external_facts
+                .sound_boundary
+                .as_ref()
+                .expect("late speech gains a boundary even when prediction was silent");
+            assert_eq!(speech.resolutions.len(), 1);
+            assert_eq!(speech.resolutions[0].actor_id, pc.index());
+            assert_eq!(speech.resolutions[0].duration_frames, 25);
+            assert!(corrected.sound_sim().pending_exclamations.is_empty());
+            let replayed = rewind.rewind_to(&assets, 2).unwrap();
+            assert_eq!(
+                replayed.encode_native_snapshot(),
+                corrected.encode_native_snapshot()
+            );
         }
-        for frame in 1..=3 {
-            rewind.checkpoint_recent(frame, &manager.engine);
-        }
+    }
 
-        // Frame 2 has no command entry, so reconstruction from frame 1 to 3
-        // must fail after doing some work without truncating frames 2 and 3.
-        assert!(
-            rewind_from_recent_timeline_history(3, &assets, &mut rewind, 1, 1, &mut Vec::new())
-                .is_none()
-        );
-        assert!(
-            rewind
-                .restore_recent(&assets, 2, RestorePolicy::Exact)
-                .is_some()
-        );
-        assert!(
-            rewind
-                .restore_recent(&assets, 3, RestorePolicy::Exact)
-                .is_some()
-        );
+    #[test]
+    fn failed_history_rebuild_does_not_publish_partial_facts_or_checkpoints() {
+        use robin_engine::engine::{ExternalFacts, SimulationFrameInput, SoundBoundary};
+        for dense_checkpoint in [false, true] {
+            let (_host, manager, assets, _incoming, _outgoing) = network_drain_fixture();
+            let mut rewind = RewindBuffer::new();
+            for frame in 0..2 {
+                rewind.begin_frame(frame, &manager.engine);
+                rewind.end_frame_input(SimulationFrameInput::default().with_external_facts(
+                    ExternalFacts::default().with_sound_boundary(SoundBoundary::live(Vec::new())),
+                ));
+            }
+            for frame in 1..=3 {
+                rewind.checkpoint_recent(frame, &manager.engine);
+            }
+            let before = serde_json::to_value(rewind.frame_for(1)).unwrap();
+            // Frame 2 is missing. Frame 1's empty live sound boundary would be
+            // removed on success, but neither tier may publish a partial rebuild.
+            if dense_checkpoint {
+                assert!(
+                    rewind_from_recent_timeline_history(
+                        3,
+                        &assets,
+                        &mut rewind,
+                        1,
+                        1,
+                        &mut Vec::new()
+                    )
+                    .is_none()
+                );
+            } else {
+                rewind.begin_session();
+                assert!(
+                    rewind
+                        .rewind_to_corrected_observe(
+                            &assets,
+                            3,
+                            |engine, frame| super::super::tick::reconstruct_live_sound_boundary(
+                                engine, &assets, frame
+                            ),
+                            |_, _| {}
+                        )
+                        .is_none()
+                );
+            }
+            assert_eq!(serde_json::to_value(rewind.frame_for(1)).unwrap(), before);
+            for frame in 2..=3 {
+                assert!(
+                    rewind
+                        .restore_recent(&assets, frame, RestorePolicy::Exact)
+                        .is_some()
+                );
+            }
+        }
     }
 }

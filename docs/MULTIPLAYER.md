@@ -196,6 +196,13 @@ future inputs grouped by target frame. When a late input arrives:
 5. report a desync and apply at the current frame only when the target is older
    than every retained snapshot.
 
+During reconstruction, live speech resolutions are regenerated from the corrected
+pending speech queue and the mission's immutable timing catalog. This applies to
+both paused transactions and ticks, including newly pending speech where the old
+prediction was silent. Corrected facts and checkpoints are published only after
+successful reconstruction; ordinary rewind and replay retain strict recorded-fact
+validation. If reconstruction still fails, a client requests a host snapshot.
+
 This is predictive rollback, not strict lockstep. Clients are paced close to
 the host clock but do not wait for every possible input before each tick.
 

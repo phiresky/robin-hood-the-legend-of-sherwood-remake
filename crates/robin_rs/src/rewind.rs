@@ -67,6 +67,14 @@ pub struct RewindBuffer {
     session: Option<BTreeMap<u32, Snapshot>>,
 }
 
+/// Corrected transactions are published only after the entire rollback succeeds.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ReconstructedFrame {
+    boundary: u32,
+    input: robin_engine::engine::SimulationFrameInput,
+    paused_inputs: Vec<robin_engine::engine::SimulationFrameInput>,
+}
+
 impl RewindBuffer {
     pub fn new() -> Self {
         Self {
@@ -192,6 +200,27 @@ impl RewindBuffer {
         target_frame: u32,
         mut observe: impl FnMut(u32, &robin_engine::engine::SimulationFrameOutput),
     ) -> Option<Engine> {
+        self.rewind_to_observe_inner(assets, target_frame, false, |_, _| {}, &mut observe)
+    }
+
+    pub(crate) fn rewind_to_corrected_observe(
+        &mut self,
+        assets: &LevelAssets,
+        target_frame: u32,
+        mut correct: impl FnMut(&Engine, &mut robin_engine::engine::SimulationFrameInput),
+        mut observe: impl FnMut(u32, &robin_engine::engine::SimulationFrameOutput),
+    ) -> Option<Engine> {
+        self.rewind_to_observe_inner(assets, target_frame, true, &mut correct, &mut observe)
+    }
+
+    fn rewind_to_observe_inner(
+        &mut self,
+        assets: &LevelAssets,
+        target_frame: u32,
+        publish_corrections: bool,
+        mut correct: impl FnMut(&Engine, &mut robin_engine::engine::SimulationFrameInput),
+        mut observe: impl FnMut(u32, &robin_engine::engine::SimulationFrameOutput),
+    ) -> Option<Engine> {
         // Prune cache entries past the current target — they're the
         // "future" we've already rewound past and won't revisit.
         if let Some(cache) = &mut self.session
@@ -218,38 +247,85 @@ impl RewindBuffer {
             snapshot = cached.clone();
         }
 
+        let mut corrected_frames = Vec::new();
+        let mut reconstructed_cache = BTreeMap::new();
         while snapshot.frame < target_frame {
             let boundary = snapshot.frame;
-            let frame = self.history.frame_for(boundary)?;
-            if let Err(error) = robin_engine::sim_timeline::replay_paused_inputs(
-                &mut snapshot.engine,
-                assets,
-                self.history.paused_inputs_for(boundary),
-            ) {
-                tracing::error!(boundary, %error, "rewind paused input admission failed");
-                return None;
+            let (replayed, corrected) =
+                self.reconstruct_frame(&mut snapshot, assets, &mut correct)?;
+            if publish_corrections {
+                corrected_frames.push(corrected);
             }
-            let output = match try_replay_authoritative_frame(&mut snapshot, assets, frame) {
-                Ok(replayed) => replayed.output,
-                Err(error) => {
-                    tracing::error!(boundary, %error, "rewind frame admission failed");
-                    return None;
-                }
-            };
+            let output = replayed.output;
             observe(boundary, &output);
             // Cache the state we just produced — it's the pre-tick
             // state for `frame + 1`.
-            if let Some(cache) = &mut self.session
-                && target_frame - snapshot.frame < SESSION_CACHE_FRAMES
-            {
-                cache.insert(snapshot.frame, snapshot.clone());
-                while cache.len() > SESSION_CACHE_FRAMES as usize {
-                    cache.pop_first();
-                }
+            if self.session.is_some() && target_frame - snapshot.frame < SESSION_CACHE_FRAMES {
+                reconstructed_cache.insert(snapshot.frame, snapshot.clone());
             }
         }
 
+        self.publish_reconstructed_frames(corrected_frames);
+        if let Some(cache) = &mut self.session {
+            cache.extend(reconstructed_cache);
+            while cache.len() > SESSION_CACHE_FRAMES as usize {
+                cache.pop_first();
+            }
+        }
         Some(snapshot.engine)
+    }
+
+    pub(crate) fn reconstruct_frame(
+        &self,
+        snapshot: &mut Snapshot,
+        assets: &LevelAssets,
+        mut correct: impl FnMut(&Engine, &mut robin_engine::engine::SimulationFrameInput),
+    ) -> Option<(
+        robin_engine::sim_timeline::ReplayFrameResult,
+        ReconstructedFrame,
+    )> {
+        let boundary = snapshot.frame;
+        let mut input = self.history.frame_for(boundary)?.clone();
+        let mut paused_inputs = self.history.paused_inputs_for(boundary).to_vec();
+        for paused in &mut paused_inputs {
+            correct(&snapshot.engine, paused);
+            if let Err(error) = snapshot.engine.advance_frame(assets, paused.clone()) {
+                tracing::error!(boundary, %error, "reconstruction paused input admission failed");
+                return None;
+            }
+        }
+        correct(&snapshot.engine, &mut input);
+        let replayed = match try_replay_authoritative_frame(snapshot, assets, &input) {
+            Ok(replayed) => replayed,
+            Err(error) => {
+                tracing::error!(boundary, %error, "reconstruction frame admission failed");
+                return None;
+            }
+        };
+        Some((
+            replayed,
+            ReconstructedFrame {
+                boundary,
+                input,
+                paused_inputs,
+            },
+        ))
+    }
+
+    pub(crate) fn publish_reconstructed_frames(&mut self, frames: Vec<ReconstructedFrame>) {
+        if let Some(earliest) = frames.iter().map(|frame| frame.boundary).min() {
+            self.recent_checkpoints.truncate_after(earliest);
+            self.pending_recent = None;
+            if let Some(cache) = &mut self.session
+                && let Some(first_invalid) = earliest.checked_add(1)
+            {
+                cache.split_off(&first_invalid);
+            }
+        }
+        for frame in frames {
+            self.history
+                .replace_frame_inputs(frame.boundary, frame.input, frame.paused_inputs);
+        }
     }
 
     /// How far back (in frames) the oldest retained snapshot reaches

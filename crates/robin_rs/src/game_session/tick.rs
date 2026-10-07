@@ -151,6 +151,26 @@ pub(super) fn refresh_live_sound_boundary(
     }
 }
 
+/// Historical live boundaries must be resampled even if the old prediction had
+/// no speech: corrected commands can introduce a new pending request.
+pub(super) fn reconstruct_live_sound_boundary(
+    engine: &engine_api::Engine,
+    assets: &engine_api::LevelAssets,
+    frame: &mut engine_api::SimulationFrameInput,
+) {
+    if frame
+        .external_facts
+        .sound_boundary
+        .as_ref()
+        .is_none_or(|boundary| matches!(boundary.policy, engine_api::SoundBoundaryPolicy::Live))
+    {
+        frame.external_facts.sound_boundary = resolve_pending_speech(
+            &engine.sound_sim().pending_exclamations,
+            assets.audio.speech_timing_catalog(),
+        );
+    }
+}
+
 fn resolve_pending_speech(
     pending: &[robin_engine::sound::PendingExclamation],
     catalog: &engine_api::SpeechTimingCatalog,

@@ -13,6 +13,8 @@ const HOST_NAMES: &[&str] = &[
     "run_engine_frame_core",
 ];
 const REPLAY_NAMES: &[&str] = &[
+    "rewind_to_observe_inner",
+    "reconstruct_frame",
     "replay_frames_to_frame",
     "try_replay_authoritative_frame",
     "replay_journal_to_frame",
@@ -111,6 +113,9 @@ fn production_reconstruction_has_no_host_scratch_and_uses_complete_frames() {
     // A deliberate entry-point move should update this small routing table.
     let roots = [
         ("src/rewind.rs", "rewind_to_observe", false),
+        ("src/rewind.rs", "rewind_to_corrected_observe", false),
+        ("src/rewind.rs", "rewind_to_observe_inner", false),
+        ("src/rewind.rs", "reconstruct_frame", false),
         (
             "../robin_engine/src/sim_timeline.rs",
             "replay_frames_to_frame",

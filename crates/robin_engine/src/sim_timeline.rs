@@ -628,6 +628,29 @@ impl TimelineHistory {
         self.commands.frame_for(frame)
     }
 
+    /// Publish a successfully reconstructed transaction after correcting late input.
+    /// Checkpoints after this boundary were derived from the previous facts.
+    pub fn replace_frame_inputs(
+        &mut self,
+        frame: u32,
+        input: crate::engine::SimulationFrameInput,
+        paused_inputs: Vec<crate::engine::SimulationFrameInput>,
+    ) {
+        let index = frame
+            .checked_sub(self.commands.oldest_frame)
+            .expect("replacement frame precedes retained history") as usize;
+        let entry = self
+            .commands
+            .frames
+            .get_mut(index)
+            .expect("replacement frame must exist in retained history");
+        *entry = JournalFrame {
+            input,
+            paused_inputs,
+        };
+        self.checkpoints.truncate_after(frame);
+    }
+
     pub fn append_input(&mut self, frame: u32, input: PlayerInput) -> bool {
         if !self.commands.append_input(frame, input) {
             return false;
