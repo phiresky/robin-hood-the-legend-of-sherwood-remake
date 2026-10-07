@@ -56,6 +56,10 @@ def main():
   fit_native_width(part,domain,'west-cut',x0=334,y0=0);union(body,part)
  root_trace=[(389,365,7),(399,377,5),(411,404,3),(413,423,.5)];root_centers=[point(387,345)]+[root_center(x,y,r) for x,y,r in root_trace];root=tube('Observed descending slender root',root_centers,[9]+[r for x,y,r in root_trace]);domain=np.asarray(wood)>0;domain[:360]=False
  tube_helpers.fit_short_root(root,domain,x0=334);union(body,root)
+ if args.revision>=9:
+  # A short continuous flare occupies the fern-hidden basal domain; the thin
+  # observed descending root remains distinct farther down the bank.
+  flare=tube('Inferred continuous fern-hidden basal flare',[point(386,352),point(386,359),point(386,365),point(387,370)],[13,17,21,23]);union(body,flare)
  # The native source includes a thin crossing twig between the observed forks.
  branch_trace=[(357,109),(376,104),(396,101),(410,98)]
  twig=tube('Observed crossing twig',[point(x,y)+Vector((0,-COS,SIN))*15 for x,y in branch_trace],[1.8,2.2,1.8,1]);union(body,twig)
@@ -83,6 +87,7 @@ def main():
   skipped.append(dict(point=list(hit),node=owners[index],normal=list(normal)));origin=hit-ray*.01
  anchor_owner=owners[index]
  shift=ray*((hit-anchor).dot(ray)+.2)
+ if args.revision>=9:shift+=Vector((0,20/math.tan(math.radians(35)),-20))
  for target in [obj,crown]:
   for vertex in target.data.vertices:vertex.co+=shift
   target.data.update()

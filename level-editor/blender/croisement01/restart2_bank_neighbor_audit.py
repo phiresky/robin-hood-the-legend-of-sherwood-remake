@@ -16,6 +16,8 @@ def bvh(objects):
  return BVHTree.FromPolygons(points,faces)
 banks=bvh([o for o in objects if o.type=='MESH' and o.get('source_node') in construction['changed_nodes']]);native=json.loads((R.parent/'baseline/masks/manifest.json').read_text());sine,cosine=math.sin(math.radians(35)),math.cos(math.radians(35));direction=Vector((0,-cosine,sine));records=[]
 neighbors=[(0,'approved-tree00-wood-fill-v1/croisement01-tree-00/baked-v4-support/worker.blend','tree00-v4/wood-domain.png'),(1,'approved-tree01-isolated-wood-fill-v1/croisement01-tree-01/baked-v1-luminance/worker.blend','tree01-source-prep-v1/wood-domain-proposal.png'),(2,'tree02-v8/assets/croisement01-tree-02/model.blend','tree02-v8/wood-domain.png'),(3,'approved-tree03-fill-v1/croisement01-tree-03/baked-v1-luminance/worker.blend','tree03-v4/wood-domain.png')]
+if any(row['mask']==4 for row in construction['root_constraints']):
+ row=next(row for row in construction['root_constraints'] if row['mask']==4);neighbors.append((4,row['model_path'],row['domain_path']))
 if any(row['mask']==6 for row in construction['root_constraints']):
  row=next(row for row in construction['root_constraints'] if row['mask']==6);neighbors.append((6,row.get('model_path','tree06-v6/assets/croisement01-tree-06/model.blend'),row.get('domain_path','tree06-v6/wood-domain.png')))
 for n,path,mask_path in neighbors:
