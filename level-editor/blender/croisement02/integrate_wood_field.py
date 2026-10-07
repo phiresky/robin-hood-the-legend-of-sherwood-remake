@@ -25,6 +25,11 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def protected_state(objects):
+    cache = {}
+    return {o.name: _geometry(o, protect_appearance=True, appearance_cache=cache) for o in objects}
+
+
 def split_boundary(bm, original, fractions, candidates):
     """Split real boundary edges; interpolate existing BMesh loop attributes."""
     ordered = []
@@ -88,7 +93,7 @@ def main():
         wood = [o for o in objects if o.type == 'MESH' and o.get('asset_group') == f'croisement02-tree-{args.tree}' and o.get('projection_component') != 'crown']
         primary = next(o for o in wood if o.get('source_node') == record['source_node'])
         protected_objects = [o for o in objects if o.type == 'MESH' and o not in wood]
-        protected = {o.name: _geometry(o, protect_appearance=True) for o in protected_objects}
+        protected = protected_state(protected_objects)
         bm = bmesh.new()
         bm.from_mesh(primary.data)
         bmesh.ops.transform(bm, matrix=primary.matrix_world, verts=list(bm.verts))
@@ -147,7 +152,7 @@ def main():
         for obj in wood:
             if obj != primary:
                 bpy.data.objects.remove(obj, do_unlink=True)
-        if protected != {o.name: _geometry(o, protect_appearance=True) for o in protected_objects}:
+        if protected != protected_state(protected_objects):
             raise ValueError('Protected crown or other asset changed')
         args.output.mkdir(parents=True)
         destination = args.output/'model.blend'

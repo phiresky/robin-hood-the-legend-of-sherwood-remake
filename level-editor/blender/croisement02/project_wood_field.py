@@ -22,6 +22,11 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def protected_state(objects):
+    cache = {}
+    return {o.name: _geometry(o, protect_appearance=True, appearance_cache=cache) for o in objects}
+
+
 def faces_hash(objects):
     faces = []
     for obj in objects:
@@ -144,7 +149,7 @@ def main():
         collection = bpy.data.collections['Croisement02 Working']
         primary = next(o for o in collection.all_objects if o.type == 'MESH' and o.get('asset_group') == f'croisement02-tree-{args.tree}' and o.get('projection_component') != 'crown')
         protected_objects = [o for o in collection.all_objects if o.type == 'MESH' and o != primary]
-        protected = {o.name:_geometry(o, protect_appearance=True) for o in protected_objects}
+        protected = protected_state(protected_objects)
         body_hash = faces_hash([primary])
         # Partition the existing body first: no cap, overlap, vertex displacement,
         # or polygon shape change is introduced by the source-owner labels.
@@ -166,9 +171,9 @@ def main():
         scoped = {o.name:[f.index for f in o.data.polygons if o.data.materials[f.material_index].name.startswith('Unprojected field wood')] for o in parts}
         if any(not faces for faces in scoped.values()): raise ValueError('Empty new-surface projection scope')
         cfg = json.loads((old.parent/'workspace.json').read_text())
-        projection = bake(cfg['map_name'], cfg['source_path'], args.output/'projection.json', receiver_object_names=[o.name for o in parts], receiver_face_indices=scoped, material_suffix='local-field-only', projection_label='exterior', elevation_deg=35., preserve_authored=False, source_mask_manifest=str(source_manifest))
+        projection = bake(cfg['map_name'], cfg['source_path'], args.output/'projection.json', receiver_object_names=[o.name for o in parts], receiver_face_indices={name:set(faces) for name,faces in scoped.items()}, material_suffix='local-field-only', projection_label='exterior', elevation_deg=35., preserve_authored=False, source_mask_manifest=str(source_manifest))
         if faces_hash(parts) != before_projection: raise ValueError('Projection changed world faces')
-        if protected != {o.name:_geometry(o, protect_appearance=True) for o in protected_objects}: raise ValueError('Projection changed protected assets')
+        if protected != protected_state(protected_objects): raise ValueError('Projection changed protected assets')
         support=[]
         for obj in parts:
             obj.data.calc_loop_triangles()

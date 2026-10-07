@@ -50,7 +50,7 @@ def preserved_mesh_state(worker, exclude_scoped_wood=False):
 
 
 def main(release_slot=True):
-    parser=argparse.ArgumentParser();parser.add_argument('--worker',type=Path,default=tree_workspace(32));parser.add_argument('--preservation-base',type=Path);parser.add_argument('--output',type=Path);parser.add_argument('--domain-review',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    parser=argparse.ArgumentParser();parser.add_argument('--worker',type=Path,default=tree_workspace(32));parser.add_argument('--preservation-base',type=Path);parser.add_argument('--output',type=Path);parser.add_argument('--domain-review',type=Path);parser.add_argument('--ground-occlusion',action='store_true');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     worker=args.worker.resolve();model_hash=sha(worker/'model.blend');output=args.output.resolve() if args.output else worker/'inspection';output.mkdir(parents=True,exist_ok=True);acquire()
     try:
         original=args.preservation_base.resolve() if args.preservation_base else tree_workspace(32)
@@ -76,12 +76,17 @@ def main(release_slot=True):
             obj=original.copy();obj.data=original.data.copy();transform=original.matrix_world.copy();obj.parent=None;obj.matrix_world=transform;obj.hide_render=False;scene.collection.objects.link(obj)
             obj.data.materials.clear();obj.data.materials.append(white)
             for face in obj.data.polygons:face.material_index=0
+        if args.ground_occlusion:
+            floor=bpy.data.meshes.new('ExactZ0 diagnostic occluder');floor.from_pydata([(-10000,-10000,0),(10000,-10000,0),(10000,10000,0),(-10000,10000,0)],[],[(0,1,2,3)])
+            floor_obj=bpy.data.objects.new(floor.name,floor);scene.collection.objects.link(floor_obj)
+            holdout=bpy.data.materials.new('Ground alpha holdout');holdout.use_nodes=True;holdout.node_tree.nodes.clear()
+            shader=holdout.node_tree.nodes.new('ShaderNodeHoldout');sink=holdout.node_tree.nodes.new('ShaderNodeOutputMaterial');holdout.node_tree.links.new(shader.outputs[0],sink.inputs['Surface']);floor.materials.append(holdout)
         box=(1035,645,1120,765);left,top,right,bottom=box;width=right-left;height=bottom-top
         target=Vector(((left+right)/2,-(top+bottom)/2/SIN,0));data=bpy.data.cameras.new('Native root camera');data.type='ORTHO';data.sensor_fit='HORIZONTAL';data.ortho_scale=width;data.clip_end=20000
         camera=bpy.data.objects.new(data.name,data);scene.collection.objects.link(camera);camera.location=target+RAY*5000;camera.rotation_euler=(target-camera.location).to_track_quat('-Z','Y').to_euler();scene.camera=camera
         scene.render.engine='CYCLES';scene.cycles.samples=8;scene.render.resolution_x=width;scene.render.resolution_y=height;scene.render.resolution_percentage=100
         scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.view_settings.view_transform='Standard';scene.view_settings.look='None'
-        destination=output/'root-source-coverage';destination.mkdir(exist_ok=True)
+        destination=output/('root-source-coverage-ground' if args.ground_occlusion else 'root-source-coverage');destination.mkdir(exist_ok=True)
         scene.render.filepath=str(destination/'render.png');bpy.ops.render.render(write_still=True,scene=scene.name)
         actual=np.asarray(Image.open(destination/'render.png').convert('RGBA'))[:,:,3]>127
         row=next(r for r in json.loads((OUT/'scenery-domains/inventory.json').read_text())['masks'] if r['index']==32)
@@ -106,7 +111,7 @@ def main(release_slot=True):
                 hit,location,normal,index,obj,matrix=scene.ray_cast(deps,Vector((x,-y/SIN,0))+RAY*5000,-RAY)
                 samples.append(dict(source=[x,y],world=list(location) if hit else None))
         interface=expected[:675-top];interface_missing=missing[:675-top]
-        write_json(destination/'report.json',dict(scoped_domain_review_sha256=sha(args.domain_review) if args.domain_review else None,interface_expected_pixels=int(interface.sum()),interface_missing_pixels=int(interface_missing.sum()),interface_source_coverage=float(1-interface_missing.sum()/interface.sum()),model_sha256=model_hash,domain_sha256=sha(destination/'domain.png'),expected_pixels=int(expected.sum()),missing_pixels=int(missing.sum()),source_coverage=float((expected&actual).sum()/expected.sum()),root_expected_pixels=int(expected[728-top:].sum()),root_missing_pixels=int(missing[728-top:].sum()),root_source_coverage=float((expected[728-top:]&actual[728-top:]).sum()/expected[728-top:].sum()),source_crop=box,samples=samples,status='local native32 stem and basal-root measurement; requires visual review'))
+        write_json(destination/'report.json',dict(ground_occlusion=args.ground_occlusion,scoped_domain_review_sha256=sha(args.domain_review) if args.domain_review else None,interface_expected_pixels=int(interface.sum()),interface_missing_pixels=int(interface_missing.sum()),interface_source_coverage=float(1-interface_missing.sum()/interface.sum()),model_sha256=model_hash,domain_sha256=sha(destination/'domain.png'),expected_pixels=int(expected.sum()),missing_pixels=int(missing.sum()),source_coverage=float((expected&actual).sum()/expected.sum()),root_expected_pixels=int(expected[728-top:].sum()),root_missing_pixels=int(missing[728-top:].sum()),root_source_coverage=float((expected[728-top:]&actual[728-top:]).sum()/expected[728-top:].sum()),source_crop=box,samples=samples,status='local native32 stem and basal-root measurement; requires visual review'))
         if sha(worker/'model.blend')!=model_hash:raise ValueError('Audit changed worker')
         print(destination)
     finally:

@@ -28,18 +28,22 @@ def read(path,asset):
     return dict(path=path,sha=digest,points=points,triangles=triangles,owners=owners,opacity=opacity.records)
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
+    parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);parser.add_argument('--candidate',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     if args.output.exists():raise FileExistsError(args.output)
     packet=OUT/'wood-sweep-cpu-review/integration-packet-v1/recipe.json'
     pixels=next(r for r in json.loads(packet.read_text())['records'] if r['tree']==32)['unresolved_source_coordinates']
     paths={'prior':OUT/'root-stem-round-3/assets/croisement02-tree-32/model.blend','current':OUT/'restart2-wood/combined-crown-v2/assets/croisement02-tree-32/model.blend','shrub':OUT/'understory-candidates/native-71-rooted-v2/assets/croisement02-shrub-71/model.blend'}
+    if args.candidate:paths['candidate']=args.candidate.resolve()
     acquire()
     try:
         assets={name:read(path,'croisement02-shrub-71' if name=='shrub' else 'croisement02-tree-32') for name,path in paths.items()};records=[]
-        for state in ['prior','current']:
+        for state in ['prior','current']+(['candidate'] if args.candidate else []):
             points=[];triangles=[];owners=[];opacity=OpacityRegistry()
-            for asset in [assets[state],assets['shrub']]:
-                offset=len(points);points.extend(asset['points']);triangles.extend(tuple(i+offset for i in t) for t in asset['triangles']);owners.extend(asset['owners']);opacity.records.extend(asset['opacity'])
+            groups=[(assets[state],None),(assets['shrub'],None)] if state!='candidate' else [(assets['current'],'crown'),(assets['candidate'],'wood'),(assets['shrub'],None)]
+            for asset,scope in groups:
+                offset=len(points);points.extend(asset['points'])
+                selected=[i for i,o in enumerate(asset['owners']) if scope is None or ((o['component']=='crown')==(scope=='crown'))]
+                triangles.extend(tuple(i+offset for i in asset['triangles'][j]) for j in selected);owners.extend(asset['owners'][j] for j in selected);opacity.records.extend(asset['opacity'][j] for j in selected)
             tree=opacity.wrap(BVHTree.FromPolygons(points,triangles,all_triangles=True))
             for index,(x,y) in enumerate(pixels):
                 samples=[]
@@ -50,7 +54,7 @@ def main():
                 records.append(dict(state=state,index=index,pixel=[x,y],samples=samples))
         for asset in assets.values():
             if sha(asset['path'])!=asset['sha']:raise ValueError('Read-only audit changed input')
-        report=dict(status='Scoped alpha-aware first-hit evidence; independent source-role review required',scope='Tree32 plus shrub71 only, prior and current tree variants. This is not a full-scene parity claim.',inputs=[dict(path=str(a['path']),sha256=a['sha']) for a in assets.values()],pixels=records,model_saved=False,rendered=False)
+        report=dict(status='Scoped alpha-aware first-hit evidence; independent source-role review required',scope='Tree32 plus shrub71 only; optional candidate uses current selected crown with private candidate wood. This is not a full-scene parity claim.',inputs=[dict(path=str(a['path']),sha256=a['sha']) for a in assets.values()],pixels=records,model_saved=False,rendered=False)
         args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(report,indent=2)+'\n')
     finally:release()
 
