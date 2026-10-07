@@ -917,8 +917,12 @@ The seam shift avoids a real roof-corner shortfall; fitting the receiver anchors
 in double precision avoids a separate translation-sensitive landing gap. No
 floor padding or wider acceptance tolerance is used. A captured binding test
 reproduces the old failure and continues to reject a real 0.02-unit height gap.
-The fresh full York candidate still passes only **38/40 climbs**: its connection
-to the surrounding map remains unresolved. The mesh review has 596/602 sampled
+The fresh full York candidate still passes only **38/40 climbs**: the lower seam
+lies inside shared exclusion-4 blockers owned by the rear gable house and the
+raised terrain. Their collision ownership must be reviewed so terrain exclusions
+do not depend on the old building layout. A separate compiler fix now admits
+precise hole-boundary seams on raised receivers, while rejecting hole interiors;
+the full York descriptor is unchanged by that fix. The mesh review has 596/602 sampled
 flight hits, maximum nearest-mesh height residual 0.872101 and maximum uncovered
 edge distance 0.039980; rendered traversal remains unverified. Fresh published-scene
 regressions retain all 84 climbs and 192 stairs across five saved maps. Failed

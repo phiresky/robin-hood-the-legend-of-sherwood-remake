@@ -10003,6 +10003,36 @@ and **192 stair routes** across Derby, Leicester, Lincoln, Sherwood and York.
 `precise-plane-keep-lkkqafqd` also retains all eight keep-annex 150-degree routes
 across both copies and elevations. Rust formatting and the game build pass.
 
+### Raised receiver hole boundaries and gable exclusion ownership (2026-10-07)
+
+Raised receiving volumes previously checked climb approaches against rounded
+navigation holes and rejected a midpoint on a hole boundary. Ordinary floor
+landings already permit that seam contact. Raised receiver admission now uses
+uniquely matched precise hole contours, falling back to the rounded contour when
+no unique match exists. Only the midpoint may touch a hole boundary; outside
+anchors and hole interiors remain blocked. The regression fails before the fix
+and passes for ladders and walls at integer and fractional placements, while a
+0.01-unit intrusion into the hole remains rejected. All 140 compiler tests, app
+typechecking and focused lint pass.
+
+Fresh York candidate export `saved-map-exports-MAyCih` is structurally identical
+to `saved-map-exports-hr4SST`; this admission fix does not resolve its two climb
+failures. The lower outside and midpoint both lie on raised receiver 87 at
+height 90.00101 and within its underlying motion boundary. The midpoint is inside
+motion area 0's permanent obstacle 18 on layer 19, whose triangle is
+[[1943,1485],[1753,1663],[1683,1639]]. Physical traversal is therefore omitted
+during compilation, rather than lost at runtime landing binding.
+
+Asset-local blocker inspection identifies
+`york-central-lane-rear-gable-house/building-168-ground-blocker-37-0-0` and
+`york-west-town-raised-terrain/building-086-ground-blocker-368-4-0` at that point.
+Both carry movement contour `york-terrain/ground-section-0/exclusion-4`. The
+raised terrain supplies a physical receiver at height 90.00101 over navigation
+height zero. The next authoring review must resolve the actual collision ownership
+and any residual exclusions tied to surrounding buildings; admitting an interior
+point or enlarging a tolerance would conceal that issue. No asset metadata is
+changed or published in this step.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

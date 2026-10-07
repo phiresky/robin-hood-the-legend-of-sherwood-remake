@@ -1755,6 +1755,23 @@ function compileAssetGameplayAttempt(
   // A raised receiving volume can supply the physical landing over a lower
   // navigation plane. Require an unambiguous ground binding and retain its
   // actual walkable boundary and holes when checking the ladder approach.
+  const receiverContours = new Map<
+    NavigationPiece,
+    Pick<NavigationPiece, "polygon" | "blockers">
+  >();
+  for (const region of navigationRegions)
+    for (const piece of region.pieces) {
+      const precise = indexPreciseBlockers(piece.preciseBlockers ?? []);
+      receiverContours.set(piece, {
+        polygon: piece.receivingPolygon ?? piece.polygon,
+        blockers: piece.blockers.map((points) => {
+          const candidates = (precise.get(motionBoundsKey(points)) ?? []).filter(
+            ({ rounded }) => polygonClipping.xor([rounded], [points]).length === 0,
+          );
+          return candidates.length === 1 ? candidates[0]!.exact : points;
+        }),
+      });
+    }
   const receiverLandings = projectionReceivers.flatMap((receiver) => {
     if (receiver.receiverSegment) return [];
     const regions = navigationRegions.filter(
@@ -1819,13 +1836,17 @@ function compileAssetGameplayAttempt(
                 containsNavigationAnchor(area, point) &&
                 region.pieces.some((piece) => {
                   const projected: Point = [point[0], point[1] - point[2]];
+                  const contour = receiverContours.get(piece)!;
                   return (
-                    (inside(projected, piece.receivingPolygon ?? piece.polygon, true) ||
-                      onClippedReceivingBoundary(
-                        projected,
-                        piece.receivingPolygon ?? piece.polygon,
-                      )) &&
-                    !piece.blockers.some((hole) => inside(projected, hole, true))
+                    (inside(projected, contour.polygon, true) ||
+                      onClippedReceivingBoundary(projected, contour.polygon)) &&
+                    !contour.blockers.some(
+                      (hole) =>
+                        inside(projected, hole, true) &&
+                        !(
+                          point === door.worldMiddle && onClippedReceivingBoundary(projected, hole)
+                        ),
+                    )
                   );
                 }),
             ),

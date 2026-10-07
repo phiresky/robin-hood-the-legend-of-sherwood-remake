@@ -19,6 +19,9 @@
   precision, avoiding translation-sensitive edge gaps caused by rounding plane
   coefficients before reconstructing collision contours. Compatibility movement
   retains its existing plane evaluation.
+  Raised receiver landings also retain matched precise navigation-hole contours.
+  A climb midpoint may meet a hole boundary, as on an ordinary floor; outside
+  anchors and hole interiors still require unblocked support.
 
 - **Physical ladder and wall navigation.** Compatible planar climbs export world-space
   floors and live collision alongside stairs. Ladder entry/exit climbing orders

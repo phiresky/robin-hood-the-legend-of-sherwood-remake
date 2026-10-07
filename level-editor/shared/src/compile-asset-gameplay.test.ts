@@ -416,6 +416,40 @@ test("physical climb landings can use bound raised receiving volumes", () => {
   }
 });
 
+test("raised climb receivers retain precise hole seams without admitting hole interiors", () => {
+  for (const type of [2, 3] as const) {
+    for (const offset of [0, 0.25]) {
+      for (const [left, right, supported] of [
+        [300, 330, true],
+        [300, 330.01, false],
+      ] as const) {
+        const { document, assets, hut } = receivingLadderCompilerFixture();
+        hut.gameplay!.lifts![0]!.type = type;
+        document.groups[0]!.transform.dx += offset;
+        const landing = hut.gameplay!.surfaces[1]!;
+        landing.polygon = landing.polygon.map(([x, y]) => [x === 330 ? 250 : x, y]);
+        for (const point of hut.parts[0]!.obstacle_local_game!.points)
+          if (point.x === 330) point.x = 250;
+        landing.preserveMovementPrecision = true;
+        landing.holes = [
+          [
+            [left, -155],
+            [right, -155],
+            [right, -145],
+            [left, -145],
+          ],
+        ];
+        const compiled = compileAssetGameplay(document, assets, bounds);
+        assert.equal(
+          compiled.lifts![0]!.physical_navigation !== undefined,
+          supported,
+          `type=${type}, offset=${offset}, hole=${left}..${right}: ${compiled.warnings?.join("\n")}`,
+        );
+      }
+    }
+  }
+});
+
 test("best-effort terrain retries preserve input and subsequent terrain edits", () => {
   const { document, assets } = unavailableTerrainControlCompilerFixture();
   document.terrain = createTerrainGrid([1000, 1000, 100, 100], 100, 17);
