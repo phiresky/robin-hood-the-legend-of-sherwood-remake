@@ -226,10 +226,10 @@ disable physical navigation at 37 degrees. The latest unpublished candidate
 emits physical navigation at all eight placements but fails all 48 actor routes,
 including the twelve routes previously using projected navigation.
 
-The current library-wide audit (`gameplay-coverage-Bi9ENk`) finds 29 of 1,279
-indexed assets without gameplay definitions. One is placed: Croisement01 tree 03.
+The current library-wide audit (`gameplay-coverage-S4Wdmj`) finds 28 of 1,279
+indexed assets without gameplay definitions. None is placed in the saved scenes.
 The timber bridge, both ferns, fallen log, upright fences 94/95 and supplemental
-wood 09/44 have published draft definitions. These counts
+wood 09/44 and Croisement01 tree 03 have published draft definitions. These counts
 reflect the current asset inventory, not gameplay certification.
 
 The asset-only physical-mesh preflight (`physical-mesh-audit-dpmilw`) checks
@@ -244,7 +244,7 @@ is open and must not silently become a solid. No new gameplay definitions were
 published from this preflight. Reproduce it with
 `node refinement/audit-physical-meshes.mjs <asset-id> ...` from `level-editor`.
 
-Tree 03 now has a reproducible physical candidate, but it is not published.
+Tree 03 now has a published physical and crown-occlusion draft.
 The error-budget simplifier produces nonmanifold edges at both 0.5 and 0.1
 units; the latter has no coincident float32 positions. Exact opposite-face
 removal also leaves invalid edges, so those candidates remain rejected.
@@ -255,10 +255,29 @@ triangles; all ten shells pass closure and cap-decomposition checks, producing
 3,732 capped pieces. Bidirectional vertex, edge-midpoint and face-centroid
 samples measure 1.3973 units source-to-candidate and 0.8884 units
 candidate-to-source (392,390 and 3,920 samples). These are sampled deviations,
-not certified maximum contact errors. The open crown still needs separate
-occlusion authoring, followed by moved/elevated native and full-scene checks.
+not certified maximum contact errors.
 The audit saves its physical input, candidate and deviation report; visual
 models remain unchanged. `BLENDER_BIN` can select the offline Blender binary.
+
+The tree definition retains 3,698 capped pieces after recording 34 numerical
+slivers with total footprint area 0.00000010782893855813159 square game units.
+Its open crown supplies 1,800 opaque, double-sided mask triangles independently
+of physical wood; no crown solid is invented. The asset-local root receiving
+probes allow up to one unit of embedding, accommodating a 0.7068-unit difference
+in saved Croisement01 without a scene-specific compiler rule. Half-unit burial
+binds; floating and 1.5-unit burial reject. The canopy front envelope remains an
+authored approximation, and steep receiving terrain needs review.
+
+The candidate (`wood-gameplay-wCPFLA`) passes ten rotated/elevated native
+construction cases, twenty movement checks and 1,000 sight/projectile checks.
+Full Croisement01 (`saved-map-exports-FeXcnT`) constructs eight areas, 3,790 sight
+obstacles, sixteen doors, thirteen jump pairs, 4,180 grid blocks and 76 elevation
+boundaries; all six controls apply/reset. Both masks remain present, with no
+missing-definition or missing-receiver warning. One collapsed movement hole
+warning remains. Publication backup: `tree-gameplay-publish-wCPFLA`. Fresh
+published geometry (`saved-map-exports-R4zaCG`) exactly matches the tested
+descriptor, and all ten scenes reopen. Dense collision cost and rendered
+integration remain unverified; this is not full gameplay certification.
 
 The optional `--caps` audit converts a closed shell into convex pieces with
 independent planar bottom/top caps, retaining multiple solid intervals and the

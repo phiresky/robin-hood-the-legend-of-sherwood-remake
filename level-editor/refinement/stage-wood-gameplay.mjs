@@ -7,6 +7,9 @@ import { insertProjectionAsset } from "../app/src/asset-commands.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
+import { loadSceneModel } from "../pipeline/src/scene-assets.ts";
+import { maskRecoveryMesh } from "../pipeline/src/mask-recovery-mesh.ts";
+import { sceneToGame, gltfToScene } from "../shared/src/geometry.ts";
 
 const [audit] = process.argv.slice(2);
 assert.ok(audit, "Supply a physical-mesh audit directory produced with --caps");
@@ -15,7 +18,26 @@ const id =
   "croisement03-stream-fallen-log";
 const report = JSON.parse(await fs.readFile(`${audit}/report.json`));
 const reviewed = report.results.find((result) => result.id === id);
-assert.ok(reviewed && reviewed.parts.length === 1 && reviewed.parts[0].cappedVolumes > 0);
+const crownNode = process.argv.find((arg) => arg.startsWith("--crown-node="))?.slice(13);
+const groundOption = process.argv.find((arg) => arg.startsWith("--ground="));
+const crownGround = groundOption ? Number(groundOption.slice(9)) : undefined;
+const rootEmbedOption = process.argv.find((arg) => arg.startsWith("--root-embed="));
+const rootEmbed = rootEmbedOption ? Number(rootEmbedOption.slice(13)) : 0;
+assert.ok(Number.isFinite(rootEmbed) && rootEmbed >= 0, "Invalid root embedding allowance");
+assert.ok(!rootEmbedOption || crownNode, "Root embedding requires crown ownership");
+assert.ok(
+  !crownNode || Number.isFinite(crownGround),
+  "A crown needs a reviewed local --ground height",
+);
+assert.ok(reviewed);
+const physicalParts = reviewed.parts.filter((part) => part.cappedVolumes > 0);
+assert.equal(physicalParts.length, 1, "Review exactly one physical wood part");
+const physical = physicalParts[0];
+assert.ok(
+  reviewed.parts.every((part) => part === physical || part.node === crownNode),
+  "Every nonphysical part needs explicit crown ownership",
+);
+assert.equal(reviewed.parts.length, crownNode ? 2 : 1);
 const entry = JSON.parse(await fs.readFile("library/3d-assets/index.json")).assets.find(
   (entry) => entry.id === id,
 );
@@ -37,8 +59,10 @@ const reference = {
   resources: descriptor.resources ?? [],
 };
 assert.equal(reference.model_sha256, reviewed.model_sha256);
-const caps = JSON.parse(await fs.readFile(`${audit}/${id}-0-caps.json`));
-assert.equal(caps.length, reviewed.parts[0].cappedVolumes);
+const caps = JSON.parse(
+  await fs.readFile(`${audit}/${id}-${reviewed.parts.indexOf(physical)}-caps.json`),
+);
+assert.equal(caps.length, physical.cappedVolumes);
 const discarded = [];
 const retained = caps.filter((points, id) => {
   const a = points[0];
@@ -52,7 +76,8 @@ const retained = caps.filter((points, id) => {
 });
 const discardedArea = discarded.reduce((sum, item) => sum + item.area, 0);
 assert.ok(discardedArea < 1e-5, "Discarded numerical slivers exceed the authoring area budget");
-const node = descriptor.parts[0].node;
+const node = physical.node;
+assert.ok(descriptor.parts.some((part) => part.node === node));
 descriptor.gameplay = {
   version: 1,
   collision: "none",
@@ -76,13 +101,13 @@ descriptor.gameplay = {
       "Mesh-derived wood collision is under review. Native movement, sight/projectile contact and rendered integration are not yet certified; no traversal surface or jump is authored.",
       `Removed ${discarded.length} numerically degenerate cap fragments with total footprint area ${discardedArea} square game units.`,
       `Dense mesh-derived collision uses ${retained.length} capped pieces. Integer-grid movement fragmentation and runtime cost need further review.`,
-      ...(reviewed.parts[0].simplifications?.length
+      ...(physical.simplifications?.length
         ? [
-            `Physical mesh was simplified independently per shell with maximum reported approximate appearance error ${Math.max(...reviewed.parts[0].simplifications.map((item) => item.approximateError))}; this is not a certified contact displacement bound.`,
+            `Physical mesh was simplified independently per shell with maximum reported approximate appearance error ${Math.max(...physical.simplifications.map((item) => item.approximateError))}; this is not a certified contact displacement bound.`,
           ]
         : []),
-      ...(reviewed.parts[0].decimations?.length
-        ? reviewed.parts[0].decimations.map(
+      ...(physical.decimations?.length
+        ? physical.decimations.map(
             (item) =>
               `Physical shell ${item.component} was decimated with ${item.method}; sampled deviations are ${item.sourceToCandidate.maximumDistance} source-to-candidate and ${item.candidateToSource.maximumDistance} candidate-to-source game units. These samples are not a certified contact displacement bound.`,
           )
@@ -90,6 +115,69 @@ descriptor.gameplay = {
     ],
   },
 };
+if (crownNode) {
+  assert.ok(descriptor.parts.some((part) => part.node === crownNode));
+  const model = await loadSceneModel("library", reference);
+  assert.ok(
+    model
+      .getRoot()
+      .listMaterials()
+      .every((material) => material.getAlphaMode() === "OPAQUE" && material.getDoubleSided()),
+    "This crown authoring path requires opaque, double-sided materials",
+  );
+  const triangles = maskRecoveryMesh(model, crownNode, (p) =>
+    sceneToGame({ kind: "oblique-orthographic", elevation_deg: 35 }, gltfToScene(p)),
+  );
+  assert.ok(triangles.length);
+  const points = [
+    ...new Map(triangles.flat().map(([x, y]) => [JSON.stringify([x, y]), [x, y]])).values(),
+  ].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const chain = (points) => {
+    const result = [];
+    for (const point of points) {
+      while (result.length > 1 && cross(result.at(-2), result.at(-1), point) <= 0) result.pop();
+      result.push(point);
+    }
+    return result.slice(0, -1);
+  };
+  const boundary = [...chain(points), ...chain(points.toReversed())].map(([x, y]) => [
+    x,
+    y,
+    crownGround,
+  ]);
+  assert.ok(boundary.length >= 3);
+  descriptor.gameplay.placementGroundHeight = crownGround;
+  descriptor.gameplay.maskOcclusionNodes = [crownNode];
+  descriptor.gameplay.masks = [
+    {
+      id: "crown-cover",
+      node: crownNode,
+      triangles,
+      cullBackfaces: false,
+      anchor: [0, 0, crownGround],
+      ...(rootEmbed
+        ? {
+            receiverPolylines: [[0, 0, crownGround], ...boundary].map(([x, y, z]) => [
+              [x, y, z],
+              [x, y, z + rootEmbed],
+            ]),
+          }
+        : { receiverPoints: [[0, 0, crownGround], ...boundary] }),
+      view: true,
+      characterBoundary: boundary,
+      projectileBoundary: boundary,
+      obstacles: [],
+    },
+  ];
+  descriptor.gameplay.draft.issues.push(
+    "Open crown geometry supplies opaque, double-sided occlusion only, with no invented solid volume. Its ground-plane canopy envelope is an authored approximation; rendered masking and sloped receiving terrain need review.",
+  );
+  if (rootEmbed)
+    descriptor.gameplay.draft.issues.push(
+      `Crown receiving probes allow the rooted asset to embed up to ${rootEmbed} game units into terrain; they do not reach ground below the asset's reviewed base.`,
+    );
+}
 validateAssetGameplay(descriptor.gameplay, descriptor);
 const output = await fs.mkdtemp("work/map-compile/wood-gameplay-");
 console.log(JSON.stringify({ output, caps: retained.length, discardedArea }));
@@ -146,6 +234,39 @@ for (const elevation of [0, 40])
       await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
       await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
       const geometry = compiled.descriptor.asset_geometry;
+      if (crownNode) {
+        assert.equal(geometry.masks.length, 1, "Crown must bind one terrain mask");
+        assert.ok(geometry.masks[0].mask_data.length, "Crown needs encoded pixel coverage");
+        if (elevation === 0 && rotation === 0) {
+          const floating = structuredClone(document);
+          floating.terrain = createTerrainGrid([0, 0, 1000, 1000], 250, elevation - 1);
+          assert.throws(
+            () =>
+              compileMap(floating, [0, 0, 1000, 1000], new Map([[id, descriptor]]), {
+                bestEffort: false,
+              }),
+            /receiving anchor/,
+          );
+          if (rootEmbed) {
+            const buried = structuredClone(document);
+            buried.groups[0].transform.dz -= rootEmbed / 2;
+            assert.equal(
+              compileMap(buried, [0, 0, 1000, 1000], new Map([[id, descriptor]]), {
+                bestEffort: false,
+              }).descriptor.asset_geometry.masks.length,
+              1,
+            );
+            buried.groups[0].transform.dz -= rootEmbed;
+            assert.throws(
+              () =>
+                compileMap(buried, [0, 0, 1000, 1000], new Map([[id, descriptor]]), {
+                  bestEffort: false,
+                }),
+              /receiving anchor/,
+            );
+          }
+        }
+      }
       const wood = geometry.sight_obstacles.filter((shape) => shape.projection_area === null);
       assert.equal(wood.length, retained.length);
       const footprintArea = (shape) =>
@@ -228,10 +349,18 @@ for (const elevation of [0, 40])
       }
       if (id.includes("fence")) assert.ok(gapCount > 0, "Fence review needs rail-gap probes");
       const layer = geometry.motion_data.layers.findIndex((layer) => layer.length > 0);
-      const centre = selected[0].points.reduce(
+      const groundContact = [...wood]
+        .sort((a, b) => footprintArea(b) - footprintArea(a))
+        .find((shape) => {
+          const bottom = shape.points.reduce((sum, p) => sum + p.z_bottom / shape.points.length, 0);
+          const top = shape.points.reduce((sum, p) => sum + p.z_top / shape.points.length, 0);
+          return bottom < ground + 80 && top > ground;
+        });
+      assert.ok(groundContact, "Wood fixture requires collision at walking height");
+      const centre = groundContact.points.reduce(
         (sum, p) => [
-          sum[0] + p.x / selected[0].points.length,
-          sum[1] + p.y / selected[0].points.length,
+          sum[0] + p.x / groundContact.points.length,
+          sum[1] + p.y / groundContact.points.length,
         ],
         [0, 0],
       );
