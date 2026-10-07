@@ -115,7 +115,11 @@ attestations, ranked admission challenges, or leaderboard co-sign messages on
 the wire, and seats enter the simulation as soon as `Welcome` is queued.
 Ranked submission is a single-uploader recorded replay handled after the
 mission: the host uploads the replay signed by its player key and the server
-re-simulates it; the other seats stay anonymous.
+re-simulates it; the other seats stay anonymous. Current ranked policies reject
+co-op configurations (`coop.players > 1`), including general “Any configuration”
+boards. Co-op mission-end screens explain this restriction and allow browsing
+the mission's general board without offering an upload. Non-host clients never
+prepare submission evidence from their local prediction/reconnect journals.
 
 ## Protocol 53
 

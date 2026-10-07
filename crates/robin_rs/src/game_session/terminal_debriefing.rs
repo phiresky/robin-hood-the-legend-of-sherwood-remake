@@ -1054,7 +1054,18 @@ fn settle_terminal_debriefing(
         .leaderboard
         .as_mut()
         .unwrap_or_else(|| panic!("interactive mission has no leaderboard runtime"))
-        .capture_terminal(outcome)
+        .capture_terminal(
+            outcome,
+            context.host.transport.local_seat(),
+            context
+                .assets
+                .profile_manager
+                .missions
+                .iter()
+                .find(|mission| mission.id == terminal_mission_id)
+                .expect("completed mission retains its profile"),
+            context.manager.engine.sim_config(),
+        )
         .unwrap_or_else(|error| panic!("mission-end leaderboard capture failed: {error}"));
     let page = terminal_debriefing_page(context, won, terminal_mission_id);
     let state = TerminalDebriefingState::new(

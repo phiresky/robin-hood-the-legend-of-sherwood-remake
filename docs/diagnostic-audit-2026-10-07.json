@@ -117,13 +117,13 @@
     },
     {
       "issue": "S02_Lei_MP leaderboard unavailable",
-      "status": "deployment_reported_by_user",
-      "finding": "User reports leaderboard deployment complete; matching gameplay-policy availability not verified."
+      "status": "coop_ranked_policy_rejection_identified_browsing_fixed",
+      "finding": "User reports leaderboard deployment complete. The engine explicitly rejects coop.players > 1 in ranked policies, including AnyConfig; redeployment cannot remove that restriction. Mission-end presentation now browses the same mission and edition general board without a submission artifact and explains that co-op submissions are unsupported. Ranked admission remains unchanged; verified co-op submissions remain unimplemented."
     },
     {
       "issue": "Mirrored replay timeline gap",
-      "status": "open",
-      "finding": "Screenshot shows frame 12641 starts at timeline 12434 after previous frame ended at 12381. Do not weaken replay continuity validation."
+      "status": "leaderboard_browsing_fixed_local_replay_gap_open",
+      "finding": "Screenshot shows frame 12641 starts at timeline 12434 after previous frame ended at 12381. Clients incorrectly attempted to prepare host-only submission evidence from local prediction/reconnect journals. Mission-end browsing now uses captured mission identity, configuration and outcome without parsing those journals. Co-op hosts also browse without preparing an unsupported upload. Replay continuity validation is unchanged; repairing the actual local recording across authoritative snapshot adoption remains open."
     }
   ],
   "validation": [
@@ -140,6 +140,7 @@
     "Campaign Manager and same-mission load catalog regressions passed in the full robin_rs audio,multiplayer suite. Native build and diff checks passed. Campaign Manager error acknowledgement uses the existing tested ErrorNotice widget; graphical interaction not manually verified.",
     "Replay catalog batch: all default unit, integration and documentation suites passed for robin_rs (audio,multiplayer), robin_engine, robin_level_data, robin_replay_format, robin_run_protocol, robin_replay_verifier and robin_highscores. Regression records a real JSONL header after three generated missions, round-trips compact bytes, cold-restores profiles, and rejects conflicting or incomplete catalogs. Schema 64 JSONL normalization and catalog typed-byte limits are covered. The opt-in leaderboard router suite and native build are checked separately.",
     "Native schema-65 game build and formatting checks passed. Two bounded native full-GOG runs emitted actual headers: 63 profiles for H01_Lin_VL and 64 for a first MultiTeamTwentyRobins launch. Both runs were stopped by their intentional 10-second timeout. An explicitly reconstructed archer diagnostic replay completed the upgrade worker with exit 0; its 28 input records are unchanged, while hashes were recomputed for the current engine/content.",
-    "cargo test --locked -p robin_highscores --features test-support passed, including all 17 router integration tests. An earlier compilation attempt ended with SIGTERM before any tests ran; the completed retry passed. No production deployment was performed."
+    "cargo test --locked -p robin_highscores --features test-support passed, including all 17 router integration tests. An earlier compilation attempt ended with SIGTERM before any tests ran; the completed retry passed. No production deployment was performed.",
+    "Mission-end leaderboard browsing: full robin_rs audio,multiplayer unit, integration and documentation suites passed. Regression uses a real spooled replay with a 1-to-54 timeline gap, verifies the exact continuity error remains rejected for host upload evidence, and verifies non-host and co-op browse bundles have no upload artifact. General-board browsing is scoped to one matching mission and content edition and rejects missing or ambiguous metadata. Native robin binary build, formatting and diff checks passed."
   ]
 }
