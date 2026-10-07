@@ -8,8 +8,15 @@ ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-edito
 from render_slots import acquire
 R=ROOT/'level-editor/work/croisement01-refinement/restart2';revision=int(sys.argv[sys.argv.index('--revision')+1]) if '--revision' in sys.argv else 3;p=R/f'tree08-wood-prototype-v{revision}';actual='--actual' in sys.argv;out=p/('actual8-v2' if actual else 'solid8-v4');floor=10*1024**3;budget=128*1024**2
 
+policy_path=Path(sys.argv[sys.argv.index('--disk-policy')+1]).resolve() if '--disk-policy' in sys.argv else None
+policy=json.loads(policy_path.read_text()) if policy_path else None
+if policy:
+ assert policy['status']=='ROOT_AUTHORIZED_BOUNDED_INSPECTION_EXCEPTION' and revision==10
+ floor=policy['minimum_free_bytes'];assert floor==8*1024**3
+ budget=min(budget,policy['max_combined_new_output_bytes'])
 def guard(reserve=2*1024**2):
  used=sum(f.stat().st_size for d in R.glob('tree08-wood-prototype-v*') for f in d.rglob('*') if f.is_file());assert used+reserve<budget;assert shutil.disk_usage(R).free>=floor+budget-used
+ if policy:assert sum(f.stat().st_size for f in p.rglob('*') if f.is_file())+reserve<=policy['max_new_output_bytes_per_lane']
 
 guard();out.mkdir(exist_ok=True);assert not any(out.iterdir()),'Do not overwrite evidence';acquire();bpy.ops.wm.open_mainfile(filepath=str(p/'model.blend'));scene=bpy.context.scene;scene.render.threads_mode='FIXED';scene.render.threads=2;scene.render.engine='BLENDER_WORKBENCH';scene.display.shading.light='STUDIO';scene.display.shading.color_type='SINGLE';scene.display.shading.single_color=(.5,.5,.5);scene.display.shading.show_shadows=True;scene.display.shading.show_cavity=True;scene.render.resolution_x=384;scene.render.resolution_y=384;scene.render.resolution_percentage=100;scene.render.image_settings.file_format='PNG';scene.world=bpy.data.worlds.new('Diagnostic neutral world');scene.world.color=(.1,.1,.1)
 if actual:
@@ -28,4 +35,4 @@ for i in range(8):
 guard();sheet=Image.new('RGB',(1536,816),'#222222');draw=ImageDraw.Draw(sheet)
 for i in range(8):
  x=i%4*384;y=i//4*408;sheet.paste(Image.open(out/f'{i}.png').convert('RGB'),(x,y+24));draw.text((x+5,y+5),'0 - Original game camera' if i==0 else f'{i} - '+('Actual diagnostic material' if actual else 'Solid construction'),fill='white')
-sheet.save(out/'sheet.png');guard();(out/'receipt.json').write_text(json.dumps(dict(model_sha256=hashlib.sha256((p/'model.blend').read_bytes()).hexdigest(),native_camera_first=True,model_unchanged=True,evaluated_mesh_clip_bounds=clip_records,clip_margin_pass=True,scope='Saved-model diagnostic material' if actual else 'Saved-model solid geometry',limitations=['No terrain/contact or final source ownership proof','Projected bark-core display is not a final first-hit ownership bake']),indent=2)+'\n')
+sheet.save(out/'sheet.png');guard();(out/'receipt.json').write_text(json.dumps(dict(model_sha256=hashlib.sha256((p/'model.blend').read_bytes()).hexdigest(),native_camera_first=True,model_unchanged=True,evaluated_mesh_clip_bounds=clip_records,clip_margin_pass=True,disk_policy_sha256=hashlib.sha256(policy_path.read_bytes()).hexdigest() if policy_path else None,scope='Saved-model diagnostic material' if actual else 'Saved-model solid geometry',limitations=['No terrain/contact or final source ownership proof','Projected bark-core display is not a final first-hit ownership bake']),indent=2)+'\n')

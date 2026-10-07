@@ -9,13 +9,26 @@ ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-edito
 from render_slots import acquire
 R=ROOT/'level-editor/work/croisement01-refinement/restart2';revision=int(sys.argv[sys.argv.index('--revision')+1]) if '--revision' in sys.argv else 1;out=R/f'tree08-wood-prototype-v{revision}';budget=128*1024**2;floor=10*1024**3
 
+policy_path=Path(sys.argv[sys.argv.index('--disk-policy')+1]).resolve() if '--disk-policy' in sys.argv else None
+policy=json.loads(policy_path.read_text()) if policy_path else None
+if policy:
+ assert policy['status']=='ROOT_AUTHORIZED_BOUNDED_INSPECTION_EXCEPTION'
+ assert revision==10,'This operational exception is only bound to the assigned Tree08 v10 lane'
+ floor=policy['minimum_free_bytes'];assert floor==8*1024**3
+ budget=min(budget,policy['max_combined_new_output_bytes'])
+
 def guard(reserve=1024**2):
  used=sum(p.stat().st_size for folder in R.glob('tree08-wood-prototype-v*') for p in folder.rglob('*') if p.is_file())
  assert used+reserve<=budget,(used,reserve,'Output budget')
+ if policy:
+  lane_used=sum(p.stat().st_size for p in out.rglob('*') if p.is_file()) if out.exists() else 0
+  assert lane_used+reserve<=policy['max_new_output_bytes_per_lane'],('Lane write budget',lane_used,reserve)
  assert shutil.disk_usage(R).free>=floor+max(reserve,budget-used),'Disk floor with remaining round reserve'
 
 def save_json(name,data):guard();(out/name).write_text(json.dumps(data,indent=2)+'\n')
-guard();out.mkdir(exist_ok=False);acquire();guard();bpy.ops.wm.read_factory_settings(use_empty=True);bpy.context.preferences.filepaths.save_version=0
+guard();out.mkdir(exist_ok=False);acquire();guard();
+if policy:save_json('disk-policy-receipt.json',dict(policy_path=str(policy_path),policy_sha256=hashlib.sha256(policy_path.read_bytes()).hexdigest(),floor_bytes=floor,round_cap_bytes=budget,lane_cap_bytes=policy['max_new_output_bytes_per_lane'],scope='Root-released Tree08v10 only; no global remesh'))
+bpy.ops.wm.read_factory_settings(use_empty=True);bpy.context.preferences.filepaths.save_version=0
 scene=bpy.context.scene;scene.render.threads_mode='FIXED';scene.render.threads=2
 plan=json.loads((R/'tree08-topology-plan-v1/plan.json').read_text());trace=json.loads((R/'tree08-source-trace-v2/trace.json').read_text());selected=[r['trace_id'] for r in plan['path_classification'] if r['structural_scaffold']]
 if revision>=2:
@@ -77,7 +90,7 @@ if revision>=4:
   core_support=[[int(x)+331,int(y)+11] for y,x in np.argwhere(np.asarray(Image.open(R/'tree08-semantic-source-v1/bark-core-proposal.png'))>0)] if revision>=7 else None
   corrected,miss_assignment,hierarchy=build_hierarchy_sections(trace['polylines'],selected,plan['root_native'],prior_misses,core_support,continuous_nodes=revision>=8,continuous_trunk=revision>=9);save_json('rooted-depth-hierarchy.json',hierarchy)
  else:corrected,miss_assignment=build_sections(trace['polylines'],selected,prior_misses)
- guard(32*1024**2)
+ guard(1024**2)
  bpy.data.objects.remove(obj,do_unlink=True);bpy.data.meshes.remove(mesh)
  if revision>=10:
   from restart2_tree08_hierarchy import assemble_without_remesh
@@ -107,7 +120,7 @@ for yy,xx in np.argwhere(core):
 save_json('coverage.json',dict(core_pixels=int(core.sum()),covered=hit_count,misses=len(miss),miss_native_pixels=miss,claim='Initial scaffold coverage only; no permission to discard uncovered native wood. Exact known-core texture packed unchanged.',source_rgba_sha256=hashlib.sha256(image_path.read_bytes()).hexdigest()))
 # Graph connectivity is distinct from welded physical connectivity.
 save_json('construction.json',dict(status='PRIVATE INITIAL PROTOTYPE; not final geometry or contact proof',selected_trace_count=len(selected),vertices=len(verts),faces=len(faces),sections=section_ranges,source_plan_sha256=hashlib.sha256((R/'tree08-topology-plan-v1/plan.json').read_bytes()).hexdigest(),root_terrain_anchors=plan['root_terrain_anchors'],limitations=[('Continuous main sweep; other rooted sections overlap but are not globally welded.' if revision>=10 else 'Main family consolidated; disputed crossing sections remain unwelded.' if revision>=4 else 'Source graph connected; swept sections overlap at intended junctions but are not welded.'),'Projected crossings8/14 remain hypotheses; no false ownership resolution.','Disconnected tips not joined. Unselected source traces retained externally.','Root depth is initial slope hypothesis without terrain receiver/contact proof.','Only reviewed bark-core RGB is displayed; other pixels remain neutral, no leaf synthesis.','No crown, terrain, gameplay or canonical changes.']))
-guard(32*1024**2);bpy.ops.wm.save_as_mainfile(filepath=str(out/'model.blend'),compress=True);assert (out/'model.blend').stat().st_size<=32*1024**2
+guard(estimate if revision>=4 else 32*1024**2);bpy.ops.wm.save_as_mainfile(filepath=str(out/'model.blend'),compress=True);assert (out/'model.blend').stat().st_size<=32*1024**2
 # Small native-camera diagnostic only; all8 follows coverage/construction review.
 scene.render.engine='CYCLES';scene.cycles.samples=4;scene.cycles.device='CPU';scene.render.resolution_x=446;scene.render.resolution_y=461;scene.render.resolution_percentage=100;scene.render.image_settings.file_format='PNG';scene.world=bpy.data.worlds.new('Neutral world');scene.world.color=(.08,.08,.08)
 camdata=bpy.data.cameras.new('Original game camera');cam=bpy.data.objects.new('Original game camera',camdata);scene.collection.objects.link(cam);camdata.type='ORTHO';camdata.clip_end=10000;camdata.ortho_scale=461;target=right*554+down*241.5;cam.location=target+ray*1500;cam.rotation_euler=(-ray).to_track_quat('-Z','Y').to_euler();scene.camera=cam;scene.render.filepath=str(out/'native-prototype.png');guard(4*1024**2);bpy.ops.render.render(write_still=True)
