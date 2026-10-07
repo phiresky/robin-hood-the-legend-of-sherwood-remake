@@ -12,7 +12,8 @@ WORK = ROOT / 'level-editor/work/york-refinement/restart2'
 BASE = WORK / 'winch-supported-hardware-v1'
 OUT = WORK / 'winch-supported-motion-v1'
 PLAN = WORK / 'winch-supported-motion-plan-v1.json'
-if OUT.exists():
+CHECK = '--check-only' in sys.argv
+if OUT.exists() and not CHECK:
     raise FileExistsError(OUT)
 
 
@@ -23,11 +24,13 @@ def budget():
     assert shutil.disk_usage(ROOT).free > 8 * 1024**3 + 20 * 1024**2 - used
 
 
-budget()
+if not CHECK:
+    budget()
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from render_slots import acquire
 acquire()
 import bpy
+import numpy as np
 from mathutils import Vector, Matrix
 sys.path.insert(0, str(ROOT / 'level-editor/refinement/blender'))
 from refinement_workspace import _geometry
@@ -79,6 +82,11 @@ for index, row in enumerate(plan['rows']):
 scene.frame_set(88)
 bpy.context.view_layer.update()
 assert final_link_guard == {o.name: _geometry(o, protect_appearance=True) for o in links}
+if CHECK:
+    print(json.dumps({'status': 'Read-only animation construction check passed; no model saved',
+                      'protected_objects_all45': len(protected),
+                      'final_links_exact': len(links), 'phase_count': len(plan['rows'])}))
+    sys.exit(0)
 scene.frame_start, scene.frame_end = 0, 90
 scene.render.fps = 25
 budget()
