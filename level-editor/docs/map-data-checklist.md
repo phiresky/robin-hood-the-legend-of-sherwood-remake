@@ -225,6 +225,17 @@ its traversal remains unresolved. Generated collinear clipping holes no longer
 disable physical navigation at 37 degrees. The latest unpublished candidate
 emits physical navigation at all eight placements but fails all 48 actor routes,
 including the twelve routes previously using projected navigation.
+Fresh compilation and native replay (`local-stair-placements-tDGWb5`) reproduce
+all 48 failures. Failure reports now query current physical source support,
+destination support and complete routing using the actual actor footprint.
+All sixteen ascending requests have supported lower entrances but unsupported
+upper destinations; near-point diagnostic routes exist for those requests.
+The other thirty-two requests stall at upper seams and still reject with a
+near-point footprint. This rules out stale exports and shows that shrinking
+the actor footprint alone is insufficient. Upper contacts and their connected
+landing support require correction before publication. The independent
+fractional-receiver ladder regression still passes. Diagnostic probes do not
+change runtime movement or turn failed routes into passing results.
 
 The current library-wide audit (`gameplay-coverage-S4Wdmj`) finds 28 of 1,279
 indexed assets without gameplay definitions. None is placed in the saved scenes.

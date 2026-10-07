@@ -472,8 +472,43 @@ fn walk_exported_lift_with_tick(
                 .and_then(|(id, index)| engine.seq().get_element(id, index))
                 .map(|element| &element.orders);
             let world_position = engine.ent(owner).position_iface().get_position();
+            let physical_support = assets
+                .navigation
+                .physical_stairs
+                .get(&sector.get())
+                .zip(engine.physical_stair_door(
+                    &assets,
+                    crate::gate::DoorIndex::new(exit as u32).unwrap(),
+                ))
+                .map(|(stair, (_, _, endpoint))| {
+                    let from = [world_position.x, world_position.y];
+                    let to = [endpoint.inside[0], endpoint.inside[1]];
+                    let half = engine.ent(owner).position_iface().get_half_diagonal();
+                    // Endpoint probes distinguish missing support from a corridor
+                    // that is too narrow. The tiny-footprint probe is diagnostic
+                    // only: it never replaces the actor's real movement query.
+                    [
+                        ("source", from, from, half),
+                        ("destination", to, to, half),
+                        ("route", from, to, half),
+                        (
+                            "near-point route",
+                            from,
+                            to,
+                            crate::coordinates::MoveBoxHalfDiagonal { x: 1.001, y: 1.001 },
+                        ),
+                    ]
+                    .map(|(name, from, to, half)| {
+                        (
+                            name,
+                            stair
+                                .route(&engine.world.pathfinder, from, to, half)
+                                .map(|route| route.map(|points| points.len())),
+                        )
+                    })
+                });
             return Err(format!(
-                "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}, world={world_position:?}, orders={selected_orders:?}",
+                "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}, world={world_position:?}, orders={selected_orders:?}, physical_support={physical_support:?}",
                 element.layer(),
                 leave.point_out,
             ));
