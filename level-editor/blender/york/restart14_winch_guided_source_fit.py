@@ -2,6 +2,13 @@
 import ast,hashlib,json,math,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-guided-entry-candidate-v1';OUT=WORK/'restart2/winch-guided-entry-source-fit-v1'
+fine='--fine' in sys.argv
+phase_step=.125 if fine else .5
+phase_count=56 if fine else 14
+selected_frames=None
+if fine:
+ selected_frames={r['frame'] for r in json.loads((OUT/'fit.json').read_text())['frames'] if r['best']['hole_centers_filled']}
+ OUT=WORK/'restart2/winch-guided-entry-source-fit-fine-v1'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -21,11 +28,12 @@ def tree(objects):
   for face in o.data.polygons:fs.append(tuple(off+i for i in face.vertices));owners.append(o.get('native_patch')=='patch-004')
  return BVHTree.FromPolygons(vs,fs),owners
 bpy.ops.wm.open_mainfile(filepath=str(BASE/'model.blend'));scene=bpy.context.scene;links=sorted((o for o in scene.objects if o.name.startswith('Guided chain link')),key=lambda o:o.name);assert len(links)==proposal['path']['count'];meshes=[]
-for phase in range(14):
- for i,o in enumerate(links):p,r=pose(i*spacing+(phase*.5)/c,i);o.location=p;o.rotation_euler=r.to_euler()
+for phase in range(phase_count):
+ for i,o in enumerate(links):p,r=pose(i*spacing+(phase*phase_step)/c,i);o.location=p;o.rotation_euler=r.to_euler()
  bpy.context.view_layer.update();meshes.append(tree(links)[0])
 source=WORK/'geometry-pass-01/native-state-source-v1';record=next(r for r in json.loads((source/'manifest.json').read_text())['records'] if r['id']=='patch-004');frames=next(r['frames'] for r in record['rows'] if r['action']=='PatchTransition');motion=json.loads((WORK/'restart2/winch-motion-physical-v2/motion.json').read_text());holes=json.loads((WORK/'restart2/winch-motion-physical-v2/hole-owner-audit-v2.json').read_text());rows=[]
 for sample,f,ha in zip(motion['rows'],frames,holes['frames']):
+ if selected_frames is not None and sample['source_frame'] not in selected_frames:continue
  scene.frame_set(sample['tick']);bpy.context.view_layer.update();fixed,owners=tree([o for o in scene.objects if o.type=='MESH' and not o.hide_render and o not in links]);alpha=Image.open(source/f['image']).getchannel('A');core=ImageOps.expand(alpha,border=1,fill=0).filter(ImageFilter.MinFilter(3)).crop((1,1,alpha.width+1,alpha.height+1));centers={tuple(h['native_pixel']) for h in ha['holes']};points=[]
  for y in range(880,979):
   for x in range(2388,2434):
@@ -37,6 +45,6 @@ for sample,f,ha in zip(motion['rows'],frames,holes['frames']):
    hit=mesh.ray_cast(origin,-back);shown=other or(hit[0] is not None and hit[3]<depth-1e-5)
    if opaque and not shown:counts['opaque_missed']+=1;counts['core_missed']+=int(core_pixel)
    if not opaque and shown:counts['empty_filled']+=1;counts['hole_centers_filled']+=int(hole)
-  candidates.append({'phase_game':phase*.5,**counts})
+  candidates.append({'phase_game':phase*phase_step,**counts})
  candidates.sort(key=lambda r:(r['hole_centers_filled'],r['opaque_missed']+r['empty_filled']+3*r['core_missed']));rows.append({'frame':sample['source_frame'],'best':candidates[0],'candidates':candidates})
 OUT.mkdir();(OUT/'fit.json').write_text(json.dumps({'status':'Diagnostic only; complete return and link identity retained but hidden support/contact not ready','model_sha256':proposal['model_sha256'],'frames':rows},indent=2)+'\n');print(json.dumps({'best_holes':[r['best']['hole_centers_filled'] for r in rows],'best_core':[r['best']['core_missed'] for r in rows]}))
