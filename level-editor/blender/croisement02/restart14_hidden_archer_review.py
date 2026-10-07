@@ -1,5 +1,6 @@
 """Reopen private leaf endpoints for complete alpha coverage and native-first views."""
 import json
+import os, shutil
 import hashlib
 import math
 import sys
@@ -17,6 +18,12 @@ from evidence_io import sha, write_json
 from render_slots import acquire, release
 from refinement_review import _tree
 from tree_geometry import SIN, COS, RAY
+
+
+def small_budget(root, extra=4*1024**2):
+    if os.environ.get('HIDDEN_ARCHER_SMALL_BUILD'):
+        assert shutil.disk_usage(root).free-extra>=10*1024**3, 'Hard free-space floor reached'
+        assert sum(p.stat().st_size for p in root.rglob('*') if p.is_file())+extra<=128*1024**2, 'Whole-output cap reached'
 
 
 def main(root=None):
@@ -69,12 +76,15 @@ def main(root=None):
                     sample=coords[0]*(1-u-v)+coords[1]*u+coords[2]*v
                     sx,sy=math.floor(sample.x*w),h-1-math.floor(sample.y*h)
                     if not image_exact or (sx,sy)!=(x,y):uv_mismatches.append(dict(pixel=[x0+x,y0+y],sample=[sx,sy],image_exact=image_exact))
+        small_budget(root)
         write_json(destination/'native-coverage.json',dict(model_sha256=sha(model),
             source_sha256=record['source_sha256'], expected_opaque=record['source_opaque_centers'],
             missing=missing,extra=extra,occupied_height_range=[min(z),max(z)],
             native_first_hits_within_two_units_of_flat_ground=low_hits,
             native_rgb_uv_mismatches=uv_mismatches,nonobserved_native_first_hits=nonobserved_hits,
             limitations=['Independent silhouette center test, not color or neighbor support proof.']))
+        if os.environ.get('HIDDEN_ARCHER_SMALL_BUILD'):
+            scene.render.threads_mode='FIXED';scene.render.threads=2
         scene.render.engine='CYCLES'
         scene.cycles.samples=8
         scene.cycles.use_denoising=False
@@ -119,6 +129,9 @@ def main(root=None):
                 camera.rotation_euler=(center-camera.location).to_track_quat('-Z','Y').to_euler()
                 path=destination/f'{mode}-{view}.png'
                 scene.render.filepath=str(path)
+                if os.environ.get('HIDDEN_ARCHER_SMALL_BUILD'):
+                    assert shutil.disk_usage(root).free-4*1024**2>=10*1024**3, 'Hard free-space floor reached'
+                    assert sum(p.stat().st_size for p in root.rglob('*') if p.is_file())+4*1024**2<=128*1024**2, 'Whole-output cap reached'
                 bpy.ops.render.render(write_still=True)
                 image=Image.open(path).convert('RGB')
                 assert np.asarray(image).std() > 2, 'Blank or clipped asset render'
@@ -128,8 +141,10 @@ def main(root=None):
             for i,image in enumerate(images):
                 left,top=(i%4)*320,(i//4)*340
                 sheet.paste(image,(left,top+20));draw.text((left+8,top+3),'Original camera' if i==0 else f'View{i+1}',fill='white')
+            small_budget(root)
             sheet.save(destination/f'{mode}-eight.png')
         assert sha(model)==record['model_sha256']
+        small_budget(root)
         write_json(destination/'evidence.json',dict(model_sha256=sha(model),
             native_camera_direction=list(RAY),native_first=True,
             actual_sheet_sha256=sha(destination/'actual-eight.png'),
