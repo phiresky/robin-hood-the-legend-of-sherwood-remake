@@ -22,6 +22,9 @@
   Raised receiver landings also retain matched precise navigation-hole contours.
   A climb midpoint may meet a hole boundary, as on an ordinary floor; outside
   anchors and hole interiors still require unblocked support.
+  Obstacle island triangulation tolerates collinear bridge triangles while
+  checking the complete collision coverage; degenerate authored boundaries
+  still fail explicitly instead of becoming empty collision.
 
 - **Physical ladder and wall navigation.** Compatible planar climbs export world-space
   floors and live collision alongside stairs. Ladder entry/exit climbing orders

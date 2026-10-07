@@ -11,6 +11,59 @@ import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import polygonClipping from "polygon-clipping";
 
+test("near-collinear island bridges retain coverage without degenerate obstacles", () => {
+  const region: Polygon = JSON.parse(
+    readFileSync(
+      new URL("../test-fixtures/collinear-obstacle-islands.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const pieces = partitionMovementObstacles(region, true);
+  for (const points of pieces) {
+    const [origin] = points;
+    const area = points.reduce((sum, p, i) => {
+      const q = points[(i + 1) % points.length]!;
+      return (
+        sum + (p[0] - origin![0]) * (q[1] - origin![1]) - (q[0] - origin![0]) * (p[1] - origin![1])
+      );
+    }, 0);
+    assert.ok(area > 1e-8);
+  }
+  const difference = polygonClipping.xor(region, polygonClipping.union(pieces.map((p) => [p])));
+  const area = difference.reduce(
+    (sum, polygon) =>
+      sum +
+      polygon.reduce((sum, ring, i) => {
+        const origin = ring[0]!;
+        const area =
+          Math.abs(
+            ring.reduce((sum, p, j) => {
+              const q = ring[(j + 1) % ring.length]!;
+              return (
+                sum +
+                (p[0] - origin[0]) * (q[1] - origin[1]) -
+                (q[0] - origin[0]) * (p[1] - origin[1])
+              );
+            }, 0),
+          ) / 2;
+        return sum + (i ? -area : area);
+      }, 0),
+    0,
+  );
+  assert.ok(area < 1e-8, `Collision coverage changed by ${area}`);
+  assert.throws(
+    () =>
+      partitionMovementObstacles([
+        [
+          [0, 0],
+          [1, 1],
+          [2, 2],
+        ],
+      ]),
+    /Degenerate/,
+  );
+});
+
 test("terrace collision retains exact partitions around its stair landing", () => {
   const region: Polygon = JSON.parse(
     readFileSync(

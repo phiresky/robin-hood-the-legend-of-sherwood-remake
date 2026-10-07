@@ -72,15 +72,24 @@ export function partitionMovementObstacles(
         indices.slice(i, i + 3).map((index) => [vertices[index * 2]!, vertices[index * 2 + 1]!]),
       );
   }
-  const result = pieces.map((points) => {
+  const result = pieces.flatMap((points) => {
+    const origin = points[0]!;
     const area = points.reduce((sum, p, i) => {
       const q = points[(i + 1) % points.length]!;
-      return sum + p[0] * q[1] - q[0] * p[1];
+      return (
+        sum + (p[0] - origin[0]) * (q[1] - origin[1]) - (q[0] - origin[0]) * (p[1] - origin[1])
+      );
     }, 0);
+    // Triangulating near-touching islands can emit a collinear bridge ear.
+    // It contributes no usable obstacle; the coverage check below still guards
+    // the complete partition. A degenerate authored outer ring remains invalid.
+    if (rings.length > 1 && points.length === 3 && Math.abs(area) < 1e-8) return [];
     if (points.length < 3 || Math.abs(area) < 1e-8)
-      throw new Error("Degenerate movement obstacle partition");
-    return area < 0 ? points.reverse() : points;
+      throw new Error("Degenerate movement obstacle partition", { cause: { region, points } });
+    return [area < 0 ? points.reverse() : points];
   });
+  if (!result.length)
+    throw new Error("Cannot partition movement obstacle islands", { cause: region });
   const area = coverageError(region, result);
   if (area > 0.001) {
     // TODO: handle touching islands that cannot be triangulated faithfully on
