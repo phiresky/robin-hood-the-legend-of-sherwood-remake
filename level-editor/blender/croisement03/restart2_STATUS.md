@@ -1,6 +1,10 @@
-## Tree02 context checkpoint
+## Tree02 shared ridge interface — current HOLD
 
-Root accepted v7 isolated morphology for the next context gate. Transparency convergence is byte-identical at32/64 for native/reverse views, saved budget128. A selected Tree01 context guard tests11677 native-mask samples and preserves6742 existing receiver hits;4935 baseline holes remain disclosed. Tree02 base ring intersects the original cropped flat ground within±0.0651 units, but native ledge/painted ground completion is excluded. Joint v2 images are invalid because camera transform updates preceded stale depth calculations; v3 stopped before rendering on a full-frame check. Corrected v4 derives common full-geometry framing and updated camera bounds, but launch stopped below the hard10GiB disk floor before creating its output directory. No valid joint visual proof or user geometry card yet. No active jobs or live/API writes.
+Tree02 v7 remains frozen at63d1308c. Valid selected joint-v4 now has complete framing and root-reviewed coherent crowns; the older joint-v2/v3 failures remain preserved. Its flat ground cannot resolve the visible source foot at y166 versus lower closure at238, so no user geometry card is ready.
+
+CPU proposal tree02-ridge-section-proposal-v1 identifies authored plateau obstacle52: rear edge mapY250.9669 minus height85 projects to165.9667 atx211. Mask96 begins at167 there. This supports a lower-ground tree hidden by the foreground ridge, not raising its root onto the bank. No tree model changes were made.
+
+The full x175–340 diagnostic ridge preserves all2172 Tree02 source samples but initially blocks14 of9358 Tree03 rays. A source-supported1–2pixel crest correction across10 columns preserves the13 accepted static bark samples without relabeling pixels. tree02-ridge-ray-guard-v4 retains one conflict: Arbre08 native leaf313,166, polygon2787,12.57824 world-ray units behind the ridge. A separate source-ray depth correction for that leaf is proposed for root review; neither frozen tree has changed. The x175–260 diagnostic proves Tree02 lower trunk is hidden fromy167 while its accepted footy166 remains visible, but cannot serve as final shared interface proof. No renders, API, live writes or final readiness claim follow this CPU evidence. Total new planning evidence186156bytes; all jobs exited.
 
 ## Tree02 bounded continuation
 
