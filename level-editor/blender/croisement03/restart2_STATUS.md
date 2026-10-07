@@ -1,3 +1,22 @@
+## Continuous western body — private coordinator review
+
+`bank-continuous-strata-v1/worker.blend`, hash `8abfdbf901d7e364`, replaces
+attached caps and flat backing with a single closed body of wrapped strata
+and recessed/sloping risers. Saved full and close actual/solid eight views,
+exact native source/contact comparisons, and the conflict overlay were inspected.
+The result is ready for scoped coordinator morphology review, not whole-bank
+approval. Body53 remains unclassified gray; bank52 front/shoulder creases and
+ramp54 still need refinement.
+
+All 34 source trace points match within 0.0000178 pixels; saved bank52/fixed
+crest and ramp54 geometry are exact against the support prototype. All 3,446
+seed rays are assigned; tested Tree02–07 neighbor rays are unchanged. Closed
+manifold topology, nonzero faces, path94–97 context and gameplay metadata pass.
+Tree01 mixed-mask conflicts are 885 rays (216 new/11 removed versus v5), over
+rock/shadow/vegetation; no bark ownership approval follows from this guard.
+`visual-review.json` binds the reviewed artifacts and limitations. All Blender
+jobs exited and the model lane is released. Frozen cards and galleries unchanged.
+
 ## Coherent western-body CPU revision ready
 
 `restart2_bank_continuous_strata.py --prepare` builds a single closed exterior
