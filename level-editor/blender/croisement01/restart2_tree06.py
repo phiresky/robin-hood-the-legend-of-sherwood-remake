@@ -36,7 +36,7 @@ def main():
   for sy in range(domain.shape[0]):domain[sy]&=((xx<367) if label.startswith('Left') else (xx>397))&(sy<140)
   fit_native_width(part,domain,'west-cut',x0=334,y0=0);union(body,part)
  root=tube('Observed descending slender root',[point(387,345),point(399,377),point(411,404),point(413,423)],[9,5,3,.5]);domain=np.asarray(wood)>0;domain[:372]=False
- fit_native_width(root,domain,'west-cut',x0=334,y0=0);union(body,root)
+ tube_helpers.fit_short_root(root,domain,x0=334);union(body,root)
  for i in range(11):
   angle=math.tau*i/11;start=Vector((380,base_y,640+i%3*20));tip=Vector((380+math.cos(angle)*145,base_y+math.sin(angle)*173,775+rng.uniform(-35,35)));union(body,tube('Inferred supported bough',[start,start.lerp(tip,.55)+Vector((0,0,18)),tip],[7,3,.5]))
  bpy.context.view_layer.objects.active=body;modifier=body.modifiers.new('Continuous native wood','REMESH');modifier.mode='VOXEL';modifier.voxel_size=.9;modifier.use_remove_disconnected=False;bpy.ops.object.modifier_apply(modifier=modifier.name)

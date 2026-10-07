@@ -23,7 +23,7 @@ from evidence_io import sha
 from render_slots import acquire
 
 
-def fit_short_root(obj,domain):
+def fit_short_root(obj,domain,x0=265):
  """Fit short observed root limbs using their actual intersected source rows."""
  points=np.asarray([tuple(v.co) for v in obj.data.vertices]);uv=np.column_stack((points[:,0],-points[:,1]*SIN-points[:,2]*COS));edges=np.asarray([tuple(e.vertices) for e in obj.data.edges]);a,b=uv[edges[:,0]],uv[edges[:,1]];dy=b[:,1]-a[:,1];rows=[]
  for y in range(domain.shape[0]):
@@ -33,7 +33,7 @@ def fit_short_root(obj,domain):
   if not np.any(active):continue
   hit=a[active,0]+(sy-a[active,1])/dy[active]*(b[active,0]-a[active,0])
   if hit.max()-hit.min()<1e-4:continue
-  rows.append([sy,float(hit.min()),float(hit.max()),265+float(xs.min())-.25,266+float(xs.max())+.25])
+  rows.append([sy,float(hit.min()),float(hit.max()),x0+float(xs.min())-.25,x0+1+float(xs.max())+.25])
  if len(rows)<5:raise ValueError('Insufficient short root silhouette evidence')
  rows=np.asarray(rows)
  for vertex,p,pr in zip(obj.data.vertices,points,uv):
