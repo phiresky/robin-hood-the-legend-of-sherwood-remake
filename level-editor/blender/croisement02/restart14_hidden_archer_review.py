@@ -26,7 +26,8 @@ def main(root=None):
         model = folder / 'model.blend'
         assert sha(model) == record['model_sha256']
         destination = folder / 'review-v2'
-        destination.mkdir(exist_ok=False)
+        destination.mkdir(exist_ok=True)
+        assert not any(destination.iterdir()), "Review evidence already exists"
         bpy.ops.wm.open_mainfile(filepath=str(model))
         scene = bpy.context.scene
         objects = [o for o in scene.objects if o.type == 'MESH']
@@ -52,6 +53,9 @@ def main(root=None):
                     mat=mesh.materials[tri.material_index]
                     nonobserved_hits+=not bool(mat.get('foliage_observed'))
                     shader=next(n for n in mat.node_tree.nodes if n.type=='BSDF_PRINCIPLED')
+                    if not shader.inputs['Base Color'].links:
+                        uv_mismatches.append(dict(pixel=[x0+x,y0+y],reason='Inferred untextured support is first visible'))
+                        continue
                     tex=shader.inputs['Base Color'].links[0].from_node
                     image=tex.image
                     image_exact=bool(image.packed_file and hashlib.sha256(image.packed_file.data).hexdigest()==record['source_sha256'])
