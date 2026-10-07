@@ -259,6 +259,15 @@ cycles. Admission tests still reject mismatched seams and missing floor coverage
 for stairs, ladders and walls. This enables asset-local curved climbing definitions
 where each piece is a valid height surface; it does not resolve vertical surfaces,
 the oak's mesh/contact reconstruction, or its actor-footprint clearance failures.
+The full compiler-to-runtime placement audit (`compound-climb-placements-7iQICH`)
+also passes all 64 directed actor routes through 16 exported descriptors: both
+climb types, the four rotations, elevations 0/40, and two independent assemblies
+per map. Each assembly retains both authored planes. Generate these editor-only
+fixtures with `node refinement/check-compound-climb-placements.mjs`, then run
+`exported_climbs_support_complete_actor_routes` with `ROBIN_ASSET_MAP_DIAGNOSTICS`
+pointing to the reported directory and `ROBIN_CLIMB_RHS` to a complete actor sprite.
+This verifies native descriptor traversal; browser ZIP and rendered checks remain
+separate gates.
 
 Fresh published York and Sherwood exports (`saved-map-exports-vDlOcb`) pass all
 132 native stair routes, 50 climb routes and six control apply/reset checks after
