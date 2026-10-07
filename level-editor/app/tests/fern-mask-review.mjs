@@ -8,6 +8,7 @@ import { rasterizeMaskGeometry } from "../../shared/src/compile-mask-geometry.ts
 import { decodeRecoveryMask } from "../../pipeline/src/recover-mask-bitmap.ts";
 import { TextureDisplay } from "../src/texture-display.ts";
 import { decodeSpritePixels } from "../src/entity-projection.ts";
+import { maskReviewMesh } from "./mask-review-mesh.mjs";
 
 const result = document.querySelector("#result");
 const json = async (url) => {
@@ -33,8 +34,22 @@ try {
   const rgba = spriteContext.getImageData(0, 0, sprite.width, sprite.height);
   decodeSpritePixels(rgba.data, manifest.pixel_format !== "rgba");
   spriteContext.putImageData(rgba, 0, 0);
-  const width = 180,
-    height = 150;
+  const staged = new Map();
+  let halfWidth = 90;
+  let halfHeight = 75;
+  for (const { asset: id } of edits)
+    for (const rotation of rotations) {
+      const file = `${id}-0-${rotation}.level.json`;
+      const descriptor = await json(`${stage}/${file}`);
+      staged.set(file, descriptor);
+      for (const mask of descriptor.asset_geometry.masks) {
+        const [x, y] = mask.box_top_left;
+        halfWidth = Math.max(halfWidth, Math.abs(x - 500), Math.abs(x + mask.box_size[0] - 500));
+        halfHeight = Math.max(halfHeight, Math.abs(y - 500), Math.abs(y + mask.box_size[1] - 500));
+      }
+    }
+  const width = Math.ceil(halfWidth + 16) * 2,
+    height = Math.ceil(halfHeight + 16) * 2;
   const renderer = new THREE.WebGLRenderer({
     alpha: true,
     antialias: false,
@@ -75,7 +90,7 @@ try {
     for (const rotation of rotations) {
       result.textContent = `RUNNING ${id} ${rotation}`;
       const file = `${id}-0-${rotation}.level.json`;
-      const descriptor = await json(`${stage}/${file}`);
+      const descriptor = staged.get(file);
       const document3d = await json(`${stage}/${file}.scene.json`);
       const reference = document3d.assetSources[0];
       const bytes = await (await fetch(`/library/${reference.model}`)).arrayBuffer();
@@ -127,24 +142,14 @@ try {
           if (x >= 0 && y >= 0 && x < width && y < height) coverage.add(y * width + x);
         }
       const rendered = plant.getContext("2d").getImageData(0, 0, width, height);
-      // Render the authored alpha-clipped triangles through the same GPU path.
+      // Render authored coverage, including compact alpha, through the GPU path.
       // This separates extraction errors from CPU/GPU rasterization differences.
       const authored = edits.find((entry) => entry.asset === id).gameplay.masks[0];
-      const clippedGeometry = new THREE.BufferGeometry();
-      clippedGeometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(
-          authored.triangles.flatMap((triangle) =>
-            triangle.flatMap((point) => {
-              const [x, y, z] = gameToScene(document3d.camera, ...point);
-              return [x, z, -y];
-            }),
-          ),
-          3,
-        ),
-      );
-      const clippedMaterial = new THREE.MeshBasicMaterial({ side: THREE.FrontSide });
-      const clippedMesh = new THREE.Mesh(clippedGeometry, clippedMaterial);
+      const authoredMesh = maskReviewMesh(authored, (point) => {
+        const [x, y, z] = gameToScene(document3d.camera, ...point);
+        return [x, z, -y];
+      });
+      const clippedMesh = authoredMesh.root;
       clippedMesh.matrixAutoUpdate = false;
       clippedMesh.matrix.copy(wrapper.matrix);
       const clippedScene = new THREE.Scene();
@@ -163,8 +168,7 @@ try {
         if (covered !== coverage.has(i)) clippedGpuVsMask++;
         if (covered !== Boolean(rendered.data[i * 4 + 3])) clippedGpuVsTexture++;
       }
-      clippedGeometry.dispose();
-      clippedMaterial.dispose();
+      authoredMesh.dispose();
       const matrix = partMatrix(document3d.camera, document3d, document3d.objects[0]);
       const projected = authored.triangles.map((triangle) =>
         triangle.map((point) => {
@@ -183,7 +187,12 @@ try {
             )
           : projected;
         const sampled = new Set();
-        for (const mask of rasterizeMaskGeometry(triangles, masks[0], true))
+        for (const mask of rasterizeMaskGeometry(
+          triangles,
+          masks[0],
+          authored.cullBackfaces,
+          authored.alphaCoverage,
+        ))
           for (const [i, pixel] of decodeRecoveryMask(mask).entries()) {
             if (!pixel) continue;
             const x = mask.box_top_left[0] + (i % mask.box_size[0]) - 500 + width / 2;
@@ -258,10 +267,6 @@ try {
           x + 4,
           y + height + 12,
         );
-        if (rotation === 0 && maskWithoutRenderedLeaf !== 0)
-          throw new Error(
-            `${id}: canonical mask covers ${maskWithoutRenderedLeaf} transparent pixels`,
-          );
         cases.push({
           id,
           rotation,
@@ -284,7 +289,13 @@ try {
   document.body.append(sheet);
   renderer.dispose();
   atlas.close();
-  const status = cases.every((entry) => entry.mismatchesTouchCoverage) ? "PASS" : "FAIL";
+  const status = cases.every(
+    (entry) =>
+      entry.mismatchesTouchCoverage &&
+      (entry.rotation !== 0 || entry.maskWithoutRenderedLeaf === 0),
+  )
+    ? "PASS"
+    : "FAIL";
   result.textContent = `${status} ${cases.length} point-mask compositing diagnostics; discrepancies beyond a one-pixel edge require review: ${JSON.stringify(cases)}`;
 } catch (error) {
   result.textContent = `FAIL ${error.stack ?? error}`;

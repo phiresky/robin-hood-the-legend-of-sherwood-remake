@@ -10002,3 +10002,31 @@ The candidate is not published. Authoring still computes the clipped mesh
 temporarily for its established canopy footprint; this does not yet solve the
 unsupported sampler cases or authoring memory cost. Published foliage migration,
 browser review support for compact coverage and further storage reduction remain.
+
+### Compact coverage visual review and first draft publication
+
+The browser reviewer now independently draws compact mesh UVs, alpha textures,
+cutoffs and material sidedness on the GPU. It preserves diagnostic images on
+failure and sizes its viewport from every tested mask's complete bounds; the
+previous fixed viewport cropped large shrubs. Two helper regressions check
+texture sharing, vertex sampling, sidedness, disposal and legacy opaque coverage.
+
+Shrub 69's complete-bounds review ran 16 point-mask compositions across four
+rotations. GPU compact coverage and the source textured model have zero differing
+pixels at every rotation. CPU bitmap differences are 0/89/52/81 pixels at
+0/90/180/270 degrees. At 90 and 270 degrees some discrepancies are isolated
+rather than immediately adjacent to matching coverage, so the diagnostic fails.
+Snapping vertices to 1/16 pixel reduces those differences to 0/36/28/36 but does
+not eliminate them; no production rasterizer quantization change was made.
+Images are in `fern-gameplay-hQfhNB/browser-review-full/after.png`.
+
+`shrub69-compact-publish-hQfhNB` installs the reviewed asset definition and updates
+the saved Croisement02 descriptor pin. It carries an explicit draft warning for
+rotated CPU rasterization differences and the approximate canopy boundary.
+Publication does not establish rendered gameplay parity. Other published foliage
+still needs migration, and remaining missing asset definitions still need authoring.
+
+The installed saved-scene export `saved-map-exports-31wLjX` contains 15 masks
+and emits both shrub 69 draft warnings. Native construction passes with 5 areas,
+154 sight obstacles, 5 doors, 4 jump pairs, 8,575 grid blocks and 57 elevation
+boundaries; all nine existing transitions apply and reset successfully.

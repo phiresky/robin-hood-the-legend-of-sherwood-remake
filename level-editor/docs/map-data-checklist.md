@@ -252,8 +252,11 @@ definitions occupy about 469 MB before publication, with one shrub alone at
 mesh/UV/alpha representation is now implemented and staged for shrub 69: its
 mask occupies 18.1 MB with 24,334 triangles, and all ten rotated/elevated exports
 match the prior bitmap coverage exactly and pass native construction. This
-format is not yet published; migration, further size reduction and rendered
-verification remain before scaling this authoring path. The experimental
+format is published for shrub 69 as a warned draft. Full-bounds browser review
+matches the compact mesh to the source model exactly, but CPU bitmap differences
+remain at rotated placements (89/52/81 pixels at 90/180/270 degrees).
+Migration, further size reduction and rendered verification remain before scaling
+this authoring path. The experimental
 authoring command still computes clipped geometry temporarily for the footprint.
 Shrubs 73/74 also expose unsupported UV/sampler cases. Geometry-derived
 publication now supports reviewed model hashes in addition to descriptor hashes.
