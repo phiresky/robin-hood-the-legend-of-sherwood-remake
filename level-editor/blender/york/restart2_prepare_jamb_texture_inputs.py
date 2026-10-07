@@ -22,10 +22,10 @@ assert sha(model) == member['model_sha256']
 probe = json.loads((PROBE / 'report.json').read_text())
 assert probe['approved_model_sha256'] == sha(model)
 assert probe['visible_pixels'] == 660
-orientation = json.loads((WORK / 'jamb-orientation-v1/validation.json').read_text())
+orientation = json.loads((WORK / 'jamb-orientation-v2/validation.json').read_text())
 assert orientation['source_model_sha256'] == sha(model)
 assert orientation['exact_shape_uv_material_transform_preserved']
-model = WORK / 'jamb-orientation-v1/model.blend'
+model = WORK / 'jamb-orientation-v2/model.blend'
 assert sha(model) == orientation['model_sha256']
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from render_slots import acquire
@@ -84,6 +84,6 @@ assert before == {o.name: _geometry(o, protect_appearance=True) for o in scene.o
     'status': 'Visual input review pending; no provider request',
     'geometry_uv_materials_preserved': True, 'approved_shape_model_sha256': member['model_sha256'], 'orientation_candidate_sha256': sha(model),
     'texture_receiver_object_names': [OBJECT], 'views_sha256': sha(OUT / 'modified/views.json'),
-    'authority_sha256': sha(OUT / 'authority.json'), 'orientation_guard_sha256': sha(WORK / 'jamb-orientation-v1/validation.json'),
+    'authority_sha256': sha(OUT / 'authority.json'), 'orientation_guard_sha256': sha(WORK / 'jamb-orientation-v2/validation.json'),
 }, indent=2) + '\n')
 print('JAMB INPUTS COMPLETE', flush=True)
