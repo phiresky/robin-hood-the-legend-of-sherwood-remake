@@ -60,3 +60,17 @@ input, and native-camera browser proof. Verify all masks in current query order,
 including layered/current-state changes; then compare display-format conversion
 and GPU output with a captured reference. Ordinary oblique rendering remains a
 separate physical-depth policy.
+
+`mask-query.mjs` provides a pre-script load membership helper and a current
+character query. Patch references are layer-local, not flattened indices: S03
+disables layer 0 indices 137–140, which are flattened indices 138–141. Current
+patch changes must update that membership before querying. The query scans
+64-pixel cells in row-major order, traverses each cell's stream-ordered masks,
+keeps the first encounter of each identity, then filters exact overlap and the
+character-side predicate. Global mask-index sorting is not equivalent.
+Pass actual grid dimensions; do not estimate them from mask bounds. The actor
+query point for a human is projected foot coordinates `(worldX, worldY-worldZ)`;
+frame origin is separately floored from map point minus center plus frame offset.
+Interaction-target action points are an explicit exception and must come from
+their own state. This helper does not infer scripts, patch applications or
+target point overrides.
