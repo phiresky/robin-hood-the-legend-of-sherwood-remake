@@ -60,6 +60,10 @@ def main():
     manifest = dict(status='Pending user review; no decisions implied',
                     card_count=count, decision_count=decisions, batches=batches,
                     resources_copied=0, models_copied=0)
+    contracts = sum(len(m.get('contract_members', [])) for b in batches
+                    for c in b['cards'] for m in c['members'])
+    artifact_note = (f'The source-state card binds {contracts} artwork contracts; it does not approve '
+                     'physical endpoints, motion, or gameplay. ') if contracts else ''
     args.output.mkdir(parents=True)
     (args.output / 'evidence.json').write_text(json.dumps(manifest, indent=2) + '\n')
     (args.output / 'index.html').write_text(
@@ -71,8 +75,7 @@ def main():
         '</style><h1>Combined pending refinement review</h1><p>' +
         f'{count} cards, {decisions} scoped member decisions. Links open the exact frozen cards and review controls.' +
         '</p><p>Geometry, texture appearance, and source-state application are separate scopes. '
-        'The source-state card binds 82 artwork contracts; it does not approve physical endpoints, motion, or gameplay. '
-        'Already approved batches are excluded.</p><a href="evidence.json">Exact combined evidence manifest</a>' +
+        + artifact_note + 'Already approved batches are excluded.</p><a href="evidence.json">Exact combined evidence manifest</a>' +
         ''.join(sections))
     print(json.dumps(dict(output=str(args.output), cards=count, decisions=decisions,
                           evidence_sha256=sha(args.output / 'evidence.json'))))
