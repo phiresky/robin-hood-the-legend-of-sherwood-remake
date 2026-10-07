@@ -7,10 +7,10 @@ def replace(old,new):
  global text
  assert text.count(old)==1,old
  text=text.replace(old,new)
-replace("OUT=WORK/'restart2/loose-planks-candidate-v1'","OUT=WORK/'restart2/loose-planks-candidate-v3'")
-replace("PLAN=WORK/'restart2/timber-contact-plan-v1/plan.json'","PLAN=WORK/'restart2/timber-edge-fit-v1/plan.json'")
-PLAN=BASE.resolve().parents[2]/'work/york-refinement/restart2/timber-edge-fit-v1/plan.json'
-replace('ec34bcd8e3b98fa5a7e5a957e0b55b86684f7f4ae8096ebfe5c720eddad9bf12','82f33f4e67a2d7ae3038f8b602f0a06ab737b14ca2745df1883b57264c78d081')
+replace("OUT=WORK/'restart2/loose-planks-candidate-v1'","OUT=WORK/'restart2/loose-planks-candidate-v4'")
+replace("PLAN=WORK/'restart2/timber-contact-plan-v1/plan.json'","PLAN=WORK/'restart2/timber-edge-fit-v2/plan.json'")
+PLAN=BASE.resolve().parents[2]/'work/york-refinement/restart2/timber-edge-fit-v2/plan.json'
+replace('ec34bcd8e3b98fa5a7e5a957e0b55b86684f7f4ae8096ebfe5c720eddad9bf12','cf1f7fc07677b676128252255406a6d26f370b056b737d40794f087a4e85b648')
 start=text.index('# Rectangular rightmost variant,');end=text.index('bpy.ops.wm.read_factory_settings',start)
 text=text[:start]+"best={'variant':'Full observed top and separately fitted lower edge','maximum_error':None}\n"+text[end:]
 replace("verts=[(x,y,z) for z in (p['bottom_z'],p['top_z']) for x,y in p['footprint_world']]","verts=[(x,y,p['bottom_z']) for x,y in p['bottom_footprint_world']]+[(x,y,p['top_z']) for x,y in p['footprint_world']]")
