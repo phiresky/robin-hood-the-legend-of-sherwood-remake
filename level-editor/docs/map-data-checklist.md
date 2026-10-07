@@ -923,9 +923,14 @@ raised terrain. Their collision ownership must be reviewed so terrain exclusions
 do not depend on the old building layout. A separate compiler fix now admits
 precise hole-boundary seams on raised receivers, while rejecting hole interiors;
 the full York descriptor is unchanged by that fix. An unpublished physical-deck
-experiment restores the gable's compiled physical navigation but still passes
-only 38/40 native climbs and raises other omission warnings from 8 to 45; the
-lower handoff lacks full actor-footprint support. It is not ready for publication. It also exposed
+experiment now passes all **40/40 native climbs** after fixing recovery of
+fractional edges when rounding joins separate solids. The previous 38/40 result
+came from a rounded collision wedge at the lower handoff, not insufficient mesh
+width. The regression preserves unrelated collision through four turned and
+translated placements, without changing the integer navigation contour or actor
+tolerances. The experiment still raises omission warnings from 8 to 45 and is
+not ready for publication. The freshly compiled published York descriptor is
+unchanged. The experiment also exposed
 and fixed a collinear obstacle-triangulation crash, with coverage preserved by a
 captured regression. The mesh review has 596/602 sampled
 flight hits, maximum nearest-mesh height residual 0.872101 and maximum uncovered

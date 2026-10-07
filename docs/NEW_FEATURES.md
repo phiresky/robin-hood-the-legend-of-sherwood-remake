@@ -25,6 +25,9 @@
   Obstacle island triangulation tolerates collinear bridge triangles while
   checking the complete collision coverage; degenerate authored boundaries
   still fail explicitly instead of becoming empty collision.
+  When rounding joins separate solids, each unambiguous fractional landing edge
+  can still be recovered. Other islands and uncertain corners retain collision,
+  and the compatibility contour must remain unchanged on the integer grid.
 
 - **Physical ladder and wall navigation.** Compatible planar climbs export world-space
   floors and live collision alongside stairs. Ladder entry/exit climbing orders

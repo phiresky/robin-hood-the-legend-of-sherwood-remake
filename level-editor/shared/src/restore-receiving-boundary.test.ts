@@ -7,6 +7,45 @@ import { restoreReceivingBoundary, restoreObstacleBoundary } from "./restore-rec
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 
+test("a separate subpixel solid cannot erase an unambiguous landing edge", () => {
+  const fixture: { points: Point[]; blockedCoverage: MultiPolygon } = JSON.parse(
+    readFileSync(
+      new URL("../test-fixtures/partial-obstacle-edge-recovery.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const island: Point[] = [
+    [1614.005, 1832.591],
+    [1614.007, 1832.591],
+    [1614.007, 1832.593],
+    [1614.005, 1832.593],
+  ];
+  assert.deepEqual(clipping.intersection([island], fixture.blockedCoverage), []);
+  assert.deepEqual(clipping.difference([island], [fixture.points]), []);
+  const falseStrip: Point[] = [
+    [1831.9, 1728.6],
+    [1832, 1728.6],
+    [1832, 1728.7],
+    [1831.9, 1728.7],
+  ];
+  for (const rotation of [0, 1, 2, 3]) {
+    const place = ([x, y]: Point): Point => {
+      for (let i = 0; i < rotation; i++) [x, y] = [-y, x];
+      return [x + rotation * 4000, y + rotation * 5000];
+    };
+    const boundary = fixture.points.map(place);
+    const sources = [...fixture.blockedCoverage, [island]].map((p) => p.map((r) => r.map(place)));
+    const restored = restoreObstacleBoundary(boundary, sources);
+    assert.ok(restored, `quarter turns: ${rotation}`);
+    const rounded = quantizeGeneratedMotionPolygon([restored], Math.round, "Restored islands", []);
+    assert.ok(rounded);
+    assert.deepEqual(clipping.xor(rounded, [boundary]), []);
+    assert.deepEqual(clipping.difference([island.map(place)], [restored]), []);
+    assert.deepEqual(clipping.intersection([restored], [falseStrip.map(place)]), []);
+    assert.equal(restoreObstacleBoundary(boundary, [...sources, ...sources]), undefined);
+  }
+});
+
 test("obstacle edge interiors survive unrelated rounded chains and cropped frame strips", () => {
   const fixture: { points: Point[]; blockedCoverage: MultiPolygon } = JSON.parse(
     readFileSync(

@@ -68,11 +68,17 @@ function restoreObstacleEdges(boundary: Point[], sources: MultiPolygon): Point[]
   sources = sources.filter(
     (source) => fixedPolygonBoolean("intersection", source, [[boundary]]).length,
   );
-  if (sources.length !== 1) return undefined;
-  const edges = sources[0]!.flatMap((contour) => {
-    const ring = simplifyMotionRing(contour, 2 / 1048576);
-    return ring.map((a, i): Edge => ({ a, b: ring[(i + 1) % ring.length]! }));
-  });
+  if (!sources.length) return undefined;
+  // Rounding can join independently placed solids. An unrelated island must
+  // not discard a uniquely identifiable edge elsewhere on the same obstacle.
+  // Competing edges still remain ambiguous, and all represented solid coverage
+  // is retained by the union below.
+  const edges = sources.flatMap((source) =>
+    source.flatMap((contour) => {
+      const ring = simplifyMotionRing(contour, 2 / 1048576);
+      return ring.map((a, i): Edge => ({ a, b: ring[(i + 1) % ring.length]! }));
+    }),
+  );
   const matches = boundary.map((vertex, i) => {
     const next = boundary[(i + 1) % boundary.length]!;
     const choices = edges.filter((edge) => edgePoint(edge, vertex) && edgePoint(edge, next));

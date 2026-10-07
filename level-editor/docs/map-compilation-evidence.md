@@ -10071,6 +10071,39 @@ support at the lower handoff; point-level admission alone is insufficient. The
 published baseline and the earlier 200/200 isolated placement result remain
 unchanged. This broad ownership experiment is diagnostic, not a parity success.
 
+### Fractional collision edges across independent solids (2026-10-07)
+
+The physical-deck candidate's lower gable handoff lacked 0.001499 square game
+units of footprint support. Closing representation-scale cracks did not remove
+the wedge: a nearby precise obstacle still contained integer-grid edges. Edge
+recovery had rejected the entire obstacle when its rounded outline intersected
+more than one disconnected source solid.
+
+`restoreObstacleBoundary` now considers edges from all intersecting source
+solids independently. Only a uniquely identified edge can be restored; competing
+edges retain their rounded geometry. The result is unioned with all previously
+represented source collision, and must still round to exactly the same integer
+obstacle. This does not merge or discard asset collision ownership or increase
+actor clearance tolerances.
+
+A regression adds a separate subpixel collision island to an existing landing
+fixture. It fails before the change and passes afterwards, including quarter
+turns with translated coordinates. It checks that the separate island remains
+solid, the false landing strip disappears, the integer contour is unchanged and
+ambiguous duplicate sources cannot authorize a cut. All 159 focused compiler,
+boundary and precise-contour tests pass; app typechecking, focused lint,
+formatting and the game build pass.
+
+Fresh export `saved-map-exports-eXYtfj` from stage
+`raised-terrain-surface-2t5N1c` passes **40/40 complete-character climb routes**
+in the native engine, including both gable directions. The actor audit finished
+successfully in 101.02 seconds. This supersedes the candidate's 38/40 result
+above. The stage remains unpublished because its 45 omission warnings and other
+feature coverage still need review. Fresh published-scene export
+`saved-map-exports-fIgcrk` is structurally identical to the previously verified
+published York descriptor in `precise-plane-saved-ie9dhna_`; its fresh native
+audit also passes all 40 climb routes in 85.35 seconds.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms
