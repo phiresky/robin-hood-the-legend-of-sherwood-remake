@@ -22,7 +22,7 @@ def sample(values,t,query):
     closed=np.vstack([values,values[0]]);abscissa=np.r_[t,1.]
     return np.column_stack([np.interp(np.mod(query,1),abscissa,closed[:,i]) for i in range(values.shape[1])])
 
-def fit(lower,upper):
+def fit(lower,upper,*,include_geometry=False):
     lo,ln,lt=loop_data(lower['positions'],lower['normals']);hi,hn,ht=loop_data(upper['positions'],upper['normals'])
     queries=np.arange(128)/128;high=sample(hi,ht,queries);high-=high.mean(axis=0);high/=np.sqrt(np.mean(high[:,:2]**2))
     costs=[]
@@ -46,7 +46,10 @@ def fit(lower,upper):
         if quality['collapsed_quads']==quality['reversed_quads']==quality['undefined_reference_normals']==0:break
     original_errors=[float(cKDTree(points).query(original)[0].max()) for points,original in [(lower_points,lo),(upper_points,hi)]]
     if max(original_errors)>1e-7:raise ValueError('Existing boundary vertex lost during edge subdivision')
-    return dict(lower_height=float(lo[0,2]),upper_height=float(hi[0,2]),lower_vertices=len(lo),upper_vertices=len(hi),common_subdivision_vertices=len(t),lower_phase=phase,normalized_shape_cost=float(min(costs)),original_boundary_vertex_error=original_errors,quality=quality,tangent_scale=tangent_scale,tangent_scale_attempts=attempts,eligible_for_bounded_integration=quality['collapsed_quads']==quality['reversed_quads']==quality['undefined_reference_normals']==0,limits=['CPU correspondence only; no saved mesh or source rasterization approval.','Existing boundary edges would be subdivided without moving original points.','Actual collar source coverage, physical contact and solid/actual appearance remain required.'])
+    result=dict(lower_height=float(lo[0,2]),upper_height=float(hi[0,2]),lower_vertices=len(lo),upper_vertices=len(hi),common_subdivision_vertices=len(t),lower_phase=phase,normalized_shape_cost=float(min(costs)),original_boundary_vertex_error=original_errors,quality=quality,tangent_scale=tangent_scale,tangent_scale_attempts=attempts,eligible_for_bounded_integration=quality['collapsed_quads']==quality['reversed_quads']==quality['undefined_reference_normals']==0,limits=['CPU correspondence only; no saved mesh or source rasterization approval.','Existing boundary edges would be subdivided without moving original points.','Actual collar source coverage, physical contact and solid/actual appearance remain required.'])
+    if include_geometry:
+        result['geometry']={'rows':rows.tolist(),'parameters':parameters.tolist(),'lower_original':lo.tolist(),'upper_original':hi.tolist(),'lower_correspondence':np.mod(t+phase,1.).tolist(),'upper_correspondence':t.tolist()}
+    return result
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--field-cuts',type=Path,default=OUT/'field-collar-cuts-v2.json');parser.add_argument('--retained',type=Path,default=OUT/'retained-collars-v1.json');parser.add_argument('--output',type=Path,default=OUT/'collar-fitting-v1.json');args=parser.parse_args()
