@@ -4,11 +4,23 @@ import type { MissionStateContract } from "../../shared/src/mission-state.ts";
 import {
   nativePresentationFrame,
   type NativeStatePresentationContract,
+  type NativePresentationFrame,
 } from "../../shared/src/native-state-presentation.ts";
 import {
   SourceAnimationClocks,
   type SourceClockHandle,
 } from "../../shared/src/native-animation-clocks.ts";
+
+function sameArtwork(a: NativePresentationFrame, b: NativePresentationFrame) {
+  return (
+    a.path === b.path &&
+    a.sha256 === b.sha256 &&
+    a.width === b.width &&
+    a.height === b.height &&
+    a.offset[0] === b.offset[0] &&
+    a.offset[1] === b.offset[1]
+  );
+}
 
 /** Explicit external-clock port. Its implementation must not advance another elapsed-time cursor. */
 export interface PhysicalTickConsumer {
@@ -86,12 +98,7 @@ export class SourceContractClockBinding {
           t.representation !== "physical"
         )
           throw new Error(`Physical target has no exact native clock identity: ${t.id}`);
-        if (
-          e.initial_frame &&
-          !e.frames.some(
-            (f) => f.path === e.initial_frame!.path && f.sha256 === e.initial_frame!.sha256,
-          )
-        )
+        if (e.initial_frame && !e.frames.some((f) => sameArtwork(f, e.initial_frame!)))
           throw new Error(`Unbound inactive physical artwork: ${t.id}`);
         const cycle = e.frames.reduce((sum, f) => sum + f.delay + 1, 0);
         if (t.actions.some((a) => a.timing.mode !== "loop" || a.timing.cycleTicks !== cycle))
@@ -227,9 +234,7 @@ export class SourceContractClockBinding {
     const cursor = this.clocks.read(this.physicalToken(id));
     const e = this.native!.elements.find((e) => e.id === this.physicalIds.get(id))!;
     if (!cursor.active && e.initial_frame) {
-      const index = e.frames.findIndex(
-        (f) => f.path === e.initial_frame!.path && f.sha256 === e.initial_frame!.sha256,
-      );
+      const index = e.frames.findIndex((f) => sameArtwork(f, e.initial_frame!));
       if (index < 0) throw new Error(`Unbound inactive physical artwork: ${id}`);
       return e.frames.slice(0, index).reduce((sum, f) => sum + f.delay + 1, 0);
     }
