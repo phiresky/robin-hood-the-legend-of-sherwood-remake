@@ -55,6 +55,8 @@ def prepare():
  print('Prepared',len(records),'guarded writes; live untouched')
 
 def apply():
+ hold=STAGE/'publication-hold.json'
+ assert not hold.exists() or read(hold)['status']=='RESOLVED', 'Terrain ownership hold must be resolved with reviewed evidence before publication'
  evidence,index,retired,protected=scope_proof();manifest=read(STAGE/'promotion.json');prior=read(STAGE/'palette-before.json');index_record=next(r for r in manifest['files'] if r['target']==str(LIVE/'3d-assets/index.json'));original_check=promotion.check_gameplay_preserved;original_writer=promotion.write_asset_index
  def retirement_check(source,target):
   if source is not None or str(target) not in retired:return original_check(source,target)
