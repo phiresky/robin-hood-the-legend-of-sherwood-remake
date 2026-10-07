@@ -9707,3 +9707,16 @@ construction (11 motion areas, 106 sight obstacles, 15 doors, 10 jump pairs,
 5,016 grid blocks, 65 elevation boundaries and three masks) and all nine
 recovered state apply/reset checks. This does not publish the fern candidates
 or resolve the missing fallen-log and bridge definitions.
+
+The browser diagnostic now separately renders the authored alpha-clipped
+triangles on the GPU. At 90/180/270 degrees, CPU versus clipped-GPU differences
+are 23/9/25 pixels for fern 35 and 18/17/18 for fern 76. Clipped-GPU versus
+textured-GPU differences are smaller: 10/2/4 and 8/2/8 respectively. Both
+canonical views agree in all three paths. This localizes most discrepancies to
+rasterization, with a smaller texture/clipped-geometry discrepancy still open.
+The reproducible subpixel sweep (`compositing/coverage-subpixel.log`) reduces
+CPU/clipped-GPU differences to 3/4/7 and 7/3/5 pixels using a 1/16-pixel grid;
+1/256 and 1/65536 grids do not give comparable reductions. This is evidence from
+one software renderer, not a portable precision contract. Production sampling
+is unchanged. A subsequent edge-rule experiment did not produce fixture results
+before the browser observation failed; its unverified code was removed.

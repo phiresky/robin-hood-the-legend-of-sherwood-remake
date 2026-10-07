@@ -3,6 +3,8 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { partMatrix } from "../../shared/src/level3d.ts";
 import { gameToScene } from "../../shared/src/scene.ts";
+import { sceneToGame, applyAffineMatrix } from "../../shared/src/geometry.ts";
+import { rasterizeMaskGeometry } from "../../shared/src/compile-mask-geometry.ts";
 import { decodeRecoveryMask } from "../../pipeline/src/recover-mask-bitmap.ts";
 import { TextureDisplay } from "../src/texture-display.ts";
 import { decodeSpritePixels } from "../src/entity-projection.ts";
@@ -17,6 +19,7 @@ const image = async (url) => createImageBitmap(await (await fetch(url)).blob());
 try {
   const stage = new URLSearchParams(location.search).get("stage");
   if (!stage) throw new Error("Provide a staged fern export URL");
+  const edits = await json(`${stage}/edits.json`);
   const manifest = await json("/library/game-data/Data/Characters/RobinTown.rhs.d/manifest.json");
   const profile = manifest.profiles.find((profile) => profile.name === "Robin des bois");
   const frame = profile.rows.find((row) => row.action_id === 3 && row.direction === 8).frames[0];
@@ -123,6 +126,74 @@ try {
           if (x >= 0 && y >= 0 && x < width && y < height) coverage.add(y * width + x);
         }
       const rendered = plant.getContext("2d").getImageData(0, 0, width, height);
+      // Render the authored alpha-clipped triangles through the same GPU path.
+      // This separates extraction errors from CPU/GPU rasterization differences.
+      const authored = edits.find((entry) => entry.asset === id).gameplay.masks[0];
+      const clippedGeometry = new THREE.BufferGeometry();
+      clippedGeometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(
+          authored.triangles.flatMap((triangle) =>
+            triangle.flatMap((point) => {
+              const [x, y, z] = gameToScene(document3d.camera, ...point);
+              return [x, z, -y];
+            }),
+          ),
+          3,
+        ),
+      );
+      const clippedMaterial = new THREE.MeshBasicMaterial({ side: THREE.FrontSide });
+      const clippedMesh = new THREE.Mesh(clippedGeometry, clippedMaterial);
+      clippedMesh.matrixAutoUpdate = false;
+      clippedMesh.matrix.copy(wrapper.matrix);
+      const clippedScene = new THREE.Scene();
+      clippedScene.add(clippedMesh);
+      renderer.render(clippedScene, camera);
+      const clippedCanvas = document.createElement("canvas");
+      clippedCanvas.width = width;
+      clippedCanvas.height = height;
+      const clippedContext = clippedCanvas.getContext("2d");
+      clippedContext.drawImage(renderer.domElement, 0, 0);
+      const clippedPixels = clippedContext.getImageData(0, 0, width, height).data;
+      let clippedGpuVsMask = 0;
+      let clippedGpuVsTexture = 0;
+      for (let i = 0; i < width * height; i++) {
+        const covered = Boolean(clippedPixels[i * 4 + 3]);
+        if (covered !== coverage.has(i)) clippedGpuVsMask++;
+        if (covered !== Boolean(rendered.data[i * 4 + 3])) clippedGpuVsTexture++;
+      }
+      clippedGeometry.dispose();
+      clippedMaterial.dispose();
+      const matrix = partMatrix(document3d.camera, document3d, document3d.objects[0]);
+      const projected = authored.triangles.map((triangle) =>
+        triangle.map((point) => {
+          const [x, y, z] = sceneToGame(
+            document3d.camera,
+            applyAffineMatrix(matrix, gameToScene(document3d.camera, ...point)),
+          );
+          return [x, y - z, 0];
+        }),
+      );
+      const subpixelComparisons = [];
+      for (const precision of [0, 16, 256, 65536]) {
+        const triangles = precision
+          ? projected.map((triangle) =>
+              triangle.map((point) => point.map((n) => Math.round(n * precision) / precision)),
+            )
+          : projected;
+        const sampled = new Set();
+        for (const mask of rasterizeMaskGeometry(triangles, masks[0], true))
+          for (const [i, pixel] of decodeRecoveryMask(mask).entries()) {
+            if (!pixel) continue;
+            const x = mask.box_top_left[0] + (i % mask.box_size[0]) - 500 + width / 2;
+            const y = mask.box_top_left[1] + Math.floor(i / mask.box_size[0]) - 500 + height / 2;
+            if (x >= 0 && y >= 0 && x < width && y < height) sampled.add(y * width + x);
+          }
+        let gpuDifferences = 0;
+        for (let i = 0; i < width * height; i++)
+          if (sampled.has(i) !== Boolean(clippedPixels[i * 4 + 3])) gpuDifferences++;
+        subpixelComparisons.push({ precision, gpuDifferences });
+      }
       let renderedLeafWithoutMask = 0;
       let mismatchesTouchCoverage = true;
       for (let i = 0; i < width * height; i++)
@@ -198,6 +269,9 @@ try {
           maskWithoutRenderedLeaf,
           renderedLeafWithoutMask,
           mismatchesTouchCoverage,
+          clippedGpuVsMask,
+          clippedGpuVsTexture,
+          subpixelComparisons,
         });
       }
       row++;
