@@ -20,7 +20,7 @@ def main():
  parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,default=1);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);dest=OUT/f'restart2/tree06-v{args.revision}';dest.mkdir(exist_ok=False);acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0;working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-06';wood_node='scenery-tree06-wood';crown_node='foliage-tree06-inferred-crown';name='Northwest Slender Forked Tree'
  native=json.loads((OUT/'baseline/masks/manifest.json').read_text())
  for row in native['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
- row=next(r for r in native['masks'] if r['index']==6);assert row['obstacle_indices']==[];alpha=Image.open(row['png']).convert('L');wood=Image.open(OUT/'restart2/tree06-wood-source-v1/wood-domain.png').convert('L')
+ row=next(r for r in native['masks'] if r['index']==6);assert row['obstacle_indices']==[];alpha=Image.open(row['png']).convert('L');wood_source=OUT/('restart2/tree06-wood-source-v2' if args.revision>=7 else 'restart2/tree06-wood-source-v1');wood=Image.open(wood_source/'wood-domain.png').convert('L')
  wood.save(dest/'wood-domain.png');ImageChops.subtract(alpha,wood).save(dest/'deferred-domain.png');native['masks'].append(dict(row,index=206,png=str(dest/'wood-domain.png')))
  base_y=-428/SIN
  def point(x,y):return Vector((x,base_y,(428-y)/COS))
