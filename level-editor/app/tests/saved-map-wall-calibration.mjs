@@ -49,7 +49,8 @@ export async function savedMapWallCalibration(document, descriptors, library = "
         const reference = document.assetSources?.find((reference) => reference.id === id);
         assert.ok(reference, `Missing pinned wall asset: ${id}`);
         const model = await loadSceneModel(library, reference);
-        const root = model.getRoot().getDefaultScene();
+        const root = model.getRoot().getDefaultScene() ?? model.getRoot().listScenes()[0];
+        assert.ok(root, `Wall model has no scene: ${id}`);
         const map = root.listChildren().find((node) => node.getName() === "map");
         assert.ok(map && map.listChildren().length === 1, `Invalid standalone wall: ${id}`);
         const group = map.listChildren()[0];

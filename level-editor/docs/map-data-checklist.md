@@ -29,6 +29,11 @@ all other gameplay data before refreshing them. The reusable check is
 `node refinement/check-wall-fixture-coverage.mjs`. All 66 enabled native map
 compilation integration tests pass against the refreshed fixtures, including
 wall routing/sight, repeated material queries and elevated lighting.
+The diagnostic wall loader also matches the editor's calibration exactly for a
+pinned synthetic GLB with a transformed Z-up source part, rotated section and
+implicit first scene. Changed model bytes reject. Ordinary-sector route sampling
+of the combined ten-map snapshots is a separate check and is not implied by the
+construction/control results above.
 
 Rounded landing contours now repair crossed subpixel corners consistently in
 the compiler and native validator while retaining their exact contours. The
