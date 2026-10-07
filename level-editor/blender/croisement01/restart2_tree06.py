@@ -24,6 +24,22 @@ def main():
  wood.save(dest/'wood-domain.png');ImageChops.subtract(alpha,wood).save(dest/'deferred-domain.png');native['masks'].append(dict(row,index=206,png=str(dest/'wood-domain.png')))
  base_y=-428/SIN
  def point(x,y):return Vector((x,base_y,(428-y)/COS))
+ # Infer a supported root centerline without collapsing the swept wood volume.
+ terrain_nodes={'ground'}|{f'building-{i:03d}' for i in [*range(10),*range(76,81)]};support_vertices=[];support_faces=[]
+ for terrain_obj in working.all_objects:
+  if terrain_obj.type!='MESH' or terrain_obj.get('source_node') not in terrain_nodes:continue
+  offset=len(support_vertices);support_vertices.extend(terrain_obj.matrix_world@v.co for v in terrain_obj.data.vertices);support_faces.extend(tuple(offset+k for k in face.vertices) for face in terrain_obj.data.polygons)
+ support_tree=BVHTree.FromPolygons(support_vertices,support_faces);native_ray=Vector((0,-COS,SIN))
+ def upward_hit(x,y):
+  origin=point(x,y)+native_ray*5000
+  for _ in range(100):
+   hit,normal,_,_=support_tree.ray_cast(origin,-native_ray,10000)
+   if hit is None:raise ValueError('Missing upward root centerline support')
+   if normal.z>.35:return hit
+   origin=hit-native_ray*.01
+  raise ValueError('Too many root support intersections')
+ main_anchor=point(386,357);future_shift=native_ray*((upward_hit(386,357)-main_anchor).dot(native_ray)+.2)
+ def root_center(x,y,r):return upward_hit(x,y)+native_ray*((r+.3)/SIN)-future_shift
  trace=[(386,358,22),(380,332,19),(381,290,17),(382,240,15),(382,190,14),(380,145,14),(377,100,13),(380,45,13),(383,-35,12)]
  body=tube('Slender continuous native trunk',[point(x,y) for x,y,r in trace]+[Vector((382,base_y,690)),Vector((375,base_y,785))],[r for x,y,r in trace]+[10,3]);body['defer_union']=True;rng=random.Random(106)
  domain=np.asarray(wood)>0;xx=np.arange(domain.shape[1])+334
@@ -35,7 +51,7 @@ def main():
   coords=[point(x,y) for x,y,r in branch]+[Vector((branch[-1][0],base_y,690)),Vector((branch[-1][0]+(-40 if label.startswith('Left') else 40),base_y,780))];part=tube(label,coords,[r for x,y,r in branch]+[4,1]);domain=np.asarray(wood)>0
   for sy in range(domain.shape[0]):domain[sy]&=((xx<367) if label.startswith('Left') else (xx>397))&(sy<140)
   fit_native_width(part,domain,'west-cut',x0=334,y0=0);union(body,part)
- root=tube('Observed descending slender root',[point(387,345),point(399,377),point(411,404),point(413,423)],[9,5,3,.5]);domain=np.asarray(wood)>0;domain[:360]=False
+ root_trace=[(389,365,7),(399,377,5),(411,404,3),(413,423,.5)];root_centers=[point(387,345)]+[root_center(x,y,r) for x,y,r in root_trace];root=tube('Observed descending slender root',root_centers,[9]+[r for x,y,r in root_trace]);domain=np.asarray(wood)>0;domain[:360]=False
  tube_helpers.fit_short_root(root,domain,x0=334);union(body,root)
  # The native source includes a thin crossing twig between the observed forks.
  branch_trace=[(357,109),(376,104),(396,101),(410,98)]
@@ -67,6 +83,7 @@ def main():
  for target in [obj,crown]:
   for vertex in target.data.vertices:vertex.co+=shift
   target.data.update()
+ (dest/'root-centerline.json').write_text(json.dumps(dict(method='Full swept wood tube along native-ray supported centerline; no per-vertex terrain draping',local_centers=[list(p) for p in root_centers],future_shift=list(future_shift),support_is_archived_hypothesis=True),indent=2)+'\n')
  (dest/'support-placement.json').write_text(json.dumps(dict(hit=list(hit),owner=anchor_owner,shift=list(shift),skipped=skipped,claim='Private placement only; contact review required'),indent=2)+'\n')
  keep={o for o in working.all_objects if o.type=='MESH' and (o in [obj,crown] or o.get('source_node') in terrain_nodes)}
  for other in list(bpy.data.objects):
