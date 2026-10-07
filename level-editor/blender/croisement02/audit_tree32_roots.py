@@ -47,7 +47,7 @@ def preserved_mesh_state(worker, exclude_scoped_wood=False):
 
 
 def main(release_slot=True):
-    parser=argparse.ArgumentParser();parser.add_argument('--worker',type=Path,default=tree_workspace(32));parser.add_argument('--preservation-base',type=Path);parser.add_argument('--output',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    parser=argparse.ArgumentParser();parser.add_argument('--worker',type=Path,default=tree_workspace(32));parser.add_argument('--preservation-base',type=Path);parser.add_argument('--output',type=Path);parser.add_argument('--domain-review',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     worker=args.worker.resolve();model_hash=sha(worker/'model.blend');output=args.output.resolve() if args.output else worker/'inspection';output.mkdir(parents=True,exist_ok=True);acquire()
     try:
         original=args.preservation_base.resolve() if args.preservation_base else tree_workspace(32)
@@ -82,7 +82,14 @@ def main(release_slot=True):
         scene.render.filepath=str(destination/'render.png');bpy.ops.render.render(write_still=True,scene=scene.name)
         actual=np.asarray(Image.open(destination/'render.png').convert('RGBA'))[:,:,3]>127
         row=next(r for r in json.loads((OUT/'scenery-domains/inventory.json').read_text())['masks'] if r['index']==32)
-        native=Image.new('L',(1792,1152));native.paste(Image.open(row['png']).convert('L'),tuple(row['box_top_left']))
+        domain_review=None
+        mask_path=Path(row['png'])
+        if args.domain_review:
+            domain_review=json.loads(args.domain_review.read_text());proposal_path=args.domain_review.parent/'proposal.json'
+            if domain_review.get('status')!='PASS_ROOT_SCOPED_WOOD_DOMAIN_CORRECTION' or sha(proposal_path)!=domain_review['proposal_sha256']:raise ValueError('Unaccepted or stale wood-domain correction')
+            proposal=json.loads(proposal_path.read_text());mask_path=Path(proposal['proposed_mask'])
+            if sha(mask_path)!=proposal['proposed_mask_sha256']:raise ValueError('Reviewed source domain changed')
+        native=Image.new('L',(1792,1152));native.paste(Image.open(mask_path).convert('L'),tuple(row['box_top_left']))
         allocation=Image.new('L',native.size);ImageDraw.Draw(allocation).rectangle((1040,650,1115,754),fill=255)
         local=(np.asarray(native)>0)&(np.asarray(allocation)>0)
         expected=local[top:bottom,left:right];missing=expected&~actual
@@ -96,7 +103,7 @@ def main(release_slot=True):
                 hit,location,normal,index,obj,matrix=scene.ray_cast(deps,Vector((x,-y/SIN,0))+RAY*5000,-RAY)
                 samples.append(dict(source=[x,y],world=list(location) if hit else None))
         interface=expected[:675-top];interface_missing=missing[:675-top]
-        write_json(destination/'report.json',dict(interface_expected_pixels=int(interface.sum()),interface_missing_pixels=int(interface_missing.sum()),interface_source_coverage=float(1-interface_missing.sum()/interface.sum()),model_sha256=model_hash,domain_sha256=sha(destination/'domain.png'),expected_pixels=int(expected.sum()),missing_pixels=int(missing.sum()),source_coverage=float((expected&actual).sum()/expected.sum()),root_expected_pixels=int(expected[728-top:].sum()),root_missing_pixels=int(missing[728-top:].sum()),root_source_coverage=float((expected[728-top:]&actual[728-top:]).sum()/expected[728-top:].sum()),source_crop=box,samples=samples,status='local native32 stem and basal-root measurement; requires visual review'))
+        write_json(destination/'report.json',dict(scoped_domain_review_sha256=sha(args.domain_review) if args.domain_review else None,interface_expected_pixels=int(interface.sum()),interface_missing_pixels=int(interface_missing.sum()),interface_source_coverage=float(1-interface_missing.sum()/interface.sum()),model_sha256=model_hash,domain_sha256=sha(destination/'domain.png'),expected_pixels=int(expected.sum()),missing_pixels=int(missing.sum()),source_coverage=float((expected&actual).sum()/expected.sum()),root_expected_pixels=int(expected[728-top:].sum()),root_missing_pixels=int(missing[728-top:].sum()),root_source_coverage=float((expected[728-top:]&actual[728-top:]).sum()/expected[728-top:].sum()),source_crop=box,samples=samples,status='local native32 stem and basal-root measurement; requires visual review'))
         if sha(worker/'model.blend')!=model_hash:raise ValueError('Audit changed worker')
         print(destination)
     finally:

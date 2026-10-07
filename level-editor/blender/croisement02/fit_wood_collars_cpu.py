@@ -22,20 +22,43 @@ def sample(values,t,query):
     closed=np.vstack([values,values[0]]);abscissa=np.r_[t,1.]
     return np.column_stack([np.interp(np.mod(query,1),abscissa,closed[:,i]) for i in range(values.shape[1])])
 
-def fit(lower,upper,*,include_geometry=False):
+def fit(lower,upper,*,include_geometry=False,tangent_mode="up-projection",forced_phase=None,tangent_smoothing=0.):
     lo,ln,lt=loop_data(lower['positions'],lower['normals']);hi,hn,ht=loop_data(upper['positions'],upper['normals'])
     queries=np.arange(128)/128;high=sample(hi,ht,queries);high-=high.mean(axis=0);high/=np.sqrt(np.mean(high[:,:2]**2))
     costs=[]
     for shift in queries:
         low=sample(lo,lt,queries+shift);low-=low.mean(axis=0);low/=np.sqrt(np.mean(low[:,:2]**2));costs.append(np.mean((low[:,:2]-high[:,:2])**2))
-    phase=float(queries[int(np.argmin(costs))]);t=np.unique(np.r_[ht,np.mod(lt-phase,1.)])
+    phase=float(queries[int(np.argmin(costs))]) if forced_phase is None else float(forced_phase)%1.;t=np.unique(np.r_[ht,np.mod(lt-phase,1.)])
     lower_points=sample(lo,lt,t+phase);upper_points=sample(hi,ht,t)
     lower_normals=sample(ln,lt,t+phase);upper_normals=sample(hn,ht,t)
+    normal_regularization=[]
+    if tangent_smoothing:
+        from scipy.ndimage import gaussian_filter1d
+        smoothed=[]
+        for points,normals,abscissa,queries_now,original in [(lo,ln,lt,t+phase,lower_normals),(hi,hn,ht,t,upper_normals)]:
+            uniform=np.arange(1024)/1024
+            perimeter=np.linalg.norm(np.roll(points,-1,axis=0)-points,axis=1).sum()
+            values=gaussian_filter1d(sample(normals,abscissa,uniform),tangent_smoothing*1024/perimeter,axis=0,mode='wrap')
+            revised=sample(values,uniform,queries_now)
+            revised/=np.linalg.norm(revised,axis=1)[:,None]
+            unit=original/np.linalg.norm(original,axis=1)[:,None]
+            angles=np.degrees(np.arccos(np.clip(np.sum(unit*revised,axis=1),-1,1)))
+            normal_regularization.append(dict(radius=tangent_smoothing,maximum_degrees=float(angles.max()),p95_degrees=float(np.quantile(angles,.95))))
+            smoothed.append(revised)
+        lower_normals,upper_normals=smoothed
     tangents=[];height=float(hi[0,2]-lo[0,2])
     if height<=0:raise ValueError('Collar height is not positive')
-    for normals in [lower_normals,upper_normals]:
+    for normals,points in [(lower_normals,lower_points),(upper_normals,upper_points)]:
         normals/=np.linalg.norm(normals,axis=1)[:,None]
-        tangent=np.array([0.,0.,1.])-normals*normals[:,2,None];length=np.linalg.norm(tangent,axis=1)
+        if tangent_mode=='boundary-cross':
+            forward=np.roll(points,-1,axis=0)-points;backward=points-np.roll(points,1,axis=0)
+            around=forward/np.linalg.norm(forward,axis=1)[:,None]+backward/np.linalg.norm(backward,axis=1)[:,None]
+            around/=np.linalg.norm(around,axis=1)[:,None]
+            tangent=np.cross(normals,around);tangent=np.where(tangent[:,2,None]<0,-tangent,tangent)
+        elif tangent_mode=='up-projection':
+            tangent=np.array([0.,0.,1.])-normals*normals[:,2,None]
+        else:raise ValueError('Unknown tangent mode')
+        length=np.linalg.norm(tangent,axis=1)
         if np.any(length<1e-6):raise ValueError('Horizontal cap normal cannot define upward collar tangent')
         tangents.append(tangent/length[:,None]*height)
     attempts=[]
@@ -46,7 +69,7 @@ def fit(lower,upper,*,include_geometry=False):
         if quality['collapsed_quads']==quality['reversed_quads']==quality['undefined_reference_normals']==0:break
     original_errors=[float(cKDTree(points).query(original)[0].max()) for points,original in [(lower_points,lo),(upper_points,hi)]]
     if max(original_errors)>1e-7:raise ValueError('Existing boundary vertex lost during edge subdivision')
-    result=dict(lower_height=float(lo[0,2]),upper_height=float(hi[0,2]),lower_vertices=len(lo),upper_vertices=len(hi),common_subdivision_vertices=len(t),lower_phase=phase,normalized_shape_cost=float(min(costs)),original_boundary_vertex_error=original_errors,quality=quality,tangent_scale=tangent_scale,tangent_scale_attempts=attempts,eligible_for_bounded_integration=quality['collapsed_quads']==quality['reversed_quads']==quality['undefined_reference_normals']==0,limits=['CPU correspondence only; no saved mesh or source rasterization approval.','Existing boundary edges would be subdivided without moving original points.','Actual collar source coverage, physical contact and solid/actual appearance remain required.'])
+    result=dict(lower_height=float(lo[0,2]),upper_height=float(hi[0,2]),lower_vertices=len(lo),upper_vertices=len(hi),common_subdivision_vertices=len(t),tangent_mode=tangent_mode,normal_regularization=normal_regularization,lower_phase=phase,normalized_shape_cost=float(min(costs)),original_boundary_vertex_error=original_errors,quality=quality,tangent_scale=tangent_scale,tangent_scale_attempts=attempts,eligible_for_bounded_integration=quality['collapsed_quads']==quality['reversed_quads']==quality['undefined_reference_normals']==0,limits=['CPU correspondence only; no saved mesh or source rasterization approval.','Existing boundary edges would be subdivided without moving original points.','Actual collar source coverage, physical contact and solid/actual appearance remain required.'])
     if include_geometry:
         result['geometry']={'rows':rows.tolist(),'parameters':parameters.tolist(),'lower_original':lo.tolist(),'upper_original':hi.tolist(),'lower_correspondence':np.mod(t+phase,1.).tolist(),'upper_correspondence':t.tolist()}
     return result

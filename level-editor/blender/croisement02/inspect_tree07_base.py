@@ -12,7 +12,7 @@ from render_slots import acquire,release
 from render_multiview_asset import render
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--mask',type=int,choices=(7,31,32,38),default=7);parser.add_argument('--model',type=Path);parser.add_argument('--output-name',default='base-review-v2');parser.add_argument('--solid-only',action='store_true');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    parser=argparse.ArgumentParser();parser.add_argument('--mask',type=int,choices=(7,31,32,38),default=7);parser.add_argument('--model',type=Path);parser.add_argument('--output-name',default='base-review-v2');parser.add_argument('--solid-only',action='store_true');parser.add_argument('--target-z',type=float);parser.add_argument('--scale',type=float);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
     worker=tree_workspace(args.mask);bank=scenery_workspace('croisement02-north-woodland-bank') if args.mask==7 else OUT/'ground-receiver-review-v5';support_asset=bank.name if args.mask==7 else 'croisement02-ground-receiver';out=OUT/f'tree{args.mask:02d}-root-research'/args.output_name;out.mkdir(parents=True,exist_ok=False)
     hashes={str(w):sha(w/'model.blend') for w in (worker,bank)}
     model=args.model.resolve() if args.model else worker/'model.blend';model_hash=sha(model)
@@ -32,9 +32,11 @@ def main():
     light_data=bpy.data.lights.new('Root contact sun','SUN');light_data.energy=2;light=bpy.data.objects.new(light_data.name,light_data);scene.collection.objects.link(light);light.rotation_euler=(.5,-.4,-.5)
     packet=json.loads((worker/'modified/views.json').read_text());packet['scene_name']=scene.name;packet['object_names']=[o.name for o in isolated];packet.pop('render_object_names',None);packet['tile_size']=[384,384]
     target=Vector({7:(762,-966,65),31:(950,-1137,25),32:(1090,-1298,25),38:(1583,-1225,25)}[args.mask])
+    if args.target_z is not None:target.z=args.target_z
+    if args.scale is not None and args.scale<=0:raise ValueError('Review scale must be positive')
     for index,view in enumerate(packet['views']):
         az=math.radians(index*45);e=math.radians(25);position=target+Vector((math.sin(az)*math.cos(e),-math.cos(az)*math.cos(e),math.sin(e)))*5000;rotation=(target-position).to_track_quat('-Z','Y').to_euler();matrix=rotation.to_matrix().to_4x4();matrix.translation=position
-        view.update(camera_location=list(position),camera_rotation_euler=list(rotation),camera_matrix_world=[list(r) for r in matrix],ortho_scale=120 if args.mask==7 else 140,crop=dict(width=384,height=384))
+        view.update(camera_location=list(position),camera_rotation_euler=list(rotation),camera_matrix_world=[list(r) for r in matrix],ortho_scale=args.scale if args.scale is not None else (120 if args.mask==7 else 140),crop=dict(width=384,height=384))
     write_json(out/'views.json',packet);scene=bpy.data.scenes[packet['scene_name']];scene.render.engine='CYCLES';scene.cycles.samples=8
     modes=('solid',) if args.solid_only else ('textured','solid')
     render(out/'views.json',out/'views',modes=modes,width=384)

@@ -93,6 +93,7 @@ def main():
     parser.add_argument('--prototype', type=Path, required=True)
     parser.add_argument('--packet', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--domain-review', type=Path)
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     if args.output.exists(): raise FileExistsError(args.output)
     evidence = json.loads((args.prototype/'evidence.json').read_text())
@@ -101,7 +102,29 @@ def main():
     model = args.prototype/'model.blend'; old = Path(record['input_model'])
     if sha(model) != evidence['model_sha256'] or sha(old) != record['input_model_sha256']: raise ValueError('Pinned model changed')
     if sha(Path(record['source_mask'])) != record['source_mask_sha256']: raise ValueError('Source mask changed')
+    remaining_pixels = record['unresolved_source_coordinates']
+    source_manifest = old.parent/'source-masks.json'
+    domain_review = None
+    if args.domain_review:
+        domain_review = json.loads(args.domain_review.read_text())
+        proposal_path = Path(domain_review['proposal']) if domain_review.get('proposal') else args.domain_review.parent/'proposal.json'
+        if domain_review.get('status') not in ('accepted','PASS_ROOT_SCOPED_WOOD_DOMAIN_CORRECTION') or sha(proposal_path) != domain_review['proposal_sha256']: raise ValueError('Unaccepted or stale scoped domain review')
+        proposal = json.loads(proposal_path.read_text())
+        if args.tree != 32 or sorted(proposal['changed_pixels']) != sorted(remaining_pixels): raise ValueError('Domain correction does not exactly cover the unresolved pixels')
+        if sha(Path(proposal['first_hit_evidence'])) != proposal['first_hit_evidence_sha256'] or sha(Path(proposal['proposed_mask'])) != proposal['proposed_mask_sha256']: raise ValueError('Scoped domain evidence changed')
+        for proof in proposal['proof_inputs']:
+            if sha(Path(proof['path'])) != proof['sha256']: raise ValueError('Reviewed nonwood receiver changed')
+        remaining_pixels = []
+        source_manifest = proposal_path.parent/'source-masks.json'
     args.output.mkdir(parents=True)
+    if domain_review:
+        revised = json.loads(source_manifest.read_text())
+        for assignment in revised['projections']['exterior']['assignments']:
+            if assignment.get('asset_group') == 'croisement02-tree-32' and assignment.get('mask_indices') == [3801]:
+                assignment['reviewed'] = True
+                assignment['review_note'] = 'Exact nine-pixel nonwood ownership correction independently reviewed; crown131 and shrub71 retain those observed pixels.'
+        source_manifest = args.output/'source-masks.json'
+        source_manifest.write_text(json.dumps(revised,indent=2)+'\n')
     acquire()
     try:
         receiver_path = ROOT/'level-editor/work/croisement02-refinement/ground-receiver-review-v5/model.blend'
@@ -116,7 +139,7 @@ def main():
         if len(ground_points) != 4 or len(ground_faces) != 2: raise ValueError('Unexpected ground geometry')
         ground_bvh = BVHTree.FromPolygons(ground_points, ground_faces, all_triangles=True)
         ground_evidence = dict(model=str(receiver_path), model_sha256=receiver_hash, vertices=[list(p) for p in ground_points], triangles=ground_faces)
-        fragments, properties, pixel_checks = old_islands(old, args.tree, record['unresolved_source_coordinates'])
+        fragments, properties, pixel_checks = old_islands(old, args.tree, remaining_pixels)
         bpy.ops.wm.open_mainfile(filepath=str(model)); bpy.context.preferences.filepaths.save_version = 0
         collection = bpy.data.collections['Croisement02 Working']
         primary = next(o for o in collection.all_objects if o.type == 'MESH' and o.get('asset_group') == f'croisement02-tree-{args.tree}' and o.get('projection_component') != 'crown')
@@ -143,7 +166,7 @@ def main():
         scoped = {o.name:[f.index for f in o.data.polygons if o.data.materials[f.material_index].name.startswith('Unprojected field wood')] for o in parts}
         if any(not faces for faces in scoped.values()): raise ValueError('Empty new-surface projection scope')
         cfg = json.loads((old.parent/'workspace.json').read_text())
-        projection = bake(cfg['map_name'], cfg['source_path'], args.output/'projection.json', receiver_object_names=[o.name for o in parts], receiver_face_indices=scoped, material_suffix='local-field-only', projection_label='exterior', elevation_deg=35., preserve_authored=False, source_mask_manifest=str(old.parent/'source-masks.json'))
+        projection = bake(cfg['map_name'], cfg['source_path'], args.output/'projection.json', receiver_object_names=[o.name for o in parts], receiver_face_indices=scoped, material_suffix='local-field-only', projection_label='exterior', elevation_deg=35., preserve_authored=False, source_mask_manifest=str(source_manifest))
         if faces_hash(parts) != before_projection: raise ValueError('Projection changed world faces')
         if protected != {o.name:_geometry(o, protect_appearance=True) for o in protected_objects}: raise ValueError('Projection changed protected assets')
         support=[]
@@ -159,7 +182,7 @@ def main():
             support.append(dict(source_node=obj['source_node'],ground=support_sections(p,t),near_ground=support_sections(p,t,.5),actual_receiver_samples=len(contacts),minimum_vertical_gap=min(contacts) if contacts else None,maximum_vertical_gap=max(contacts) if contacts else None))
         bpy.ops.wm.save_as_mainfile(filepath=str(args.output/'model.blend'))
         if sha(model) != evidence['model_sha256'] or sha(old) != record['input_model_sha256']: raise ValueError('Input mutation')
-        report=dict(status='PRIVATE HOLD: projected prototype, no renders or approval', model_sha256=sha(args.output/'model.blend'), previous_prototype=str(args.prototype), previous_model_sha256=evidence['model_sha256'], packet_sha256=sha(args.packet), body_world_faces_sha256=body_hash, partition_preserves_world_faces=True, internal_caps_added=0, disconnected_source_checks=pixel_checks, retained_source_fragments=len(fragments), source_scoped_projection=scoped, support=support, actual_ground_receiver=ground_evidence, protected=protected, pending=['Opaque source coverage and nine-pixel exact coverage','Actual terrain receiver footprint and38 terrain-occluded source coverage','Solid/actual independent visual review'])
+        report=dict(status='PRIVATE HOLD: projected prototype, no renders or approval', model_sha256=sha(args.output/'model.blend'), previous_prototype=str(args.prototype), previous_model_sha256=evidence['model_sha256'], packet_sha256=sha(args.packet), body_world_faces_sha256=body_hash, partition_preserves_world_faces=True, internal_caps_added=0, domain_review=str(args.domain_review) if args.domain_review else None, domain_review_sha256=sha(args.domain_review) if args.domain_review else None, disconnected_source_checks=pixel_checks, retained_source_fragments=len(fragments), source_scoped_projection=scoped, support=support, actual_ground_receiver=ground_evidence, protected=protected, pending=['Opaque source coverage and nine-pixel exact coverage','Actual terrain receiver footprint and38 terrain-occluded source coverage','Solid/actual independent visual review'])
         (args.output/'evidence.json').write_text(json.dumps(report,indent=2)+'\n')
     except Exception as error:
         (args.output/'failure.json').write_text(json.dumps(dict(status='PRIVATE HOLD; failed before readiness',error=str(error)),indent=2)+'\n')

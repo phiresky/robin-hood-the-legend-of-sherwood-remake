@@ -113,7 +113,8 @@ def main():
             parameters = arrays[key+'_parameters']
             # Endpoint-refined samples validate the continuous mapping. Uniform
             # construction rows avoid retaining microscopic diagnostic triangles.
-            chosen = [int(np.argmin(abs(parameters-t))) for t in np.linspace(0, 1, 49)]
+            targets = np.unique(np.r_[np.linspace(0,1,49),.001,.002,.005,.01,.99,.995,.998,.999])
+            chosen = sorted(set(int(np.argmin(abs(parameters-t))) for t in targets))
             rings = [low]+[[bm.verts.new(p) for p in rows[i]] for i in chosen[1:-1]]+[high]
             for a, b in zip(rings, rings[1:]):
                 for j in range(len(a)):

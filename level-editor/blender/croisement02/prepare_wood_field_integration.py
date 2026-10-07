@@ -62,6 +62,8 @@ def edge_positions(original, new):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--smooth-rim', action='store_true')
+    parser.add_argument('--tree', type=int, choices=[32,38])
     args = parser.parse_args()
     if args.output.exists():
         raise FileExistsError(args.output)
@@ -74,6 +76,7 @@ def main():
     arrays = {}
     records = []
     for index, (lower_z, upper_z, box) in CONFIG.items():
+        if args.tree is not None and args.tree != index:continue
         old = next(r for r in retained['records'] if r['tree'] == index)
         model = Path(old['worker']) / 'model.blend'
         if sha(model) != old['model_sha256']:
@@ -81,7 +84,12 @@ def main():
         upper = next(c for c in old['cuts'] if c['height'] == upper_z)
         observed, source_path = source(index, box)
         body, thickness, coverage = thickness_field(observed)
-        vertices, faces = shell(body, thickness, box[:2], ground[index])
+        rim_report = None
+        if args.smooth_rim:
+            from smooth_wood_field import smooth_shell
+            vertices, faces, rim_report = smooth_shell(body, thickness, box[:2], ground[index])
+        else:
+            vertices, faces = shell(body, thickness, box[:2], ground[index])
         vertices, faces, loops = cut_shell_below(vertices, faces, lower_z)
         # Eliminate unused points left above the clipping plane.
         used = np.unique(faces)
@@ -101,9 +109,16 @@ def main():
             available.remove(upper_index)
             hi_ids = upper['ordered_loops'][upper_index]
             hi = dict(positions=[upper['vertices'][str(v)]['position'] for v in hi_ids], normals=[upper['vertices'][str(v)]['geometric_normal'] for v in hi_ids])
-            fitted = fit(lo, hi, include_geometry=True)
+            fitted = fit(lo, hi, include_geometry=True, tangent_mode="up-projection",tangent_smoothing=.5 if args.smooth_rim else 0.)
+            if args.smooth_rim and not fitted['eligible_for_bounded_integration']:
+                initial_phase=fitted['lower_phase'];phase_attempts=[]
+                for offset in [v/1024 for i in [1,2,4,8,16,32] for v in [i,-i]]:
+                    trial=fit(lo,hi,include_geometry=True,tangent_mode='up-projection',forced_phase=initial_phase+offset,tangent_smoothing=.5)
+                    phase_attempts.append(dict(offset=offset,passed=trial['eligible_for_bounded_integration'],quality=trial['quality']))
+                    if trial['eligible_for_bounded_integration']:
+                        fitted=trial;fitted['phase_search']=phase_attempts;break
             if not fitted['eligible_for_bounded_integration']:
-                raise ValueError(f'Collar guard failed for {index}/{number}')
+                raise ValueError(f'Collar guard failed for {index}/{number}: '+json.dumps({k:v for k,v in fitted.items() if k!='geometry'}))
             geometry = fitted.pop('geometry')
             rows = np.asarray(geometry['rows'])
             key = f'{prefix}_collar{number}'
@@ -120,7 +135,7 @@ def main():
             arrays[key+'_lower_original_ids'] = positions
             collars.append(dict(array_prefix=key, upper_extraction_loop=upper_index, **fitted))
         unresolved = np.argwhere(observed & ~body)[:, ::-1] + np.array(box[:2])
-        records.append(dict(tree=index, input_model=str(model), input_model_sha256=old['model_sha256'], source_node=old['source_node'], source_box=box, source_mask=str(source_path), source_mask_sha256=sha(source_path), lower_cut_z=lower_z, upper_cut_z=upper_z, field_vertices=len(vertices), field_triangles=len(faces), coverage=coverage, unresolved_source_coordinates=unresolved.tolist(), collars=collars))
+        records.append(dict(tree=index, input_model=str(model), input_model_sha256=old['model_sha256'], source_node=old['source_node'], source_box=box, source_mask=str(source_path), source_mask_sha256=sha(source_path), lower_cut_z=lower_z, upper_cut_z=upper_z, field_vertices=len(vertices), field_triangles=len(faces), coverage=coverage, rim_report=rim_report, unresolved_source_coordinates=unresolved.tolist(), collars=collars))
     args.output.mkdir(parents=True)
     payload = args.output/'field-collars.npz'
     np.savez_compressed(payload, **arrays)
