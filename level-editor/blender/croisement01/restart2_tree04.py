@@ -15,7 +15,7 @@ from render_slots import acquire
 
 def main():
  if shutil.disk_usage(OUT).free<35*1024**3:raise ValueError('Disk floor35GiB')
- parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,default=1);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);dest=OUT/f'restart2/tree04-v{args.revision}';dest.mkdir(exist_ok=False);acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0;working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-03';wood_node='scenery-tree04-wood';crown_node='foliage-tree04-inferred-crown';name='Northwest Forked Foreground Tree'
+ parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,default=1);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);dest=OUT/f'restart2/tree04-v{args.revision}';dest.mkdir(exist_ok=False);acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0;working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-04';wood_node='scenery-tree04-wood';crown_node='foliage-tree04-inferred-crown';name='Northwest Forked Foreground Tree'
  native=json.loads((OUT/'baseline/masks/manifest.json').read_text())
  for row in native['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
  row=next(r for r in native['masks'] if r['index']==4);assert row['obstacle_indices']==[];alpha=Image.open(row['png']).convert('L');wood=alpha.copy()
