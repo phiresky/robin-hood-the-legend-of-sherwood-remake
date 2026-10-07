@@ -132,7 +132,7 @@ def main(root=None):
             solid_sheet_sha256=sha(destination/'solid-eight.png'),
             coverage_sha256=sha(destination/'native-coverage.json'),
             status='Private actual/solid review ready for author inspection; support still pending'))
-    if root.name == 'candidate-v2':
+    if root.name == 'candidate-v3':
         from restart14_hidden_archer_support import main as support
         support(root)
 
