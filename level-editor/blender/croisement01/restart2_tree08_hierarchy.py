@@ -69,9 +69,26 @@ def regularize_radii(path):
     return np.maximum(result,.65)
 
 
-def build_hierarchy_sections(traces,selected,root,misses,support_core=None,continuous_nodes=False):
+def build_hierarchy_sections(traces,selected,root,misses,support_core=None,continuous_nodes=False,continuous_trunk=False):
     plans,pending,info=rooted_arcs(traces,selected,root)
     assert not pending,('Unassigned source arcs',pending)
+    if continuous_trunk:
+        # These source arcs are successive samples of the same uninterrupted
+        # stem, not separate cylinders or independent branch origins.
+        trunk_ids=[165,179,187,188,190,207,223,233]
+        joined=[];cursor=(556,221)
+        for i in trunk_ids:
+            pts=plans[i]['source_points']
+            if tuple(pts[-1][:2])==cursor:pts=list(reversed(pts))
+            assert tuple(pts[0][:2])==cursor,(i,cursor,pts[0])
+            joined.extend(pts if not joined else pts[1:]);cursor=tuple(pts[-1][:2])
+        arc=0
+        for j,p in enumerate(joined):
+            if j:arc+=math.dist(joined[j-1][:2],p[:2])
+            p[5]=arc
+        for i in trunk_ids:del plans[i]
+        plans[10000]=dict(trace_id=10000,source_points=joined,origin=list(joined[0][:2]),tip=list(joined[-1][:2]),tree_arc=True,inherited_depth=joined[0][3],inherited_slope=joined[0][4],target_slope=0,continuous_source_arcs=trunk_ids)
+        info['continuous_trunk_source_arcs']=trunk_ids
     s,c=math.sin(math.radians(35)),math.cos(math.radians(35));ray=np.array([0,-c,s]);down=np.array([0,-s,-c]);right=np.array([1,0,0])
     def point(x,y,depth):
         t=smoothstep((y-350)/40);z=(370-y)/c*(1-t)-(y-370)*.25*t
@@ -111,6 +128,16 @@ def build_hierarchy_sections(traces,selected,root,misses,support_core=None,conti
                 for j in order:
                     k=j-1 if order.step>0 else j+1
                     radii[j]=max(radii[j],radii[k]-.16*math.dist(path[j][:2],path[k][:2]))
+        if continuous_trunk and not arc['tree_arc']:
+            # A projected cycle is not automatically a physical attachment.
+            # Narrow its far end continuously instead of exposing a flat disk.
+            # Source loss, if any, remains visible to the full coverage audit.
+            total=path[-1][5]
+            for j in range(len(path)):
+                remaining=total-path[j][5]
+                if remaining<min(12,total*.45):
+                    w=smoothstep(remaining/max(.001,min(12,total*.45)))
+                    radii[j]=.35+(radii[j]-.35)*w
         vertices=[];faces=[];n=16
         for j,(x,y,_,depth,_,_) in enumerate(path):
             # A wide tangent estimate prevents pixel staircase normals from
@@ -133,3 +160,16 @@ def build_hierarchy_sections(traces,selected,root,misses,support_core=None,conti
         for k in range(n):a=j*n+k;b=j*n+(k+1)%n;faces.append((a,b,b+n,a+n))
     faces.extend([tuple(reversed(range(n))),tuple((len(rings)-1)*n+k for k in range(n))]);sections.append(dict(trace_id='inferred-basal-continuation',vertices=vertices,faces=faces,held_crossing=False))
     return sections,obligations,dict(info,arcs=list(plans.values()),max_depth_step_per_source_length=.6,max_depth_curvature=.018,spatial_depth_blending=False)
+
+
+def assemble_without_remesh(bpy,collection,sections):
+    """Assemble exact swept surfaces; no global remesh, smoothing or decimation."""
+    vertices=[];faces=[]
+    for section in sections:
+        offset=len(vertices);vertices.extend(section['vertices']);faces.extend(tuple(offset+i for i in f) for f in section['faces'])
+    mesh=bpy.data.meshes.new('Explicit continuous stem and rooted bough surfaces');mesh.from_pydata(vertices,[],faces);mesh.update()
+    # Smooth shading changes normals only; source centerlines/radii stay exact.
+    for p in mesh.polygons:p.use_smooth=len(p.vertices)==4
+    obj=bpy.data.objects.new('Tree08 local sweep correction without global remesh',mesh);collection.objects.link(obj)
+    obj['construction_limit']='Branch tubes meet by overlap; only main trunk is one continuous sweep. Junction topology/contact still require verification.'
+    return obj

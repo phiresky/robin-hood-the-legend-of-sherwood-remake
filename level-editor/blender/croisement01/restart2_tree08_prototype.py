@@ -70,17 +70,21 @@ obj['scope']=f'Initial wood geometry hypothesis only;{len(selected)} separate sw
 if revision>=4:
  sys.path.insert(0,str(Path(__file__).parent))
  from restart2_tree08_correction import build_sections,consolidate,DEPTH_FAMILIES
- prior_misses=json.loads((R/('tree08-wood-prototype-v5' if revision>=6 else 'tree08-wood-prototype-v3')/'coverage.json').read_text())['miss_native_pixels']
- assert len(prior_misses)==(110 if revision>=6 else 207),'Bind corrected source obligations to reviewed predecessor'
+ prior_misses=json.loads((R/('tree08-wood-prototype-v8' if revision>=9 else 'tree08-wood-prototype-v5' if revision>=6 else 'tree08-wood-prototype-v3')/'coverage.json').read_text())['miss_native_pixels']
+ assert len(prior_misses)==(41 if revision>=9 else 110 if revision>=6 else 207),'Bind corrected source obligations to reviewed predecessor'
  if revision>=6:
   from restart2_tree08_hierarchy import build_hierarchy_sections
   core_support=[[int(x)+331,int(y)+11] for y,x in np.argwhere(np.asarray(Image.open(R/'tree08-semantic-source-v1/bark-core-proposal.png'))>0)] if revision>=7 else None
-  corrected,miss_assignment,hierarchy=build_hierarchy_sections(trace['polylines'],selected,plan['root_native'],prior_misses,core_support,continuous_nodes=revision>=8);save_json('rooted-depth-hierarchy.json',hierarchy)
+  corrected,miss_assignment,hierarchy=build_hierarchy_sections(trace['polylines'],selected,plan['root_native'],prior_misses,core_support,continuous_nodes=revision>=8,continuous_trunk=revision>=9);save_json('rooted-depth-hierarchy.json',hierarchy)
  else:corrected,miss_assignment=build_sections(trace['polylines'],selected,prior_misses)
  guard(32*1024**2)
  bpy.data.objects.remove(obj,do_unlink=True);bpy.data.meshes.remove(mesh)
- obj=consolidate(bpy,scene.collection,corrected);mesh=obj.data
- if revision>=5:
+ if revision>=10:
+  from restart2_tree08_hierarchy import assemble_without_remesh
+  obj=assemble_without_remesh(bpy,scene.collection,corrected)
+ else:obj=consolidate(bpy,scene.collection,corrected)
+ mesh=obj.data
+ if 5<=revision<10:
   # Reduce the remeshed surface before serialization, retaining voxel shape
   # detail for a subsequent source-ray audit rather than coarsening the field.
   bpy.context.view_layer.objects.active=obj;modifier=obj.modifiers.new('Bounded prototype surface simplification','DECIMATE');modifier.ratio=.35;bpy.ops.object.modifier_apply(modifier=modifier.name);mesh=obj.data
@@ -102,7 +106,7 @@ for yy,xx in np.argwhere(core):
  else:hit_count+=1
 save_json('coverage.json',dict(core_pixels=int(core.sum()),covered=hit_count,misses=len(miss),miss_native_pixels=miss,claim='Initial scaffold coverage only; no permission to discard uncovered native wood. Exact known-core texture packed unchanged.',source_rgba_sha256=hashlib.sha256(image_path.read_bytes()).hexdigest()))
 # Graph connectivity is distinct from welded physical connectivity.
-save_json('construction.json',dict(status='PRIVATE INITIAL PROTOTYPE; not final geometry or contact proof',selected_trace_count=len(selected),vertices=len(verts),faces=len(faces),sections=section_ranges,source_plan_sha256=hashlib.sha256((R/'tree08-topology-plan-v1/plan.json').read_bytes()).hexdigest(),root_terrain_anchors=plan['root_terrain_anchors'],limitations=[('Main family consolidated; disputed crossing sections remain unwelded.' if revision>=4 else 'Source graph connected; swept sections overlap at intended junctions but are not welded.'),'Projected crossings8/14 remain hypotheses; no false ownership resolution.','Disconnected tips not joined. Unselected source traces retained externally.','Root depth is initial slope hypothesis without terrain receiver/contact proof.','Only reviewed bark-core RGB is displayed; other pixels remain neutral, no leaf synthesis.','No crown, terrain, gameplay or canonical changes.']))
+save_json('construction.json',dict(status='PRIVATE INITIAL PROTOTYPE; not final geometry or contact proof',selected_trace_count=len(selected),vertices=len(verts),faces=len(faces),sections=section_ranges,source_plan_sha256=hashlib.sha256((R/'tree08-topology-plan-v1/plan.json').read_bytes()).hexdigest(),root_terrain_anchors=plan['root_terrain_anchors'],limitations=[('Continuous main sweep; other rooted sections overlap but are not globally welded.' if revision>=10 else 'Main family consolidated; disputed crossing sections remain unwelded.' if revision>=4 else 'Source graph connected; swept sections overlap at intended junctions but are not welded.'),'Projected crossings8/14 remain hypotheses; no false ownership resolution.','Disconnected tips not joined. Unselected source traces retained externally.','Root depth is initial slope hypothesis without terrain receiver/contact proof.','Only reviewed bark-core RGB is displayed; other pixels remain neutral, no leaf synthesis.','No crown, terrain, gameplay or canonical changes.']))
 guard(32*1024**2);bpy.ops.wm.save_as_mainfile(filepath=str(out/'model.blend'),compress=True);assert (out/'model.blend').stat().st_size<=32*1024**2
 # Small native-camera diagnostic only; all8 follows coverage/construction review.
 scene.render.engine='CYCLES';scene.cycles.samples=4;scene.cycles.device='CPU';scene.render.resolution_x=446;scene.render.resolution_y=461;scene.render.resolution_percentage=100;scene.render.image_settings.file_format='PNG';scene.world=bpy.data.worlds.new('Neutral world');scene.world.color=(.08,.08,.08)
