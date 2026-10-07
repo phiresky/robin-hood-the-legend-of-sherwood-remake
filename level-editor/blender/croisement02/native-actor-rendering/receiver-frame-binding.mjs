@@ -32,7 +32,7 @@ export function createReceiverActorFrameBinding(THREE, body, identity) {
         const {left, top, width, height} = frame.bounds ?? {};
         if (![left, top, width, height].every(Number.isFinite) || width <= 0 || height <= 0)
           throw new Error('Invalid common frame bounds');
-        const projected=projectShadowReceivers({anchor,bounds:frame.bounds,elevation,triangles:receiverTriangles});
+        const projected=projectShadowReceivers({anchor,bounds:frame.bounds,coverage:frame.shadowBounds,elevation,triangles:receiverTriangles});
         const geometry = new THREE.BufferGeometry();
         let material;
         try {

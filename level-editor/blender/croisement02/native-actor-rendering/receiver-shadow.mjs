@@ -25,19 +25,23 @@ function intersection(subject,boundary) {
 }
 
 /** Private support projection. Receiver vertices are [worldX, worldY-height, height]. */
-export function projectShadowReceivers({anchor,bounds,elevation,triangles}) {
+export function projectShadowReceivers({anchor,bounds,coverage=bounds,elevation,triangles}) {
   if(!Array.isArray(anchor)||anchor.length!==3||!anchor.every(Number.isFinite)||
       !Number.isFinite(elevation)||elevation<=0||elevation>=Math.PI/2)
     throw Error('Invalid projection anchor or elevation');
   const {left,top,width,height}=bounds??{};
   if(![left,top,width,height].every(Number.isFinite)||width<=0||height<=0)
     throw Error('Invalid frame bounds');
+  if(!coverage || ![coverage.left,coverage.top,coverage.width,coverage.height].every(Number.isFinite) ||
+      coverage.width<=0 || coverage.height<=0 || coverage.left<left || coverage.top>top ||
+      coverage.left+coverage.width>left+width || coverage.top-coverage.height<top-height)
+    throw Error('Shadow coverage escapes its source frame');
   if(!Array.isArray(triangles)||!triangles.length) throw Error('Missing support triangles');
   const sin=Math.sin(elevation),cos=Math.cos(elevation),baseZ=anchor[1]*cos;
   const mapY=anchor[2]*sin-baseZ;
-  const x0=anchor[0]+left,x1=x0+width,y0=mapY-top,y1=y0+height;
+  const x0=anchor[0]+coverage.left,x1=x0+coverage.width,y0=mapY-coverage.top,y1=y0+coverage.height;
   const footprint=[[x0,y0],[x1,y0],[x1,y1],[x0,y1]];
-  const expectedArea=width*height,tolerance=Math.max(1,expectedArea)*1e-8;
+  const expectedArea=coverage.width*coverage.height,tolerance=Math.max(1,expectedArea)*1e-8;
   if(![x0,x1,y0,y1,expectedArea].every(Number.isFinite))throw Error('Projection extent overflow');
   const pieces=[];
   for(const [receiver,triangle]of triangles.entries()) {

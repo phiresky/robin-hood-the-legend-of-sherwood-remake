@@ -54,3 +54,12 @@ test('reversed winding and elevated nonzero anchor preserve native footprint coo
   }
   assert.equal(got.indices.length,6);
 });
+test('shadow-only coverage keeps full-frame UVs without requiring terrain under transparent body pixels',()=>{
+ const bounds={left:0,top:10,width:10,height:10},coverage={left:2,top:4,width:4,height:2};
+ const triangles=[[[2,-4,0],[6,-4,0],[2,-2,0]],[[6,-4,0],[6,-2,0],[2,-2,0]]];
+ const args={anchor:[0,0,0],bounds,coverage,elevation:Math.PI/4,triangles};
+ const got=projectShadowReceivers(args);assert.equal(got.coveredArea,8);
+ assert.ok(got.uvs.every((n,i)=>n>=(i%2?0.2:0.2)-1e-8&&n<=(i%2?0.4:0.6)+1e-8));
+ assert.throws(()=>projectShadowReceivers({...args,coverage:{...coverage,left:-1}}),/escapes/);
+ assert.throws(()=>projectShadowReceivers({...args,coverage:undefined}),/Incomplete/);
+});

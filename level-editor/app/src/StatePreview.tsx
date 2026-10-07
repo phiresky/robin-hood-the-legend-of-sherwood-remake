@@ -355,7 +355,7 @@ export default function StatePreview(props: {
                 </For>
               </select>
             </label>
-            <label>
+            <label class="check">
               <input
                 type="checkbox"
                 aria-label="Show character in artwork"
@@ -365,7 +365,7 @@ export default function StatePreview(props: {
               />{" "}
               Show character in artwork
             </label>
-            <label>
+            <label class="check">
               <input
                 type="checkbox"
                 aria-label="Show hidden character outline"
