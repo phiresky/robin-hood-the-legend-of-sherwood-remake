@@ -398,6 +398,7 @@ function compileAssetGameplayAttempt(
   const placedMasks: {
     id: string;
     anchor: Vec3;
+    receiverPoints?: Vec3[];
     receiverSegment?: [Vec3, Vec3];
     receiverPolyline?: Vec3[];
     receiverPolylines?: Vec3[][];
@@ -770,6 +771,7 @@ function compileAssetGameplayAttempt(
       placedMasks.push({
         id: `${placement.id}/${mask.id}`,
         anchor: transform(mask.node, mask.anchor),
+        receiverPoints: mask.receiverPoints?.map((p) => transform(mask.node, p)),
         ...(mask.receiverPolylines
           ? {
               receiverPolylines: mask.receiverPolylines.map((line) =>
@@ -2221,6 +2223,10 @@ function compileAssetGameplayAttempt(
           ? [mask.receiverSegment]
           : undefined);
     const receivingPoints = (plane: HeightPlane): Point[] => {
+      if (mask.receiverPoints)
+        return mask.receiverPoints
+          .filter((p) => Math.abs(planeHeight(plane, [p[0], p[1] - p[2]]) - p[2]) < 1e-4)
+          .map(project);
       if (!probe)
         return Math.abs(planeHeight(plane, heightPoint) - mask.anchor[2]) < 1e-4 ? [point] : [];
       try {
@@ -2254,7 +2260,7 @@ function compileAssetGameplayAttempt(
         })
         .map((area) => area.layer),
     );
-    if (!receivingLayers.size || probe)
+    if (!receivingLayers.size || probe || mask.receiverPoints)
       receivingLayers = new Set([
         ...receivingLayers,
         ...receivers.flatMap((group) =>

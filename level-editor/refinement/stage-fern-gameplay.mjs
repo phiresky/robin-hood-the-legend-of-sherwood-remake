@@ -138,6 +138,7 @@ for (const id of selected) {
         ...(textured ? { alphaCoverage: textured.alphaCoverage } : {}),
         cullBackfaces: true,
         anchor: [0, 0, ground],
+        receiverPoints: [[0, 0, ground], ...boundary],
         view: true,
         characterBoundary: boundary,
         projectileBoundary: boundary,

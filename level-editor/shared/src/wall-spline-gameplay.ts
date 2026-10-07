@@ -377,6 +377,7 @@ export function wallSplineGameplay(
             anchorCropped &&
             !mask.receiverSegment &&
             !mask.receiverPolyline &&
+            !mask.receiverPoints &&
             !mask.receiverPolylines
           ) {
             warnings.push(
@@ -399,6 +400,15 @@ export function wallSplineGameplay(
                   .filter((line) => line.length >= 2)
               : receiver
             : [];
+          const receiverPoints = mask.receiverPoints
+            ?.map((p) => source(mask.node, p))
+            .filter((p) => !run || (p[axis] >= start && p[axis] <= limit));
+          if (receiverPoints && !receiverPoints.length) {
+            warnings.push(
+              `Wall spline ${path.id}, mask ${mask.id}: cropped receiving points; mask omitted.`,
+            );
+            continue;
+          }
           if (receiver && !receiverFragments.length) {
             warnings.push(
               `Wall spline ${path.id}, mask ${mask.id}: cropped receiving probe; mask omitted.`,
@@ -407,7 +417,10 @@ export function wallSplineGameplay(
           }
           // An explicit probe selects the layer. Keep its representative anchor
           // inside the surviving span so export-frame checks do not discard it.
-          const anchor = warp(anchorCropped ? receiverFragments[0]![0]! : anchorSource, repeat);
+          const anchor = warp(
+            anchorCropped ? (receiverPoints?.[0] ?? receiverFragments[0]![0]!) : anchorSource,
+            repeat,
+          );
           let boundaryMissing = false;
           const boundary = (points: Vec3[] | undefined, closed = true): Vec3[] | undefined => {
             if (!points) return undefined;
@@ -461,7 +474,8 @@ export function wallSplineGameplay(
               triangles: alphaCoverage.get(repeat)!,
             },
             anchor,
-            receiverSegment: receiver ? undefined : receiverSegment,
+            receiverPoints: receiverPoints?.map((p) => warp(p, repeat)),
+            receiverSegment: receiver || receiverPoints ? undefined : receiverSegment,
             receiverPolyline:
               receiver && receiverFragments.length === 1
                 ? receiverFragments[0]!.map((p) => warp(p, repeat))

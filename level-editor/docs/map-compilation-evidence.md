@@ -10088,3 +10088,24 @@ warning because its placed origin has no authored receiving surface at its groun
 height. Its ten isolated terrain cases pass, but the saved scene requires further
 receiver/placement authoring. This omission is not hidden by the successful native
 construction result.
+
+### Asset-local mask receiving points
+
+Shrub 60's origin is unsupported, but multiple canopy-footprint vertices overlap
+the same surrounding ground layer. Masks now accept explicit `receiverPoints`
+in asset-local coordinates, mutually exclusive with segment/polyline probes.
+Placement transforms each point; only contacts at the authored surface height
+contribute, and all contributing receivers must resolve to one layer. No nearby
+layer or source-level fallback is used. Foliage authoring emits the ground origin
+and alpha-covered footprint vertices as receiving points.
+
+Spline deformation transforms and trims these points with each repeat. A surviving
+point retains a mask whose representative origin was cropped; a repeat with no
+surviving contacts is omitted with a warning. Tests cover unsupported origins,
+wrong heights, competing layers, rotated duplicates and cropped spline contacts.
+
+`foliage-contacts-EQHthn` stages shrub 60's contact definition;
+`saved-map-exports-DRzWhE` restores its mask, producing 22 masks without a shrub 60
+receiver omission. Native construction and control apply/reset checks pass.
+`foliage-contacts-publish-EQHthn` installs the definition and scene pin. This fixes
+receiving-layer selection, not the remaining rendered bitmap discrepancies.

@@ -536,6 +536,32 @@ test("a surviving mask probe retains a cropped repeat when its point anchor is t
   assert.ok(pointOnly.warnings.some((warning) => warning.includes("cropped receiving anchor")));
 });
 
+test("spline masks retain only ground contact points inside each cropped repeat", () => {
+  const { document, asset, assets, bounds } = wallMaterialFixture();
+  const mask = asset.gameplay!.masks![0]!;
+  delete mask.receiverSegment;
+  const local = (x: number) => sceneToGame(document.camera, [x, 0, 0]);
+  mask.anchor = local(49);
+  mask.receiverPoints = [local(-49), local(49)];
+  document.splines![0]!.points = [
+    [100, 200, 0],
+    [345, 200, 0],
+  ];
+  const generated = wallSplineGameplay(document, assets, false);
+  const masks = generated.descriptors[0]!.gameplay!.masks!;
+  assert.deepEqual(
+    masks.map((m) => m.receiverPoints!.length),
+    [2, 2, 1],
+  );
+  assert.ok(masks.every((m) => m.receiverPoints!.every(([x]) => x >= 100 && x <= 345)));
+  assert.ok(masks.every((m) => m.receiverSegment === undefined));
+  assert.equal(compileAssetGameplay(document, assets, bounds).masks!.length, 3);
+  mask.receiverPoints = [local(49)];
+  const cropped = wallSplineGameplay(document, assets, false);
+  assert.equal(cropped.descriptors[0]!.gameplay!.masks!.length, 2);
+  assert.ok(cropped.warnings.some((warning) => warning.includes("cropped receiving points")));
+});
+
 test("spline masks keep disconnected probe fragments after clipping", () => {
   const base = wallMaterialFixture();
   const baseline = compileAssetGameplay(base.document, base.assets, base.bounds).masks;

@@ -263,8 +263,10 @@ are published as warned compact drafts after thirty placement/native checks.
 Shrubs 57–60 are also published after forty placement/native checks. Identical
 alpha planes shared by separate material textures now serialize only once;
 this fixes a duplicated-texture size failure without changing sampling rules.
-In the saved scene shrub 60 still loses its mask with a receiving-surface warning;
-its origin has no receiving plane at the authored height. This remains unresolved.
+Shrub 60's origin lies in a ground gap. Published asset-local receiving points
+around its footprint now bind its mask to the surrounding ground; the saved scene
+exports 22 masks without that omission. Wrong-height and competing-layer contacts
+still reject. Rotated CPU/GPU bitmap differences remain unresolved.
 Geometry-derived
 publication now supports reviewed model hashes in addition to descriptor hashes.
 
