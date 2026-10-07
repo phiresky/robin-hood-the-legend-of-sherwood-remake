@@ -1,7 +1,7 @@
 """Score a complete moving chain loop against all source poses before authoring motion."""
 import hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-chain-loop-prototype-v3';OUT=WORK/'restart2/winch-closed-loop-fit-v3'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-chain-loop-prototype-v7';OUT=WORK/'restart2/winch-closed-loop-fit-v7'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -25,7 +25,7 @@ def pose(t,index):
    if t<height:p,tangent=right+up*(height-t),-up
    else:
     a=-(t-height)/radius;p,tangent=mid+direction*(radius*math.cos(a))+up*(radius*math.sin(a)),direction*math.sin(a)-up*math.cos(a)
- path_normal=up.cross(direction).normalized();roll=math.atan2(path_normal.x,direction.x);side=path_normal.cross(tangent)*math.cos(roll)+path_normal*math.sin(roll);side.normalize();normal=side.cross(tangent).normalized()
+ path_normal=up.cross(direction).normalized();roll=math.atan2(path_normal.x,direction.x)*tangent.z;side=path_normal.cross(tangent)*math.cos(roll)+path_normal*math.sin(roll);side.normalize();normal=side.cross(tangent).normalized()
  if index%2:side=normal;normal=side.cross(tangent).normalized()
  return p,Matrix((side,tangent,normal)).transposed().to_euler()
 def tree(objects):
