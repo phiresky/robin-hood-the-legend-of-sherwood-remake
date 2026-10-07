@@ -11,7 +11,7 @@ from restart6_source_gap_audit import OUT,RAY,SIN,COS
 from restart4_stump_final_contact import frame
 
 def main():
- tag,destination,permission=sys.argv[sys.argv.index('--')+1:];out=Path(destination);total=Path(permission).parent/'contacts-v3';site_root=total/tag;assert out.is_relative_to(site_root);authority=json.loads(Path(permission).read_text());assert tag in authority['allowed_sites'];assert authority['limits']==dict(site_mib=8,total_mib=160,file_mib=4,free_floor_gib=10,address_space_gib=12,rss_gib=8)
+ tag,destination,permission,*options=sys.argv[sys.argv.index('--')+1:];assert options in ([],['opposite']);out=Path(destination);total=Path(permission).parent/'contacts-v3';site_root=total/tag;assert out.is_relative_to(site_root);authority=json.loads(Path(permission).read_text());assert tag in authority['allowed_sites'];assert authority['limits']==dict(site_mib=8,total_mib=160,file_mib=4,free_floor_gib=10,address_space_gib=12,rss_gib=8)
  worker=OUT/'restart15-hiding-mounds/all-placements-v1';model=worker/'model.blend';validation=json.loads((worker/'validation.json').read_text());assert digest(model)==validation['model_sha256']==authority['model_sha256'];row=next(r for r in validation['records']if r['tag']==tag);check(site_root,total)
  bpy.ops.wm.read_factory_settings(use_empty=True);scene=bpy.context.scene;bpy.context.preferences.filepaths.use_auto_save_temporary_files=False;scene.render.engine='CYCLES';scene.cycles.device='CPU';scene.render.threads_mode='FIXED';scene.render.threads=2;scene.cycles.samples=16;scene.cycles.transparent_max_bounces=512;scene.render.use_persistent_data=False;scene.use_nodes=False;scene.render.use_sequencer=False;scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.render.image_settings.color_depth='8';scene.view_settings.view_transform='Standard';scene.view_settings.look='None';world=bpy.data.worlds.new('Neutral contact inspection');world.use_nodes=True;world.node_tree.nodes['Background'].inputs['Strength'].default_value=.8;scene.world=world
  with bpy.data.libraries.load(str(model),link=False)as(src,dst):dst.objects=list(row['objects'])
@@ -36,10 +36,11 @@ def main():
  bpy.context.view_layer.update()
  for pin in pins:
   for rec in pin['objects']:assert max(abs(bpy.data.objects[rec['name']].matrix_world[i][j]-rec['matrix_world'][i][j])for i in range(4)for j in range(4))<1e-6
- images=[]
- for name,direction in [('native',RAY),('side',Vector((COS,0,SIN))),('low-side',Vector((math.cos(math.radians(12)),0,math.sin(math.radians(12)))) )]:
+ images=[];views=[('native',RAY),('side',Vector((COS,0,SIN))),('low-side',Vector((math.cos(math.radians(12)),0,math.sin(math.radians(12)))) )]
+ if options:views=[('opposite-side',Vector((-COS,0,SIN)))];assert tag=='site-12'
+ for name,direction in views:
   assert png_bound(480,480,4)<4*MIB;check(site_root,total,4*MIB);camera=frame(scene,own,direction,480,1.5);target=out/f'{name}.png';assert not target.exists();scene.render.filepath=str(target);bpy.ops.render.render(write_still=True);assert target.stat().st_size<4*MIB;images.append(dict(view=name,path=target.name,sha256=digest(target),camera_matrix=[list(v)for v in camera.matrix_world],ortho_scale=camera.data.ortho_scale));check(site_root,total)
- assert png_bound(1440,480,3)<4*MIB;check(site_root,total,4*MIB);canvas=Image.new('RGB',(1440,480),(35,35,35))
+ assert png_bound(480*len(views),480,3)<4*MIB;check(site_root,total,4*MIB);canvas=Image.new('RGB',(480*len(views),480),(35,35,35))
  for i,entry in enumerate(images):
   im=Image.open(out/entry['path']).convert('RGBA');canvas.paste(im,(i*480,0),im)
  canvas.save(out/'contact-three.png');check(site_root,total);assert digest(model)==authority['model_sha256'];assert all(digest(Path(p['path']))==p['sha256']for p in pins)

@@ -6,7 +6,7 @@ P=Path(__file__).resolve().parent;sys.path.insert(0,str(P))
 from mound_contact_budget import digest,allocated,check,MIB,GIB
 
 def main():
- tag=sys.argv[1];worker=P.parents[1]/'work/croisement02-refinement/restart15-hiding-mounds/all-placements-v1';permission=Path(sys.argv[3])if len(sys.argv)>3 else worker/'contacts-v3-output-authorization.json';grant=json.loads(permission.read_text());probe=json.loads((worker/'startup-cap-comparison-v1/receipt.json').read_text());by_cap={r['fsize_cap']:r['exit_code']for r in probe['records']};assert by_cap=={True:-25,False:0},'Successful bounded startup comparison required';assert tag in grant['allowed_sites'];assert grant['limits']==dict(site_mib=8,total_mib=160,file_mib=4,free_floor_gib=10,address_space_gib=12,rss_gib=8);total=worker/'contacts-v3';total.mkdir(exist_ok=True);site_root=total/tag;site_root.mkdir(exist_ok=True);attempt=sys.argv[2]if len(sys.argv)>2 else'attempt-02';assert attempt.startswith('attempt-')and attempt[8:].isdigit();out=site_root/attempt
+ tag=sys.argv[1];worker=P.parents[1]/'work/croisement02-refinement/restart15-hiding-mounds/all-placements-v1';permission=Path(sys.argv[3]).resolve()if len(sys.argv)>3 else worker/'contacts-v3-output-authorization.json';grant=json.loads(permission.read_text());probe=json.loads((worker/'startup-cap-comparison-v1/receipt.json').read_text());by_cap={r['fsize_cap']:r['exit_code']for r in probe['records']};assert by_cap=={True:-25,False:0},'Successful bounded startup comparison required';assert tag in grant['allowed_sites'];assert grant['limits']==dict(site_mib=8,total_mib=160,file_mib=4,free_floor_gib=10,address_space_gib=12,rss_gib=8);total=worker/'contacts-v3';total.mkdir(exist_ok=True);site_root=total/tag;site_root.mkdir(exist_ok=True);attempt=sys.argv[2]if len(sys.argv)>2 else'attempt-02';assert attempt.startswith('attempt-')and attempt[8:].isdigit();out=site_root/attempt
  if(out/'resource-receipt.json').exists():
   prior=json.loads((out/'resource-receipt.json').read_text());assert prior['status']=='PASS'and all(digest(out/n)==h for n,h in prior['outputs'].items());assert all(digest(Path(n))==h for n,h in prior['input_hashes'].items());print('Verified completed site',tag);return
  if out.exists():raise RuntimeError('Partial site exists: preserve it and obtain a fresh explicit attempt path before retry')
@@ -14,7 +14,7 @@ def main():
  def limits():
   resource.setrlimit(resource.RLIMIT_AS,(12*GIB,12*GIB));os.setsid()
  env=os.environ.copy();env.update(OMP_NUM_THREADS='2',OPENBLAS_NUM_THREADS='2',MESA_SHADER_CACHE_DISABLE='true',CUDA_CACHE_DISABLE='1')
- command=['/usr/bin/blender','--background','--threads','2','--python-exit-code','1','--python',str(recipe),'--',tag,str(out),str(permission)]
+ command=['/usr/bin/blender','--background','--threads','2','--python-exit-code','1','--python',str(recipe),'--',tag,str(out),str(permission)]+(['opposite']if len(sys.argv)>4 and sys.argv[4]=='opposite' else[])
  with(out/'process.log').open('wb')as log:
   child=subprocess.Popen(command,stdout=log,stderr=subprocess.STDOUT,env=env,preexec_fn=limits);process=psutil.Process(child.pid)
   while child.poll()is None:
