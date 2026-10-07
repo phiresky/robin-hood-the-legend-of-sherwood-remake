@@ -3,13 +3,16 @@
 //! The caller supplies a current collision snapshot, including connected landing
 //! support. Screen projection is deliberately absent from pathfinding.
 
-use geo::{Area, BooleanOps, Contains, Intersects, LineString, Point, Polygon, Validation};
+use geo::{
+    Area, BooleanOps, Contains, Intersects, LineString, MapCoords, Point, Polygon, Validation,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::coordinates::{MapBBox, MapPoint, MoveBoxHalfDiagonal};
 use crate::fast_find_grid::{FastFindGrid, GridLine};
 use crate::pathfinder::{MotionArea, MotionObstacle, PathFinder, PathGraph};
 
+mod clearance;
 mod landing_binding;
 mod landing_support;
 
@@ -30,6 +33,8 @@ pub struct BoundPhysicalStair {
     layer: usize,
     area: usize,
     obstacle_states: Vec<u32>,
+    #[serde(default)]
+    climbing: bool,
     #[serde(default)]
     landings: Vec<landing_binding::BoundLanding>,
     #[serde(default)]
@@ -105,7 +110,7 @@ impl BoundPhysicalStair {
         position: [f32; 2],
         half: MoveBoxHalfDiagonal,
     ) -> bool {
-        let actor = actor_footprint(position, half);
+        let actor = self.clearance_polygon(position, half);
         self.definition
             .obstacles
             .iter()
@@ -113,6 +118,10 @@ impl BoundPhysicalStair {
             .any(|obstacle| {
                 polygon(&obstacle.polygon)
                     .expect("validated physical obstacle")
+                    .map_coords(|point| geo::Coord {
+                        x: f64::from(point.x),
+                        y: f64::from(point.y),
+                    })
                     .intersects(&actor)
             })
     }
@@ -134,6 +143,7 @@ impl BoundPhysicalStair {
         }
         Ok(Self {
             definition: definition.clone(),
+            climbing: matches!(lift.lift_type, 2 | 3),
             layer,
             area,
             obstacle_states: motion_area
@@ -174,6 +184,15 @@ impl BoundPhysicalStair {
         half_diagonal: MoveBoxHalfDiagonal,
         extra_obstacles: &[Vec<[f32; 2]>],
     ) -> Result<Option<Vec<[f32; 2]>>, String> {
+        if !half_diagonal.x.is_finite()
+            || !half_diagonal.y.is_finite()
+            || half_diagonal.x <= 1.0
+            || half_diagonal.y <= 1.0
+        {
+            return Err(
+                "physical stair query requires a finite positive effective footprint".into(),
+            );
+        }
         let geometry = StairRouteGeometry {
             boundary: self.definition.boundary.clone(),
             obstacles: self
@@ -191,7 +210,7 @@ impl BoundPhysicalStair {
                 .chain(extra_obstacles.iter().cloned())
                 .collect(),
         };
-        if self.landings.is_empty() {
+        if self.landings.is_empty() && !self.climbing {
             return geometry.route(source, goal, half_diagonal);
         }
         let mut support = Vec::new();
@@ -212,7 +231,18 @@ impl BoundPhysicalStair {
             }
             support.extend(free.0);
         }
-        geometry.route_with_landing_regions(source, goal, half_diagonal, &support, &[])
+        if self.climbing {
+            geometry.route_with_clearance_regions(
+                source,
+                goal,
+                half_diagonal,
+                &self.clearance_offsets(half_diagonal, 1.0),
+                &support,
+                &[],
+            )
+        } else {
+            geometry.route_with_landing_regions(source, goal, half_diagonal, &support, &[])
+        }
     }
 }
 

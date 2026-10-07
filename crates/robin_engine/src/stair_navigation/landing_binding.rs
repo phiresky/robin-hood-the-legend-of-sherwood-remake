@@ -39,6 +39,7 @@ mod tests {
             [1980., 1800.],
         ];
         let mut bound = BoundPhysicalStair {
+            climbing: false,
             floor: None,
             definition: robin_level_data::physical_stair::PhysicalStairNavigation {
                 floor_patches: vec![],
@@ -153,6 +154,7 @@ mod tests {
         .unwrap();
         for gap in [0.0, 0.02] {
             let mut bound = BoundPhysicalStair {
+                climbing: false,
                 floor: None,
                 definition: fixture.definition.clone(),
                 layer: 3,
@@ -231,6 +233,7 @@ mod tests {
         )))
         .unwrap();
         let mut bound = BoundPhysicalStair {
+            climbing: false,
             floor: None,
             definition: fixture.definition,
             layer: 66,
@@ -300,6 +303,7 @@ mod tests {
             "fixture must expose the lossy conversion"
         );
         let mut bound = BoundPhysicalStair {
+            climbing: false,
             floor: None,
             definition: fixture.definition,
             layer: 2,
@@ -334,6 +338,7 @@ mod tests {
     #[test]
     fn permanent_landing_holes_exclude_false_height_contacts() {
         let stair = BoundPhysicalStair {
+            climbing: false,
             floor: None,
             definition: robin_level_data::physical_stair::PhysicalStairNavigation {
                 floor_patches: Vec::new(),
@@ -667,6 +672,7 @@ mod tests {
     #[test]
     fn landing_binding_preserves_matching_pre_grid_receiver() {
         let mut stair = BoundPhysicalStair {
+            climbing: false,
             floor: None,
             definition: robin_level_data::physical_stair::PhysicalStairNavigation {
                 floor_patches: Vec::new(),
@@ -877,6 +883,7 @@ mod tests {
     #[test]
     fn landing_binding_rejects_wrong_heights_and_incomplete_receivers() {
         let mut stair = BoundPhysicalStair {
+            climbing: false,
             floor: None,
             definition: robin_level_data::physical_stair::PhysicalStairNavigation {
                 floor_patches: Vec::new(),
@@ -978,10 +985,7 @@ impl BoundPhysicalStair {
         position: [f32; 2],
         half: MoveBoxHalfDiagonal,
     ) -> bool {
-        let actor = actor_footprint(position, half).map_coords(|point| geo::Coord {
-            x: f64::from(point.x),
-            y: f64::from(point.y),
-        });
+        let actor = self.clearance_polygon(position, half);
         self.landings
             .iter()
             .filter(|landing| landing.layer == usize::from(layer) && landing.sector == sector)

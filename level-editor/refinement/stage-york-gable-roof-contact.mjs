@@ -5,8 +5,16 @@ import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
 // Explicit asset authoring. Contact geometry remains local to its owning asset.
-const [stage] = process.argv.slice(2);
+const [stage, offsetFlag, offsetValue] = process.argv.slice(2);
 assert.ok(stage, "Provide reviewed gable-house climb seam edits");
+assert.ok(
+  process.argv.length <= 5 && (offsetFlag === undefined || offsetFlag === "--upper-seam-offset"),
+);
+const upperSeamOffset = offsetFlag ? Number(offsetValue) : 0;
+assert.ok(
+  Number.isFinite(upperSeamOffset) && Math.abs(upperSeamOffset) <= 1,
+  "Upper seam offset requires a reviewed distance within one local game unit",
+);
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8"));
 assert.equal(edits.length, 1);
 const climbId = "york-central-lane-stone-gable-house";
@@ -51,6 +59,31 @@ const difference = flightPlane.map((value, i) => value - roofPlane[i]);
 const length = Math.hypot(difference[0], difference[1]);
 assert.ok(length > 0);
 const changes = [];
+if (upperSeamOffset !== 0) {
+  const lift = climb.lifts.find((lift) => lift.surface === flight.id);
+  assert.ok(lift && lift.doors.length === 2);
+  const door = lift.doors[1];
+  assert.ok(door.middle[2] > lift.doors[0].middle[2], "Expected the upper climb entrance");
+  const before = structuredClone(door);
+  const direction = [-difference[1] / length, difference[0] / length];
+  for (const key of ["inside", "middle", "outside"]) {
+    const point = door[key];
+    point[0] += direction[0] * upperSeamOffset;
+    point[1] += direction[1] * upperSeamOffset;
+    const roofPoint = convert([point], climbOrigin, roofOrigin)[0];
+    point[2] =
+      planeHeight(key === "inside" ? flightPlane : roofPlane, roofPoint) +
+      roofOrigin[2] -
+      climbOrigin[2];
+  }
+  changes.push({
+    kind: "upper-climb-seam-shift",
+    distance: upperSeamOffset,
+    direction,
+    before,
+    after: structuredClone(door),
+  });
+}
 for (const i of [1, 2]) {
   const point = footprint[i];
   const t = -planeHeight(difference, point) / length ** 2;
@@ -86,7 +119,11 @@ assert.ok(!gameplay.volumes?.some((volume) => volume.id === volumeId));
 const originalSlab = assets
   .get(roofId)
   .parts.find((part) => part.node === roof.node).obstacle_local_game;
-const { projection_area, material_indices, ...shape } = originalSlab;
+const {
+  projection_area: _projectionArea,
+  material_indices: _materialIndices,
+  ...shape
+} = originalSlab;
 assert.ok(originalSlab.points.every((point) => point.z_bottom === originalSlab.points[0].z_bottom));
 gameplay.volumes ??= [];
 gameplay.volumes.push({

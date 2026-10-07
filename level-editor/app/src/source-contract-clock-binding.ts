@@ -4,16 +4,28 @@ import type { MissionStateContract } from "../../shared/src/mission-state.ts";
 import {
   nativePresentationFrame,
   type NativeStatePresentationContract,
+  type NativePresentationFrame,
 } from "../../shared/src/native-state-presentation.ts";
 import {
   SourceAnimationClocks,
   type SourceClockHandle,
 } from "../../shared/src/native-animation-clocks.ts";
 
+function sameArtwork(a: NativePresentationFrame, b: NativePresentationFrame) {
+  return (
+    a.path === b.path &&
+    a.sha256 === b.sha256 &&
+    a.width === b.width &&
+    a.height === b.height &&
+    a.offset[0] === b.offset[0] &&
+    a.offset[1] === b.offset[1]
+  );
+}
+
 /** Explicit external-clock port. Its implementation must not advance another elapsed-time cursor. */
 export interface PhysicalTickConsumer {
   internallyPlaying(): boolean;
-  sampleExternalTick(tick: number): void;
+  sampleExternalTick(tick: number, active: boolean): void;
 }
 
 /** Exact loop-contract linkage. Resource decoding begins only after set() publishes every identity. */
@@ -86,6 +98,8 @@ export class SourceContractClockBinding {
           t.representation !== "physical"
         )
           throw new Error(`Physical target has no exact native clock identity: ${t.id}`);
+        if (e.initial_frame && !e.frames.some((f) => sameArtwork(f, e.initial_frame!)))
+          throw new Error(`Unbound inactive physical artwork: ${t.id}`);
         const cycle = e.frames.reduce((sum, f) => sum + f.delay + 1, 0);
         if (t.actions.some((a) => a.timing.mode !== "loop" || a.timing.cycleTicks !== cycle))
           throw new Error(`Physical/native cycle differs: ${t.id}`);
@@ -133,7 +147,7 @@ export class SourceContractClockBinding {
     if (consumer.internallyPlaying())
       throw new Error("Physical consumer would double-advance its clock");
     if (this.consumers.has(id)) throw new Error("Physical consumer already attached");
-    consumer.sampleExternalTick(this.physicalSampleTick(id));
+    consumer.sampleExternalTick(this.physicalSampleTick(id), this.physicalVisible(id));
     this.consumers.set(id, consumer);
   }
   get ready() {
@@ -172,6 +186,11 @@ export class SourceContractClockBinding {
       });
     });
   }
+  setActive(id: string, active: boolean) {
+    this.assertExternalConsumers();
+    this.clocks.setState(this.handle(id), { active });
+    this.samplePhysical();
+  }
   setPlaying(id: string, playing: boolean) {
     this.clocks.setState(this.handle(id), { playing });
   }
@@ -190,7 +209,7 @@ export class SourceContractClockBinding {
   samplePhysical() {
     this.assertExternalConsumers();
     for (const [id, consumer] of this.consumers)
-      consumer.sampleExternalTick(this.physicalSampleTick(id));
+      consumer.sampleExternalTick(this.physicalSampleTick(id), this.physicalVisible(id));
   }
   dispose() {
     if (!this.disposed) {
@@ -204,10 +223,21 @@ export class SourceContractClockBinding {
       if (consumer.internallyPlaying())
         throw new Error("Physical consumer would double-advance its clock");
   }
+  private physicalVisible(id: string) {
+    const e = this.native!.elements.find((e) => e.id === this.physicalIds.get(id))!;
+    return this.clocks.read(this.physicalToken(id)).active || !!e.initial_frame;
+  }
   private physicalSampleTick(id: string) {
     const timing = this.physical?.targets.find((t) => t.id === id)?.actions[0]?.timing;
     if (!timing || timing.mode !== "loop")
       throw new Error(`Missing validated physical loop timing: ${id}`);
+    const cursor = this.clocks.read(this.physicalToken(id));
+    const e = this.native!.elements.find((e) => e.id === this.physicalIds.get(id))!;
+    if (!cursor.active && e.initial_frame) {
+      const index = e.frames.findIndex((f) => sameArtwork(f, e.initial_frame!));
+      if (index < 0) throw new Error(`Unbound inactive physical artwork: ${id}`);
+      return e.frames.slice(0, index).reduce((sum, f) => sum + f.delay + 1, 0);
+    }
     // Keep bounded animation sampling independent of the long-lived authoritative source cursor.
     return this.clocks.read(this.physicalToken(id)).tick % timing.cycleTicks;
   }

@@ -9653,6 +9653,108 @@ The diagnostic's three focused tests cover landing-only exclusions, active
 flight/landing obstacles, unchanged inputs and explicit height extrapolation.
 All 23 stair-navigation tests, Rust formatting and the main game build pass.
 
+### Climbing clearance along the physical surface (2026-10-07)
+
+The contact diagnostic now compares ground, surface and screen frames and
+measures straight swept footprints and connected free-center components.
+For a planar floor with gradient `g`, the surface frame uses the positive square
+root of `I + g*gᵀ`. This preserves distances on the lifted 3D plane. The gable
+candidate's upper inside anchors become supported at every tested rotation in
+this frame, while the direct crossing still hits the roof slab. Configuration
+space finds a supported detour between both inside anchors in every placement.
+Screen clearance instead loses connectivity at 180 degrees, so it is not a
+rotation-independent substitute. These polygon experiments alone do not prove
+native actor traversal or rendered contact.
+
+Physical ladder and wall queries now apply the inverse surface metric to the
+actor's existing footprint. They preserve its width, depth and angles along the
+plane; profile dimensions and the normal one-unit movement inset are unchanged.
+Ordinary stairs retain their prior horizontal clearance. Sweeping the resulting
+centrally symmetric footprint checks real support and live obstacles without
+padding geometry. Closing-obstacle intersection and neighbour-query bounds use
+the corresponding full footprint. Compound climbs use a conservative convex
+envelope of their per-patch footprints, so a seam cannot under-check either
+floor; narrow compound layouts still need broader verification.
+
+The same `...gable-house-neighbour-placements-5s3m76` descriptors now complete
+24/32 actor routes instead of 0/32. Both copies pass at 0, 37 and 180 degrees,
+at both elevations. All eight 90-degree cases still fail at the upper door
+handoff; the main inside-to-inside climb succeeds. Its first midpoint has
+0.005525 square units of unsupported projected footprint and no slab overlap.
+The unnormalized diagnostic puts it 0.181216 world-XY units from the nearest
+free-center region; this is not a tolerance recommendation. No landing tolerance
+was relaxed, and neither asset candidate is published.
+
+Regression snapshot `surface-clearance-regression-ib6a1geu` passes all 84 existing
+climbs: Derby 4, Leicester 22, Lincoln 8, Sherwood 10 and York 40. The other five
+maps have no climbs in these descriptors. All 47 regular compiled-navigation
+tests pass, as do moved-climb, compound-climb and copied-barrier actor tests and
+all four changing-climb tests, including 72 mid-climb reopening checks. The 28
+stair-navigation tests include metric length preservation, narrow-contact
+rejection, real barriers, full-footprint crushing, neighbour bounds, compound
+envelopes and invalid inputs. Eight diagnostic tests pass. Truly vertical and
+overhanging surfaces remain outside the current height-field representation.
+All 66 enabled map-compilation integration tests, Rust formatting and the main
+game build also pass with the final clearance implementation.
+
+### Wider climb placement checks and precise entrance binding (2026-10-07)
+
+`check-courtyard-west-stair-neighbours.mjs` accepts an explicit `--rotations=`
+list; its default remains 0/37/90/180 degrees. It retains each compiled descriptor
+and editor scene before asserting connectivity, marking diagnostics incomplete
+until every placement and disconnected-neighbour rejection has passed.
+
+The gable authoring helper can slide the upper doorway along the equal-height
+flight/roof seam by at most one local XY unit. It retains both planes, the slab,
+and collision rules. The half-unit candidate `york-gable-roof-contact-iM9TlQ`
+still passes only 24/32 routes (`...gable-house-neighbour-placements-CbUzcx`).
+The one-unit candidate `york-gable-roof-contact-KiNzCZ` compiles 50 placements at
+25 angles, two elevations and two copies, and rejects 300 disconnected-neighbour
+cases (`...gable-house-neighbour-placements-9FaGRH`). Only 144/200 native routes
+pass. Full York `saved-map-exports-tU05vA` passes 38/40 climbs: the lower gable
+entrance cannot bind physical landing support and falls back to projected
+navigation. The mesh review retains 596/602 sampled flight hits, maximum nearest
+mesh height residual 0.872101 and maximum uncovered edge distance 0.039980.
+The upper approach is on the separate roof and receives no support from the
+climb asset mesh alone. These asset edits remain unpublished.
+
+With surface clearance, the existing keep-annex candidate's original eight
+placements (`lincoln-keep-annex-neighbour-placements-jlgO6X`) now pass all 32
+native routes. The expanded sweep initially stops at 150 degrees; retained
+failure `...keep-annex-neighbour-placements-er7ULT` shows that an exact supported
+outside point projects to [1429.643952, 1299.807472], while [1430, 1300] lies
+0.301092 units outside its receiving polygon. Increasing collision tolerances
+would not address that loss of entrance precision.
+
+Physical lift resolution now uses the exact projected world anchor. The loader
+uses the existing physical navigation endpoints for runtime doors and selects
+landing receivers using the physical outside point. Integer coordinates remain
+compatibility identities; no duplicate endpoint data is needed in the export.
+A compiler regression covers stairs, ladders and walls and verifies that genuinely
+unsupported points do not gain physical traversal. A native regression verifies
+receiver binding when the rounded approach lies outside a triangular roof, both
+with and without explicit door endpoint fields. Floor contours, obstacle bounds,
+and movement tolerances are unchanged. The expanded keep-annex compilation now
+passes all 50 placements and rejects 200 missing/raised neighbours in
+`lincoln-keep-annex-neighbour-placements-TjltD7`; native handoff verification
+passes 196/200 routes and detects four receiver mismatches at 150 degrees, so
+the asset is unpublished. Final exports without duplicate endpoint fields are
+in `lincoln-keep-annex-neighbour-placements-qVQyOl`; their complete native rerun
+confirms the same 196/200 result and the same four 150-degree handoff failures.
+
+All ten saved scenes compile in `saved-map-exports-1tkbkL`. Fresh final exports
+of Derby, Leicester, Lincoln, Sherwood and York in `saved-map-exports-sghWnY`
+are identical after removing only the intermediate batch's redundant endpoint
+fields; all 84 complete-character climb routes and all 192 stair routes pass.
+All 139 compiler tests,
+48 regular compiled-navigation tests and four changing-climb actor tests pass,
+including 72 mid-climb barrier reopening checks. App typechecking and focused
+lint pass. Pipeline typechecking remains blocked by unrelated state-delivery
+test types. Two app export fixture comparisons (merged platform and sloped
+terrain sockets) also fail with the unchanged compiler, verified by rerunning
+those two cases against its HEAD version; they are not marked as passing here.
+The final game build and Rust/editor formatting checks pass.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

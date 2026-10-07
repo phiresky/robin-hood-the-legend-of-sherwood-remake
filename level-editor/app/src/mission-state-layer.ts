@@ -201,7 +201,10 @@ export class MissionStateLayer {
                 row.binding.id,
                 {
                   internallyPlaying: () => consumer.playing,
-                  sampleExternalTick: (tick) => consumer.sampleExternalTick(tick),
+                  sampleExternalTick: (tick, active) => {
+                    consumer.sampleExternalTick(tick);
+                    consumer.object.visible = active;
+                  },
                 },
                 token,
               );
