@@ -58,6 +58,30 @@ def precise_plane_separation(first, second, adjacent):
             signs = [determinant(*a, point) for point in b]
             if all(value > 0 for value in signs) or all(value < 0 for value in signs):
                 return True
+        def subtract(a, b): return [x-y for x, y in zip(a, b)]
+        def cross(a, b):
+            return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]
+        a, b = triangles
+        normals = [cross(subtract(t[1], t[0]), subtract(t[2], t[0])) for t in triangles]
+        direction = cross(*normals)
+        if any(direction):
+            axis = max(range(3), key=lambda index: abs(direction[index]))
+            intervals = []
+            for triangle, plane in [(a, b), (b, a)]:
+                distances = [determinant(*plane, point) for point in triangle]
+                points = [point[axis] for point, distance in zip(triangle, distances) if distance == 0]
+                for i in range(3):
+                    j = (i+1) % 3
+                    if distances[i]*distances[j] < 0:
+                        fraction = distances[i]/(distances[i]-distances[j])
+                        points.append(triangle[i][axis]+fraction*(triangle[j][axis]-triangle[i][axis]))
+                if not points:
+                    return True
+                intervals.append((min(points), max(points)))
+            # The two nonparallel planes intersect in one line. Disjoint
+            # clipped intervals on any nonconstant line coordinate cannot meet.
+            if min(high for low, high in intervals) < max(low for low, high in intervals):
+                return True
     return False
 
 
@@ -161,7 +185,7 @@ def main():
                     precise_separations.append(dict(faces=[i, j], kind=key))
                     continue
                 failures.append(dict(faces=[i, j], kind=key))
-    (packet / 'precise-plane-separations.json').write_text(json.dumps(dict(method='80-digit Decimal determinants; original stored coordinates, existing shared-boundary inset only; strict signs, no tolerance relaxation', separated=precise_separations), indent=2) + '\n')
+    (packet / 'precise-plane-separations.json').write_text(json.dumps(dict(method='80-digit Decimal determinants and nonparallel-plane line intervals; original stored coordinates, existing shared-boundary inset only; strict separation, no tolerance relaxation', separated=precise_separations), indent=2) + '\n')
     source = np.load(root / 'tree08-v12-local-fork-cpu-v1/minimal-forks.npz')
     ids = [29, 93] if args.threeway else [args.section]
     if args.fiveway:
