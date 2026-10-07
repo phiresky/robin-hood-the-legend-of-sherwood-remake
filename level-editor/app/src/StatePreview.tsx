@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
 import type { Level3D } from "@rle/shared";
+import type { MissionStateSource } from "./mission-state-layer.ts";
 import type { EditorViewport } from "./editor-viewport.ts";
 import {
   nativeLoopPreviewPeriod,
@@ -34,6 +35,53 @@ export default function StatePreview(props: {
     [mode, setMode] = createSignal<"art" | "initial" | "applied">("art"),
     [tick, setTick] = createSignal(0),
     [playing, setPlaying] = createSignal(false);
+  const [actorSource, setActorSource] = createSignal<MissionStateSource | null>(null),
+    [actorId, setActorId] = createSignal(""),
+    [actorEnabled, setActorEnabled] = createSignal(false),
+    [actorHidden, setActorHidden] = createSignal(false),
+    [actorBusy, setActorBusy] = createSignal(false);
+  let actorRequest = 0;
+  const actors = () =>
+    (props.document()?.mission?.soldiers ?? []).filter((a) => /^import-soldier-\d+$/.test(a.id));
+  async function updateActor(enabled: boolean, id = actorId(), hidden = actorHidden()) {
+    const attempt = ++actorRequest;
+    setActorEnabled(false);
+    props.viewport.clearNativeActorPreview();
+    if (!enabled) {
+      setActorBusy(false);
+      return;
+    }
+    const source = actorSource();
+    if (!source || !id) return;
+    setActorBusy(true);
+    try {
+      const index = Number(id.slice("import-soldier-".length));
+      const soldiers = source.data.soldiers as { layer: number }[];
+      if (!soldiers[index]) throw new Error("Character no longer belongs to this preview");
+      const ready = await props.viewport.setNativeActorPreview(source, [
+        {
+          identity: `soldiers:${index}`,
+          preview: { kind: "editable", editorId: id },
+          active: true,
+          layer: soldiers[index]!.layer,
+          drawHidden: hidden,
+          outlineColor: 0xf800,
+        },
+      ]);
+      if (attempt !== actorRequest) return;
+      setActorEnabled(ready);
+    } catch (error) {
+      if (attempt === actorRequest) props.onError(String(error));
+    } finally {
+      if (attempt === actorRequest) setActorBusy(false);
+    }
+  }
+  function clearActor() {
+    actorRequest++;
+    setActorSource(null);
+    setActorEnabled(false);
+    setActorBusy(false);
+  }
   let generation = 0,
     request = 0,
     lastLibrary: FileSystemDirectoryHandle | null | undefined,
@@ -61,7 +109,9 @@ export default function StatePreview(props: {
   function applyMode(view: "art" | "initial" | "applied", familyId: string) {
     if (loopContract() || patchContract())
       props.viewport.setStatePresentationMode(
-        view === "initial" && loopContract()?.physical ? "physical" : "native-art",
+        view === "initial" && (loopContract()?.physical || actorSource())
+          ? "physical"
+          : "native-art",
       );
     else if (view === "art") props.viewport.setDeliveredStateMode("native-art");
     else {
@@ -76,6 +126,7 @@ export default function StatePreview(props: {
     context: number,
   ) {
     const attempt = ++request;
+    clearActor();
     setSelected(entry.id);
     setContract(null);
     setLoopContract(null);
@@ -99,6 +150,10 @@ export default function StatePreview(props: {
         setFamily(loaded.contract.focus_patch_id);
       } else if (loaded.kind === "native-loop") {
         setLoopContract(loaded.contract);
+        if (loaded.source.name === "S03_FoB_MP") {
+          setActorSource(loaded.source);
+          setActorId(actors()[0]?.id ?? "");
+        }
         setFamily(loaded.contract.focus_element_id);
       } else {
         setContract(loaded.contract);
@@ -126,6 +181,7 @@ export default function StatePreview(props: {
       lastMission = mission;
       const context = ++generation;
       request++;
+      clearActor();
       setEntries([]);
       setContract(null);
       setLoopContract(null);
@@ -164,6 +220,7 @@ export default function StatePreview(props: {
     },
   );
   const timer = setInterval(() => {
+    if (actorEnabled() && !props.viewport.actorPreviewStatus().ready) setActorEnabled(false);
     if (!contract() && !loopContract() && !patchContract()) return;
     const s =
       loopContract() || patchContract()
@@ -280,6 +337,53 @@ export default function StatePreview(props: {
                   : "Original artwork repeats the selected animation. Nearby animation keeps its own timing."
                 : "Original artwork plays the recorded transition. 3D views show the object when present in each state."}
           </p>
+          <Show when={actorSource() && actors().length}>
+            <label>
+              Character
+              <select
+                aria-label="Artwork preview character"
+                value={actorId()}
+                disabled={actorBusy()}
+                onChange={(event) => {
+                  const id = event.currentTarget.value;
+                  setActorId(id);
+                  void updateActor(actorEnabled(), id);
+                }}
+              >
+                <For each={actors()}>
+                  {(actor) => <option value={actor.id}>{actor.name}</option>}
+                </For>
+              </select>
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                aria-label="Show character in artwork"
+                checked={actorEnabled()}
+                disabled={actorBusy()}
+                onChange={(event) => void updateActor(event.currentTarget.checked)}
+              />{" "}
+              Show character in artwork
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                aria-label="Show hidden character outline"
+                checked={actorHidden()}
+                disabled={actorBusy()}
+                onChange={(event) => {
+                  const hidden = event.currentTarget.checked;
+                  setActorHidden(hidden);
+                  void updateActor(actorEnabled(), actorId(), hidden);
+                }}
+              />{" "}
+              Show hidden outline
+            </label>
+            <p class="hint">
+              Uses this character’s current edited position and facing. This preview does not play
+              the mission.
+            </p>
+          </Show>
           <Show when={(contract()?.families.length ?? 0) > 1}>
             <label>
               Part
@@ -302,7 +406,10 @@ export default function StatePreview(props: {
             View
             <select
               aria-label="State preview view"
-              disabled={(!!loopContract() && !loopContract()?.physical) || !!patchContract()}
+              disabled={
+                (!!loopContract() && !loopContract()?.physical && !actorSource()) ||
+                !!patchContract()
+              }
               value={mode()}
               onChange={(event) => {
                 if (!loopContract()) props.viewport.setDeliveredStatePlaying(false);
@@ -310,8 +417,10 @@ export default function StatePreview(props: {
               }}
             >
               <option value="art">Original artwork</option>
-              <Show when={loopContract()?.physical}>
-                <option value="initial">3D animation</option>
+              <Show when={loopContract()?.physical || actorSource()}>
+                <option value="initial">
+                  {loopContract()?.physical ? "3D animation" : "3D scene"}
+                </option>
               </Show>
               <Show when={contract()}>
                 <option value="initial">3D initial</option>
@@ -328,7 +437,7 @@ export default function StatePreview(props: {
           >
             <p class="hint">No object is present in this state.</p>
           </Show>
-          <Show when={mode() === "art" || !!loopContract()?.physical}>
+          <Show when={mode() === "art" || !!loopContract()?.physical || !!actorSource()}>
             <div class="actions">
               <button type="button" onClick={play}>
                 {playing() ? "Pause" : "Play"}
