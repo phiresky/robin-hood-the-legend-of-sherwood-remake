@@ -28,6 +28,17 @@ def snapshot():
     for row in manifest['files']:
         path = Path(row['target'])
         expected = row['source_sha256'] if row['source'] is not None else None
+        if str(path) == manifest['index_generation']['target']:
+            # Other maps can publish after this map's transaction. Its own
+            # catalog entries must remain exact; pin the full current index.
+            before = json.loads(Path(row['source']).read_text())
+            after = json.loads(path.read_text())
+            def scoped(index):
+                return [entry for entry in index['assets']
+                        if entry.get('source_map', '').lower() == 'croisement02']
+            if before['version'] != after['version'] or scoped(before) != scoped(after):
+                raise ValueError('Installed Crossings02 catalog changed')
+            expected = sha(path)
         if sha(path) != expected:
             raise ValueError('Installed publication changed: ' + str(path))
         pins[str(path)] = expected
