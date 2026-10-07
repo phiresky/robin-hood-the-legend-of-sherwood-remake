@@ -10162,6 +10162,54 @@ focused diagnosis and records the filter in its report. Unfiltered full audits
 above still test every stair. Focused lint/format checks, Cargo formatting and
 the game build pass.
 
+### Physical doorsteps on independently authored terrain (2026-10-07)
+
+The physical-terrain experiment's omitted west-town lane entrances were placed
+on sloped receiver volumes that supplied rendering height but no explicit
+walking floor. Merely enabling those volumes as movement solids blocked the
+projected ground beneath them. `refinement/stage-receiver-floors.mjs` explicitly
+promotes selected receiver tops to asset-local walking floors and exposes their
+outer edges as navigation sockets. It checks every staged descriptor pin,
+requires selected solid support, refuses unreviewed material partitions and
+retains the fitted top plane. No runtime sector IDs or saved-layout fallback
+are introduced.
+
+Staging uses `terrain-volume-stage-rebase-PRbGPE`, which updates only the two
+published stair pins in the preceding experiment while preserving its explicit
+experimental gameplay. Final stage `receiver-floors-kEzmuf` adds the
+`building-601-receiver` and `building-602-receiver` floors to
+`york-west-town-lane-stone-tower` and `york-west-town-lane-narrow-timber-house`.
+The authored fourth height differed from each volume's fitted plane by at most
+0.000004599 and 0.000010356 units respectively. Retaining those rounded heights
+made the initial placement batch fail planarity after rotation to 180 degrees.
+Evaluating all floor vertices on the already validated volume plane fixes that
+authoring inconsistency without increasing compiler tolerances.
+
+`refinement/check-receiver-floor-placements.mjs` places two copies of each house
+over newly authored flat terrain at 0, 37, 90 and 180 degrees and two elevations.
+Final batch `receiver-floor-placements-bidY5j` produces eight exports and
+**32 connected doorstep placements**. Each doorstep must have exactly one
+terrain socket match; removing terrain or raising it 20 units rejects all
+**64 checked connections**. Building entrances remain defined on their own
+doorstep even when the terrain connection is absent. These are compiler checks,
+not proof of complete actor routes.
+
+The native sampled receiver audit passes **32 directed crossings** in that
+batch, covering the 0- and 37-degree placements at both elevations. It reports
+zero eligible receiver pairs at 90 and 180 degrees. Those orientations therefore
+remain unverified by actor movement despite the test's successful exit status.
+The report is `actor-receiver-crossing-report.json` in the placement batch.
+
+Full candidate `saved-map-exports-49YG0O` restores two building records (68 to
+70), the two formerly omitted receiver bindings and the raised terrain's
+`light-14 receiver 1` binding. Omission warnings decrease from **45 to 40**;
+door/receiver/jump/light omissions decrease from **20 to 15** with no newly
+omitted feature. The full native geometry-control audit loads this candidate
+and successfully applies/resets all **six controls**. Complete door approach
+routes, the unsampled orientations and rendered contacts remain outstanding.
+The helper and placement verifier pass focused lint and formatting. Neither
+doorstep nor the broader terrain candidate is published by this experiment.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

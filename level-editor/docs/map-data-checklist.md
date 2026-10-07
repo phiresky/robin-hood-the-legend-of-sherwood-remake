@@ -949,6 +949,18 @@ native audits retain the actual movement-order route, bound landing geometry and
 initial collision states; `audit-lift-support.py` measures contact support.
 Passing the placement sweep does not certify the remaining full-scene or visual
 behavior; the gable, lean-to and broader physical-terrain candidate remain unpublished.
+An additional unpublished doorstep experiment makes the stone tower and narrow
+timber house in York's west-town lane own the physical tops of their existing
+entrance volumes. It restores two building entrances, two receiving bindings and
+one light binding in the physical-terrain candidate, reducing omission warnings
+from 45 to 40 without new feature omissions. The floors expose matching exterior
+sockets to independently authored terrain: 32 copied/rotated/elevated placements
+compile, and 64 missing/raised-terrain cases reject the connection. Native sampled
+receiver checks pass 32 crossings at 0 and 37 degrees; they find no eligible
+samples at 90 or 180 degrees, so those orientations are not native-verified.
+All six full-map geometry controls still apply and reset. Complete door approach
+routes, rendered contacts and the remaining 15 feature omissions need review
+before publishing the candidate.
 The receiving-plane loader now propagates f32 rounding through both the plane
 anchors and each receiver vertex. Steep valid planes no longer fail loading
 merely because assets are translated; the regression still rejects explicit

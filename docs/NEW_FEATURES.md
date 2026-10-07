@@ -8,6 +8,14 @@
   copied, rotated and elevated placements pass native character traversal.
   Rendered integration remains unverified.
 
+- **Physical doorstep authoring experiments.** A staging helper can turn explicitly
+  selected asset receiver tops into walkable floors with exterior edge sockets.
+  It retains the volume's fitted plane through rotation, checks descriptor pins
+  and refuses unreviewed material partitions. Two candidate doorsteps connect to
+  newly authored terrain in copied, rotated and elevated compiler checks; native
+  traversal coverage and rendered review are still incomplete, so these changes
+  remain unpublished.
+
 - **Physical walking on receiving floors (integration in progress).** Precise receiving
   floors support world-coordinate routes and bounded source recovery, retaining
   holes and current collision. Walking clearance uses its normal inset; source
