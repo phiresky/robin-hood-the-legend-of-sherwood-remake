@@ -1,3 +1,25 @@
+## Full-bank construction scope prepared
+
+`bank-west-transition-v1/surface-scope.json` refines the earlier join finding:
+the upper west side is covered by adjacent plateau95, so the7.075px distance
+to obstacle94 alone is not evidence of a void. All seven bank/path top profiles
+fit planes within0.001 authored units. Preserve their shelf steps and retain
+the native elevation-line references; visual context95 is not a metadata fix.
+
+The next bounded prototype covers bank52 and ramps53/54 with unchanged
+path94–97 context and the frozen shared crest. Its resource budget is8MiB per
+model /32MiB per round, two threads and10GiB plus write-estimate headroom.
+The coordinator queued its model/render lane after the current tasks; no
+Blender work has started in this continuation.
+
+`bank-exposed-rock-proposal-v1/` contains3,446 conservative source-inspected
+rock seed pixels from three interior patches, with every foreign mask overlap
+reserved. The saved-frame alpha audit finds only one candidate pixel covered
+by any overlapping animation frame. This remains a proposal: no source pixel
+has been removed, assigned to a face or claimed as runtime-order proof.
+The broad gold crown, ivy-covered front, hidden bank surfaces and Tree01 source
+partition remain separate unfinished ownership work.
+
 ## Shared interface frozen; full bank and Tree01 CPU continuation
 
 The earlier Tree02 shared-interface HOLD below is superseded by the root PASS
