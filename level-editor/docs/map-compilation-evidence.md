@@ -9803,3 +9803,22 @@ the bridge still leaves two. All 146 existing compiler/navigation/terrain tests
 and the additional regression pass. Application typechecking passes; pipeline
 typechecking still encounters the separately modified state-delivery tests.
 Full rendered occlusion and the remaining 180-degree receiver failure are open.
+
+The 180-degree failure was an artificial internal seam between adjacent
+generated ground receivers with identical material and receiving plane.
+`partitionProjectionMaterials` now unions adjacent equivalent generated supports
+before subtracting their coverage. It preserves physical receiver identities,
+different materials/planes and ordering between non-equivalent supports. A
+focused regression checks a fractional quadrilateral made from two triangles,
+unchanged input metadata, separate material boundaries and physical identities.
+All 156 affected terrain, compiler, navigation and partition tests pass, along
+with application typechecking and focused lint/format checks.
+
+Structured candidate `croisement-bridge-gameplay-59LmI4` passes all forty native
+directed actor crossings and 3,120 sight/projectile queries, retaining all twenty
+wrong-height landing rejections. Exporting the complete saved Croisement03 with
+the bridge candidate (`saved-map-exports-6W8tQm`) passes native construction:
+12 areas, 633 sight obstacles, 15 doors, ten jump pairs, 5,434 grid blocks and
+68 elevation boundaries. All nine state apply/reset checks pass. This verifies
+loading and control construction, not original-scene bridge crossings or rendered
+actor occlusion. The bridge remains unpublished pending that integration review.

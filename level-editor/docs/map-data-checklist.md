@@ -268,11 +268,13 @@ The solid-deck candidate now also passes all 40 actor crossings and 240
 sight/projectile probes after fitting the nominal deck plane within 0.000016
 height units and retaining fractional terrain fragments through compiler
 clipping. The newer full-structure candidate adds mesh-derived rail/pier solids
-and passes 3,120 sight/projectile checks. Eighteen of twenty placement fixtures
-pass both actor crossings; the two 180-degree gap cases still lose receiver
-tracking. Terrain now retains fractional coordinates until navigation assembly,
-fixing the separate 90-degree disconnection. Rendered actor occlusion also
-remains unverified; this asset is still unpublished and counted as missing.
+and passes 3,120 sight/projectile checks and all 40 directed actor crossings.
+Terrain retains fractional coordinates until navigation assembly, fixing the
+90-degree disconnection; equivalent generated ground receivers now merge before
+partitioning, fixing the 180-degree receiver seam. Full Croisement03 with the
+candidate passes native construction and state apply/reset checks. Rendered
+actor occlusion and original-scene bridge crossings remain unverified; this
+asset is still unpublished and counted as missing.
 An unpublished mesh-derived bridge deck candidate passes ten complete native
 crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes
