@@ -6,8 +6,8 @@
   "issues": [
     {
       "issue": "profile",
-      "status": "open_reproduced",
-      "finding": "Fresh save/replay bootstrap has 63 profiles but the session generated profile 65. The supplied archer replay also fails here before simulation; current reconstruction handles only one appended profile.",
+      "status": "new_save_catalog_fixed_replay_and_older_reports_open",
+      "finding": "Fresh save/replay bootstrap has 63 profiles but the reported session generated profile 65. New manual saves, autosaves and restart checkpoints retain the exact mission catalog. Cold loading checks the installed prefix and restores only exact generated profile definitions, transactionally. The disk-save regression covers three generated profiles and malformed catalog rejection. Older payloads lack this catalog. The archer report full log records the prior sequence DerbyExplorer (proto Derby), MultiTeamFourGrades, MultiTeamTwentyRobins, providing a recovery lead to verify. Replay headers still need a corresponding durable catalog; the supplied replay remains blocked before simulation.",
       "report_ids": [
         "18357d99ae6a",
         "1a0a43475196",
@@ -135,6 +135,7 @@
     "Indoor render branch checked against expected sector behavior; visual gameplay verification remains pending.",
     "Second batch: full robin_engine and robin_rs audio,multiplayer suites passed, including rejected rollback recovery, exact snapshot preservation, and sparse gesture capture regressions.",
     "Difficulty label layout is implemented but visual verification remains pending.",
-    "Second batch native build passed; no deployment performed by this worktree."
+    "Second batch native build passed; no deployment performed by this worktree.",
+    "Generated mission catalogs: level-data and engine unit/integration suites passed; engine/level-data documentation tests passed separately after correcting the game regression fixture. Full robin_rs audio,multiplayer suite passed, including a disk-save cold load after three generated missions. Native build, formatting and diff checks passed for this batch."
   ]
 }

@@ -617,6 +617,10 @@ pub struct SaveHeader {
     pub mission_id: u32,
     /// Exact immutable mission assets required before engine construction.
     pub mission_assets: robin_engine::mission_assets::MissionAssetDescriptor,
+    /// Exact mission catalog, including profiles allocated during this session.
+    /// Older saves omit it and can only restore profiles identified by their descriptor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mission_profiles: Option<Vec<robin_engine::profiles::MissionProfile>>,
     /// Unix epoch seconds at save time.
     pub timestamp_unix: u64,
     /// Human-readable label chosen by the player (empty for auto saves).
@@ -649,6 +653,7 @@ impl SaveHeader {
             version: SAVE_FORMAT_VERSION,
             mission_id,
             mission_assets,
+            mission_profiles: None,
             timestamp_unix,
             display_text,
             multiplayer_diagnostic: false,
@@ -656,6 +661,40 @@ impl SaveHeader {
             provenance,
             replay: None,
         })
+    }
+
+    /// Restore only an exact catalog extension. Validate the whole extension
+    /// before mutation so incompatible or malformed saves leave profiles intact.
+    pub(crate) fn restore_mission_profiles(
+        &self,
+        profiles: &mut robin_engine::profiles::ProfileManager,
+    ) -> Result<()> {
+        let Some(saved) = &self.mission_profiles else {
+            return Ok(());
+        };
+        if saved.len() < profiles.missions.len() {
+            // Ambient extra missions may remain, but the saved prefix must match.
+            if profiles.missions[..saved.len()] != saved[..] {
+                bail!("saved mission catalog differs from installed mission profiles");
+            }
+            return Ok(());
+        }
+        if saved[..profiles.missions.len()] != profiles.missions[..] {
+            bail!("saved mission catalog differs from installed mission profiles");
+        }
+        let mut prepared = profiles.clone();
+        for profile in &saved[profiles.missions.len()..] {
+            let index = prepared.add_forced_mission(
+                profile.proto_level_filename.clone(),
+                profile.mission_filename.clone(),
+                profile.mission_name.clone(),
+            ) as usize;
+            if &prepared.missions[index] != profile {
+                bail!("saved mission profile {index} is not a generated mission profile");
+            }
+        }
+        profiles.missions = prepared.missions;
+        Ok(())
     }
 
     pub fn validate(&self) -> Result<()> {

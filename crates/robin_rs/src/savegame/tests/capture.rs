@@ -1094,3 +1094,78 @@ fn unavailable_history_keeps_a_local_unranked_continuation() {
             .any(|load| load.snapshot.is_some())
     );
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn cold_save_restores_multiple_session_generated_mission_profiles() {
+    let root = tempfile::tempdir().unwrap();
+    let (engine, mut assets, mut profiles, mut host) = fresh_save_session("Generated catalog");
+    let base = profiles.clone();
+    let mut campaign = engine.campaign().clone();
+    for name in ["EarlierArena", "AnotherArena", "CurrentArena"] {
+        let profile_idx = profiles.add_forced_mission("ArenaMap".into(), name.into(), name.into());
+        campaign.missions.push(Mission {
+            profile_idx: Some(profile_idx),
+            ..Mission::default()
+        });
+    }
+    campaign.current_mission_idx = Some(campaign.missions.len() - 1);
+    let mission_id = profiles.missions.last().unwrap().id;
+    campaign.snapshot_preselected_with_simulation(0, Default::default());
+    assets.profile_manager = std::sync::Arc::new(profiles.clone());
+    let engine = Engine::new_for_test(800.0, 600.0, campaign, &mut assets).unwrap();
+    let game = game_for_save(&profiles, mission_id);
+    let mut manager = SaveGameManager::new(root.path().to_str().unwrap().into());
+    manager
+        .write_quick_save(&mut host, &game, &engine, mission_id, Some(&profiles), None)
+        .unwrap();
+    let index = manager
+        .find_by_filename(save_file::special_slots::QUICK)
+        .unwrap();
+    let saved = GameSaveFile::read_from(&manager.save_path(index)).unwrap();
+    assert_eq!(
+        saved.header.mission_profiles.as_ref().unwrap(),
+        &profiles.missions
+    );
+    let mut restored = base.clone();
+    let selected =
+        crate::game_session::install_and_validate_saved_profile(&mut restored, &saved).unwrap();
+    assert_eq!(selected, profiles.missions.len() - 1);
+    assert_eq!(restored.missions, profiles.missions);
+
+    // Older payloads with unrecorded intervening profiles remain an explicit
+    // error; filling the holes with the current mission would corrupt history.
+    let mut older = saved.clone();
+    older.header.mission_profiles = None;
+    assert!(
+        crate::game_session::install_and_validate_saved_profile(&mut base.clone(), &older).is_err()
+    );
+
+    let mut incompatible = saved.clone();
+    incompatible.header.mission_profiles.as_mut().unwrap()[0].mission_filename =
+        "DifferentBase".into();
+    let mut unchanged = base.clone();
+    assert!(
+        incompatible
+            .header
+            .restore_mission_profiles(&mut unchanged)
+            .is_err()
+    );
+    assert_eq!(unchanged.missions, base.missions);
+    let mut malformed = saved;
+    malformed
+        .header
+        .mission_profiles
+        .as_mut()
+        .unwrap()
+        .last_mut()
+        .unwrap()
+        .id += 1;
+    assert!(
+        malformed
+            .header
+            .restore_mission_profiles(&mut unchanged)
+            .is_err()
+    );
+    assert_eq!(unchanged.missions, base.missions);
+}

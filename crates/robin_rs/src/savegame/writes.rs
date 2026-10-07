@@ -711,12 +711,18 @@ impl SaveGameManager {
         // Invalidate the previous mission's checkpoint even if capture fails.
         self.session_restart = None;
         let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
-        let header = SaveHeader::new(
+        let mut header = SaveHeader::new(
             mission_id,
             game.mission_assets().map_err(anyhow::Error::msg)?.clone(),
             "Restart Point".into(),
             provenance,
         )?;
+        header.mission_profiles = Some(
+            profiles
+                .context("restart requires mission profiles")?
+                .missions
+                .clone(),
+        );
         let mut save = PreparedGameSave::capture_session_restart(engine, host, game, header)?;
         save.record_replay_boundary(&host.application_context().replay_recording())?;
         let mut slot = SaveGame::new(
@@ -801,7 +807,7 @@ fn capture_save(capture: SaveCapture<'_>, display_text: String) -> Result<GameSa
         ..
     } = capture;
     let provenance = required_save_provenance(host, engine, mission_id, profiles)?;
-    GameSaveFile::capture_with_game(
+    let mut save = GameSaveFile::capture_with_game(
         engine,
         host,
         game,
@@ -809,5 +815,12 @@ fn capture_save(capture: SaveCapture<'_>, display_text: String) -> Result<GameSa
         game.mission_assets().map_err(anyhow::Error::msg)?.clone(),
         display_text,
         provenance,
-    )
+    )?;
+    save.header.mission_profiles = Some(
+        profiles
+            .context("save requires mission profiles")?
+            .missions
+            .clone(),
+    );
+    Ok(save)
 }

@@ -303,6 +303,7 @@ impl AutosaveCoordinator {
             display_text,
             provenance,
         )?;
+        payload.header.mission_profiles = Some(profiles.missions.clone());
         if payload.header.timestamp_unix == 0 {
             bail!("autosave payload clock returned the invalid Unix timestamp zero");
         }

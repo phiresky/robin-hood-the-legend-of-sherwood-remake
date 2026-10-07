@@ -357,6 +357,9 @@ pub(crate) fn install_and_validate_saved_profile(
     profiles: &mut engine_profiles::ProfileManager,
     save: &crate::save_file::GameSaveFile,
 ) -> Result<usize, MissionError> {
+    save.header
+        .restore_mission_profiles(profiles)
+        .map_err(|error| MissionError::save(format!("{error:#}")))?;
     let descriptor = &save.header.mission_assets;
     let campaign = save.engine.campaign();
     let mission_idx = campaign.current_mission_idx.ok_or_else(|| {

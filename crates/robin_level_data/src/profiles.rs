@@ -751,6 +751,8 @@ pub struct CivilianProfile {
 #[derive(
     Debug,
     Clone,
+    PartialEq,
+    Eq,
     Default,
     Serialize,
     Deserialize,
