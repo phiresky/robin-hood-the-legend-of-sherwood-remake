@@ -3,10 +3,10 @@ import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {stateProofCommand} from './restart6_verify_remaining_state_editor.mjs';
-export async function run({ws,nextId,origin,out}){
+export async function run({ws,nextId,origin,out,commandTimeoutMs=60000}){
  const base=resolve('level-editor/work/croisement02-refinement/restart2-state/remaining-seven-contact-v1');
  await mkdir(out,{recursive:true});
- const command=(method,params)=>stateProofCommand(ws,nextId,method,params);
+ const command=(method,params)=>stateProofCommand(ws,nextId,method,params,commandTimeoutMs);
  const evaluate=async expression=>{const r=await command('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result?.value};
  // Navigation intentionally replaces the previous document before any proof evaluation starts.
  const id=nextId();await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{ws.removeEventListener('message',listener);reject(Error('Navigation timed out'))},60000);const listener=e=>{const d=JSON.parse(e.data);if(d.id===id){clearTimeout(timer);ws.removeEventListener('message',listener);d.error?reject(Error(JSON.stringify(d.error))):resolve(d.result)}};ws.addEventListener('message',listener);ws.send(JSON.stringify({id,method:'Page.navigate',params:{url:origin+'/@fs'+join(base,'index.html')}}))});

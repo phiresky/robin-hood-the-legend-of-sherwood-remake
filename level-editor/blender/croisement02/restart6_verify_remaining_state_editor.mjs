@@ -17,10 +17,10 @@ export function stateProofCommand(ws,nextId,method,params,timeoutMs=60000){retur
   if(ws.readyState!==1)return closed();ws.send(JSON.stringify({id,method,params}));
  });
 }
-export async function run({ws,nextId,evaluate,out}){
+export async function run({ws,nextId,evaluate,out,commandTimeoutMs=60000}){
  await mkdir(out,{recursive:true});
  const manifest=await json(join(stage,'manifest.json')),checks=[],screenshots=[];
- const command=(method,params)=>stateProofCommand(ws,nextId,method,params);
+ const command=(method,params)=>stateProofCommand(ws,nextId,method,params,commandTimeoutMs);
  // Use this module's CDP evaluator so the callback's return conventions cannot alter assertions.
  const exec=async expression=>{const r=await command('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result?.value};
  const until=async expression=>{for(let i=0;i<600;i++){if(await exec(expression))return;await new Promise(r=>setTimeout(r,200));}throw Error('Timeout '+expression+' '+await exec('document.body.innerText.slice(-1600)'))};
