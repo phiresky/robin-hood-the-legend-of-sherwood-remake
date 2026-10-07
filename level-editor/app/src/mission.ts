@@ -20,6 +20,13 @@ import {
 
 import { SpriteAtlasImages, spriteAtlasRect } from "./sprite-atlas.ts";
 import type { NativePixels } from "./native-state-presentation.ts";
+import { createReceiverActorFrameBinding } from "./actor-receiver-binding.ts";
+import {
+  projectedTerrainReceivers,
+  shadowCoverageBounds,
+  type PhysicalReceiverTriangle,
+  type SpriteBounds,
+} from "./actor-shadow-receivers.ts";
 
 class MissingSpriteError extends Error {}
 
@@ -81,6 +88,7 @@ interface SpriteFrame {
   texture: THREE.Texture;
   geometry: THREE.BufferGeometry;
   shadow: THREE.Texture | null;
+  shadowBounds?: SpriteBounds;
   bounds: { left: number; top: number; width: number; height: number };
   source: {
     resourceId: number;
@@ -120,6 +128,96 @@ export class MissionEntities {
   readonly warnings: string[] = [];
   private actors: ActorView[] = [];
   private sourceMission = "";
+  private receiverBinding: ReturnType<typeof createReceiverActorFrameBinding> | undefined;
+  private receiverAuthority:
+    | {
+        identity: string;
+        revision: string;
+        triangles: readonly PhysicalReceiverTriangle[];
+        elevation: number;
+      }
+    | undefined;
+  private receiverFrameKey = "";
+  private receiverError: string | undefined;
+  characterReceiverStatus() {
+    return {
+      ready: !!this.receiverAuthority,
+      revision: this.receiverAuthority?.revision,
+      error: this.receiverError,
+    };
+  }
+  clearCharacterReceivers() {
+    this.receiverBinding?.dispose();
+    this.receiverBinding = undefined;
+    this.receiverAuthority = undefined;
+    this.receiverFrameKey = "";
+    this.receiverError = undefined;
+  }
+  /** Caller supplies evaluated physical support for this explicit preview revision. */
+  bindCharacterReceivers(
+    identity: string,
+    revision: string,
+    triangles: readonly PhysicalReceiverTriangle[],
+    elevation: number,
+  ) {
+    if (
+      this.disposed ||
+      this.actors.length !== 1 ||
+      !!this.sourceMission ||
+      this.actors[0]!.sourceMember ||
+      !identity ||
+      !revision ||
+      !Number.isFinite(elevation) ||
+      elevation <= 0 ||
+      elevation >= Math.PI / 2
+    )
+      throw new Error("Explicit editable character and receiver revision required");
+    const authority = { identity, revision, elevation, triangles: structuredClone(triangles) };
+    const actor = this.actors[0]!,
+      frame = actor.selected ?? actor.frames.get(actor.direction) ?? actor.frames.get(-1);
+    if (!frame) throw new Error("Character receiver frame is not ready");
+    const binding = createReceiverActorFrameBinding(actor.mesh, identity);
+    try {
+      binding.apply(this.receiverSnapshot(authority, frame, actor.mesh, actor.mesh.rotation.y));
+    } catch (error) {
+      binding.dispose();
+      throw error;
+    }
+    this.clearCharacterReceivers();
+    this.receiverBinding = binding;
+    this.receiverAuthority = authority;
+    this.receiverError = undefined;
+  }
+  private receiverSnapshot(
+    authority: NonNullable<MissionEntities["receiverAuthority"]>,
+    frame: SpriteFrame,
+    mesh: ActorView["mesh"],
+    rotation: number,
+  ) {
+    const anchor = mesh.position.toArray(),
+      b = frame.shadowBounds ?? frame.bounds;
+    const mapY =
+      anchor[2] * Math.sin(authority.elevation) - anchor[1] * Math.cos(authority.elevation);
+    const selected =
+      mesh.visible && frame.shadow
+        ? projectedTerrainReceivers(authority.triangles, [
+            anchor[0] + b.left,
+            mapY - b.top,
+            anchor[0] + b.left + b.width,
+            mapY - b.top + b.height,
+          ])
+        : [];
+    return {
+      identity: authority.identity,
+      frame,
+      anchor,
+      rotation,
+      active: mesh.visible,
+      elevation: authority.elevation,
+      receiverTriangles: selected.map((r) => r.points),
+      shadowStyle: spriteShadowStyle("Day"),
+    };
+  }
   get missionName() {
     return this.sourceMission;
   }
@@ -234,6 +332,32 @@ export class MissionEntities {
         : lockOrientations || frame.geometry.userData.spriteShape === "prone-character"
           ? ((direction - actor.direction) * Math.PI) / 8
           : azimuth;
+      if (this.receiverAuthority && this.receiverBinding) {
+        const key = JSON.stringify([
+          this.receiverAuthority.revision,
+          frame.source.resourceId,
+          actor.mesh.position.toArray(),
+          actor.mesh.visible,
+        ]);
+        if (key !== this.receiverFrameKey) {
+          try {
+            this.receiverBinding.apply(
+              this.receiverSnapshot(
+                this.receiverAuthority,
+                frame,
+                actor.mesh,
+                actor.mesh.rotation.y,
+              ),
+            );
+            this.receiverFrameKey = key;
+          } catch (error) {
+            this.clearCharacterReceivers();
+            this.receiverError = `Character shadow support unavailable: ${String(error)}`;
+          }
+        }
+      }
+      if (this.receiverBinding?.shadow)
+        this.receiverBinding.shadow.rotation.y = -actor.mesh.rotation.y;
       // Authored shadows remain fixed in world space as the camera orbits.
       if (actor.shadow) actor.shadow.rotation.y = -actor.mesh.rotation.y;
     }
@@ -241,6 +365,7 @@ export class MissionEntities {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.clearCharacterReceivers();
     this.root.removeFromParent();
     this.root.clear();
     for (const m of this.materials) m.dispose();
@@ -719,6 +844,16 @@ export class MissionEntities {
         texture,
         geometry,
         shadow,
+        ...(shadowPixels
+          ? {
+              shadowBounds: shadowCoverageBounds(shadowPixels, {
+                left,
+                top,
+                width,
+                height: heightPx,
+              })!,
+            }
+          : {}),
         bounds: { left, top, width, height: heightPx },
         source: {
           resourceId: ++MissionEntities.nextResourceId,
