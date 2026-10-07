@@ -1,6 +1,226 @@
 use super::*;
 
 #[test]
+fn dispatched_walk_changes_receivers_between_overlapping_height_planes() {
+    let cases: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-sloped-terrain-sockets.json"
+    )))
+    .unwrap();
+    let mut descriptor = cases[0]["descriptor"].clone();
+    let geometry = &mut descriptor["asset_geometry"];
+    geometry["motion_data"]["layers"][0][0]["polygon"]["points"] =
+        serde_json::json!([[0, 0], [100, 0], [100, 100], [0, 100]]);
+    geometry["motion_data"]["layers"][0][0]["precise_polygon"] = serde_json::json!([]);
+    let template = geometry["sight_obstacles"][0].clone();
+    let receivers = [
+        (vec![(0., 0.), (100., 0.), (100., 100.), (0., 100.)], false),
+        (vec![(40., 40.), (60., 40.), (60., 60.), (40., 60.)], true),
+    ]
+    .into_iter()
+    .map(|(points, raised)| {
+        let mut receiver = template.clone();
+        receiver["points"] = serde_json::Value::Array(
+            points
+                .into_iter()
+                .map(|(x, y)| {
+                    let z = if raised { (y - 40.) * 0.5 } else { 0. };
+                    serde_json::json!({"x": x, "y": y, "z_bottom": z, "z_top": z})
+                })
+                .collect(),
+        );
+        receiver
+    })
+    .collect::<Vec<_>>();
+    geometry["sight_obstacles"] = serde_json::json!(receivers);
+    let (engine, assets) = compiled_walkway(&serde_json::to_vec(&descriptor).unwrap());
+    let ground = MapPoint::new(50., 30.);
+    let ramp = MapPoint::new(50., 45.);
+    for (source, goal) in [(ground, ramp), (ramp, ground)] {
+        assert_eq!(
+            dispatch_building_approach(engine.clone(), assets.clone(), 0, 0, source, goal),
+            Ok(())
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires exported building approaches via ROBIN_ASSET_MAP_DIAGNOSTICS"]
+fn exported_building_approaches_support_dispatched_actor_routes() {
+    let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["complete"], true);
+    let mut report = serde_json::json!({
+        "scope": "dispatched-building-approaches-not-interior-entry-or-rendering",
+        "actor_half_diagonal": [6, 3],
+        "complete": false, "audit_finished": false, "results": []
+    });
+    let report_path = directory.join("actor-building-approach-report.json");
+    std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    let mut checked = 0;
+    let mut failed = 0;
+    for result in manifest["results"].as_array().unwrap() {
+        let file = result["file"].as_str().unwrap();
+        let bytes = std::fs::read(directory.join(file)).unwrap();
+        let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let dimensions = &descriptor["walkable_polygon"][2];
+        let (engine, assets) = compiled_walkway_with_dimensions(
+            &bytes,
+            (
+                dimensions[0].as_f64().unwrap() as f32 + 1.,
+                dimensions[1].as_f64().unwrap() as f32 + 1.,
+            ),
+        );
+        let probes = result["building_approaches"]
+            .as_array()
+            .expect("authored building approach probes");
+        assert!(!probes.is_empty());
+        assert_eq!(
+            probes.len(),
+            engine
+                .script_domains
+                .interactables
+                .doors
+                .iter()
+                .filter(|door| door.door_type == crate::gate::DoorType::Building)
+                .count()
+        );
+        for probe in probes {
+            let matches = engine
+                .script_domains
+                .interactables
+                .doors
+                .iter()
+                .enumerate()
+                .filter(|(_, door)| {
+                    door.door_type == crate::gate::DoorType::Building
+                        && u64::from(door.layer_out) == probe["layer"].as_u64().unwrap()
+                        && u64::from(u16::from(door.sector_out))
+                            == probe["sector"].as_u64().unwrap()
+                        && f64::from(door.point_out.x) == probe["point_out"][0].as_f64().unwrap()
+                        && f64::from(door.point_out.y) == probe["point_out"][1].as_f64().unwrap()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(matches.len(), 1, "ambiguous entrance probe: {probe}");
+            let (index, door) = matches[0];
+            let world = &probe["source_world"];
+            let approach = MapPoint::new(
+                world[0].as_f64().unwrap() as f32,
+                (world[1].as_f64().unwrap() - world[2].as_f64().unwrap()) as f32,
+            );
+            let sector_index = door
+                .sector_out_index
+                .expect("bound building outside sector")
+                .get() as usize;
+            for (source, goal) in [(approach, door.point_out), (door.point_out, approach)] {
+                let outcome = dispatch_building_approach(
+                    engine.clone(),
+                    assets.clone(),
+                    door.layer_out,
+                    sector_index,
+                    source,
+                    goal,
+                );
+                checked += 1;
+                if outcome.is_err() {
+                    failed += 1;
+                }
+                report["results"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!({
+                        "file": file, "door": index, "probe": probe, "layer": door.layer_out,
+                        "source": [source.x, source.y], "goal": [goal.x, goal.y],
+                        "passed": outcome.is_ok(), "error": outcome.err()
+                    }));
+            }
+        }
+        std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    }
+    report["audit_finished"] = true.into();
+    report["complete"] = (checked > 0 && failed == 0).into();
+    std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+    assert!(checked > 0);
+    assert_eq!(
+        failed,
+        0,
+        "{failed}/{checked} building approach routes failed; see {}",
+        report_path.display()
+    );
+}
+
+fn dispatch_building_approach(
+    mut engine: EngineInner,
+    mut assets: LevelAssets,
+    layer: u16,
+    sector_index: usize,
+    source: MapPoint,
+    goal: MapPoint,
+) -> Result<(), String> {
+    let sector = &engine.world.fast_grid.level.sectors[sector_index];
+    let handle = crate::position_interface::SectorHandle::new(u16::from(sector.sector_number))
+        .unwrap()
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(sector_index as u32).unwrap());
+    let receiver = engine
+        .get_projection_area_index(&assets, handle, layer, source)
+        .ok_or_else(|| format!("approach source has no receiver: {source:?}"))?;
+    engine
+        .get_projection_area_index(&assets, handle, layer, goal)
+        .ok_or_else(|| format!("approach goal has no receiver: {goal:?}"))?;
+    let owner = walking_pc(&mut engine, &mut assets, source, layer, handle);
+    engine.set_obstacle_and_material(&assets, owner, Some(receiver));
+    let action = OrderType::WalkingUpright;
+    let mut movement = SequenceElement::new_movement(1, Command::Move, Some(owner), action);
+    let crate::sequence::SequenceElementData::Movement {
+        destination,
+        layer: target_layer,
+        sector: target_sector,
+        ..
+    } = &mut movement.data
+    else {
+        unreachable!()
+    };
+    *destination = goal;
+    *target_layer = layer;
+    *target_sector = Some(handle);
+    let sequence = engine.t_launch_in_progress(&assets, movement);
+    let sim = crate::sim_rng::test_context();
+    let outcome = engine.try_dispatch_move_path(
+        TickCtx::new(&sim, &assets),
+        owner,
+        crate::sequence::SequenceElementRef::new(sequence, 0),
+        goal,
+        action,
+    );
+    if !matches!(outcome, MovePathOutcome::Pending | MovePathOutcome::Success) {
+        return Err(format!("approach dispatch failed: {outcome:?}"));
+    }
+    for _ in 0..2 {
+        engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
+    }
+    engine.select_sequence_element(owner, Some((sequence, 0)));
+    for _ in 0..500 {
+        engine.t_tick_actor_owner_envelopes(&assets);
+        let position = engine.ent(owner).element_data().position_map();
+        actor_receiver_result(&engine, &assets, owner, handle, layer, position)?;
+        if (position - goal).length() < 0.01 {
+            return Ok(());
+        }
+    }
+    let position = engine.ent(owner).element_data().position();
+    let orders = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .map(|element| &element.orders);
+    Err(format!(
+        "approach stalled at {position:?}; goal {goal:?}; orders {orders:?}"
+    ))
+}
+
+#[test]
 #[ignore = "requires exported geometry and ray probes via ROBIN_ASSET_MAP_DIAGNOSTICS"]
 fn exported_geometry_preserves_authored_sight_and_projectile_gaps() {
     use crate::sight_obstacle::{SIGHTOBSTACLE_OPAQUE, SIGHTOBSTACLE_SOLID, is_reachable_3d};

@@ -10210,6 +10210,45 @@ routes, the unsampled orientations and rendered contacts remain outstanding.
 The helper and placement verifier pass focused lint and formatting. Neither
 doorstep nor the broader terrain candidate is published by this experiment.
 
+### Dispatched doorstep approaches and destination receiver selection (2026-10-07)
+
+The placement verifier now supplies an explicit physical approach probe for
+each entrance. It starts 24 world-XY units outside the doorstep's lower edge on
+newly authored terrain, retaining the compiled doorway endpoint. Extending the
+projected doorway direction is unsuitable because a turned slope can compress
+or reverse that direction. Each probe must identify exactly one exported
+building entrance.
+
+Batch `receiver-floor-placements-jzIo86` retains all eight successful exports,
+32 copied placements and 64 disconnected-terrain checks. The new ignored native
+audit `exported_building_approaches_support_dispatched_actor_routes` dispatches
+ordinary Move requests, processes path requests and ticks actors in both
+directions for every entrance. It records outcomes even when routes fail;
+there is no geometry-eligibility filter that can silently skip an orientation.
+Its scope is the standard native walking fixture with a 6-by-3 half-diagonal,
+not complete character sprites or building transition animations.
+
+The initial audit completed with **32/64 routes passing**. All approaches onto
+the doorsteps kept the ground receiver after entering the slope; approaches away
+passed. Same-floor physical dispatch had accepted a projected destination by
+unprojecting it onto the current floor, even when the actual receiving query
+selected a raised neighbour. The destination could therefore appear supported
+on the wrong plane. Dispatch now requires an implicit destination's receiver
+to belong to the selected physical floor; other moves retain their receiver
+transition path. Explicit world endpoints retain their existing height checks.
+
+After the fix, the same batch passes **64/64 directed routes**, covering both
+assets and copies at 0, 37, 90 and 180 degrees and both elevations. The report
+`actor-building-approach-report-before-receiver-selection.json` retains the
+completed failing baseline; `actor-building-approach-report.json` contains the
+completed passing audit. A regular regression covers an overlapping flat floor
+and sloped receiver, checking both movement directions. The compiled-navigation
+suite passes **52 tests**, with 16 explicitly ignored external-data audits.
+Focused verifier lint/format checks, Cargo formatting and the game build pass. These results
+supersede the earlier sampler's missing 90/180-degree approach coverage, but do
+not complete world-space cross-floor routing or certify building entry/exit and
+rendering. The doorstep/terrain asset candidate remains unpublished.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

@@ -955,12 +955,17 @@ entrance volumes. It restores two building entrances, two receiving bindings and
 one light binding in the physical-terrain candidate, reducing omission warnings
 from 45 to 40 without new feature omissions. The floors expose matching exterior
 sockets to independently authored terrain: 32 copied/rotated/elevated placements
-compile, and 64 missing/raised-terrain cases reject the connection. Native sampled
-receiver checks pass 32 crossings at 0 and 37 degrees; they find no eligible
-samples at 90 or 180 degrees, so those orientations are not native-verified.
-All six full-map geometry controls still apply and reset. Complete door approach
-routes, rendered contacts and the remaining 15 feature omissions need review
-before publishing the candidate.
+compile, and 64 missing/raised-terrain cases reject the connection. The initial
+native receiver sampler covered only 0 and 37 degrees. A subsequent normal
+movement-dispatch audit exposed incorrect floor selection on every incoming
+approach: a projected goal over the doorstep was unprojected onto the ground
+below. Dispatch now requires the destination receiver to belong to the selected
+physical floor. All **64/64 directed approaches** pass across all four tested
+angles, two elevations and copied placements, using the native walking fixture
+with a 6-by-3 half-diagonal. These checks do not exercise building entry/exit
+animations or complete character sprites. All six full-map geometry controls
+still apply and reset. Rendered contacts, complete building traversal and the
+remaining 15 feature omissions need review before publishing the candidate.
 The receiving-plane loader now propagates f32 rounding through both the plane
 anchors and each receiver vertex. Steep valid planes no longer fail loading
 merely because assets are translated; the regression still rejects explicit

@@ -31,6 +31,10 @@
   retain a position supported by the normal movement footprint. Connected stairs
   can support footprints at their landing; climb walls cannot. Seek/line orders,
   cross-floor routing and ordinary soft repulsion still need integration.
+  Same-floor dispatch now checks the destination's actual receiver before
+  unprojecting its position. A raised neighbour cannot accidentally select the
+  flat floor underneath; moves onto another receiver retain their existing
+  transition path instead of walking at the wrong height.
   Physical floor and stair-landing bindings fit receiver anchors in double
   precision, avoiding translation-sensitive edge gaps caused by rounding plane
   coefficients before reconstructing collision contours. Compatibility movement

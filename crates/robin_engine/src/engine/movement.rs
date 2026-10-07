@@ -5354,7 +5354,21 @@ impl EngineInner {
                             None
                         }
                     });
-                    let goal = explicit.or_else(|| floor.world_point_from_screen(dest))?;
+                    let goal = explicit.or_else(|| {
+                        // A projected point over a raised neighbour can also
+                        // invert onto the floor below it. Only retain a single
+                        // physical floor when the destination actually belongs
+                        // to one of its receivers; crossing moves must keep
+                        // their receiver transitions.
+                        let sector = self.world.entities.get(owner)?.element_data().sector()?;
+                        let receiver =
+                            self.get_projection_area_index(tcx.assets, sector, entity_layer, dest)?;
+                        floor
+                            .receivers
+                            .contains(&receiver.get())
+                            .then(|| floor.world_point_from_screen(dest))
+                            .flatten()
+                    })?;
                     floor.contains_world_position(goal).then_some((index, goal))
                 })
         } else {

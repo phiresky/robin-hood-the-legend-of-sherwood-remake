@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { readStoredMap, pinnedDescriptors } from "../pipeline/src/stored-map.ts";
-import { groupCentroid } from "../shared/src/level3d.ts";
+import { groupCentroid, partMatrix } from "../shared/src/level3d.ts";
+import { gameToScene } from "../shared/src/scene.ts";
+import { sceneToGame } from "../shared/src/geometry.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 import { compileMap } from "../app/src/map-compile.ts";
 
@@ -102,7 +104,73 @@ for (const height of [0, 40])
     const file = `receiver-floors-${height}-${rotation}.level.json`;
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
-    results.push({ map: file, file, warnings: compiled.warnings });
+    const buildingApproaches = document.groups.map((group) => {
+      const id = ids.find((id) => group.id.endsWith(`/${id}`));
+      const gameplay = assets.get(id).gameplay;
+      const floor = gameplay.surfaces.find((surface) =>
+        surface.id.endsWith("-receiver-physical-floor"),
+      );
+      const transform = (node, point) => {
+        const object = document.objects.find(
+          (object) => object.group === group.id && object.node === `asset:${id}:${node}`,
+        );
+        assert.ok(object);
+        const matrix = partMatrix(document.camera, document, object);
+        const local = gameToScene(document.camera, ...point);
+        return sceneToGame(
+          document.camera,
+          [0, 1, 2].map(
+            (row) =>
+              matrix[row] * local[0] +
+              matrix[4 + row] * local[1] +
+              matrix[8 + row] * local[2] +
+              matrix[12 + row],
+          ),
+        );
+      };
+      const points = floor.polygon.map(([x, y], index) =>
+        transform(floor.node, [x, y, floor.height[index]]),
+      );
+      const bottom = Math.min(...points.map((point) => point[2]));
+      const edge = points
+        .map((point, index) => [point, points[(index + 1) % points.length]])
+        .filter((edge) => edge.every((point) => Math.abs(point[2] - bottom) < 1e-5));
+      assert.equal(edge.length, 1, `${group.id}: expected one level approach edge`);
+      const [a, b] = edge[0];
+      const midpoint = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      const center = [0, 1].map(
+        (axis) => points.reduce((sum, point) => sum + point[axis], 0) / points.length,
+      );
+      let normal = [a[1] - b[1], b[0] - a[0]];
+      if (normal[0] * (center[0] - midpoint[0]) + normal[1] * (center[1] - midpoint[1]) > 0)
+        normal = normal.map((value) => -value);
+      const length = Math.hypot(...normal);
+      const source = [
+        midpoint[0] + (normal[0] * 24) / length,
+        midpoint[1] + (normal[1] * 24) / length,
+        90.00101 + height,
+      ];
+      const door = gameplay.interiors[0].doors[0];
+      const outside = transform(door.node, door.outside);
+      const pointOut = [Math.round(outside[0]), Math.round(outside[1] - outside[2])];
+      const matches = compiled.descriptor.asset_geometry.buildings
+        .flatMap((building) => building.Building?.doors ?? [])
+        .filter((door) => door.point_out.every((value, index) => value === pointOut[index]));
+      assert.equal(matches.length, 1, `${group.id}: ambiguous compiled entrance`);
+      return {
+        id: `${group.id}/${door.id}`,
+        source_world: source,
+        point_out: pointOut,
+        layer: matches[0].layer_out,
+        sector: matches[0].sector_out,
+      };
+    });
+    results.push({
+      map: file,
+      file,
+      warnings: compiled.warnings,
+      building_approaches: buildingApproaches,
+    });
     for (const kind of ["missing", "raised"]) {
       const changed = structuredClone(document);
       if (kind === "missing") delete changed.terrain;
