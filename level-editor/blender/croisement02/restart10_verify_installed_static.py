@@ -14,6 +14,7 @@ WORK = ROOT / 'level-editor/work/croisement02-refinement/restart2-textures'
 STAGE = WORK / 'post-batch15-static-candidate-v6'
 FIXTURE = WORK / 'installed-static-v1'
 RUNNER = WORK / 'review_installed_static_v1.mjs'
+SUPPLEMENT = None
 
 
 def sha(path):
@@ -26,9 +27,27 @@ def snapshot():
     if manifest['status'] != 'APPLIED':
         raise ValueError('Static publication is not applied')
     pins = {str(manifest_path): sha(manifest_path)}
+    replacements = {}
+    if SUPPLEMENT is not None:
+        supplement = json.loads(SUPPLEMENT.read_text())
+        if supplement['manifest_sha256'] != sha(manifest_path):
+            raise ValueError('Supplement belongs to another publication')
+        pins[str(SUPPLEMENT)] = sha(SUPPLEMENT)
+        for name, digest in supplement['evidence'].items():
+            if sha(Path(name)) != digest:
+                raise ValueError('Supplement evidence changed: ' + name)
+            pins[name] = digest
+        replacements = supplement['files']
+        if not set(replacements).issubset({row['target'] for row in manifest['files']}):
+            raise ValueError('Supplement contains unknown publication targets')
     for row in manifest['files']:
         path = Path(row['target'])
         expected = row['source_sha256'] if row['source'] is not None else None
+        if str(path) in replacements:
+            replacement = replacements[str(path)]
+            if replacement['previous_sha256'] != expected:
+                raise ValueError('Supplement baseline mismatch: ' + str(path))
+            expected = replacement['sha256']
         if str(path) == manifest['index_generation']['target']:
             # Other maps can publish after this map's transaction. Its own
             # catalog entries must remain exact; pin the full current index.
@@ -59,12 +78,14 @@ def snapshot():
 
 
 def main():
-    global FIXTURE, RUNNER
+    global FIXTURE, RUNNER, SUPPLEMENT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--fixture', type=Path, default=FIXTURE)
     parser.add_argument('--runner', type=Path, default=RUNNER)
+    parser.add_argument('--supplement', type=Path)
     args = parser.parse_args()
     FIXTURE, RUNNER = args.fixture.resolve(), args.runner.resolve()
+    SUPPLEMENT = args.supplement.resolve() if args.supplement else None
     acquire()
     try:
         output = FIXTURE / 'runtime'
