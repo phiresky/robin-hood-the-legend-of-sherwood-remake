@@ -6,7 +6,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 WORK = ROOT / 'level-editor/work/york-refinement/restart2'
-OUT = WORK / 'jamb-texture-inputs-v2'
+OUT = WORK / 'jamb-texture-inputs-v3'
 PROBE = WORK / 'jamb-source-probe-v1'
 GEO = WORK / 'gate-geometry-v10'
 OBJECT = 'building-778-portcullis-jamb-return'
@@ -22,6 +22,11 @@ assert sha(model) == member['model_sha256']
 probe = json.loads((PROBE / 'report.json').read_text())
 assert probe['approved_model_sha256'] == sha(model)
 assert probe['visible_pixels'] == 660
+orientation = json.loads((WORK / 'jamb-orientation-v1/validation.json').read_text())
+assert orientation['source_model_sha256'] == sha(model)
+assert orientation['exact_shape_uv_material_transform_preserved']
+model = WORK / 'jamb-orientation-v1/model.blend'
+assert sha(model) == orientation['model_sha256']
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from render_slots import acquire
 acquire()
@@ -54,7 +59,7 @@ authority = {
     'exclusions': ['Moving gate bars', 'Bright patch000 interior', 'Original building-778 context', 'Winch and room'],
     'receiver_object': OBJECT, 'source_node': 'building-778', 'projection_component': 'portcullis-jamb-return',
     'accepted_pixels': 660, 'domain_sha256': sha(OUT / 'known-domain.png'),
-    'source_sha256': sha(OUT / 'source.png'), 'approved_model_sha256': sha(model),
+    'source_sha256': sha(OUT / 'source.png'), 'approved_shape_model_sha256': member['model_sha256'], 'orientation_candidate_sha256': sha(model),
     'approval_receipt_sha256': approval['receipt_sha256'],
 }
 (OUT / 'authority.json').write_text(json.dumps(authority, indent=2) + '\n')
@@ -77,8 +82,8 @@ render_review(OUT / 'modified', scene_name=scene.name, collection_name=collectio
 assert before == {o.name: _geometry(o, protect_appearance=True) for o in scene.objects if o.name in before}
 (OUT / 'input-review.json').write_text(json.dumps({
     'status': 'Visual input review pending; no provider request',
-    'geometry_uv_materials_preserved': True, 'approved_model_sha256': sha(model),
+    'geometry_uv_materials_preserved': True, 'approved_shape_model_sha256': member['model_sha256'], 'orientation_candidate_sha256': sha(model),
     'texture_receiver_object_names': [OBJECT], 'views_sha256': sha(OUT / 'modified/views.json'),
-    'authority_sha256': sha(OUT / 'authority.json'),
+    'authority_sha256': sha(OUT / 'authority.json'), 'orientation_guard_sha256': sha(WORK / 'jamb-orientation-v1/validation.json'),
 }, indent=2) + '\n')
 print('JAMB INPUTS COMPLETE', flush=True)
