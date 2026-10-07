@@ -16,11 +16,12 @@ from render_slots import acquire,release
 from tree_geometry import SIN,RAY
 
 
-def preserved_mesh_state(worker):
+def preserved_mesh_state(worker, exclude_scoped_wood=False):
     bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'));bpy.context.view_layer.update()
     result={}
     for obj in bpy.data.collections['Croisement02 Working'].all_objects:
         if obj.type!='MESH':continue
+        if exclude_scoped_wood and obj.get('asset_group')=='croisement02-tree-32' and obj.get('source_node') in ('building-080','building-081','building-082') and obj.get('projection_component')!='crown':continue
         mesh=obj.data
         record=dict(vertices=[list(v.co) for v in mesh.vertices],faces=[list(f.vertices) for f in mesh.polygons],
                     slots=[f.material_index for f in mesh.polygons],smooth=[f.use_smooth for f in mesh.polygons],
@@ -50,9 +51,7 @@ def main(release_slot=True):
     worker=args.worker.resolve();model_hash=sha(worker/'model.blend');output=args.output.resolve() if args.output else worker/'inspection';output.mkdir(parents=True,exist_ok=True);acquire()
     try:
         original=args.preservation_base.resolve() if args.preservation_base else tree_workspace(32)
-        previous=preserved_mesh_state(original);current=preserved_mesh_state(worker)
-        changed=[o.name for o in bpy.data.collections['Croisement02 Working'].all_objects if o.type=='MESH' and o.get('asset_group')=='croisement02-tree-32' and o.get('source_node') in ('building-080','building-081','building-082') and o.get('projection_component')!='crown']
-        for name in changed:previous.pop(name);current.pop(name)
+        previous=preserved_mesh_state(original,exclude_scoped_wood=True);current=preserved_mesh_state(worker,exclude_scoped_wood=True)
         preservation=dict(previous_worker=str(original),previous_model_sha256=sha(original/'model.blend'),model_sha256=model_hash,previous_meshes=previous,current_meshes=current,preserved=previous==current,scope='Selected crown and all other assets; wood080/081/082 repaired as continuous fork; upper surface deviation separately measured')
         if previous!=current:raise ValueError('Protected crown or other asset mesh, transform, UV, or material changed')
         write_json(output/'root-preservation.json',preservation)
