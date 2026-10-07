@@ -7,7 +7,7 @@ ROOT = Path.cwd()
 STATE = ROOT / 'level-editor/work/croisement02-refinement/restart2-state'
 OLD = STATE / 'installed41-normal-http-chunk-1-v1'
 PLAN = STATE / 'restart17-initial-context-publication-v3'
-OUT = STATE / 'restart20-initial-context-browser-v3'
+OUT = STATE / 'restart20-initial-context-browser-v5'
 sha = lambda data: hashlib.sha256(data).hexdigest()
 
 def main():
@@ -21,7 +21,11 @@ def main():
     assert changes == config['entry_ids'] or set(changes) == set(config['entry_ids'])
     pins = {str(Path('level-editor/library') / p): h for p, h in plan['current_library_pins'].items()}
     drift = []
-    for p, h in plan['current_runtime_pins'].items():
+    runtime_paths = set(plan['current_runtime_pins'])
+    for directory in ['level-editor/app/src', 'level-editor/shared/src']:
+        runtime_paths.update(str(p.relative_to(ROOT)) for p in (ROOT / directory).rglob('*') if p.is_file() and p.suffix in {'.ts', '.tsx', '.js', '.mjs', '.json', '.wgsl', '.glsl', '.css'})
+    for p in sorted(runtime_paths):
+        h = plan['current_runtime_pins'].get(p)
         actual = sha((ROOT / p).read_bytes())
         if actual != h:
             drift.append({'path': p, 'expected': h, 'actual': actual})
@@ -74,11 +78,15 @@ def main():
     run = run.replace("status:'PASS_INSTALLED41_NORMAL_HTTP_CHUNK'", "status:'PASS_STAGED_EIGHT_INITIAL_CONTEXTS'")
     run = run.replace("Actual installed41-entry production /library route, no library interception or private state overlay. Exact selected families checked; aggregate must cover all7. All successful normal HTTP resource reads re-fetched and hashed versus unchanged installed files. No publication writes.", "Private nine-path overlay only: proposed41 catalog plus eight corrected contracts. Other resources use normal production route. Exact pre-script initial/reset source pixels and existing physical endpoints checked. Tac19 startup remains actor-conditional. All successful HTTP reads rehashed against exact overlay or unchanged library bytes. No publication writes.")
     run = run.replace("console.log('PASS installed41 chunk '+JSON.stringify([\"s03_fob_mp-log-trap\", \"emb05_fob_mp-south-cart\"]))", "console.log('PASS staged eight initial contexts '+JSON.stringify(config.entry_ids))")
+    # Full request traces repeat data already preserved by hashed HTTP receipts.
+    run = run.replace("writeFile(join(out,'runtime-events.jsonl'),JSON.stringify(row)+'\\n',{flag:'a'})", "void 0")
+    run = run.replace("source_files_unchanged:Object.keys(inputs.files).length,events,elapsed_ms:", "source_files_unchanged:Object.keys(inputs.files).length,event_counts:Object.fromEntries([...new Set(events.map(e=>e.method))].map(method=>[method,events.filter(e=>e.method===method).length])),elapsed_ms:")
+    run = run.replace("error:String(error),events,elapsed_ms:", "error:String(error),last_events:events.slice(-50),event_count:events.length,elapsed_ms:")
     (OUT / 'run.mjs').write_text(run)
     for name in ['run.mjs','states.mjs','editor.tsx']:
         p=OUT/name; pins[str(p.relative_to(ROOT))]=sha(p.read_bytes())
     (OUT / 'inputs.json').write_text(json.dumps({'files':pins,'static_map_sha256':pins['level-editor/library/scenes/croisement02.rhlos-map.json']},indent=2)+'\n')
-    (OUT / 'runtime-baseline.json').write_text(json.dumps({'source_files':{p:pins[p] for p in plan['current_runtime_pins']}},indent=2)+'\n')
+    (OUT / 'runtime-baseline.json').write_text(json.dumps({'source_files':{p:pins[p] for p in sorted(runtime_paths)}},indent=2)+'\n')
     (OUT / 'preparation.json').write_text(json.dumps({'status':'PREPARED_NOT_LAUNCHED','runtime_changes_since_v3':drift,'root_review_required_for_runtime_changes':bool(drift),'overlay_paths':list(config['overlay']),'entries':41,'unchanged_entries':33,'corrected_entries':8,'scope':config['scope']},indent=2)+'\n')
     print(json.dumps({'output':str(OUT.relative_to(ROOT)),'runtime_drift':drift,'pinned_files':len(pins)}))
 
