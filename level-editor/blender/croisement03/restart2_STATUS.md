@@ -1,3 +1,20 @@
+## Coherent western-body CPU revision ready
+
+`restart2_bank_continuous_strata.py --prepare` builds a single closed exterior
+surface for the complete western body. The CPU plan is
+`bank-continuous-strata-plan-v1/geometry.json`:171vertices,338triangles,
+507edges, Euler characteristic2, positive volume520559.9. All34 traced upper
+and lower points remain exactly on their source rays. No Boolean core, attached
+cap solids or broad front backing is part of this new construction.
+
+Each shelf wraps around its shoulders into the rear body; recessed sloping
+risers join the layers. The original lower perimeter closes the volume.
+A four-direction CPU preview was inspected, and the nonadjacent transverse
+triangle test found no intersections. Coplanar/adjacent foldback checks and
+saved Blender native/actual8/solid8/contact/source guards remain mandatory.
+This is preparation only: no render lane used, no new Blender model or approval.
+Request the coordinator lane before running the builder.
+
 ## Western shelf revision v5 — private morphology HOLD
 
 `bank-shelf-prototype-v5/worker.blend`, hash7bb763ed9366c82f, is888,905bytes.
