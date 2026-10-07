@@ -930,7 +930,11 @@ width. The regression preserves unrelated collision through four turned and
 translated placements, without changing the integer navigation contour or actor
 tolerances. The experiment still raises omission warnings from 8 to 45 and is
 not ready for publication. The freshly compiled published York descriptor is
-unchanged. The experiment also exposed
+unchanged. The experiment's stair audit passes **126/130 routes**; the east-riverside
+curtain-wall stair and market southwest connecting stair each fail both
+directions at their lower contact. Their newly enabled solid collision needs
+comparison against the authored floors; the published descriptor retains its
+previous 130/130 stair result. The experiment also exposed
 and fixed a collinear obstacle-triangulation crash, with coverage preserved by a
 captured regression. The mesh review has 596/602 sampled
 flight hits, maximum nearest-mesh height residual 0.872101 and maximum uncovered

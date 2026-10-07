@@ -10104,6 +10104,19 @@ feature coverage still need review. Fresh published-scene export
 published York descriptor in `precise-plane-saved-ie9dhna_`; its fresh native
 audit also passes all 40 climb routes in 85.35 seconds.
 
+The candidate's full native stair audit completed in 346.88 seconds with
+**126/130 routes passing**. Both directions fail for
+`york-east-riverside-curtain-wall/building-261-lift` (sector 616) and
+`york-market-southwest-connecting-stairs/building-474-lift` (sector 619).
+The former binds only its upper landing; its lower midpoint lacks approximately
+20 square game units of support. The latter binds both landings, but its lower
+approach center extends approximately 0.0869 units beyond receiving support.
+These are larger contact problems, not grounds to increase numeric tolerances.
+The next authoring review must compare newly enabled part-solid collision with
+the corrected stair floors and their existing local clearances. The candidate
+remains unpublished; the structurally unchanged published descriptor retains
+its previously verified 130/130 stair routes.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms
