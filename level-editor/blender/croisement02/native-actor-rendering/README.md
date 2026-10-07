@@ -26,6 +26,19 @@ terrain integration, intersect/subdivide the shadow geometry at receiver triangl
 boundaries, or supply evidence that the entire covered support is planar. Merely
 checking four corners or adding a finite set of test samples cannot prove that.
 
+The separate `projectShadowReceivers` prototype clips explicitly supplied native
+map `[x,y,height]` receiver triangles to the common frame rectangle. It preserves
+receiver breaklines and interpolated heights/UVs. Receiver pieces keep separate
+vertices, so raised edges never acquire an invented joining ramp or vertical
+side. It rejects missing coverage, overlapping receivers (including overlaps
+whose area would cancel a hole), vertical/degenerate triangles and invalid data.
+Area checks use a relative numerical tolerance of `1e-8`; this is numerical
+coverage validation, not proof the caller selected the correct actual receiver.
+Sloped-plane, interior-peak, discontinuity, missing-support and nonzero-anchor
+tests cover this helper. It is not yet connected to the frame binding above.
+Actual receiver extraction, visibility at raised sides and browser contact proof
+remain required before terrain integration.
+
 There is no action chooser, clock, script-handle mapping or AI. Inactive and hidden
 snapshots retain source identity but remove the shadow and hide the body. Missing
 body resources throw; a null frame explicitly means hidden artwork. Destination
