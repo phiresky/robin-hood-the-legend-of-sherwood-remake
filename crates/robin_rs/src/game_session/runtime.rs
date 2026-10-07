@@ -1143,28 +1143,38 @@ impl TimelineRuntime {
         self.lifecycle.trace(FrameContractStage::TimelineBegin);
     }
 
-    /// A second ingress drain may reconstruct the open frame after late input
-    /// invalidates both pending snapshot tiers. Re-open only that capture,
+    /// A second ingress drain may reconstruct or replace the open frame.
+    /// Rebind snapshot jumps and reopen capture at the final pre-command state,
     /// preserving this host iteration's commands, facts, clock and ordinal.
-    pub(super) fn reopen_after_pre_tick_network_rollback(
+    pub(super) fn reopen_after_pre_tick_network_correction(
         &mut self,
         frame: &mut MissionFrame,
         engine: &Engine,
+        adopted_frame: Option<u32>,
     ) {
         assert_eq!(
             self.lifecycle.phase,
             MissionPhase::Input,
-            "network rollback must precede simulation"
+            "network correction must precede simulation"
         );
-        assert_eq!(
-            frame.timeline_before,
-            Some(self.current_frame()),
-            "late-input rollback must reconstruct the already-open frame"
+        assert!(
+            frame.timeline_before.is_some(),
+            "network correction requires an already-open frame"
         );
         assert!(
             frame.timeline_after.is_none(),
             "cannot reopen an already committed frame"
         );
+        if let Some(adopted) = adopted_frame {
+            assert_eq!(adopted, self.frame_number());
+            frame.rebind_timeline_after_discontinuity(self.current_frame());
+        } else {
+            assert_eq!(
+                frame.timeline_before,
+                Some(self.current_frame()),
+                "late-input rollback must reconstruct the already-open frame"
+            );
+        }
         self.history.begin_frame(self.frame_number(), engine);
         // Recording samples the final pre-command state, not the speculative
         // state captured before the late input arrived. Do not call open_frame:

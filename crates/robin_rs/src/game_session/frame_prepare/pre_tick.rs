@@ -25,28 +25,34 @@ fn drain_pre_tick_network(
     let drain = drain_mission_network(runtime, host, manager, assets, false, current_epoch_ms())?;
     if drain.rewrote_sim_state {
         frame.refresh_live_sound_boundary(&manager.engine, assets);
-    }
-    if drain.rewrote_sim_state && drain.adopted_frame.is_none() {
-        // Rollback and disconnect both invalidate the open history capture.
-        // A disconnect holds this same boundary until snapshot admission, but
-        // the held refresh can still produce paused history (e.g. UI effects).
-        runtime.reopen_after_pre_tick_network_rollback(frame, &manager.engine);
+        // Every correction invalidates the open history capture. Snapshot
+        // admission can also move its boundary forward or backward.
+        runtime.reopen_after_pre_tick_network_correction(
+            frame,
+            &manager.engine,
+            drain.adopted_frame,
+        );
     }
     *mp_clock_pause |= drain.pause_simulation;
+    if drain.adopted_frame.is_some() {
+        // Inputs collected for the old cursor are either already represented
+        // by the snapshot or still queued for their original future frame.
+        discard_abandoned_frame_inputs(frame);
+    }
     frame.stage_commands().commands.extend(drain.inputs);
     if host.transport.local_seat() == engine_player_command::PlayerId::HOST
         && host.transport.reconnecting()
     {
-        discard_abandoned_host_frame_inputs(frame);
+        discard_abandoned_frame_inputs(frame);
     }
     Ok(())
 }
 
-fn discard_abandoned_host_frame_inputs(frame: &mut MissionFrame) {
+fn discard_abandoned_frame_inputs(frame: &mut MissionFrame) {
     if !frame.commands().is_empty() {
         tracing::warn!(
             count = frame.commands().len(),
-            "multiplayer: discarded accumulated frame inputs after host snapshot resynchronization"
+            "multiplayer: discarded accumulated inputs from the replaced frame"
         );
         frame.discard_commands();
     }
@@ -438,6 +444,107 @@ pub(super) fn finalize_pre_tick(
 #[cfg(test)]
 mod tests {
     #[test]
+    fn second_drain_snapshot_rebinds_forward_and_backward_frame_boundaries() {
+        use super::*;
+        use crate::game_session::replay_init::ReplayAndRollback;
+        use crate::game_session::runtime::{FrameContract, TimelineFrame};
+        use crate::multiplayer::{NetChannels, NetEvent};
+        use crate::rewind::RewindBuffer;
+        use robin_engine::engine::{LevelAssets, SimulationFrameInput};
+        use robin_engine::engine_manager::EngineManager;
+        use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
+        use std::sync::Arc;
+
+        for target in [30, 32] {
+            let mut assets = LevelAssets::new();
+            let mut manager = EngineManager::new(
+                Engine::new_for_test(640.0, 480.0, Default::default(), &mut assets).unwrap(),
+            );
+            let mut assets = Arc::new(assets);
+            let mut timeline = TimelineRuntime::new(
+                ReplayAndRollback {
+                    recording_control: Arc::<crate::replay_service::ReplayService>::default()
+                        .recording(),
+                    recorder: None,
+                    player: None,
+                    rollback_checker: None,
+                    rewind_buffer: RewindBuffer::new(),
+                    start_paused: false,
+                },
+                FrameContract::Graphical,
+                false,
+                true,
+            );
+            timeline.adopt_frame(TimelineFrame::from_wire(31));
+            let (channels, incoming, _outgoing, _, _) = NetChannels::new();
+            let mut host = Host::scratch(640.0, 480.0);
+            host.transport = crate::host::HostTransport::test_session(channels, PlayerId(1));
+            host.transport.await_authoritative_snapshot();
+            let mut frame = MissionFrame::new(17);
+            timeline.open_frame(&mut frame, &manager.engine);
+            frame.stage_commands().commands.push(PlayerInput::host(
+                PlayerCommand::SetAmountOfSpeaking { amount: 9 },
+            ));
+            let due = PlayerInput::host(PlayerCommand::SetUnbindingEnabled { enabled: false });
+            incoming.send(NetEvent::Disconnected).unwrap();
+            incoming
+                .send(NetEvent::InitialSnapshot {
+                    frame: target,
+                    engine_bytes: manager.engine.encode_native_snapshot(),
+                })
+                .unwrap();
+            incoming
+                .send(NetEvent::Input {
+                    server_frame: target,
+                    origin_frame: target,
+                    target_frame: target,
+                    input: due.clone(),
+                })
+                .unwrap();
+            let mut paused = false;
+            drain_pre_tick_network(
+                &mut timeline,
+                &mut host,
+                &mut manager,
+                &mut assets,
+                &mut frame,
+                &mut paused,
+                false,
+            )
+            .unwrap();
+            assert!(paused);
+            assert_eq!(timeline.frame_number(), target);
+            assert_eq!(
+                serde_json::to_value(frame.commands()).unwrap(),
+                serde_json::to_value([due]).unwrap(),
+                "only inputs for the adopted frame may be applied"
+            );
+            frame.adopt_authoritative_input(
+                SimulationFrameInput::no_hourglass().with_post_initialize(true),
+            );
+            frame.commit_timeline_after(timeline.current_frame());
+            let transition = frame.timeline_transition();
+            assert_eq!(
+                transition.before.number(),
+                target,
+                "the open frame must follow the adopted snapshot"
+            );
+            assert_eq!(transition.after.number(), target);
+            timeline.commit_paused_history(&frame);
+            // Paused inputs become queryable when the next running frame
+            // publishes the pending history capture.
+            timeline
+                .history_mut()
+                .append_fixture(SimulationFrameInput::default());
+            assert_eq!(
+                timeline.history().buffer().paused_inputs_for(target).len(),
+                1
+            );
+            assert!(timeline.history().buffer().paused_inputs_for(31).is_empty());
+        }
+    }
+
+    #[test]
     fn second_drain_disconnect_retains_a_paused_history_boundary() {
         use super::*;
         use crate::game_session::replay_init::ReplayAndRollback;
@@ -805,7 +912,7 @@ mod tests {
             .push(robin_engine::player_command::PlayerInput::host(
                 robin_engine::player_command::PlayerCommand::CrouchDown,
             ));
-        super::discard_abandoned_host_frame_inputs(&mut frame);
+        super::discard_abandoned_frame_inputs(&mut frame);
         assert!(frame.commands().is_empty());
     }
 
