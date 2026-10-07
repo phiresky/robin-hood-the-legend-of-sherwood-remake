@@ -12,6 +12,7 @@ import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 
 const id = "croisement03-timber-bridge";
 const solidDeck = process.argv.includes("--solid-deck");
+const flatDeck = process.argv.includes("--flat-deck");
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json")).assets;
@@ -76,6 +77,16 @@ for (let face = 0; face < indices.length / 3; face++) {
 assert.equal(faces.length, 2, "Review changed deck topology");
 assert.equal(underside.length, 2, "Review changed deck underside topology");
 const ground = faces.flatMap((face) => face.points).reduce((sum, p) => sum + p[2], 0) / 6;
+let planeFitError = 0;
+if (flatDeck)
+  for (const triangles of [faces, underside]) {
+    const height = triangles.flatMap((f) => f.points).reduce((sum, p) => sum + p[2], 0) / 6;
+    for (const p of triangles.flatMap((f) => f.points)) {
+      planeFitError = Math.max(planeFitError, Math.abs(p[2] - height));
+      p[2] = height;
+    }
+    assert.ok(planeFitError < 0.0001, "Deck plane fit exceeds export rounding");
+  }
 descriptor.gameplay = {
   version: 1,
   collision: "none",
@@ -108,7 +119,7 @@ descriptor.gameplay = {
     height: points.map((p) => p[2]),
     navigationRegion: "bridge-deck",
     preserveMovementPrecision: true,
-    projectionMaterials: { defaultMaterial: 1, regions: [] },
+    projectionMaterials: { defaultMaterial: 1, regions: [], ...(flatDeck ? { priority: 1 } : {}) },
     navigationJoins: points.flatMap((a, i) => {
       const b = points[(i + 1) % 3];
       const sceneLength = Math.hypot(b[0] - a[0], (b[1] - a[1]) / Math.sin((35 * Math.PI) / 180));
@@ -301,6 +312,8 @@ await fs.writeFile(
     faces: faces.map((f) => f.face),
     ground,
     solidDeck,
+    flatDeck,
+    planeFitError,
     scope: "Unpublished deck construction only; collision and connectivity incomplete",
   }),
 );

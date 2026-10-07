@@ -1145,7 +1145,9 @@ function compileAssetGameplayAttempt(
       for (const polygon of remaining)
         replacement.push({
           ...surface,
-          polygon: ring(polygon[0]!),
+          // Boolean clipping creates fractional remnants even when the input
+          // terrain was quantized. Retain them until navigation union/rounding.
+          polygon: ring(polygon[0]!, "Clipped terrain surface", 1e-8),
           worldPolygon: polygon[0]!.map(([x, y]): Point => [
             x,
             y + planeHeight(surface.plane, [x, y]),
@@ -1155,7 +1157,7 @@ function compileAssetGameplayAttempt(
             .map((hole) =>
               hole.map(([x, y]): Point => [x, y + planeHeight(surface.plane, [x, y])]),
             ),
-          holes: polygon.slice(1).map((h) => ring(h)),
+          holes: polygon.slice(1).map((h) => ring(h, "Clipped terrain hole", 1e-8)),
         });
     }
     surfaces.splice(0, surfaces.length, ...placed, ...replacement);

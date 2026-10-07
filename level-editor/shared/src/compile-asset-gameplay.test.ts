@@ -47,6 +47,41 @@ import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 import { parseLevel3D, parseProjectionAssetDescriptor } from "./validation.ts";
 import nearEdgeOnStair from "../test-fixtures/near-edge-on-placed-stair.json" with { type: "json" };
 
+test("fractional terrain remnants survive floor clipping until navigation union", () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  document.terrain = createTerrainGrid([300, 300, 100, 100], 100, 0);
+  hut.gameplay = {
+    version: 1,
+    collision: "none",
+    doors: [],
+    surfaces: [
+      {
+        id: "inset-floor",
+        node: "building-999",
+        height: 0,
+        preserveMovementPrecision: true,
+        polygon: [
+          [0.2, 0],
+          [100, 0],
+          [100, 100],
+          [0, 100],
+          [0, 0.2],
+        ],
+        projectionMaterials: { defaultMaterial: 3, regions: [] },
+      },
+    ],
+  };
+  const compiled = compileAssetGameplay(document, assets, [0, 0, 1000, 1000]);
+  const areas = compiled.motion_data.layers.flat();
+  assert.equal(areas.length, 1);
+  assert.deepEqual(areas[0]!.polygon.points, [
+    [300, 300],
+    [400, 300],
+    [400, 400],
+    [300, 400],
+  ]);
+});
+
 test("a connected physical stair survives a pinched screen projection in copied placements", () => {
   const document = parseLevel3D(nearEdgeOnStair.document);
   assert.ok(document.size);

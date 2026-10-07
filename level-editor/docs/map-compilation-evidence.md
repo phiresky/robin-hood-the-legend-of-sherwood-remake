@@ -9756,3 +9756,22 @@ coplanar receiver conflicts and then a quantized collision sliver; that
 experiment was removed. No collision padding, actor-test relaxation or library
 publication was performed. The solid candidate remains explicit and unverified;
 rail/pier collision and rendered integration are still required.
+
+Further inspection shows the solid cuts were separating one bank's receiving
+area, rather than an isolated renderer issue. Candidate `--solid-deck
+--flat-deck` fits the nominally horizontal deck and underside independently;
+the maximum height change is 0.0000151033 game units. Wood has explicit material
+priority over coplanar ground. A compiler bug previously prevented this case:
+terrain fragments produced by subtracting placed floors were subjected to a
+half-pixel area threshold before navigation union. The compiler now preserves
+these fractional polygons and holes at its existing continuous-geometry
+threshold until final navigation processing. A regression test leaves a
+0.02-square-unit terrain corner and verifies the final full square is retained.
+
+Candidate `croisement-bridge-gameplay-axLNH0` passes all 40 native directed actor
+crossings and 240 sight/projectile probes, with twenty wrong-height rejections.
+All 146 affected compiler/navigation/terrain tests pass. The application
+typecheck passes; the pipeline typecheck encountered unrelated concurrent
+`state-delivery.test.ts` errors. This resolves the tested solid-deck crossing
+failure, not rail/pier collision or rendered actor integration. Publication is
+still pending those requirements.
