@@ -118,6 +118,7 @@ def main():
     parser.add_argument('--revision', type=int, default=1)
     parser.add_argument('--group', type=int, choices=[0, 1])
     parser.add_argument('--conformed', action='store_true')
+    parser.add_argument('--float32', action='store_true')
     args = parser.parse_args()
     suffix = '' if args.section == 29 else f'-{args.section}'
     root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
@@ -132,6 +133,10 @@ def main():
         packet = packet.with_name(packet.name + '-conformed')
     mesh = np.load(packet / 'candidate.npz')
     vertices, faces = mesh['vertices'], mesh['faces']
+    if args.float32:
+        vertices = (vertices-np.array([552., -672., 235.])).astype(np.float32).astype(np.float64)+np.array([552., -672., 235.])
+        packet = packet / 'float32-proof'
+        packet.mkdir(exist_ok=False)
     topology = audit(vertices, faces)
     parents = list(range(len(vertices)))
     def find(index):
