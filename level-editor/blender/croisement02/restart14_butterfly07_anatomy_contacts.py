@@ -32,9 +32,9 @@ def triangle_planes(v):
         planes.append(np.r_[n,-n@a])
     return np.array(planes)
 
-def main():
+def main(fit_path=None):
     assert not OUT.exists(),'Preserve prior evidence'
-    fitp=B/'butterfly07-pose-fit-v1/fit.json';fit=json.loads(fitp.read_text());rows={r['phase']:r for r in fit['rows']}
+    fitp=Path(fit_path) if fit_path else B/'butterfly07-pose-fit-v1/fit.json';fit=json.loads(fitp.read_text());rows={r['phase']:r for r in fit['rows']}
     units=[]
     def vertices(row,mirror=False,t=None,other=None):
         p=np.array(row['parameters']);anchor=np.array(row['fixed_path_anchor_zup'])
@@ -97,7 +97,7 @@ def main():
             row=results.setdefault(u['key'],{'contact_counts':{},'parts':{},'witnesses':[]})
             for owner,count in u['contacts'].items():row['contact_counts'][owner]=row['contact_counts'].get(owner,0)+count;row['parts'][u['part']]=row['parts'].get(u['part'],0)+count
             if len(row['witnesses'])<5:row['witnesses']+=u['witnesses']
-        report={'status':'PRIVATE_ANATOMY_AND_CONSERVATIVE_SWEEP_DIAGNOSTIC','fit_sha256':reader.sha(fitp),'map_sha256':reader.sha(map_path),'recipe_sha256':reader.sha(Path(__file__)),'assets':assets,'results':results,'method':'Exact transformed receiver triangles clipped to closed triangulated ellipsoid body or zero-thickness wing fan triangles; bilinear level0 alpha maximized on intersections. Both depth branches tested. Eight rotational subintervals per adjacent pose; slerped body rotation and linear hinges, anchors and registration. Each endpoint convex hull expanded by rigorous second-derivative chord-error bound. Swept contacts are conservative, not proof of an actual intermediate intersection.','limits':['49 own-source pixels remain outside fitted anatomy. This tests inferred geometry, not final butterfly approval.','No test across absent22..91 poses; full99 cycle unverified.','Wing fans are inferred solid surfaces; UV/material pattern unbuilt.','Opposite-depth poses project identically; source cannot select them.','Numerical closed-contact tolerance1e-8 world units; level0 alpha only.','No path lifting, canopy edit, render or library write.']}
+        report={'status':'PRIVATE_ANATOMY_AND_CONSERVATIVE_SWEEP_DIAGNOSTIC','fit_sha256':reader.sha(fitp),'map_sha256':reader.sha(map_path),'recipe_sha256':reader.sha(Path(__file__)),'assets':assets,'results':results,'method':'Exact transformed receiver triangles clipped to closed triangulated ellipsoid body or zero-thickness wing fan triangles; bilinear level0 alpha maximized on intersections. Both depth branches tested. Eight rotational subintervals per adjacent pose; slerped body rotation and linear hinges, anchors and registration. Each endpoint convex hull expanded by rigorous second-derivative chord-error bound. Swept contacts are conservative, not proof of an actual intermediate intersection.','limits':[f"{sum(row['missing'] for row in fit['rows'])} own-source pixels remain outside fitted anatomy. This tests inferred geometry, not final butterfly approval.",'No test across absent22..91 poses; full99 cycle unverified.','Wing fans are inferred solid surfaces; UV/material pattern unbuilt.','Opposite-depth poses project identically; source cannot select them.','Numerical closed-contact tolerance1e-8 world units; level0 alpha only.','No path lifting, canopy edit, render or library write.']}
         OUT.mkdir();payload=json.dumps(report,indent=2)+'\n';assert len(payload)<2*1024**2;(OUT/'report.json').write_text(payload)
         print(json.dumps({k:v['contact_counts'] for k,v in results.items()}),flush=True)
         return report
