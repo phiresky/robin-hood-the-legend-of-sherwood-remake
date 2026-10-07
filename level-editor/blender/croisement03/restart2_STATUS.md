@@ -1,3 +1,21 @@
+## Closed whole-bank CPU builder ready for lane
+
+`bank-whole-geometry-plan-v3/geometry.json` contains closed52/54 surfaces:
+442/126 vertices,880/248 triangles, Euler2, positive volumes and nonzero faces.
+All166 fixed-crest samples are exact; CPU projected coverage retains all3,446
+original source seeds. Original west shoulder breaks and the east/south traces
+remain source-aligned. South ledges continue into inferred side shoulders;
+preview iteration rejected isolated dents. CPU eight directions and native
+crease projection were inspected; full saved review is still mandatory.
+
+`restart2_bank_whole_builder.py --run` builds these arrays, retains53 exactly,
+and subtracts its solid from52 at their interface. It checks post-Boolean
+closed topology, preserved53 geometry and fixed crest before source projection.
+The54 upper seam matches52; all gameplay metadata remains native. Inferred east
+shoulder depth/height and a two-unit54 lateral extension need saved scrutiny.
+Large hidden planes remain provisional. New rock proposals stay unassigned.
+No Blender launched; request coordinator lane for this concrete bounded build.
+
 ## Whole-bank CPU source and construction plan
 
 The coordinator retained continuous bank53 as the scoped working baseline.
