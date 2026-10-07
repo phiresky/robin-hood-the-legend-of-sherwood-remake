@@ -110,6 +110,17 @@ def ear_clip(paths):
 
 
 def triangulate(paths):
+    canonical = []
+    for path in paths:
+        points = []
+        for point in path:
+            if not points or np.linalg.norm(point-points[-1]) > 1e-10:
+                points.append(point)
+        if len(points) > 1 and np.linalg.norm(points[0]-points[-1]) <= 1e-10:
+            points.pop()
+        assert len(points) >= 3, 'Contour collapsed after duplicate-point identification'
+        canonical.append(np.asarray(points))
+    paths = canonical
     if len(paths) == 1:
         return ear_clip(paths)
     points, lines = vtkPoints(), vtkCellArray()

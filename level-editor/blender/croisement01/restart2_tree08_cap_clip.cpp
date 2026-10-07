@@ -3,10 +3,21 @@
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
+#include <cmath>
 namespace bg = boost::geometry;
 using Point = bg::model::d2::point_xy<double>;
 using Polygon = bg::model::polygon<Point>;
 using Multi = bg::model::multi_polygon<Polygon>;
+template<class Ring> void identify_duplicates(Ring &ring) {
+  Ring cleaned;
+  for (const auto &point : ring) {
+    if (cleaned.empty() || std::hypot(bg::get<0>(point)-bg::get<0>(cleaned.back()),
+                                     bg::get<1>(point)-bg::get<1>(cleaned.back())) > 1e-10)
+      cleaned.push_back(point);
+  }
+  if (!cleaned.empty() && !bg::equals(cleaned.front(), cleaned.back())) cleaned.push_back(cleaned.front());
+  ring = cleaned;
+}
 Multi read_paths() {
   size_t count;
   if (!(std::cin >> count) || count > 256) throw std::runtime_error("path count");
@@ -42,8 +53,15 @@ int main() {
       std::cout << ' ' << bg::get<0>(ring[i]) << ' ' << bg::get<1>(ring[i]);
     std::cout << '\n';
   };
-  for (const auto &p : remaining) {
-    if (!bg::is_valid(p)) throw std::runtime_error("invalid difference");
+  for (auto &p : remaining) {
+    identify_duplicates(p.outer());
+    for (auto &ring : p.inners()) identify_duplicates(ring);
+    bg::remove_spikes(p);
+    std::string validity;
+    if (!bg::is_valid(p, validity)) {
+      std::cerr << "Invalid difference: " << validity << '\n' << std::setprecision(17) << bg::wkt(p) << '\n';
+      throw std::runtime_error("invalid difference");
+    }
     write(p.outer());
     for (const auto &ring : p.inners()) write(ring);
   }

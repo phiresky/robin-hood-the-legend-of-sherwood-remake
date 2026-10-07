@@ -66,6 +66,7 @@ def main():
     parser.add_argument('--threeway', action='store_true')
     parser.add_argument('--fiveway', action='store_true')
     parser.add_argument('--revision', type=int, default=1)
+    parser.add_argument('--group', type=int, choices=[0, 1])
     args = parser.parse_args()
     suffix = '' if args.section == 29 else f'-{args.section}'
     root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
@@ -74,6 +75,8 @@ def main():
         packet = root / 'tree08-v12-threeway-stitched-v1'
     if args.fiveway:
         packet = root / f'tree08-v12-fiveway-stitched-v{args.revision}'
+    if args.group is not None:
+        packet = root / f'tree08-v12-remaining-group{args.group}-stitched-v{args.revision}'
     mesh = np.load(packet / 'candidate.npz')
     vertices, faces = mesh['vertices'], mesh['faces']
     topology = audit(vertices, faces)
@@ -99,6 +102,8 @@ def main():
     # It does not replace exact nonadjacent intersection testing.
     inset = centers[:, None] + (triangles - centers[:, None]) * (1 - 1e-7)
     for i, triangle in enumerate(triangles):
+        if i % 2000 == 0:
+            print('INTERSECTION FACE', i, '/', len(triangles), flush=True)
         lo, hi = lower[i], upper[i]
         candidates = vtkIdList()
         locator.FindCellsWithinBounds([lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]], candidates)
@@ -127,7 +132,12 @@ def main():
     ids = [29, 93] if args.threeway else [args.section]
     if args.fiveway:
         ids = [29, 93, 33, 96]
-    before = native_depth([(source['continuation_vertices'], source['continuation_faces'])] + [(source[f'vertices_{i}'], source[f'faces_{i}']) for i in ids])
+    references = [(source['continuation_vertices'], source['continuation_faces'])] + [(source[f'vertices_{i}'], source[f'faces_{i}']) for i in ids]
+    if args.group is not None:
+        from restart2_tree08_remaining_forks import inputs
+        meshes, _, groups, origin = inputs(root)
+        references = [(meshes[i][0]+origin, meshes[i][1]) for i in groups[args.group]]
+    before = native_depth(references)
     after = native_depth([(vertices, faces)])
     common = np.isfinite(before) & np.isfinite(after)
     lost = int((np.isfinite(before) & ~np.isfinite(after)).sum())
