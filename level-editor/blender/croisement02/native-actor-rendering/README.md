@@ -19,6 +19,13 @@ its own disposal registry. Recompute on placement/support changes as well as on
 direction/frame changes. This prototype deliberately allocates each sample;
 production caching needs explicit support revisions and frame identities.
 
+**Terrain integration hold:** the inherited four-corner plane projection does
+not follow interior receiver changes. The interior-bump CPU test explicitly
+demonstrates this limitation; it is not a terrain-conformality pass. Before real
+terrain integration, intersect/subdivide the shadow geometry at receiver triangle
+boundaries, or supply evidence that the entire covered support is planar. Merely
+checking four corners or adding a finite set of test samples cannot prove that.
+
 There is no action chooser, clock, script-handle mapping or AI. Inactive and hidden
 snapshots retain source identity but remove the shadow and hide the body. Missing
 body resources throw; a null frame explicitly means hidden artwork. Destination

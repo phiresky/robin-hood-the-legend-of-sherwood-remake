@@ -89,3 +89,19 @@ test('failed preparation disposes scratch geometry without disposing borrowed te
   assert.equal(body.children.length,0); assert.equal(binding.shadow,null);
   binding.dispose(); assert.equal(released,1);
 });
+test('documents four-corner projection limitation: an interior receiver bump is missed', () => {
+  const {binding,snapshot} = setup();
+  const samples = [];
+  // A deliberately bounded receiver bump entirely inside the sprite footprint.
+  const sin=Math.sin(snapshot.elevation), centerY=200*sin-20;
+  const bump=(x,y)=>{ samples.push([x,y]);return Math.abs(x-101)<2 && Math.abs(y-centerY)<2 ? 8 : 0; };
+  binding.apply({...snapshot,supportHeight:bump});
+  const positions=binding.shadow.geometry.getAttribute('position');
+  assert.equal(samples.length,4);
+  assert.equal(bump(101,centerY),8);
+  assert.ok([...Array(positions.count).keys()].every(i=>Math.abs(positions.getY(i)-0.15)<1e-6));
+  // This is limitation evidence, not a terrain-conformality pass: the output
+  // interpolates flat through a receiver that is eight native units higher.
+  assert.equal(positions.count,4);
+  binding.dispose();
+});
