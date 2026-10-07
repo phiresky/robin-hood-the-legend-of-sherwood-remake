@@ -118,7 +118,12 @@ for (const id of selected) {
     },
   };
   validateAssetGameplay(descriptor.gameplay, descriptor);
-  edits.push({ asset: id, descriptorSha256: hash(bytes), gameplay: descriptor.gameplay });
+  edits.push({
+    asset: id,
+    descriptorSha256: hash(bytes),
+    modelSha256: reference.model_sha256,
+    gameplay: descriptor.gameplay,
+  });
   reviews.push({
     asset: id,
     modelSha256: reference.model_sha256,

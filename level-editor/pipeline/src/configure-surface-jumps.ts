@@ -23,6 +23,8 @@ export interface SurfaceJumpEdit {
 export interface GameplayEdit {
   asset: string;
   descriptorSha256: string;
+  /** Geometry-derived definitions are also bound to the model used for review. */
+  modelSha256?: string;
   gameplay: AssetGameplay;
 }
 export interface SurfacePrecisionEdit {
@@ -54,6 +56,7 @@ export async function configureAssetGameplay(
   const indexBefore = await fs.readFile(path.join(library, indexFile), "utf8");
   const index = parseProjectionAssetIndex(JSON.parse(indexBefore));
   const changes: { file: string; before: string; after: string }[] = [];
+  const reviewedModels = new Map<string, string>();
   const pins = new Map<string, { before: string; after: string }>();
   const published: string[] = [];
   for (const asset of new Set(edits.map((edit) => edit.asset))) {
@@ -75,6 +78,16 @@ export async function configureAssetGameplay(
       throw new Error(`Conflicting gameplay edits: ${asset}`);
     const gameplay = structuredClone(replacements[0]?.gameplay ?? descriptor.gameplay);
     if (!gameplay) throw new Error(`Missing gameplay: ${asset}`);
+    const reviewedModel = replacements[0]?.modelSha256;
+    if (reviewedModel !== undefined) {
+      if (!/^[0-9a-f]{64}$/.test(reviewedModel))
+        throw new Error(`Invalid reviewed model digest: ${asset}`);
+      const modelPath = path.join(library, "3d-assets", entry.model);
+      const model = await fs.readFile(modelPath);
+      if (createHash("sha256").update(model).digest("hex") !== reviewedModel)
+        throw new Error(`Stale reviewed model: ${asset}`);
+      reviewedModels.set(modelPath, reviewedModel);
+    }
     if (gameplay.spline?.modelSha256) {
       const model = await fs.readFile(path.join(library, "3d-assets", entry.model));
       if (createHash("sha256").update(model).digest("hex") !== gameplay.spline.modelSha256)
@@ -148,6 +161,13 @@ export async function configureAssetGameplay(
   };
   await fs.writeFile(path.join(output, "report.json"), encode(report));
   if (apply) {
+    for (const [modelPath, digest] of reviewedModels)
+      if (
+        createHash("sha256")
+          .update(await fs.readFile(modelPath))
+          .digest("hex") !== digest
+      )
+        throw new Error(`Reviewed model changed during publication: ${modelPath}`);
     for (const change of changes)
       if ((await fs.readFile(path.join(library, change.file), "utf8")) !== change.before)
         throw new Error(`Library changed: ${change.file}`);

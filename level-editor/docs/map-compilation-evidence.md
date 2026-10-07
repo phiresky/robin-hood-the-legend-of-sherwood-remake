@@ -9963,3 +9963,22 @@ complete native rendered ZIP playthrough.
 Fresh inventory `gameplay-coverage-io9QXo` finds 75 missing definitions among
 1,279 assets and 47 missing placed definitions: 43 in Croisement02, one in
 Croisement01 and three in Croisement03.
+
+Batch `shrub-batch-erzjxjez` was intentionally stopped with `complete: false`:
+sixteen assets passed ten native construction cases each; two authoring attempts
+failed. Shrub 73 has UV values outside the supported sampler domain; shrub 74
+fails the nearest-sampling/no-texture-transform precondition. Neither failure
+was converted to empty gameplay.
+
+More seriously, the first fourteen successful explicit-triangle definitions
+total 468,916,952 bytes. Shrub 69 alone contains 719,673 triangles and occupies
+127,141,905 bytes. These candidates were not published. Mesh UVs and compact
+alpha coverage need to replace per-texel geometric expansion for a practical
+library; successful native construction does not make this storage cost viable.
+The already-published foliage drafts also need migration to that representation.
+
+`configureAssetGameplay` now accepts a reviewed `modelSha256` for full gameplay
+edits. It checks model bytes before staging and again before installation;
+foliage authoring emits that hash. Five publication tests pass, including changed
+model bytes with an unchanged descriptor. Focused lint and formatting pass;
+pipeline typechecking remains blocked by unrelated state-delivery test types.

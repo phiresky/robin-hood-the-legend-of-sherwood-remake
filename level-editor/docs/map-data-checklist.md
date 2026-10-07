@@ -246,6 +246,13 @@ is not established. The current saved Croisement02 scene compiles using publishe
 definitions with fourteen masks; native construction and nine control apply/reset
 checks pass. These construction checks do not certify a rendered playthrough.
 
+The broader shrub batch exposed a storage problem: fourteen successful draft
+definitions occupy about 469 MB before publication, with one shrub alone at
+127 MB. The batch was stopped and those shrubs were not published. A compact
+mesh/UV/alpha representation is needed before scaling this authoring path.
+Shrubs 73/74 also expose unsupported UV/sampler cases. Geometry-derived
+publication now supports reviewed model hashes in addition to descriptor hashes.
+
 The earlier library-wide audit found 38 of 1,297 indexed assets without gameplay
 definitions, including the composite Derby keep, several Nottingham buildings,
 and York market props. Four are placed in the current Croisement03 scene:

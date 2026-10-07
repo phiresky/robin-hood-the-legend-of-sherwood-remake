@@ -126,6 +126,36 @@ test("failed installation restores descriptors and removes only its temporary fi
   }
 });
 
+test("geometry-derived gameplay rejects changed model bytes with an unchanged descriptor", async () => {
+  const f = await fixture();
+  try {
+    const descriptor = JSON.parse(f.before);
+    const model = path.join(path.dirname(f.descriptor), descriptor.model);
+    const edits = [
+      {
+        asset: descriptor.id,
+        descriptorSha256: f.hash(f.before),
+        modelSha256: f.hash("reviewed model"),
+        gameplay: descriptor.gameplay,
+      },
+    ];
+    await fs.writeFile(model, "changed model");
+    await assert.rejects(
+      configureAssetGameplay(f.library, edits, path.join(f.root, "stale"), true),
+      /Stale reviewed model/,
+    );
+    assert.equal(await fs.readFile(f.descriptor, "utf8"), f.before);
+    await fs.writeFile(model, "reviewed model");
+    await configureAssetGameplay(f.library, edits, path.join(f.root, "applied"), true);
+    assert.deepEqual(
+      JSON.parse(await fs.readFile(f.descriptor, "utf8")).gameplay,
+      descriptor.gameplay,
+    );
+  } finally {
+    await fs.rm(f.root, { recursive: true, force: true });
+  }
+});
+
 test("spline gameplay replacement is bound to the reviewed model as well as its descriptor", async () => {
   const f = await fixture();
   try {
