@@ -48,7 +48,23 @@ report=apply(manifest,args.generation/'generated-preserved.png',args.output,
 if before!={o.name:_geometry(o) for o in scene.objects}:raise ValueError('Bake changed geometry')
 if outside!={o.name:_geometry(o,protect_appearance=True) for o in scene.objects if o.name in outside}:
     raise ValueError('Bake changed outside objects or materials')
+# Keep only the reviewed receiver in the saved worker; context was checked above.
+receivers=[o for o in scene.objects if o.type=='MESH' and o.get('asset_group')==approval['asset_id']]
+scoped_before={o.name:_geometry(o,protect_appearance=True) for o in receivers}
+keep=set(receivers)
+for o in receivers:
+    ancestor=o.parent
+    while ancestor is not None:keep.add(ancestor);ancestor=ancestor.parent
+for o in list(bpy.data.objects):
+    if o not in keep:bpy.data.objects.remove(o,do_unlink=True)
+for blocks in (bpy.data.meshes,bpy.data.materials,bpy.data.images):
+    for block in list(blocks):
+        if block.users==0:blocks.remove(block)
+bpy.context.view_layer.update()
+assert scoped_before=={o.name:_geometry(o,protect_appearance=True) for o in receivers}
+bpy.context.preferences.filepaths.save_version=0
 bpy.ops.wm.save_as_mainfile(filepath=str(args.output/'model.blend'),compress=True)
+assert (args.output/'model.blend').stat().st_size<8*1024**2
 report.update(geometry_verified=True,outside_objects_preserved=len(outside),
               approved_model_sha256=sha(model),baked_model_sha256=sha(args.output/'model.blend'),
               scope='Private texture candidate; actual rendered review and user texture approval pending')
