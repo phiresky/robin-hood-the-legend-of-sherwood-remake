@@ -18,7 +18,7 @@ def constant(action):
    for bag in strip.channelbags:
     for fc in bag.fcurves:
      for key in fc.keyframe_points:key.interpolation='CONSTANT'
-def main(*, min_free_gib=25, review_phases=(0,2,18), output_budget_mib=None, comparison_phases=None, render_threads=4):
+def main(*, min_free_gib=25, review_phases=(0,2,18), output_budget_mib=None, comparison_phases=None, render_threads=4, checkpoint_frames=False):
  def budget():
   assert shutil.disk_usage(OUT).free>min_free_gib*1024**3, 'Free space below scoped render floor'
   if output_budget_mib is not None:assert sum(p.stat().st_size for p in OUT.rglob('*') if p.is_file())<output_budget_mib*1024**2, 'Scoped output budget exceeded'
@@ -43,12 +43,17 @@ def main(*, min_free_gib=25, review_phases=(0,2,18), output_budget_mib=None, com
  lights=[]
  for name,offset,energy in [('key',(-25,-35,50),22000),('fill',(35,10,20),9000)]:
   data=bpy.data.lights.new(name,'AREA');data.energy=energy;data.size=25;ob=bpy.data.objects.new(name,data);s.collection.objects.link(ob);lights.append((ob,Vector(offset)))
+ expected_uv={name:hashlib.sha256(np.array([list(u.uv) for u in ob.data.uv_layers.active.data],dtype='<f4').tobytes()).hexdigest() for name,ob in objects.items()};image_name=image.name
  s.frame_set(1);bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'model.blend'),compress=True);bpy.ops.wm.open_mainfile(filepath=str(OUT/'model.blend'));s=bpy.context.scene;root=bpy.data.objects['Butterfly01 conserved animated rig'];objects={name:bpy.data.objects[name] for name in meshes};cam=s.camera;lights=[(bpy.data.objects['key'],Vector((-25,-35,50))),(bpy.data.objects['fill'],Vector((35,10,20)))]
+ reopened_image=bpy.data.images[image_name];assert reopened_image.packed_file is not None;packed_image_sha=hashlib.sha256(bytes(reopened_image.packed_file.data)).hexdigest();assert packed_image_sha==authority['fixed_pattern_sha256'];assert all(hashlib.sha256(np.array([list(u.uv) for u in ob.data.uv_layers.active.data],dtype='<f4').tobytes()).hexdigest()==expected_uv[name] for name,ob in objects.items())
+ progress={'status':'RENDERING','model_sha256':sha(OUT/'model.blend'),'fit_sha256':sha(OUT/'fit.json'),'completed_frames':{}}
  solid=bpy.data.materials.new('Physical solid inspection');solid.use_nodes=True;solid.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value=(.40,.38,.30,1);solid.node_tree.nodes['Principled BSDF'].inputs['Roughness'].default_value=.8
  def render(phase,view,path,mode='actual'):
   budget();s.frame_set(phase*2+1);center=root.location.copy();angle=-math.pi/2+view*math.pi/4;direction=Vector((math.cos(angle)*COS,math.sin(angle)*COS,SIN));cam.location=center+direction*100;cam.rotation_euler=(center-cam.location).to_track_quat('-Z','Y').to_euler()
   for light,offset in lights:light.location=center+offset;light.rotation_euler=(-offset).to_track_quat('-Z','Y').to_euler()
   s.view_layers[0].material_override=solid if mode=='solid' else None;bpy.context.view_layer.update();s.render.filepath=str(path);bpy.ops.render.render(write_still=True)
+  if checkpoint_frames:
+   progress['completed_frames'][str(path.relative_to(OUT))]={'phase':phase,'view':view,'mode':mode,'sha256':sha(path)};(OUT/'frame-checkpoints.json').write_text(json.dumps(progress,indent=2)+'\n')
  for row in packet['poses']:
   folder=OUT/'motion';folder.mkdir(exist_ok=True)
   for view in [0,4]:render(row['phase'],view,folder/f"phase-{row['phase']:02d}-view-{view}.png")
@@ -71,9 +76,13 @@ def main(*, min_free_gib=25, review_phases=(0,2,18), output_budget_mib=None, com
  sheet.save(OUT/'nine-phase-comparison.png')
  budget();checks=[]
  for row in packet['poses']:
-  s.frame_set(row['phase']*2+1);q0=list(root.rotation_quaternion);loc0=list(root.location);a0={name:list(objects[name].rotation_quaternion) for name in ['left','right']};s.frame_set(row['phase']*2+2);assert q0==list(root.rotation_quaternion) and loc0==list(root.location) and all(a0[name]==list(objects[name].rotation_quaternion) for name in a0);checks.append(row['phase'])
+  s.frame_set(row['phase']*2+1);rx,ry,rz,left,right,dx,dy=row['parameters'];g=rot('z',rz)@rot('y',ry)@rot('x',rx);expected_q=Matrix((B@g@B.T).tolist()).to_quaternion();assert abs(root.rotation_quaternion.dot(expected_q))>1-1e-6;sx=row['source']['bbox'][0]+row['source_center'][0]+dx;sy=row['source']['bbox'][1]+row['source_center'][1]+dy;z=row['inferred_altitude'];assert (root.location-Vector((sx,-(sy+COS*z)/SIN,z))).length<.002
+  for name,sign,angle in [('left',-1,left),('right',1,right)]:assert abs(objects[name].rotation_quaternion.dot(Matrix((B@rot('y',-sign*angle)@B.T).tolist()).to_quaternion()))>1-1e-6
+  q0=list(root.rotation_quaternion);loc0=list(root.location);a0={name:list(objects[name].rotation_quaternion) for name in ['left','right']};s.frame_set(row['phase']*2+2);assert q0==list(root.rotation_quaternion) and loc0==list(root.location) and all(a0[name]==list(objects[name].rotation_quaternion) for name in a0);checks.append(row['phase'])
  assert all(signature(objects[name].data)==rest[name] for name in rest);assert sha(src)==source_hash
- guard={'model_sha256':sha(OUT/'model.blend'),'rest_geometry_exact':rest,'source_parent_unchanged':True,'saved99_two_tick_holds_exact':len(checks)==99,'single_rig_meshes':len([o for o in s.objects if o.type=='MESH']),'fixed_material_image_sha256':authority['fixed_pattern_sha256'],'fixed_uv_maps':{name:hashlib.sha256(np.array([list(u.uv) for u in ob.data.uv_layers.active.data],dtype='<f4').tobytes()).hexdigest() for name,ob in objects.items()},'no_per_phase_meshes_or_uv_animation':True,'source_cycle_ticks':198,'original_camera_first':True,'full_native_render_parity_claim':False,'review_phases':list(review_phases),'render_threads':render_threads,'disk_floor_gib':min_free_gib,'output_budget_mib':output_budget_mib,'fit_summary':json.loads((OUT/'fit-summary.json').read_text())};assert guard['single_rig_meshes']==3;(OUT/'validation.json').write_text(json.dumps(guard,indent=2)+'\n');print('FULL_RIG_READY',guard['model_sha256'])
+ guard={'model_sha256':sha(OUT/'model.blend'),'rest_geometry_exact':rest,'source_parent_unchanged':True,'saved99_two_tick_holds_exact':len(checks)==99,'single_rig_meshes':len([o for o in s.objects if o.type=='MESH']),'fixed_material_image_sha256':authority['fixed_pattern_sha256'],'reopened_packed_image_sha256':packed_image_sha,'reopened_uv_matches_pre_save':True,'saved_pose_parameters_match_frozen_fit':True,'fixed_uv_maps':{name:hashlib.sha256(np.array([list(u.uv) for u in ob.data.uv_layers.active.data],dtype='<f4').tobytes()).hexdigest() for name,ob in objects.items()},'no_per_phase_meshes_or_uv_animation':True,'source_cycle_ticks':198,'original_camera_first':True,'full_native_render_parity_claim':False,'review_phases':list(review_phases),'render_threads':render_threads,'disk_floor_gib':min_free_gib,'output_budget_mib':output_budget_mib,'fit_summary':json.loads((OUT/'fit-summary.json').read_text())};assert guard['single_rig_meshes']==3;(OUT/'validation.json').write_text(json.dumps(guard,indent=2)+'\n');print('FULL_RIG_READY',guard['model_sha256'])
+ if checkpoint_frames:
+  assert len(progress['completed_frames'])==198+16*len(review_phases);progress['status']='SAVED_MODEL_GUARDS_PASS_PENDING_VISUAL_REVIEW';progress['validation_sha256']=sha(OUT/'validation.json');(OUT/'frame-checkpoints.json').write_text(json.dumps(progress,indent=2)+'\n')
 if __name__=='__main__':
  acquire()
  try:main()
