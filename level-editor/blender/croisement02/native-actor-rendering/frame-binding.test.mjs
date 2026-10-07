@@ -73,3 +73,19 @@ test('same frame at a new anchor recomputes support and keeps world shadow orien
   assert.ok(orientation.angleTo(new THREE.Quaternion())<1e-7);
   binding.dispose();
 });
+test('failed preparation disposes scratch geometry without disposing borrowed textures', () => {
+  let allocated = 0, released = 0, borrowedReleased = 0;
+  class TrackedGeometry extends THREE.PlaneGeometry {
+    constructor(...args) { super(...args); allocated++; this.addEventListener('dispose',()=>released++); }
+  }
+  const next = frame();
+  next.texture.addEventListener('dispose',()=>borrowedReleased++);
+  next.shadow.addEventListener('dispose',()=>borrowedReleased++);
+  const body = new THREE.Mesh(next.geometry,new THREE.MeshBasicMaterial({map:next.texture}));
+  const binding = createActorFrameBinding({...THREE,PlaneGeometry:TrackedGeometry},body,identity);
+  assert.throws(()=>binding.apply({identity,frame:next,anchor:[0,0,0],rotation:0,active:true,
+    elevation:Math.PI/5,supportHeight:()=>NaN,shadowStyle:{color:0,opacity:0.4}}),/support height/);
+  assert.equal(allocated,1); assert.equal(released,1); assert.equal(borrowedReleased,0);
+  assert.equal(body.children.length,0); assert.equal(binding.shadow,null);
+  binding.dispose(); assert.equal(released,1);
+});
