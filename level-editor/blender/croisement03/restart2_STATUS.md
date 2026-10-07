@@ -1,3 +1,20 @@
+## Whole-bank CPU source and construction plan
+
+The coordinator retained continuous bank53 as the scoped working baseline.
+`bank-whole-source-plan-v1/plan.json` extends the construction scope to52/54:
+fixed shared crest stays exact, exposed west shoulder follows its two existing
+breaks, east blocks and south ledges follow six newly traced short segments.
+Shoulders stay angular and irregular; no circular regularization. Interfaces
+must close into continuous bulk rather than additional attached slabs.
+
+The native whole-bank/east/south close-ups and annotated reservation sheet were
+inspected. Seven proposed rock interiors add1,399 unreserved pixels;141 mixed
+mask pixels stay withheld. Actual saved animation alpha overlaps11 candidate
+pixels, leaving1,388 never covered; no ownership or deletion follows from this.
+Source/height interpretation still needs saved geometry review. Next: CPU
+closed52/54 arrays and interface constraints, then request a bounded lane.
+No model/render lane, frozen card, gallery or canonical changes in this step.
+
 ## Continuous western body — private coordinator review
 
 `bank-continuous-strata-v1/worker.blend`, hash `8abfdbf901d7e364`, replaces
