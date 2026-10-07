@@ -14,10 +14,10 @@ from vtkmodules.util.numpy_support import vtk_to_numpy
 def section_loops(vertices, faces, origin, normal, basis):
     segments = set()
     points = {}
-    for triangle in vertices[faces]:
-        distances = (triangle - origin) @ normal
-        if distances.min() > 1e-9 or distances.max() < -1e-9:
-            continue
+    triangles = vertices[faces]
+    plane_distances = (triangles - origin) @ normal
+    crosses = (plane_distances.min(axis=1) <= 1e-9) & (plane_distances.max(axis=1) >= -1e-9)
+    for triangle, distances in zip(triangles[crosses], plane_distances[crosses]):
         hits = []
         for a, b, da, db in zip(triangle, np.roll(triangle, -1, axis=0), distances, np.roll(distances, -1)):
             if abs(da) < 1e-9:
@@ -76,7 +76,42 @@ def area(poly):
     return float(np.sum(poly[:, 0] * np.roll(poly[:, 1], -1) - poly[:, 1] * np.roll(poly[:, 0], -1)) / 2)
 
 
+def ear_clip(paths):
+    polygon = np.asarray(paths[0])
+    if area(polygon) < 0:
+        polygon = polygon[::-1]
+    remaining = list(range(len(polygon)))
+    triangles = []
+    def cross(a, b):
+        return a[0]*b[1]-a[1]*b[0]
+    while len(remaining) > 3:
+        for i, index in enumerate(remaining):
+            indices = [remaining[i-1], index, remaining[(i+1) % len(remaining)]]
+            a, b, c = polygon[indices]
+            if cross(b-a, c-a) <= 1e-12:
+                continue
+            blocked = False
+            for other in remaining:
+                if other in indices:
+                    continue
+                point = polygon[other]
+                if min(cross(b-a, point-a), cross(c-b, point-b), cross(a-c, point-c)) >= -1e-12:
+                    blocked = True
+                    break
+            if not blocked:
+                triangles.append(polygon[indices])
+                remaining.pop(i)
+                break
+        else:
+            raise AssertionError('No valid ear in source polygon')
+    triangles.append(polygon[remaining])
+    assert abs(sum(area(t) for t in triangles) - area(polygon)) < 1e-9
+    return np.asarray(triangles)
+
+
 def triangulate(paths):
+    if len(paths) == 1:
+        return ear_clip(paths)
     points, lines = vtkPoints(), vtkCellArray()
     points.SetDataTypeToDouble()
     for path in paths:

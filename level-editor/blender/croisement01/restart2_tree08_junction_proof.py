@@ -8,6 +8,7 @@ from vtkmodules.vtkCommonCore import vtkIdList
 from vtkmodules.vtkCommonDataModel import vtkStaticCellLocator, vtkTriangle
 
 from restart2_tree08_fork_kernel import poly
+from restart2_tree08_local_fork import audit
 
 
 def intersection(a, b):
@@ -63,14 +64,30 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--section', type=int, choices=[29, 93, 33, 96], default=29)
     parser.add_argument('--threeway', action='store_true')
+    parser.add_argument('--fiveway', action='store_true')
+    parser.add_argument('--revision', type=int, default=1)
     args = parser.parse_args()
     suffix = '' if args.section == 29 else f'-{args.section}'
     root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
     packet = root / f'tree08-v12-planar-junction{suffix}-stitched-v1'
     if args.threeway:
         packet = root / 'tree08-v12-threeway-stitched-v1'
+    if args.fiveway:
+        packet = root / f'tree08-v12-fiveway-stitched-v{args.revision}'
     mesh = np.load(packet / 'candidate.npz')
     vertices, faces = mesh['vertices'], mesh['faces']
+    topology = audit(vertices, faces)
+    parents = list(range(len(vertices)))
+    def find(index):
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+    for a, b, c in faces:
+        parents[find(int(b))] = find(int(a))
+        parents[find(int(c))] = find(int(a))
+    components = len({find(i) for i in range(len(vertices))})
+    topology['components'] = components
     triangles = vertices[faces]
     lower, upper = triangles.min(1), triangles.max(1)
     locator = vtkStaticCellLocator()
@@ -108,13 +125,16 @@ def main():
                 failures.append(dict(faces=[i, j], kind=key))
     source = np.load(root / 'tree08-v12-local-fork-cpu-v1/minimal-forks.npz')
     ids = [29, 93] if args.threeway else [args.section]
+    if args.fiveway:
+        ids = [29, 93, 33, 96]
     before = native_depth([(source['continuation_vertices'], source['continuation_faces'])] + [(source[f'vertices_{i}'], source[f'faces_{i}']) for i in ids])
     after = native_depth([(vertices, faces)])
     common = np.isfinite(before) & np.isfinite(after)
     lost = int((np.isfinite(before) & ~np.isfinite(after)).sum())
     gained = int((~np.isfinite(before) & np.isfinite(after)).sum())
     depth_error = float(np.abs(before[common] - after[common]).max())
-    report = dict(status='FAIL' if failures or lost or gained or depth_error > .0002 else 'PASS_LOCAL_DIAGNOSTICS', tested_intersections=counts,
+    topology_fail = components != 1 or topology['volume'] <= 0 or any(topology[k] for k in ['nonmanifold_edges', 'winding_errors', 'zero_area'])
+    report = dict(status='FAIL' if topology_fail or failures or lost or gained or depth_error > .0002 else 'PASS_LOCAL_DIAGNOSTICS', topology=topology, tested_intersections=counts,
                   intersections=failures, native_pixels=int(common.sum()),
                   native_lost=lost, native_gained=gained,
                   maximum_native_front_depth_difference=depth_error,

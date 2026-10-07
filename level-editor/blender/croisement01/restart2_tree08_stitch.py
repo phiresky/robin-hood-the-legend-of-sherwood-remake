@@ -14,6 +14,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--section', type=int, choices=[29, 93, 33, 96], default=29)
     parser.add_argument('--threeway', action='store_true')
+    parser.add_argument('--fiveway', action='store_true')
+    parser.add_argument('--revision', type=int, default=1)
     args = parser.parse_args()
     suffix = '' if args.section == 29 else f'-{args.section}'
     root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
@@ -22,6 +24,9 @@ def main():
     if args.threeway:
         source = root / 'tree08-v12-threeway-v1'
         output = root / 'tree08-v12-threeway-stitched-v1'
+    if args.fiveway:
+        source = root / f'tree08-v12-fiveway-v{args.revision}'
+        output = root / f'tree08-v12-fiveway-stitched-v{args.revision}'
     output.mkdir(exist_ok=False)
     mesh = np.load(source / 'candidate.npz')
     vertices, faces = mesh['vertices'], mesh['faces']
