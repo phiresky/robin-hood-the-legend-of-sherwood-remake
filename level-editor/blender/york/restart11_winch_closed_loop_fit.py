@@ -1,7 +1,7 @@
 """Score a complete moving chain loop against all source poses before authoring motion."""
 import hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-chain-loop-prototype-v7';OUT=WORK/'restart2/winch-closed-loop-fit-v7'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-chain-loop-prototype-v8';OUT=WORK/'restart2/winch-closed-loop-fit-v8'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
