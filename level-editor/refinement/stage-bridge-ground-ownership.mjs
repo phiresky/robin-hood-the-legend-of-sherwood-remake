@@ -22,6 +22,11 @@ assert.ok(bridge && ground);
 const edit = edits.find((edit) => edit.asset === bridge.id);
 assert.ok(edit);
 bridge.gameplay = structuredClone(edit.gameplay);
+bridge.gameplay.draft = {
+  issues: [
+    "Mesh-derived bridge collision and walkable deck: textured actor occlusion, shadows and full rendered gameplay remain unverified.",
+  ],
+};
 const object = document.objects.find(
   (p) => p.node === `asset:${bridge.id}:${bridge.parts[0].node}`,
 );

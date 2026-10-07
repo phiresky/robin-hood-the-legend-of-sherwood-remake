@@ -9883,3 +9883,25 @@ moves a deck away from a ground hole: the old gap becomes impassable while the
 new floor remains connected, without adding ground sockets for either location.
 151 affected tests, application typecheck and focused lint pass. Native moved
 placements, rendered review and publication remain pending.
+
+`check-bridge-asset-ground.mjs` converts the twenty rotated/elevated bridge
+fixtures into asset-owned ground and removes editor terrain before compilation.
+Stage `bridge-asset-ground-RnigNG` passes all forty native actor crossings and
+3,120 sight/projectile queries. Forty one-unit height mismatches reject; ten
+separated-bank removal checks retain disconnected banks. This tests arbitrary
+bridge orientation on continuous ground and fitted banks, not native rendered
+playthroughs of every possible placement.
+
+Publication `bridge-publish-8TtzAK` installs the bridge and corrected background
+definitions and refreshes Croisement03's descriptor pins. The bridge remains a
+draft with explicit rendered actor occlusion/shadow warnings. Running
+`check-saved-bridge-contact.mjs --published` produces
+`saved-bridge-contact-dKPC8h`; both native actor directions pass using published
+definitions without staged overrides.
+
+Fresh inventory `gameplay-coverage-spEhsn` finds 1,279 indexed assets, 89 missing
+definitions and 61 missing placed definitions: 57 Croisement02 assets, one
+Croisement01 asset and Croisement03's two ferns and stream fallen log. The bridge
+is no longer missing. The previous four-missing-placement count is historical;
+the current library has changed. Definition presence is not proof of gameplay
+completeness.

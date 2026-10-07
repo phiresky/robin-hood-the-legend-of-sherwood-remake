@@ -8,10 +8,12 @@ import { gameToScene } from "../shared/src/scene.ts";
 import { sceneToGame, applyAffineMatrix } from "../shared/src/geometry.ts";
 
 const stage = process.argv[2];
-assert.ok(stage, "Provide staged bridge gameplay definitions");
+assert.ok(stage, "Provide staged bridge gameplay definitions or --published");
 const document = await readStoredMap("library/scenes/croisement03.rhlos-map.json", "library");
 const assets = await pinnedDescriptors("library", document.assetSources, document.sceneAssets);
-for (const edit of JSON.parse(await fs.readFile(`${stage}/edits.json`))) {
+for (const edit of stage === "--published"
+  ? []
+  : JSON.parse(await fs.readFile(`${stage}/edits.json`))) {
   const asset = assets.get(edit.asset);
   if (asset) asset.gameplay = edit.gameplay;
 }
