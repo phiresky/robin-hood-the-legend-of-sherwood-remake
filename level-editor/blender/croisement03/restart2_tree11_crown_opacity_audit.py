@@ -16,8 +16,9 @@ from render_views import render_views
 B = ROOT / 'level-editor/work/croisement03-refinement/restart2'
 
 
-def main():
-    candidate = B / 'tree11-crown-prototype-v2'
+def main(tree=11, revision=2):
+    assert tree in (10, 11)
+    candidate = B / f'tree{tree}-crown-prototype-v{revision}'
     out = candidate / 'physical-opacity-audit'
     assert not out.exists()
     out.mkdir()
@@ -25,11 +26,13 @@ def main():
     try:
         bpy.ops.wm.open_mainfile(filepath=str(candidate / 'worker.blend'))
         scene = bpy.data.scenes['Tree13 isolated wood']
-        leaf = next(o for o in scene.objects if o.get('asset_group') == 'croisement03-arbre06-fragment-tree11-provisional')
+        leaf = next(o for o in scene.objects if o.get('asset_group') == f'croisement03-arbre06-fragment-tree{tree}-provisional')
         mesh = leaf.data
         count = json.loads((candidate / 'receipt.json').read_text())['native_faces']
         source_faces = list(mesh.polygons)[:count]
-        assert count == 911 and all(len(f.vertices) == 4 for f in source_faces)
+        assert count > 0 and all(len(f.vertices) == 4 for f in source_faces)
+        if tree == 11:
+            assert count == 911
         depths, widths, heights = [], [], []
         sin, cos = math.sin(math.radians(35)), math.cos(math.radians(35))
         for face in source_faces:
@@ -52,8 +55,15 @@ def main():
         material.node_tree.links.remove(emission.inputs['Color'].links[0])
         emission.inputs['Color'].default_value = (.55, .55, .55, 1)
         # Only RGB changes in this diagnostic. Original physical alpha still drives transparency.
-        render_views(scene.name, {'view-0': 'Tree13 view0', 'view-1': 'Tree13 view1', 'view-4': 'Tree13 view4'}, out, modes=('textured',), width=768)
-        source = np.array(Image.open(B / 'tree11-canopy-fragment-source-v1/000.png'))
+        render_views(scene.name, {f'view-{i}': f'Tree13 view{i}' for i in range(8)}, out, modes=('textured',), width=512)
+        sheet = Image.new('RGB', (2048, 1024), '#333333')
+        for i in range(8):
+            frame = Image.open(out / f'view-{i}-textured.png').convert('RGBA')
+            background = Image.new('RGBA', frame.size, '#333333')
+            background.alpha_composite(frame)
+            sheet.paste(background.convert('RGB'), ((i % 4) * 512, (i // 4) * 512))
+        sheet.save(out / 'sheet.png')
+        source = np.array(Image.open(B / f'tree{tree}-canopy-fragment-source-v1/000.png'))
         write_json(out / 'receipt.json', dict(status='PASS disconnected source cells, no continuous opaque source panel',
             model_sha256=sha(candidate / 'worker.blend'), source_faces=count,
             native_face_max_projected_width=max(widths), native_face_max_projected_height=max(heights),
@@ -63,11 +73,12 @@ def main():
             frame0_opaque_pixels=int(np.count_nonzero(source[:, :, 3])), frame0_total_pixels=int(source.shape[0]*source.shape[1]),
             original_alpha_controls_transparent_shader=True,
             diagnostic='Shared solid mode uses BLENDER_WORKBENCH, which renders every card opaque. New gray RGB Cycles renders preserve the original alpha, geometry and UV without saving a modified worker.',
-            receipt_correction='The original construction receipt inferred_leaf_faces counter was overwritten by a temporary support-branch face list. The mesh counts above are authoritative; no geometry change.',
-            views={str(i): sha(out / f'view-{i}-textured.png') for i in (0, 1, 4)}))
+            receipt_correction='Tree11 v2 construction receipt has a stale inferred-face counter from a temporary support-face list. These direct mesh counts are authoritative; no geometry change.' if tree == 11 else None,
+            views={str(i): sha(out / f'view-{i}-textured.png') for i in range(8)}))
     finally:
         release()
 
 
 if __name__ == '__main__':
-    main()
+    args = sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else []
+    main(*map(int, args))
