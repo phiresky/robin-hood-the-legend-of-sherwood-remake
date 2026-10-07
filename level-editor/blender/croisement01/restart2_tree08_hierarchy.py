@@ -69,7 +69,7 @@ def regularize_radii(path):
     return np.maximum(result,.65)
 
 
-def build_hierarchy_sections(traces,selected,root,misses,support_core=None,continuous_nodes=False,continuous_trunk=False):
+def build_hierarchy_sections(traces,selected,root,misses,support_core=None,continuous_nodes=False,continuous_trunk=False,transport_frames=False):
     plans,pending,info=rooted_arcs(traces,selected,root)
     assert not pending,('Unassigned source arcs',pending)
     if continuous_trunk:
@@ -139,17 +139,24 @@ def build_hierarchy_sections(traces,selected,root,misses,support_core=None,conti
                     w=smoothstep(remaining/max(.001,min(12,total*.45)))
                     radii[j]=.35+(radii[j]-.35)*w
         vertices=[];faces=[];n=16
+        transported=None
+        if transport_frames:
+            from restart2_tree08_transport import frames
+            transported=frames([point(q[0],q[1],q[3]) for q in path],radii)
         for j,(x,y,_,depth,_,_) in enumerate(path):
             # A wide tangent estimate prevents pixel staircase normals from
             # twisting adjacent rings while all source center samples stay fixed.
             before=path[max(0,j-8)];after=path[min(len(path)-1,j+8)];dx,dy=after[0]-before[0],after[1]-before[1];length=max(.001,math.hypot(dx,dy));normal=right*(-dy/length)+down*(dx/length)
             for k in range(n):
-                a=math.tau*k/n;vertices.append(point(x,y,depth)+normal*(math.cos(a)*radii[j])+ray*(math.sin(a)*radii[j]))
+                a=math.tau*k/n
+                nr,br=(transported[j][0],transported[j][1]) if transported else (normal,ray)
+                vertices.append(point(x,y,depth)+nr*(math.cos(a)*radii[j])+br*(math.sin(a)*radii[j]))
         for j in range(len(path)-1):
             for k in range(n):a=j*n+k;b=j*n+(k+1)%n;faces.append((a,b,b+n,a+n))
         faces.extend([tuple(reversed(range(n))),tuple((len(path)-1)*n+k for k in range(n))])
         crossing=not arc['tree_arc'] or any(685<=p[0]<=777 and 185<=p[1]<=315 for p in path)
         sections.append(dict(trace_id=i,vertices=vertices,faces=faces,held_crossing=crossing))
+    if transport_frames:return sections,obligations,dict(info,arcs=list(plans.values()),max_depth_step_per_source_length=.6,max_depth_curvature=.018,spatial_depth_blending=False,duplicate_basal_removed=True,parallel_transport_radius_curvature_limit=.6)
     # Reuse only the explicit basal continuation recipe, never its spatial
     # branch depth field; the basal centerline receives zero inherited depth.
     rings=[(557,350,19),(557,360,21),(558,371,23),(559,381,22),(561,390,18),(565,400,12),(568,409,5),(569,414,.4)];vertices=[];faces=[];n=24

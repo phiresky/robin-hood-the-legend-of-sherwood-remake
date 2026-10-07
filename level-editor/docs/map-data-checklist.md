@@ -11,6 +11,38 @@ not certification of every library asset or gameplay case. Best-effort exports
 warn about omissions and preserve initial states where possible; warnings are
 not evidence that an omitted feature works.
 
+The current ten-scene export batch (`saved-map-exports-EdJxua`) compiles and passes
+native construction plus all 71 control apply/reset checks. That batch exposed a
+verification-script gap: it omitted the editor's mesh-derived spline calibration.
+The script now loads pinned wall meshes and runs the editor's calibration before
+compilation. Fresh Wychford output (`saved-map-exports-4KKPYc`) includes its ridge
+curtain without the previous missing-calibration warning and passes native
+construction (153 motion areas, 15,140 sight obstacles) and all three controls.
+This is descriptor-level evidence, not a complete browser bake or playthrough.
+Wychford's floating church-tower approach remains disconnected, and York's
+unbound appearance variants remain in their initial visual states with warnings.
+All eight wall calibration/rendering and fixture-equality tests now pass. The
+three stale fixtures differed only by consolidation of fifty flat terrain
+receivers into one. Audit `wall-fixture-coverage-MVpdKR` proves identical union
+coverage for each height/material/receiver-property group and exact equality of
+all other gameplay data before refreshing them. The reusable check is
+`node refinement/check-wall-fixture-coverage.mjs`. All 66 enabled native map
+compilation integration tests pass against the refreshed fixtures, including
+wall routing/sight, repeated material queries and elevated lighting.
+The diagnostic wall loader also matches the editor's calibration exactly for a
+pinned synthetic GLB with a transformed Z-up source part, rotated section and
+implicit first scene. Changed model bytes reject. Ordinary-sector route sampling
+of the combined ten-map snapshots (`current-route-audit-gp9fm_nt`) now passes
+1,126 directed within-sector routes. Expected connectivity comes from an
+independent collision flood-fill; every returned path segment retains actor-box
+clearance. The batch combines exact descriptor snapshots, using the calibrated
+Wychford export, and records their hashes. It does not test inter-sector doors,
+jumps, traversal callbacks or complete actor playthroughs. Counts are Wychford
+84, Croisement01 16, Croisement02 6, Croisement03 24, Derby 144, Leicester 150,
+Lincoln 182, Nottingham 188, Sherwood 52 and York 280. The debug audit took
+531 seconds; Wychford alone spent 394 seconds in path queries. This is a
+performance investigation target, not a release-game latency measurement.
+
 Rounded landing contours now repair crossed subpixel corners consistently in
 the compiler and native validator while retaining their exact contours. The
 southern York stair candidate passes 32 directed actor routes across eight

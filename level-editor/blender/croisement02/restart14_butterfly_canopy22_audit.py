@@ -7,13 +7,13 @@ from scipy.spatial.transform import Rotation
 from scipy.spatial import cKDTree
 ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/croisement02-refinement';B=W/'restart14-butterflies';O=B/'canopy22-alpha-audit-v2';LIB=ROOT/'level-editor/library'
 SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
-def guard():
+def guard(minimum_free_bytes=8*1024**3,output_limit_bytes=8*1024**2):
  used=sum(p.stat().st_size for p in O.rglob('*')if p.is_file())if O.exists()else 0
- assert used<8*1024**2 and shutil.disk_usage(ROOT).free>=8*1024**3+8*1024**2-used,'8GiB plus remaining8MiB extraction reserve'
-def main(ray_records=None,postprocess=None,output=None):
+ assert used<output_limit_bytes and shutil.disk_usage(ROOT).free>=minimum_free_bytes+output_limit_bytes-used,'CPU extraction free-space reserve or output limit failed'
+def main(ray_records=None,postprocess=None,output=None,*,asset_ids=None,triangle_callback=None,query_margin=0.,minimum_free_bytes=8*1024**3,output_limit_bytes=8*1024**2):
  global O
  if output is not None:O=output
- guard();plan=json.loads((B/'all7-context-plan-v1/plan.json').read_text());mp=LIB/'scenes/croisement02.rhlos-map.json';assert sha(mp)==plan['map_sha256'];m=json.loads(mp.read_text());sources={r['id']:r for r in m['assetSources']};rays=[]
+ guard(minimum_free_bytes,output_limit_bytes);plan=json.loads((B/'all7-context-plan-v1/plan.json').read_text());mp=LIB/'scenes/croisement02.rhlos-map.json';assert sha(mp)==plan['map_sha256'];m=json.loads(mp.read_text());sources={r['id']:r for r in m['assetSources']};rays=[]
  for s in plan['sequences']:
   for f in s['path']:
    assert sha(Path(f['source']))==f['sha256'];rays.append({'sequence':s['index'],'phase':f['phase'],'screen':f['alpha_centroid_display'],'hits':[]})
@@ -21,7 +21,8 @@ def main(ray_records=None,postprocess=None,output=None):
  if ray_records is not None:rays=ray_records
  q=np.array([r['screen'] for r in rays]);records=[];placements=[*m['placements'],*({'id':r['id'],'assets':[r['id']],'transform':{'dx':0,'dy':0,'dz':0,'rot_deg':0}} for r in m['sceneAssets'])];sources.update({r['id']:r for r in m['sceneAssets']})
  for placed in placements:
-  guard();src=sources[placed['assets'][0]];path=LIB/src['model'];fd=path.open('rb');raw=mmap.mmap(fd.fileno(),0,access=mmap.ACCESS_READ);n=struct.unpack_from('<I',raw,12)[0];doc=json.loads(raw[20:20+n]);offset=28+n;t=placed['transform'];assert t['rot_deg']==0;world=np.eye(4);world[:3,3]=[t['dx'],t['dz'],t['dy']/SIN];
+  if asset_ids is not None and placed['id'] not in asset_ids:continue
+  guard(minimum_free_bytes,output_limit_bytes);src=sources[placed['assets'][0]];path=LIB/src['model'];fd=path.open('rb');raw=mmap.mmap(fd.fileno(),0,access=mmap.ACCESS_READ);n=struct.unpack_from('<I',raw,12)[0];doc=json.loads(raw[20:20+n]);offset=28+n;t=placed['transform'];assert t['rot_deg']==0;world=np.eye(4);world[:3,3]=[t['dx'],t['dz'],t['dy']/SIN];
   if src.get('role')=='ground':world[:3,:3]=Rotation.from_euler('x',-90,degrees=True).as_matrix()
   hidden={k for k,v in placed.get('parts',{}).items() if v.get('hidden')};textures={};external={};touched=0
   def acc(i):
@@ -50,6 +51,12 @@ def main(ray_records=None,postprocess=None,output=None):
      value*=sample
     else:value*=arr[min(int(coords[1]*arr.shape[0]),arr.shape[0]-1),min(int(coords[0]*arr.shape[1]),arr.shape[1]-1),3]/255
    return float(value)
+  def texture_record(mat):
+   p=mat.get('pbrMetallicRoughness',{});tex=p.get('baseColorTexture')
+   if tex is None:return None,{},p.get('baseColorFactor',[1,1,1,1])[3]
+   alpha(mat,np.zeros(2),True)
+   td=doc['textures'][tex['index']]
+   return textures[td['source']],doc.get('samplers',[])[td['sampler']]if'sampler'in td else {},p.get('baseColorFactor',[1,1,1,1])[3]
   def visit(ni,parent,inherited_hidden=False):
    nonlocal touched
    node=doc['nodes'][ni];hide=inherited_hidden or node.get('name') in hidden;local=np.array(node['matrix']).reshape(4,4).T if'matrix'in node else np.eye(4)
@@ -59,7 +66,7 @@ def main(ray_records=None,postprocess=None,output=None):
    if'mesh'in node and not hide and not node.get('extras',{}).get('gameplay_only'):
     for pi,prim in enumerate(doc['meshes'][node['mesh']]['primitives']):
      assert prim.get('mode',4)==4
-     ai=prim['attributes']['POSITION'];a=doc['accessors'][ai];lo=a['min'];hi=a['max'];corners=np.array([[x,y,z,1]for x in [lo[0],hi[0]]for y in [lo[1],hi[1]]for z in [lo[2],hi[2]]])@transform.T;screen=np.c_[corners[:,0],SIN*corners[:,2]-COS*corners[:,1]];eligible=np.flatnonzero(np.all(q>=screen.min(0),axis=1)&np.all(q<=screen.max(0),axis=1))
+     ai=prim['attributes']['POSITION'];a=doc['accessors'][ai];lo=a['min'];hi=a['max'];corners=np.array([[x,y,z,1]for x in [lo[0],hi[0]]for y in [lo[1],hi[1]]for z in [lo[2],hi[2]]])@transform.T;screen=np.c_[corners[:,0],SIN*corners[:,2]-COS*corners[:,1]];eligible=np.flatnonzero(np.all(q>=screen.min(0)-query_margin,axis=1)&np.all(q<=screen.max(0)+query_margin,axis=1))
      if not len(eligible):continue
      v=acc(ai);v=(np.c_[v,np.ones(len(v))]@transform.T)[:,:3];ind=acc(prim['indices']).ravel()if'indices'in prim else np.arange(len(v));tri=v[ind].reshape(-1,3,3);st=np.stack((tri[:,:,0],SIN*tri[:,:,2]-COS*tri[:,:,1]),axis=2);uvs=acc(prim['attributes']['TEXCOORD_0'])[ind].reshape(-1,3,2)if'TEXCOORD_0'in prim['attributes']else None;mat=doc.get('materials',[])[prim['material']]if'material'in prim else {};touched+=1
      tc=mat.get('pbrMetallicRoughness',{}).get('baseColorTexture',{}).get('texCoord',0);uvkey=f'TEXCOORD_{tc}'
@@ -70,6 +77,8 @@ def main(ray_records=None,postprocess=None,output=None):
       if ca.get('normalized'):colors/=float({5121:255,5123:65535}[ca['componentType']])
       colors=colors[ind].reshape(-1,3,colors.shape[1])
      normals=np.cross(tri[:,1]-tri[:,0],tri[:,2]-tri[:,0]);facing=normals@np.array([0,SIN,COS])*np.sign(np.linalg.det(transform[:3,:3]))
+     if triangle_callback is not None:
+      triangle_callback(placed,node,ni,pi,tri,uvs,mat,alpha,texture_record)
      aa=st[:,0];bb=st[:,1]-aa;cc=st[:,2]-aa;det=bb[:,0]*cc[:,1]-bb[:,1]*cc[:,0];valid=abs(det)>1e-10
      centroids=st.mean(axis=1);radius=np.linalg.norm(st-centroids[:,None,:],axis=2).max();tree=cKDTree(centroids);near=tree.query_ball_point(q[eligible],radius+1e-7)
      for ri,candidates in zip(eligible,near):
