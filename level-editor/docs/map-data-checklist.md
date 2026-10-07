@@ -238,6 +238,10 @@ typed mask coverage, reject wrong-height ground and introduce no movement
 collision. Their authored canopy boundary and rendered character/projectile
 contact still require review. Mixed-sided shrubs and wooden objects need their
 own treatment; they are not assigned empty gameplay to reduce missing counts.
+Mask authoring now preserves mixed material sidedness after alpha clipping.
+Shrub 55 passes ten native construction checks, but its browser review exposes
+small mask/texture disagreements, including isolated discrepancies at 0° and
+90°. It remains an unpublished candidate; rendered parity is not established.
 
 The earlier library-wide audit found 38 of 1,297 indexed assets without gameplay
 definitions, including the composite Derby keep, several Nottingham buildings,

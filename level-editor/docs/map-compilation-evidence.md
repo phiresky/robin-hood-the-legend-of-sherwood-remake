@@ -9921,3 +9921,21 @@ and no generated movement obstacles. These definitions remain unpublished:
 rendered character/projectile occlusion is unverified, and the closed canopy
 boundary is an explicit approximation. The library missing-definition count has
 not been reduced by these staged candidates.
+
+Mixed-sided shrub authoring now opts into `preserveMaterialSidedness` during
+mesh extraction. Double-sided materials receive opposite-winding copies of the
+alpha-clipped triangles; one-sided materials retain one winding. The default
+recovery path remains unchanged. Thirteen mesh/rasterization tests pass,
+including mixed opaque primitives and partial-alpha reverse-face coverage.
+Focused lint/format checks pass; pipeline typechecking still fails in unrelated
+`shared/src/state-delivery.test.ts` fixtures.
+
+Shrub 55 stage `fern-gameplay-pW8Bcl` passes ten native construction checks and
+ten wrong-height rejections. Its browser point-mask review completes sixteen
+cases at four rotations but fails the edge-consistency criterion at 0° and 90°.
+Rendered leaf pixels without CPU mask coverage number 6/5/2/4 at 0/90/180/270°.
+Clipped GPU versus CPU coverage differs at 2/12/9/27 pixels; clipped GPU versus
+textured mesh differs at 8/15/5/26. This separates remaining extraction/rendering
+and rasterization differences; it does not certify native compositing. The
+candidate remains unpublished. The review sheet and reported case count now
+scale to the selected asset list rather than assuming two ferns.

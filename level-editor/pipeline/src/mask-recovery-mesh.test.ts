@@ -55,6 +55,24 @@ test("mesh recovery requires an unambiguous part in the selected scene", () => {
   assert.throws(() => maskRecoveryMesh(model, "part", (p) => p), /one selected part/);
 });
 
+test("culled mask authoring preserves mixed material sidedness without changing legacy coverage", () => {
+  const { model, primitive } = fixture();
+  primitive.setMaterial(model.createMaterial().setDoubleSided(false));
+  const single = maskRecoveryMesh(model, "part", (p) => p);
+  model
+    .getRoot()
+    .listMeshes()[0]!
+    .addPrimitive(primitive.clone().setMaterial(model.createMaterial().setDoubleSided(true)));
+  assert.deepEqual(
+    maskRecoveryMesh(model, "part", (p) => p),
+    [...single, ...single],
+  );
+  const result = maskRecoveryMesh(model, "part", (p) => p, undefined, undefined, {
+    preserveMaterialSidedness: true,
+  });
+  assert.deepEqual(result, [single[0], single[0], [...single[0]!].reverse()]);
+});
+
 test("mesh recovery rejects unsupported coverage and malformed geometry", () => {
   for (const alpha of ["BLEND"] as const) {
     const { model, primitive } = fixture();
@@ -129,6 +147,20 @@ test("cutout mesh recovery decodes alpha and keeps foliage ownership separate", 
     ],
   );
   const covered = maskRecoveryMesh(model, "part", (p) => p, textures);
+  material.setDoubleSided(true);
+  // Only half the texture is covered; reversed faces must retain the clipped
+  // geometry rather than restore the source triangle over transparent texels.
+  const partial = new Map(textures);
+  partial.set(texture, { width: 2, height: 2, alpha: new Uint8Array([255, 0, 255, 0]) });
+  const clipped = maskRecoveryMesh(model, "part", (p) => p, partial);
+  assert.ok(clipped.length > 0);
+  assert.notDeepEqual(clipped, covered);
+  assert.deepEqual(
+    maskRecoveryMesh(model, "part", (p) => p, partial, undefined, {
+      preserveMaterialSidedness: true,
+    }),
+    clipped.flatMap((triangle) => [triangle, [...triangle].reverse()]),
+  );
   primitive.getAttribute("TEXCOORD_0")!.setArray(new Float32Array([-2, 3, -2, 3, -2, 3]));
   assert.throws(() => maskRecoveryMesh(model, "part", (p) => p, textures), /in-range/);
   material.getBaseColorTextureInfo()!.setWrapS(33071).setWrapT(33071);

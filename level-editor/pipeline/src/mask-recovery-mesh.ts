@@ -38,6 +38,7 @@ export function maskRecoveryMesh(
   place: (point: Vec3) => Vec3,
   textures?: ReadonlyMap<Texture, MaskAlphaImage>,
   projectedBounds?: readonly MaskCoverageRectangle[],
+  options: { preserveMaterialSidedness?: boolean } = {},
 ): MaskTriangle[] {
   if (
     projectedBounds?.some(
@@ -66,6 +67,14 @@ export function maskRecoveryMesh(
       if (primitive.getMode() !== 4 || primitive.listTargets().length)
         throw new Error(`Mask recovery requires static triangles: ${part}`);
       const material = primitive.getMaterial();
+      // A culled mask can represent mixed material sidedness by retaining an
+      // opposite winding only for faces whose material renders both sides.
+      // Do this after alpha clipping so the reverse face has identical holes.
+      const append = (triangle: MaskTriangle) => {
+        triangles.push(triangle);
+        if (options.preserveMaterialSidedness && material?.getDoubleSided())
+          triangles.push([triangle[2], triangle[1], triangle[0]]);
+      };
       const mode = material?.getAlphaMode() ?? "OPAQUE";
       if (mode === "BLEND") throw new Error(`Mask recovery needs texture coverage for ${part}`);
       const texture = mode === "MASK" ? material!.getBaseColorTexture() : null;
@@ -136,7 +145,7 @@ export function maskRecoveryMesh(
             continue;
         }
         if (mode === "OPAQUE") {
-          triangles.push(triangle);
+          append(triangle);
           continue;
         }
         const indicesForTriangle = [0, 1, 2].map(
@@ -173,7 +182,7 @@ export function maskRecoveryMesh(
           alphaImage,
           [info?.getWrapS() === 33071, info?.getWrapT() === 33071],
         ))
-          triangles.push(covered);
+          append(covered);
       }
     }
   });

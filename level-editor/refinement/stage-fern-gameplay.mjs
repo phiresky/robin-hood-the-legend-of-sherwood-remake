@@ -69,11 +69,10 @@ for (const id of selected) {
       .listMaterials()
       .every(
         (material) =>
-          !material.getDoubleSided() &&
           material.getAlphaMode() === "MASK" &&
           material.getExtras().foliage_physical_opacity === true,
       ),
-    "Rooted foliage authoring requires one-sided physical-alpha materials",
+    "Rooted foliage authoring requires physical-alpha materials",
   );
   const textures = await maskRecoveryTextures(model);
   const triangles = maskRecoveryMesh(
@@ -81,6 +80,8 @@ for (const id of selected) {
     node,
     (p) => sceneToGame(camera, gltfToScene(p)),
     textures,
+    undefined,
+    { preserveMaterialSidedness: true },
   );
   assert.ok(triangles.length);
   const points = triangles.flat();

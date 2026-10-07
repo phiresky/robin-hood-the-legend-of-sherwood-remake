@@ -20,6 +20,7 @@ try {
   const stage = new URLSearchParams(location.search).get("stage");
   if (!stage) throw new Error("Provide a staged fern export URL");
   const edits = await json(`${stage}/edits.json`);
+  const rotations = [0, 90, 180, 270];
   const manifest = await json("/library/game-data/Data/Characters/RobinTown.rhs.d/manifest.json");
   const profile = manifest.profiles.find((profile) => profile.name === "Robin des bois");
   const frame = profile.rows.find((row) => row.action_id === 3 && row.direction === 8).frames[0];
@@ -44,7 +45,7 @@ try {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   const sheet = document.createElement("canvas");
   sheet.width = width * 4 * 2;
-  sheet.height = (height + 20) * 8 * 2;
+  sheet.height = (height + 20) * edits.length * rotations.length * 2;
   const context = sheet.getContext("2d");
   context.scale(2, 2);
   context.imageSmoothingEnabled = false;
@@ -71,7 +72,7 @@ try {
   const cases = [];
   let row = 0;
   for (const { asset: id } of edits)
-    for (const rotation of [0, 90, 180, 270]) {
+    for (const rotation of rotations) {
       result.textContent = `RUNNING ${id} ${rotation}`;
       const file = `${id}-0-${rotation}.level.json`;
       const descriptor = await json(`${stage}/${file}`);
@@ -284,7 +285,7 @@ try {
   renderer.dispose();
   atlas.close();
   const status = cases.every((entry) => entry.mismatchesTouchCoverage) ? "PASS" : "FAIL";
-  result.textContent = `${status} 32 point-mask compositing diagnostics; discrepancies beyond a one-pixel edge require review: ${JSON.stringify(cases)}`;
+  result.textContent = `${status} ${cases.length} point-mask compositing diagnostics; discrepancies beyond a one-pixel edge require review: ${JSON.stringify(cases)}`;
 } catch (error) {
   result.textContent = `FAIL ${error.stack ?? error}`;
 }
