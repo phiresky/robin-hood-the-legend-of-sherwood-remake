@@ -32,8 +32,16 @@ wall routing/sight, repeated material queries and elevated lighting.
 The diagnostic wall loader also matches the editor's calibration exactly for a
 pinned synthetic GLB with a transformed Z-up source part, rotated section and
 implicit first scene. Changed model bytes reject. Ordinary-sector route sampling
-of the combined ten-map snapshots is a separate check and is not implied by the
-construction/control results above.
+of the combined ten-map snapshots (`current-route-audit-gp9fm_nt`) now passes
+1,126 directed within-sector routes. Expected connectivity comes from an
+independent collision flood-fill; every returned path segment retains actor-box
+clearance. The batch combines exact descriptor snapshots, using the calibrated
+Wychford export, and records their hashes. It does not test inter-sector doors,
+jumps, traversal callbacks or complete actor playthroughs. Counts are Wychford
+84, Croisement01 16, Croisement02 6, Croisement03 24, Derby 144, Leicester 150,
+Lincoln 182, Nottingham 188, Sherwood 52 and York 280. The debug audit took
+531 seconds; Wychford alone spent 394 seconds in path queries. This is a
+performance investigation target, not a release-game latency measurement.
 
 Rounded landing contours now repair crossed subpixel corners consistently in
 the compiler and native validator while retaining their exact contours. The
