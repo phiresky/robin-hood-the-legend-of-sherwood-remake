@@ -2,8 +2,6 @@
 import hashlib,json,math,struct,sys
 from pathlib import Path
 import numpy as np
-from scipy.spatial import cKDTree
-from scipy.spatial.transform import Rotation
 ROOT=Path(__file__).resolve().parents[3]
 OUT=ROOT/'level-editor/work/croisement02-refinement'
 BASE=OUT/'restart14-canopy-animation/tree42-motion-v5'
@@ -27,6 +25,7 @@ def phase_weights():
     return np.arange(15,dtype=np.float32)*4/25,weights
 
 def map_deltas(base_world,source_world,source_delta,linear,tolerance=1e-4):
+    from scipy.spatial import cKDTree
     tree=cKDTree(source_world);distance,ids=tree.query(base_world)
     assert np.max(distance)<=tolerance,('Static basis correspondence failed',float(max(distance)))
     for point,index in zip(base_world,ids):
@@ -46,9 +45,15 @@ def capture():
     deltas=np.array([np.array([v.co[:]for v in key.data])-basis for key in keys[1:]])@matrix[:3,:3].T
     # Blender world Z-up to delivered world Y-up; native placement is kept separately.
     basis_yup=basis_world[:,[0,2,1]]*np.array([1,1,-1]);delta_yup=deltas[:,:,[0,2,1]]*np.array([1,1,-1])
+    wood={o.name:(np.array(o.matrix_world),np.array([v.co[:] for v in o.data.vertices])) for o in objects if o!=crown}
     evaluated=[]
     for phase in range(15):
         scene.frame_set(1+phase*4);bpy.context.view_layer.update()
+        assert np.array_equal(np.array(crown.matrix_world),matrix),'Crown parent transform changed'
+        for o in objects:
+            if o!=crown:
+                transform,points=wood[o.name]
+                assert np.array_equal(np.array(o.matrix_world),transform) and np.array_equal(np.array([v.co[:] for v in o.data.vertices]),points),'Wood changed during crown cycle'
         expected=np.zeros(13);index=phase%14
         if index:expected[index-1]=1
         assert np.array_equal([k.value for k in keys[1:]],expected)
@@ -64,6 +69,7 @@ def capture():
     (DEST/'capture.json').write_text(json.dumps(receipt,indent=2)+'\n');verify_inputs()
 
 def augment():
+    from scipy.spatial.transform import Rotation
     verify_inputs();receipt=json.loads((DEST/'capture.json').read_text());assert receipt['source_model_sha256']==MODEL_SHA
     assert receipt['arrays_sha256']==sha(DEST/'approved-crown.npz')
     target=DEST/'tree42-approved-motion.glb';assert not target.exists()
