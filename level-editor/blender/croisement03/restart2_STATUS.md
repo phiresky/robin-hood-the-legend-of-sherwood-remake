@@ -26,8 +26,9 @@ current versions are `tree12-static-leaf-crown-v3/` and
 images and UVs. Added static source samples are3,034 and2,371 respectively;
 all native samples pass first-hit checks with zero changes or misses.
 Native/reverse transparency converges exactly at32 and64 bounces.
-The consolidated independent geometry request is
-`static-crown-pair-review-v3/root-review-request.json`.
+Independent geometry review passed. The two immutable next-pool cards are
+`geometry-round7-static-crowns-v3/review-candidates.json`, with the bound request
+and root receipt in `static-crown-pair-review-v3/`.
 These new static surfaces must not receive future shared animation image swaps.
 
 Tree11 static geometry20426a89 and Tree10 static geometry380a4e79 passed saved
