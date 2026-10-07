@@ -1,5 +1,5 @@
 """Prepare one approved hub tree's exact woody surfaces; protected crown unchanged."""
-import sys,json,hashlib,shutil
+import sys,json,hashlib,shutil,io
 from pathlib import Path
 import bpy,numpy as np
 from PIL import Image
@@ -17,15 +17,36 @@ def triangle_signature(objects):
    for vi,li in zip(tri.vertices,tri.loops):corners.append((tuple(round(float(x),5) for x in o.matrix_world@m.vertices[vi].co),tuple((uv.name,tuple(round(float(x),7) for x in uv.data[li].uv)) for uv in layers)))
    rows.append((tuple(sorted(corners)),m.materials[tri.material_index].name))
  return sorted(rows)
+def prove_packed_bark(objects, mask):
+ """Bind a missing external mask pin to actual approved packed image bytes."""
+ source=Image.open(B.parent/'baseline/covered.png').convert('RGBA');domain=Image.open(mask).convert('L');box=domain.getbbox();assert box
+ expected=source.crop(box);expected.putalpha(domain.crop(box));expected=np.array(expected);records={}
+ for obj in objects:
+  used={face.material_index for face in obj.data.polygons}
+  for index in used:
+   material=obj.data.materials[index];assert material and material.use_nodes
+   nodes=[n for n in material.node_tree.nodes if n.type=='TEX_IMAGE'];assert len(nodes)==1,'Unexpected wood texture graph requires explicit audit'
+   node=nodes[0];image=node.image;assert image and image.packed_file,'Approved bark must be packed'
+   data=bytes(image.packed_file.data);actual=np.array(Image.open(io.BytesIO(data)).convert('RGBA'))
+   assert actual.shape==expected.shape and np.array_equal(actual,expected),'External bark domain differs from actual approved packed RGBA'
+   assert node.interpolation=='Closest' and node.extension=='CLIP'
+   records[image.name]=dict(packed_sha256=hashlib.sha256(data).hexdigest(),size=list(image.size),material=material.name)
+ assert records
+ return dict(status='PASS exact approved packed RGBA equals native crop with this alpha domain',mask=str(mask),mask_sha256=sha(mask),crop_box=list(box),pixels=int(np.count_nonzero(np.array(domain))),images=records,limits=['Material binding only; native first-hit guard remains required.','No new source pixels or shader/UV changes.'])
 def main(tree):
  assert tree in range(2,12);asset=f'croisement03-tree-{tree:02}';archive=B/'approved-hub-v17-v23-plus-two-v1';decision=json.loads((archive/'verified-scope.json').read_text());member=decision['effective_assets'][asset];source=Path(member['model']);assert sha(source)==member['model_sha256']
  masks=[Path(p) for p,h in decision['verified_files'].items() if f'tree{tree:02}-bark-proposal-' in p and p.endswith('/proposed-bark.png')]
- assert len(masks)==1,'Need explicitly bound bark domain or packed-material evidence before preparation';mask=masks[0];assert sha(mask)==decision['verified_files'][str(mask)]
+ assert len(masks)<=1;packed_binding=not masks
+ if packed_binding:
+  assert tree in (2,8,9),'Unbound bark domain needs a separate audit';mask=B/f'tree{tree:02}-bark-proposal-v1/proposed-bark.png';assert mask.is_file()
+ else:
+  mask=masks[0];assert sha(mask)==decision['verified_files'][str(mask)]
  assert shutil.disk_usage(R).free>10*1024**3;available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024;assert available>=6*1024**3
  out=B/'approved-hub-textures-v1'/asset/'wood-input-v1';out.mkdir(parents=True,exist_ok=False);acquire()
  try:
   bpy.ops.wm.open_mainfile(filepath=str(source));bpy.context.preferences.filepaths.save_version=0;scene=bpy.context.scene;scene.name='Croisement03 Refinement';scene.render.threads_mode='FIXED';scene.render.threads=2;collection=bpy.data.collections.new('Croisement03 Working');scene.collection.children.link(collection)
   wood=[o for o in scene.objects if o.type=='MESH' and o.get('asset_group')==asset];assert wood;protected_objects=[o for o in scene.objects if o.type=='MESH' and o not in wood];assert protected_objects
+  if packed_binding:write_json(out/'packed-bark-domain-binding.json',prove_packed_bark(wood,mask))
   protected={o.name:_geometry(o,protect_appearance=True) for o in protected_objects};images={im.name:hashlib.sha256(np.asarray(im.pixels[:],np.float32).tobytes()).hexdigest() for im in bpy.data.images if im.has_data};before=triangle_signature(wood)
   groups={node:[o for o in wood if o.get('source_node')==node] for node in sorted({o['source_node'] for o in wood})};joined=[]
   for node,group in groups.items():
