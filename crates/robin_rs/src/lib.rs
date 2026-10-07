@@ -52,7 +52,7 @@ pub fn init_tracing() {
         #[cfg(not(target_arch = "wasm32"))]
         {
             use std::io::IsTerminal;
-            use tracing_subscriber::{filter::LevelFilter, prelude::*};
+            use tracing_subscriber::prelude::*;
 
             let ansi = std::io::stderr().is_terminal();
             let stderr_layer = tracing_subscriber::fmt::layer()
@@ -62,7 +62,7 @@ pub fn init_tracing() {
             let replay_file_layer = tracing_subscriber::fmt::layer()
                 .with_ansi(false)
                 .with_writer(ReplayLogMakeWriter)
-                .with_filter(LevelFilter::DEBUG);
+                .with_filter(replay_log_filter());
             tracing_subscriber::registry()
                 .with(stderr_layer)
                 .with(replay_file_layer)
@@ -71,7 +71,18 @@ pub fn init_tracing() {
     });
 }
 
-/// Start writing DEBUG-and-higher tracing events to `path`.
+/// Keep dependency debug dumps off the synchronous diagnostic/file writer.
+/// Game events and frame timings remain available even when stderr is quiet.
+#[cfg(not(target_arch = "wasm32"))]
+fn replay_log_filter() -> tracing_subscriber::filter::Targets {
+    use tracing_subscriber::filter::{LevelFilter, Targets};
+    Targets::new()
+        .with_default(LevelFilter::WARN)
+        .with_target("robin", LevelFilter::DEBUG)
+        .with_target("fps", LevelFilter::DEBUG)
+}
+
+/// Start writing game DEBUG events, frame timings and dependency warnings to `path`.
 ///
 /// The tracing subscriber is installed during early process startup,
 /// before the replay filename is known, so this swaps the destination
@@ -319,6 +330,22 @@ pub mod zoom_hud;
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::compose_env_filter;
+
+    #[test]
+    fn replay_logging_keeps_game_diagnostics_without_dependency_debug_dumps() {
+        use tracing_subscriber::prelude::*;
+        let subscriber = tracing_subscriber::registry().with(super::replay_log_filter());
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(tracing::enabled!(target: "robin_engine::movement", tracing::Level::DEBUG));
+            assert!(tracing::enabled!(target: "robin_rs::game_session", tracing::Level::INFO));
+            assert!(tracing::enabled!(target: "fps", tracing::Level::DEBUG));
+            assert!(!tracing::enabled!(target: "geo::algorithm::relate", tracing::Level::DEBUG));
+            assert!(!tracing::enabled!(target: "naga::front", tracing::Level::DEBUG));
+            assert!(!tracing::enabled!(target: "iroh::socket", tracing::Level::DEBUG));
+            assert!(tracing::enabled!(target: "iroh::socket", tracing::Level::WARN));
+            assert!(tracing::enabled!(target: "geo::algorithm::relate", tracing::Level::ERROR));
+        });
+    }
 
     #[test]
     fn bare_debug_filters_to_game_crates() {
