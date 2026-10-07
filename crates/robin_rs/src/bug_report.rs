@@ -19,7 +19,33 @@ static DROPPED_LOG_BYTES: AtomicUsize = AtomicUsize::new(0);
 static REPLAY: Mutex<Option<PathBuf>> = Mutex::new(None);
 static GAME_PANIC_SAVED: AtomicBool = AtomicBool::new(false);
 static UPLOADING: AtomicBool = AtomicBool::new(false);
+static DESYNC_REPORTED: AtomicBool = AtomicBool::new(false);
 static MESSAGES: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+
+/// Capture the first multiplayer mismatch per process, independently of crashes.
+/// Persistent divergence can otherwise produce a report every hash interval.
+pub(crate) fn report_multiplayer_desync(description: &str) {
+    if DESYNC_REPORTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let description = description.to_owned();
+    // Replay collection and compression can be expensive. Do not stall the
+    // simulation and make network timing worse while diagnosing divergence.
+    if let Err(error) = std::thread::Builder::new()
+        .name("desync-report".into())
+        .spawn(
+            move || match capture(DiagnosticKindV1::Bug, &description, None) {
+                Ok(_) => submit_pending(),
+                Err(error) => {
+                    tracing::warn!("Cannot queue multiplayer desync report: {error:#}");
+                }
+            },
+        )
+    {
+        // Keep the attempt bounded even if resources remain unavailable.
+        tracing::warn!("Cannot start multiplayer desync reporter: {error}");
+    }
+}
 
 pub(crate) fn record_log(bytes: &[u8]) {
     if let Ok(mut log) = LOG.try_lock() {

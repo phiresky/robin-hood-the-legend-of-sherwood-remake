@@ -117,6 +117,17 @@ pub(in crate::game_session) fn process_pre_tick_state_hash(
             let last_rollback_target = last_rollback.map_or(0, |r| r.target_frame);
             let last_rollback_replayed = last_rollback.map_or(0, |r| r.replayed_frames);
             let last_rollback_total_us = last_rollback.map_or(0, |r| r.total.as_micros());
+            let description = format!(
+                "multiplayer DESYNC: frame={frame} local={local_hash:016x} host={host_hash:016x} \
+                 local_seat={:?} local_frame={} host_schedule_frame={:?} pending_input_frames={} \
+                 last_rollback_path={last_rollback_path} last_rollback_earliest={last_rollback_earliest} \
+                 last_rollback_target={last_rollback_target} last_rollback_replayed={last_rollback_replayed} \
+                 last_rollback_total_us={last_rollback_total_us}",
+                host.transport.local_seat(),
+                runtime.frame_number(),
+                runtime.multiplayer().timing().schedule_frame(),
+                runtime.network().pending_frame_count(),
+            );
             tracing::warn!(
                 frame,
                 local = format!("{local_hash:016x}"),
@@ -128,8 +139,10 @@ pub(in crate::game_session) fn process_pre_tick_state_hash(
                 last_rollback_target,
                 last_rollback_replayed,
                 last_rollback_total_us,
-                "multiplayer DESYNC: local engine hash differs from host's"
+                "{description}"
             );
+            #[cfg(not(target_arch = "wasm32"))]
+            crate::bug_report::report_multiplayer_desync(&description);
         } else {
             tracing::debug!(frame, "multiplayer hash OK");
         }

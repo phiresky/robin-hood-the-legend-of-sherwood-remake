@@ -118,6 +118,7 @@ export function installDiagnostics(queueStore?: DiagnosticQueue): { log: (line: 
     let logBytes = 0;
     let uploading = false;
     let automaticReports = 0;
+    let desyncReported = false;
     const reportedFailures = new Set<string>();
     let lastPanicAt = -Infinity;
     // Open lazily inside the error-handled queue operations so denied storage
@@ -211,6 +212,14 @@ export function installDiagnostics(queueStore?: DiagnosticQueue): { log: (line: 
                 logLines[logHead++] = { text: '', bytes: 0 };
             }
             if (logHead >= 1024) { logLines.splice(0, logHead); logHead = 0; }
+            // One mismatch per page lifetime; repeated hashes must not flood
+            // uploads or consume the separate crash-report allowance.
+            const desync = line.indexOf('multiplayer DESYNC:');
+            if (desync >= 0 && !desyncReported) {
+                desyncReported = true;
+                void queue('bug', line.slice(desync), null)
+                    .catch(error => showStatus(`Could not queue desync report: ${String(error)}`));
+            }
             // Rust wasm panic hooks write to console.error before wasm traps.
             if (line.includes('panicked at')) failure(line);
             const missionFailure = line.indexOf('Mission launch failed:');

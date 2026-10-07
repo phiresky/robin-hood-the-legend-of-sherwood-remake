@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Automatic multiplayer desync diagnostics.** The first host/client hash
+  mismatch per native process or browser page queues a bug report and attempts
+  upload. Reports include the frame, both hashes, local seat, network timing,
+  rollback context and recent logs; native reports also capture the active replay.
+  Failed uploads remain queued. This diagnoses divergence without correcting it.
+
 - **Stair collision derived from authored flights.** Two York library stairs now
   carry movement volumes matching their corrected walking surfaces, so their
   lower contacts also work against independently authored physical terrain.

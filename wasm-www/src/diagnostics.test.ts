@@ -98,7 +98,7 @@ test('reports exceeding the compressed limit are rejected before fetch', async (
     assert.equal(uploaded, false);
 });
 
-test('automatic reports ignore resize notifications and coalesce panic/trap duplicates', async t => {
+test('automatic reports deduplicate desyncs independently of crashes and ignore resize notifications', async t => {
     const { JSDOM } = await import('jsdom');
     const { installDiagnostics } = await import('./diagnostics.ts');
     const dom = new JSDOM('<button id="report-bug"></button><dialog id="bug-report-dialog"><form id="bug-report-form"><textarea id="bug-report-description"></textarea><p id="bug-report-status"></p><button id="bug-report-send"></button></form></dialog>', { url: 'https://game.test/' });
@@ -125,17 +125,25 @@ test('automatic reports ignore resize notifications and coalesce panic/trap dupl
     reporter.log('panicked at engine.rs:12: missing entity');
     reporter.failure(new WebAssembly.RuntimeError('unreachable executed'));
     reporter.log('panicked at engine.rs:12: missing entity');
+    reporter.log('multiplayer hash OK');
+    reporter.log('multiplayer hash comparison missed: historical state expired');
+    const desync = 'multiplayer DESYNC: frame=100 local=abc host=def local_seat=2';
+    reporter.log(`WARN ${desync}`);
+    for (let i = 0; i < 20; i++) reporter.log(`multiplayer DESYNC: frame=${125 + i * 25} local=123 host=456`);
     const missionFailure = "Mission launch failed: Level load failed: IO error: chunk version mismatch in 'SCOT': expected 4, found 5";
     reporter.log(`ERROR run.rs:1000 ${missionFailure}`);
     reporter.log(`ERROR run.rs:1000 ${missionFailure}`);
-    for (let retry = 0; retry < 100 && (await queue.list()).length < 3; retry++) await new Promise(resolve => setTimeout(resolve, 10));
+    for (let retry = 0; retry < 100 && (await queue.list()).length < 4; retry++) await new Promise(resolve => setTimeout(resolve, 10));
     const reports = (await queue.list()).map(row => JSON.parse(row.body));
-    assert.equal(reports.length, 3);
+    assert.equal(reports.length, 4);
     assert.deepEqual(reports.map(report => report.description).sort(), [
-        missionFailure, 'panicked at engine.rs:12: missing entity', 'unreachable',
+        missionFailure, desync, 'panicked at engine.rs:12: missing entity', 'unreachable',
     ]);
     assert.equal(reports.find(report => report.description.includes('panicked at')).kind, 'panic');
     const missionReport = reports.find(report => report.description === missionFailure);
     assert.equal(missionReport.kind, 'bug');
+    const desyncReport = reports.find(report => report.description === desync);
+    assert.equal(desyncReport.kind, 'bug');
+    assert.match(desyncReport.recent_log, /frame=100 local=abc host=def local_seat=2/);
     assert.match(missionReport.recent_log, /chunk version mismatch in 'SCOT'/);
 });
