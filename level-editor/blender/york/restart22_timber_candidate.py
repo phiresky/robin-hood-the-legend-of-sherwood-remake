@@ -32,7 +32,9 @@ def inside_polygon(x,y,poly):
     return inside
 for xy,owner in list(source_owners.items()):
     if owner[0].startswith('pale') and inside_polygon(xy[0]+.5,xy[1]+.5,plan['source_long_side_polygon']):
-        source_owners[xy]=('long-crossing','side')
+        source_owners.pop(xy)  # Proposed side reassignment is not accepted source evidence.
+for record in plan['remaining']:
+    source_owners.pop(tuple(record['pixel']),None)
 role_rejected=0
 '''
 replace('accepted=0;outside_mask=0;mask_uncovered=0',injection+'accepted=0;outside_mask=0;mask_uncovered=0')
