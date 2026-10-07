@@ -67,6 +67,7 @@ def main():
     parser.add_argument('--fiveway', action='store_true')
     parser.add_argument('--revision', type=int, default=1)
     parser.add_argument('--group', type=int, choices=[0, 1])
+    parser.add_argument('--conformed', action='store_true')
     args = parser.parse_args()
     suffix = '' if args.section == 29 else f'-{args.section}'
     root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
@@ -77,6 +78,8 @@ def main():
         packet = root / f'tree08-v12-fiveway-stitched-v{args.revision}'
     if args.group is not None:
         packet = root / f'tree08-v12-remaining-group{args.group}-stitched-v{args.revision}'
+    if args.conformed:
+        packet = packet.with_name(packet.name + '-conformed')
     mesh = np.load(packet / 'candidate.npz')
     vertices, faces = mesh['vertices'], mesh['faces']
     topology = audit(vertices, faces)

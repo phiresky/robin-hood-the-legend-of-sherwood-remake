@@ -36,13 +36,23 @@ Multi read_paths() {
   }
   return paths;
 }
-int main() {
+int main(int argc, char **argv) {
   auto remaining = read_paths();
   const auto clips = read_paths();
-  for (const auto &clip : clips) {
-    Multi next;
-    bg::difference(remaining, clip, next);
-    remaining = next;
+  if (argc > 1 && std::string(argv[1]) == "intersection") {
+    Multi intersections;
+    for (const auto &clip : clips) {
+      Multi next;
+      bg::intersection(remaining, clip, next);
+      intersections.insert(intersections.end(), next.begin(), next.end());
+    }
+    remaining = intersections;
+  } else {
+    for (const auto &clip : clips) {
+      Multi next;
+      bg::difference(remaining, clip, next);
+      remaining = next;
+    }
   }
   size_t count = 0;
   for (const auto &p : remaining) count += 1+p.inners().size();
