@@ -20,6 +20,19 @@ def main():
     assert json.loads(o['gameplay_metadata_json'])==level['sight_obstacles'][o['native_obstacle']]
     bm=bmesh.new();bm.from_mesh(o.data);topology[o.name]=dict(vertices=len(bm.verts),faces=len(bm.faces),materials=[m.name if m else None for m in o.data.materials],material_indices=sorted(set(f.material_index for f in o.data.polygons)),nonmanifold_edges=sum(not e.is_manifold for e in bm.edges),boundary_edges=sum(e.is_boundary for e in bm.edges),zero_area_faces=sum(f.calc_area()<1e-8 for f in bm.faces));bm.free()
    else:context[o.get('source_node',o.name)]=fingerprint(o)
+  if (O/'interface-construction.json').exists():
+   from mathutils.bvhtree import BVHTree
+   from mathutils import Vector
+   plan=json.loads((B/'restart2/bank-whole-geometry-plan-v3/geometry.json').read_text());trace_errors={};contact_errors={}
+   for index in ('52','54'):
+    o=s.objects['Candidate bank '+index];m=o.data;m.calc_loop_triangles();tree=BVHTree.FromPolygons([v.co for v in m.vertices],[list(t.vertices) for t in m.loop_triangles],all_triangles=True)
+    errors=[]
+    for trace in plan[index]['traces']:
+     for i in trace['vertices']:errors.append(tree.find_nearest(Vector(plan[index]['vertices'][i]))[3])
+    trace_errors[index]=max(errors)
+    S=__import__('math').sin(__import__('math').radians(35));C=__import__('math').cos(__import__('math').radians(35))
+    contact_errors[index]=max(tree.find_nearest(Vector((x,-y/S,z/C)))[3] for x,y,z in plan['guards']['interface52_54'])
+   write_json(O/'saved-trace-interface-guard.json',dict(model_sha256=digest,trace_max_world_error=trace_errors,shared52_54_endpoint_error=contact_errors,status='PASS' if max([*trace_errors.values(),*contact_errors.values()])<1e-4 else 'HOLD trace/interface'))
   base=B/'baseline/croisement03-baseline.blend'
   with bpy.data.libraries.load(str(base),link=False) as (a,b):b.objects=[f'building-{i:03}.001' for i in (94,95,96,97)]
   differences=[];world_errors={}

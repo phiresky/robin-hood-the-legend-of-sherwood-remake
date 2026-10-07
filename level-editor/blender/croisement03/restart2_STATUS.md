@@ -1,3 +1,22 @@
+## Whole-bank saved pass — HOLD native trace visibility
+
+`bank-whole-prototype-v1/worker.blend`, hash `4b04f6beb12c8823`, is931,494bytes.
+Saved actual/solid eight views and full/west/east/south native comparisons were
+inspected. Topology/context/metadata, retained53, fixed crest and52/54 seam pass;
+all3,446 seeds assign and testedTree02–07 native rays are unchanged.
+
+The model stays HOLD. Six of51 observed crease points are hidden by other
+bank faces: west184,263 by53; four east low-block points by52 itself; south
+413,373 by54. The52 Boolean also moves an interpolated crease segment1.235
+world units. Large triangular planes still dominate the visible bank. New
+`saved-trace-visibility.json` and `saved-trace-interface-guard.json` expose these
+failures beyond simple topology or source-vertex coincidence.
+
+`visual-review.json` pins the result and concrete correction points. Retain the
+previous53 working baseline; next reshape occluding52/54 planes and constrain
+whole crease segments to be native first hits. Reserved source pixels stay
+unassigned. All jobs exited; lane released. No gallery or canonical writes.
+
 ## Closed whole-bank CPU builder ready for lane
 
 `bank-whole-geometry-plan-v3/geometry.json` contains closed52/54 surfaces:

@@ -1,4 +1,4 @@
-"""Inspect a saved bank at the exact native camera and the west shelf contact."""
+"""Inspect a saved bank at the exact native camera and exposed west/east/south contacts."""
 import sys,math,json
 from pathlib import Path
 import bpy,numpy as np
@@ -32,12 +32,12 @@ def main():
   write_json(output/'tree01-coarse-guard.json',dict(status='PASS' if not changes else 'HOLD coarse source intersections',samples=int(np.count_nonzero(np.array(domain))),baseline_holes=holes,changes=changes,model_sha256=digest,baseline_sha256=basehash))
   s.render.engine='CYCLES';s.cycles.samples=16;s.cycles.use_denoising=False;s.render.threads_mode='FIXED';s.render.threads=2;s.render.resolution_percentage=100;s.render.image_settings.file_format='PNG';s.render.image_settings.color_mode='RGBA'
   camera=bpy.data.objects.new('Exact native bank camera',bpy.data.cameras.new('Exact native bank camera'));s.collection.objects.link(camera);camera.data.type='ORTHO';camera.data.sensor_fit='HORIZONTAL';camera.data.clip_start=.1;camera.data.clip_end=10000;s.camera=camera;source=Image.open(B/'baseline/covered.png').convert('RGBA')
-  for label,box in [('full',(0,135,650,510)),('west-contact',(70,290,220,425))]:
+  for label,box in [('full',(0,135,650,510)),('west-contact',(70,290,220,425)),('east-contact',(550,185,635,355)),('south-contact',(275,290,440,485))]:
    left,top,right,bottom=box;target=Vector(((left+right)/2,-(top+bottom)/2/S,0));camera.location=target+RAY*5000;camera.rotation_euler=(-RAY).to_track_quat('-Z','Y').to_euler();camera.data.ortho_scale=right-left;s.render.resolution_x=right-left;s.render.resolution_y=bottom-top;s.render.filepath=str(output/f'{label}.png');bpy.ops.render.render(write_still=True)
    actual=Image.open(output/f'{label}.png').convert('RGBA');crop=source.crop(box);factor=1 if label=='full' else 3;w,h=crop.size;sheet=Image.new('RGB',(w*factor*2,h*factor+24),'#333333');draw=ImageDraw.Draw(sheet)
    for i,(name,im) in enumerate([('Native source',crop),('Saved geometry; gray remains unclassified',actual)]):
     bg=Image.new('RGBA',im.size,'#333333');bg.alpha_composite(im);sheet.paste(bg.convert('RGB').resize((w*factor,h*factor),Image.Resampling.NEAREST),(w*factor*i,24));draw.text((w*factor*i+3,5),name,fill='white')
    sheet.save(output/f'{label}-comparison.png')
-  assert sha(model)==digest and sha(base)==basehash;write_json(output/'receipt.json',dict(model_sha256=digest,status='Saved native full extent and west contact rendered; visual review required',images={p.name:sha(p) for p in output.glob('*.png')},limits=['West path remains original coarse geometry/material context.','Gray ramp/support morphology is unfinished; rendering is not readiness approval.']))
+  assert sha(model)==digest and sha(base)==basehash;write_json(output/'receipt.json',dict(model_sha256=digest,status='Saved native full extent and west/east/south contacts rendered; visual review required',images={p.name:sha(p) for p in output.glob('*.png')},limits=['West path remains original coarse geometry/material context.','Gray ramp/support morphology is unfinished; rendering is not readiness approval.']))
  finally:release()
 if __name__=='__main__':main()
