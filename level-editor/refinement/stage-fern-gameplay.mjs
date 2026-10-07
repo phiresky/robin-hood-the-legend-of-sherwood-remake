@@ -81,18 +81,39 @@ for (const id of selected) {
     "Rooted foliage authoring requires physical-alpha materials",
   );
   const textures = await maskRecoveryTextures(model);
+  let coveredTriangles = 0;
+  let footprint = [];
+  let pendingPoints = [];
+  const flushFootprint = () => {
+    footprint = hull([...footprint, ...pendingPoints]);
+    pendingPoints = [];
+  };
   const triangles = maskRecoveryMesh(
     model,
     node,
     (p) => sceneToGame(camera, gltfToScene(p)),
     textures,
     undefined,
-    { preserveMaterialSidedness: true },
+    {
+      preserveMaterialSidedness: true,
+      nearestWrappedCoverage: compact,
+      ...(compact
+        ? {
+            onTriangle: (triangle) => {
+              coveredTriangles++;
+              pendingPoints.push(...triangle);
+              if (pendingPoints.length >= 3000) flushFootprint();
+            },
+          }
+        : {}),
+    },
   );
-  assert.ok(triangles.length);
-  const points = triangles.flat();
-  // Keep the established alpha-covered footprint while evaluating compact
-  // serialization. The temporary clipped mesh is not saved in compact mode.
+  if (compact) flushFootprint();
+  else coveredTriangles = triangles.length;
+  assert.ok(coveredTriangles);
+  const points = compact ? footprint : triangles.flat();
+  // Keep the alpha-covered footprint by accumulating a hull in bounded batches.
+  // Compact mode retains source triangles and alpha, not the expanded mesh.
   const textured = compact
     ? maskRecoveryTexturedMesh(model, node, (p) => sceneToGame(camera, gltfToScene(p)), textures)
     : undefined;
@@ -139,7 +160,7 @@ for (const id of selected) {
   reviews.push({
     asset: id,
     modelSha256: reference.model_sha256,
-    triangles: triangles.length,
+    triangles: coveredTriangles,
     storedTriangles: textured?.triangles.length ?? triangles.length,
     serializedMaskBytes: Buffer.byteLength(JSON.stringify(descriptor.gameplay.masks)),
     coverageFormat: compact ? "textured-triangles" : "clipped-triangles",

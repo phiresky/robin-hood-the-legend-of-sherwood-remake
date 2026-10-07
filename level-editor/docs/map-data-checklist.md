@@ -256,9 +256,11 @@ format is published for shrub 69 as a warned draft. Full-bounds browser review
 matches the compact mesh to the source model exactly, but CPU bitmap differences
 remain at rotated placements (89/52/81 pixels at 90/180/270 degrees).
 Migration, further size reduction and rendered verification remain before scaling
-this authoring path. The experimental
-authoring command still computes clipped geometry temporarily for the footprint.
-Shrubs 73/74 also expose unsupported UV/sampler cases. Geometry-derived
+this authoring path. Footprint authoring now streams clipped triangles into a
+bounded-batch hull instead of retaining the expanded mesh. Repeat/mirrored UVs
+and explicit nearest base-level sampling unblock shrubs 73/74; these and shrub 68
+are published as warned compact drafts after thirty placement/native checks.
+Geometry-derived
 publication now supports reviewed model hashes in addition to descriptor hashes.
 
 The earlier library-wide audit found 38 of 1,297 indexed assets without gameplay

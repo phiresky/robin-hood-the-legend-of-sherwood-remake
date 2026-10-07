@@ -10030,3 +10030,32 @@ The installed saved-scene export `saved-map-exports-31wLjX` contains 15 masks
 and emits both shrub 69 draft warnings. Native construction passes with 5 areas,
 154 sight obstacles, 5 doors, 4 jump pairs, 8,575 grid blocks and 57 elevation
 boundaries; all nine existing transitions apply and reset successfully.
+
+### Streaming wrapped foliage footprints
+
+Compact authoring now streams alpha-clipped triangles into a hull accumulator
+in batches of 3,000 points. It no longer retains the full expanded asset mesh.
+Repeat and mirrored repeat UVs are split into their intersecting tiles, preserving
+interpolated positions and vertex alpha. Excessive repetition above 4,096 tiles
+per triangle reports an error. Clamped edges retain their exterior texels.
+The explicit nearest base-level authoring mode matches map baking even when a
+source material requests filtering; texture transforms remain unsupported.
+
+`fern-gameplay-BZ5rMA` checks shrub 68. Its boundary and ten rotated/elevated
+bitmap exports match `fern-gameplay-3HULzB` exactly. It stores 3,928 triangles
+instead of 59,474, in a 3,746,085-byte mask definition. `fern-gameplay-GO93gA`
+successfully authors previously blocked shrubs 73/74: respectively 20,840/7,405
+stored triangles and 15,261,157/5,011,969 bytes. All thirty native construction
+cases pass and all thirty incorrect receiving heights are rejected.
+
+`compact-shrubs-publish-BZ5rMA-GO93gA` installs these three definitions and updates
+the saved Croisement02 pins. All retain draft warnings for approximate canopy
+boundaries and unverified rendered occlusion/projectile contact. Twenty-four
+focused tests pass, including streamed geometry equivalence and negative/repeated
+UV footprints. This does not resolve the CPU/GPU bitmap edge differences or
+complete the remaining foliage migration.
+
+The installed full-scene export `saved-map-exports-w0yeJQ` contains 18 masks.
+Native construction and all nine control apply/reset checks pass. Pipeline
+typechecking still reports the existing state-delivery test errors; focused lint
+and formatting pass.

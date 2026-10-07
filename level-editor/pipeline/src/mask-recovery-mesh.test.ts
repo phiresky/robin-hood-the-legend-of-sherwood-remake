@@ -215,6 +215,14 @@ test("cutout mesh recovery decodes alpha and keeps foliage ownership separate", 
   partial.set(texture, { width: 2, height: 2, alpha: new Uint8Array([255, 0, 255, 0]) });
   const clipped = maskRecoveryMesh(model, "part", (p) => p, partial);
   assert.ok(clipped.length > 0);
+  const streamed: ReturnType<typeof maskRecoveryMesh> = [];
+  assert.deepEqual(
+    maskRecoveryMesh(model, "part", (p) => p, partial, undefined, {
+      onTriangle: (triangle) => streamed.push(triangle),
+    }),
+    [],
+  );
+  assert.deepEqual(streamed, clipped);
   assert.notDeepEqual(clipped, covered);
   assert.deepEqual(
     maskRecoveryMesh(model, "part", (p) => p, partial, undefined, {
