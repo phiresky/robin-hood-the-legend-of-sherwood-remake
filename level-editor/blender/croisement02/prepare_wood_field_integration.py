@@ -109,11 +109,11 @@ def main():
             available.remove(upper_index)
             hi_ids = upper['ordered_loops'][upper_index]
             hi = dict(positions=[upper['vertices'][str(v)]['position'] for v in hi_ids], normals=[upper['vertices'][str(v)]['geometric_normal'] for v in hi_ids])
-            fitted = fit(lo, hi, include_geometry=True, tangent_mode="up-projection",tangent_smoothing=.5 if args.smooth_rim else 0.)
+            fitted = fit(lo, hi, include_geometry=True, tangent_mode="up-projection",tangent_smoothing=.5 if args.smooth_rim else 0.,validate_float32=args.smooth_rim)
             if args.smooth_rim and not fitted['eligible_for_bounded_integration']:
                 initial_phase=fitted['lower_phase'];phase_attempts=[]
                 for offset in [v/1024 for i in [1,2,4,8,16,32] for v in [i,-i]]:
-                    trial=fit(lo,hi,include_geometry=True,tangent_mode='up-projection',forced_phase=initial_phase+offset,tangent_smoothing=.5)
+                    trial=fit(lo,hi,include_geometry=True,tangent_mode='up-projection',forced_phase=initial_phase+offset,tangent_smoothing=.5,validate_float32=True)
                     phase_attempts.append(dict(offset=offset,passed=trial['eligible_for_bounded_integration'],quality=trial['quality']))
                     if trial['eligible_for_bounded_integration']:
                         fitted=trial;fitted['phase_search']=phase_attempts;break

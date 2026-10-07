@@ -18,7 +18,7 @@ from tree_geometry import SIN,RAY
 
 def preserved_mesh_state(worker, exclude_scoped_wood=False):
     bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'));bpy.context.view_layer.update()
-    result={}
+    result={};image_hashes={}
     for obj in bpy.data.collections['Croisement02 Working'].all_objects:
         if obj.type!='MESH':continue
         if exclude_scoped_wood and obj.get('asset_group')=='croisement02-tree-32' and obj.get('source_node') in ('building-080','building-081','building-082') and obj.get('projection_component')!='crown':continue
@@ -38,8 +38,11 @@ def preserved_mesh_state(worker, exclude_scoped_wood=False):
                         try:entry['inputs'].append(list(value))
                         except TypeError:entry['inputs'].append(str(type(value)))
                 if node.type=='TEX_IMAGE' and node.image:
-                    pixels=np.empty(len(node.image.pixels),dtype=np.float32);node.image.pixels.foreach_get(pixels)
-                    entry['image_sha256']=hashlib.sha256(pixels.tobytes()).hexdigest()
+                    image_key=node.image.as_pointer()
+                    if image_key not in image_hashes:
+                        pixels=np.empty(len(node.image.pixels),dtype=np.float32);node.image.pixels.foreach_get(pixels)
+                        image_hashes[image_key]=hashlib.sha256(pixels.tobytes()).hexdigest()
+                    entry['image_sha256']=image_hashes[image_key]
                 nodes.append(entry)
             record['materials'].append(dict(nodes=nodes,links=[(link.from_node.type,link.from_socket.name,link.to_node.type,link.to_socket.name) for link in material.node_tree.links]))
         result[obj.name]=hashlib.sha256(json.dumps(record,sort_keys=True).encode()).hexdigest()
