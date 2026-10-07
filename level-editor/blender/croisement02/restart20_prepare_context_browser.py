@@ -7,7 +7,7 @@ ROOT = Path.cwd()
 STATE = ROOT / 'level-editor/work/croisement02-refinement/restart2-state'
 OLD = STATE / 'installed41-normal-http-chunk-1-v1'
 PLAN = STATE / 'restart17-initial-context-publication-v3'
-OUT = STATE / 'restart20-initial-context-browser-v5'
+OUT = STATE / 'restart20-initial-context-browser-v6'
 sha = lambda data: hashlib.sha256(data).hexdigest()
 
 def main():
@@ -20,6 +20,16 @@ def main():
     changes = [e['id'] for e, b in zip(proposed['entries'], baseline['entries']) if e != b]
     assert changes == config['entry_ids'] or set(changes) == set(config['entry_ids'])
     pins = {str(Path('level-editor/library') / p): h for p, h in plan['current_library_pins'].items()}
+    catalog_audit_path = STATE / 'restart20-initial-context-browser-v5/catalog-delta-audit.json'
+    catalog_audit = json.loads(catalog_audit_path.read_text())
+    catalog_key = 'level-editor/library/3d-assets/index.json'
+    assert catalog_audit['expected_baseline_match'] and catalog_audit['croisement02_unchanged']
+    assert not catalog_audit['added'] and not catalog_audit['removed']
+    assert {r['id'] for r in catalog_audit['changed']} == {'york-east-riverside-curtain-wall', 'york-market-southwest-connecting-stairs'}
+    assert pins[catalog_key] == catalog_audit['baseline_sha256']
+    assert sha((ROOT / catalog_key).read_bytes()) == catalog_audit['current_sha256']
+    pins[catalog_key] = catalog_audit['current_sha256']
+    pins[str(catalog_audit_path.relative_to(ROOT))] = sha(catalog_audit_path.read_bytes())
     drift = []
     runtime_paths = set(plan['current_runtime_pins'])
     for directory in ['level-editor/app/src', 'level-editor/shared/src']:
@@ -87,7 +97,7 @@ def main():
         p=OUT/name; pins[str(p.relative_to(ROOT))]=sha(p.read_bytes())
     (OUT / 'inputs.json').write_text(json.dumps({'files':pins,'static_map_sha256':pins['level-editor/library/scenes/croisement02.rhlos-map.json']},indent=2)+'\n')
     (OUT / 'runtime-baseline.json').write_text(json.dumps({'source_files':{p:pins[p] for p in sorted(runtime_paths)}},indent=2)+'\n')
-    (OUT / 'preparation.json').write_text(json.dumps({'status':'PREPARED_NOT_LAUNCHED','runtime_changes_since_v3':drift,'root_review_required_for_runtime_changes':bool(drift),'overlay_paths':list(config['overlay']),'entries':41,'unchanged_entries':33,'corrected_entries':8,'scope':config['scope']},indent=2)+'\n')
+    (OUT / 'preparation.json').write_text(json.dumps({'status':'PREPARED_NOT_LAUNCHED','runtime_changes_since_v3':drift,'shared_catalog_delta':catalog_audit,'root_review_required_for_runtime_changes':bool(drift),'overlay_paths':list(config['overlay']),'entries':41,'unchanged_entries':33,'corrected_entries':8,'scope':config['scope']},indent=2)+'\n')
     print(json.dumps({'output':str(OUT.relative_to(ROOT)),'runtime_drift':drift,'pinned_files':len(pins)}))
 
 if __name__=='__main__':
