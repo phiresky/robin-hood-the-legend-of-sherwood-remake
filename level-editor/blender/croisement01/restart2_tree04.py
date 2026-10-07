@@ -74,6 +74,7 @@ def main():
   if hit is None:raise ValueError('No upward terrain support')
   if normal.z>.35:break
   skipped.append(dict(point=list(hit),node=owners[index],normal=list(normal)));origin=hit-ray*.01
+ anchor_owner=owners[index]
  shift=ray*((hit-anchor).dot(ray)+.2)
  for target in [obj,crown]:
   for vertex in target.data.vertices:vertex.co+=shift
@@ -98,7 +99,7 @@ def main():
     if rear is not None:thickness=max(0.0,(p-rear).dot(ray))
    target=nearest+ray*(.08+thickness);vertex.co=obj.matrix_world.inverted()@(p.lerp(target,weight));changes.append(dict(vertex=vertex.index,distance=float((target-p).dot(ray)),weight=weight))
   obj.data.update();(dest/'basal-ray-support.json').write_text(json.dumps(dict(method=('Basal bank support preserves each original camera-ray wood interval thickness; source projection unchanged.' if args.revision>=4 else 'Smooth basal continuation onto nearby upward archival bank faces along native camera rays; projected source unchanged.'),vertices=changes,terrain_provisional=True),indent=2)+'\n')
- (dest/'support-placement.json').write_text(json.dumps(dict(hit=list(hit),owner=owners[index],shift=list(shift),skipped=skipped,claim='Private placement only; contact review required'),indent=2)+'\n')
+ (dest/'support-placement.json').write_text(json.dumps(dict(hit=list(hit),owner=anchor_owner,shift=list(shift),skipped=skipped,claim='Private placement only; contact review required'),indent=2)+'\n')
  keep={o for o in working.all_objects if o.type=='MESH' and (o in [obj,crown] or o.get('source_node') in terrain_nodes)}
  for other in list(bpy.data.objects):
   if other.type=='MESH' and other not in keep:bpy.data.objects.remove(other,do_unlink=True)
