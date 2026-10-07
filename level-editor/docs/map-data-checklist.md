@@ -21,9 +21,14 @@ construction (153 motion areas, 15,140 sight obstacles) and all three controls.
 This is descriptor-level evidence, not a complete browser bake or playthrough.
 Wychford's floating church-tower approach remains disconnected, and York's
 unbound appearance variants remain in their initial visual states with warnings.
-Five wall calibration/rendering tests pass, but three existing native-fixture
-equality checks in `wall-gameplay.test.ts` differ in terrain receiver output and
-remain unresolved; they do not exercise the new diagnostic mesh loader.
+All eight wall calibration/rendering and fixture-equality tests now pass. The
+three stale fixtures differed only by consolidation of fifty flat terrain
+receivers into one. Audit `wall-fixture-coverage-MVpdKR` proves identical union
+coverage for each height/material/receiver-property group and exact equality of
+all other gameplay data before refreshing them. The reusable check is
+`node refinement/check-wall-fixture-coverage.mjs`. All 66 enabled native map
+compilation integration tests pass against the refreshed fixtures, including
+wall routing/sight, repeated material queries and elevated lighting.
 
 Rounded landing contours now repair crossed subpixel corners consistently in
 the compiler and native validator while retaining their exact contours. The
