@@ -35,8 +35,11 @@ def main():
   coords=[point(x,y) for x,y,r in branch]+[Vector((branch[-1][0],base_y,690)),Vector((branch[-1][0]+(-40 if label.startswith('Left') else 40),base_y,780))];part=tube(label,coords,[r for x,y,r in branch]+[4,1]);domain=np.asarray(wood)>0
   for sy in range(domain.shape[0]):domain[sy]&=((xx<367) if label.startswith('Left') else (xx>397))&(sy<140)
   fit_native_width(part,domain,'west-cut',x0=334,y0=0);union(body,part)
- root=tube('Observed descending slender root',[point(387,345),point(399,377),point(411,404),point(413,423)],[9,5,3,.5]);domain=np.asarray(wood)>0;domain[:372]=False
+ root=tube('Observed descending slender root',[point(387,345),point(399,377),point(411,404),point(413,423)],[9,5,3,.5]);domain=np.asarray(wood)>0;domain[:360]=False
  tube_helpers.fit_short_root(root,domain,x0=334);union(body,root)
+ # The native source includes a thin crossing twig between the observed forks.
+ branch_trace=[(357,109),(376,104),(396,101),(410,98)]
+ twig=tube('Observed crossing twig',[point(x,y)+Vector((0,-COS,SIN))*15 for x,y in branch_trace],[1.8,2.2,1.8,1]);union(body,twig)
  for i in range(11):
   angle=math.tau*i/11;start=Vector((380,base_y,640+i%3*20));tip=Vector((380+math.cos(angle)*145,base_y+math.sin(angle)*173,775+rng.uniform(-35,35)));union(body,tube('Inferred supported bough',[start,start.lerp(tip,.55)+Vector((0,0,18)),tip],[7,3,.5]))
  bpy.context.view_layer.objects.active=body;modifier=body.modifiers.new('Continuous native wood','REMESH');modifier.mode='VOXEL';modifier.voxel_size=.9;modifier.use_remove_disconnected=False;bpy.ops.object.modifier_apply(modifier=modifier.name)
