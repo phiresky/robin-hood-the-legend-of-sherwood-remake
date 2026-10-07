@@ -267,8 +267,12 @@ including 20 over a gap whose banks are disconnected without the bridge.
 The solid-deck candidate now also passes all 40 actor crossings and 240
 sight/projectile probes after fitting the nominal deck plane within 0.000016
 height units and retaining fractional terrain fragments through compiler
-clipping. Rail/pier collision and rendered actor occlusion remain unfinished;
-this asset is still unpublished and counted as missing.
+clipping. The newer full-structure candidate adds mesh-derived rail/pier solids
+and passes 3,120 sight/projectile checks. Eighteen of twenty placement fixtures
+pass both actor crossings; the two 180-degree gap cases still lose receiver
+tracking. Terrain now retains fractional coordinates until navigation assembly,
+fixing the separate 90-degree disconnection. Rendered actor occlusion also
+remains unverified; this asset is still unpublished and counted as missing.
 An unpublished mesh-derived bridge deck candidate passes ten complete native
 crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes

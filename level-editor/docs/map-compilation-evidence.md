@@ -9775,3 +9775,31 @@ typecheck passes; the pipeline typecheck encountered unrelated concurrent
 `state-delivery.test.ts` errors. This resolves the tested solid-deck crossing
 failure, not rail/pier collision or rendered actor integration. Publication is
 still pending those requirements.
+
+`author-croisement-bridge-structure.py` now derives the five non-deck timber
+components from the asset mesh. Four vertical extrusions are fitted within
+0.000084652 scene units, keeping their front-profile openings. The brace retains
+its convex mesh vertices. Adjacent cap triangles merge only when their union is
+convex; per-component volume error stays below 0.0031%. Merging caps and coplanar
+hull faces reduces the runtime representation from 2,835 to 526 solids,
+including the deck. Partition volume conservation is checked independently.
+
+Seventy-two ray probes use triangle intersections against the entire asset mesh
+as their oracle, including 32 clear openings and 40 wood hits. With the deck
+probes, five rotations and two elevations, candidate
+`croisement-bridge-gameplay-20Dvs0` passes all 3,120 native sight/projectile
+queries. Independent actor runs (`actor-case-report.json`) pass both directions
+in 18 of 20 scenes. The 180-degree gap scenes at elevations zero and forty still
+fail receiver tracking; all continuous-terrain cases pass. This is not full
+traversal certification or publication.
+
+The preceding structured candidate exposed a distinct 90-degree disconnection:
+terrain rounded its shared edge before precise asset floors and rail collision
+were assembled. Terrain surfaces now preserve fractional coordinates through
+assembly. The minimized regression contains one rail solid, two deck triangles
+and two terrain banks, with no model or level-data loading. Previously it
+compiled into two navigation regions; now it compiles into one, while removing
+the bridge still leaves two. All 146 existing compiler/navigation/terrain tests
+and the additional regression pass. Application typechecking passes; pipeline
+typechecking still encounters the separately modified state-delivery tests.
+Full rendered occlusion and the remaining 180-degree receiver failure are open.

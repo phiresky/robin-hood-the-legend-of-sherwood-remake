@@ -46,6 +46,20 @@ import {
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 import { parseLevel3D, parseProjectionAssetDescriptor } from "./validation.ts";
 import nearEdgeOnStair from "../test-fixtures/near-edge-on-placed-stair.json" with { type: "json" };
+import rotatedTerrainBridge from "../test-fixtures/rotated-terrain-bridge-seam.json" with { type: "json" };
+
+test("a rail cut cannot disconnect a fractional terrain bank from its rotated bridge", () => {
+  const document = parseLevel3D(rotatedTerrainBridge.document);
+  const asset = parseProjectionAssetDescriptor(rotatedTerrainBridge.descriptor);
+  const compiled = compileAssetGameplay(document, new Map([[asset.id, asset]]), [0, 0, 1000, 1000]);
+  assert.equal(compiled.motion_data.layers.flat().length, 1);
+  const banks = compileAssetGameplay(
+    { ...document, objects: [], groups: [], assetSources: [] },
+    new Map(),
+    [0, 0, 1000, 1000],
+  );
+  assert.equal(banks.motion_data.layers.flat().length, 2);
+});
 
 test("fractional terrain remnants survive floor clipping until navigation union", () => {
   const { document, assets, hut } = assetCompilerFixture();
