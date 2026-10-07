@@ -13,6 +13,26 @@ from refinement_inventory import inventory
 from evidence_io import sha
 from render_slots import acquire
 
+
+def fit_short_root(obj,domain):
+ """Fit short observed root limbs using their actual intersected source rows."""
+ points=np.asarray([tuple(v.co) for v in obj.data.vertices]);uv=np.column_stack((points[:,0],-points[:,1]*SIN-points[:,2]*COS));edges=np.asarray([tuple(e.vertices) for e in obj.data.edges]);a,b=uv[edges[:,0]],uv[edges[:,1]];dy=b[:,1]-a[:,1];rows=[]
+ for y in range(domain.shape[0]):
+  xs=np.flatnonzero(domain[y]);sy=y+.5
+  if not len(xs):continue
+  active=(np.minimum(a[:,1],b[:,1])<=sy)&(np.maximum(a[:,1],b[:,1])>=sy)&(np.abs(dy)>1e-8)
+  if not np.any(active):continue
+  hit=a[active,0]+(sy-a[active,1])/dy[active]*(b[active,0]-a[active,0])
+  if hit.max()-hit.min()<1e-4:continue
+  rows.append([sy,float(hit.min()),float(hit.max()),265+float(xs.min())-.25,266+float(xs.max())+.25])
+ if len(rows)<5:raise ValueError('Insufficient short root silhouette evidence')
+ rows=np.asarray(rows)
+ for vertex,p,pr in zip(obj.data.vertices,points,uv):
+  if pr[1]<rows[0,0] or pr[1]>rows[-1,0]:continue
+  lo,hi,left,right=[np.interp(pr[1],rows[:,0],rows[:,i]) for i in range(1,5)]
+  vertex.co.x=left+(p[0]-lo)*(right-left)/(hi-lo)
+ obj.data.update()
+
 def main():
  if shutil.disk_usage(OUT).free<35*1024**3:raise ValueError('Disk floor35GiB')
  parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,default=1);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);dest=OUT/f'restart2/tree05-v{args.revision}';dest.mkdir(exist_ok=False);acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0;working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-05';wood_node='scenery-tree05-wood';crown_node='foliage-tree05-inferred-crown';name='Northwest Rear Forked Tree'
@@ -53,7 +73,7 @@ def main():
     domain=np.asarray(alpha)>0;domain[:190]=False
     for sy in range(190,domain.shape[0]):
      centers=[np.interp(sy,[190,yy],[329,xx]) for xx,yy in roots];domain[sy]&=np.argmin(np.abs((np.arange(domain.shape[1])+265)[:,None]-np.asarray(centers)),axis=1)==n
-    if np.count_nonzero(np.any(domain,axis=1))>=20:fit_native_width(root,domain,'west-cut',x0=265,y0=0)
+    fit_short_root(root,domain)
    union(body,root)
  else:
   for angle in [.2,1.9,3.5,5]:
