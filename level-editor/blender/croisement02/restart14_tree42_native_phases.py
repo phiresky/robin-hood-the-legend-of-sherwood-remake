@@ -7,7 +7,7 @@ from mathutils import Vector
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(Path(__file__).parent)]
 from render_slots import acquire,release
 from tree_geometry import SIN,RAY
-OUT=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation';BASE=OUT/'tree42-motion-v1';DEST=BASE/'native-phases-v1';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+OUT=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation';BASE=OUT/('tree42-motion-v4'if '--coherent'in sys.argv else 'tree42-motion-v3'if '--smooth'in sys.argv else 'tree42-motion-v2'if '--dense'in sys.argv else 'tree42-motion-v1');DEST=BASE/'native-phases-v1';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  DEST.mkdir(exist_ok=False);r=json.loads((BASE/'report.json').read_text());assert sha(BASE/'prototype.blend')==r['prototype_sha256'];source=json.loads((OUT/'source-reconciliation-v1/report.json').read_text())['groups'][1];bpy.ops.wm.open_mainfile(filepath=str(BASE/'prototype.blend'));scene=bpy.context.scene;crown=next(o for o in scene.objects if o.type=='MESH'and o.get('asset_group')=='croisement02-tree-42'and o.get('projection_component')=='crown')
  for o in scene.objects:

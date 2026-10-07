@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from tree_geometry import RAY,SIN
 from mathutils.bvhtree import BVHTree
-OUT=ROOT/'level-editor/work/croisement02-refinement';BASE=OUT/'restart14-canopy-animation/tree42-motion-v1';DEST=BASE/'review-v3';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+OUT=ROOT/'level-editor/work/croisement02-refinement';BASE=OUT/('restart14-canopy-animation/tree42-motion-v4'if '--coherent'in sys.argv else 'restart14-canopy-animation/tree42-motion-v3'if '--smooth'in sys.argv else 'restart14-canopy-animation/tree42-motion-v2'if '--dense'in sys.argv else 'restart14-canopy-animation/tree42-motion-v1');DEST=BASE/'review-v3';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  DEST.mkdir(exist_ok=False);r=json.loads((BASE/'report.json').read_text());assert sha(BASE/'prototype.blend')==r['prototype_sha256'];bpy.ops.wm.open_mainfile(filepath=str(BASE/'prototype.blend'));scene=bpy.context.scene;objects=[o for o in scene.objects if o.type=='MESH'and o.get('asset_group')=='croisement02-tree-42'];crown=next(o for o in objects if o.get('projection_component')=='crown');views=json.loads((OUT/'restart2-canopy/soft-envelope-packaged-v1/assets/croisement02-tree-42/modified/views.json').read_text())['views'];source=json.loads((OUT/'restart14-canopy-animation/source-reconciliation-v1/report.json').read_text())['groups'][1];support=[]
  for phase,f in enumerate(source['frames']):
