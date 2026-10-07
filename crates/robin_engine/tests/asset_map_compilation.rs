@@ -103,6 +103,49 @@ fn spline_masks_repeat_coverage_boundaries_and_obstacle_altitudes_independently(
     }
 }
 
+#[test]
+fn spline_mask_application_fragments_preserve_independent_ranges() {
+    use robin_engine::coordinates::MapPoint;
+    let mut descriptor: serde_json::Value =
+        serde_json::from_slice(include_bytes!("fixtures/asset-spline-material.level.json"))
+            .unwrap();
+    descriptor["asset_geometry"]["masks"] =
+        serde_json::from_slice(include_bytes!("fixtures/asset-spline-split-masks.json")).unwrap();
+    let mut assets = LevelAssets::new();
+    let engine = construct(&serde_json::to_vec(&descriptor).unwrap(), &mut assets);
+    let masks = &engine.fast_grid().level.masks;
+    assert_eq!(masks.len(), 6);
+    for (repeat, pair) in masks.chunks_exact(2).enumerate() {
+        let offset = 100. * repeat as f32;
+        assert_eq!(pair[0].bitmap, pair[1].bitmap);
+        assert_eq!(pair[0].mask_type, 23);
+        assert_eq!(pair[1].mask_type, 3);
+        assert_eq!(pair[0].obstacle_indices.len(), 2);
+        assert!(pair[1].obstacle_indices.is_empty());
+        for x in 95..=205 {
+            for y in 190..=216 {
+                let point = MapPoint::new(offset + x as f32, y as f32);
+                for (fragment, mask) in pair.iter().enumerate() {
+                    let (character_start, character_y, projectile_start, projectile_y) =
+                        if fragment == 0 {
+                            (110, 197, 120, 209)
+                        } else {
+                            (160, 203, 170, 214)
+                        };
+                    assert_eq!(
+                        mask.is_applied_to_point_character(point),
+                        x >= character_start && x <= 200 && y < character_y
+                    );
+                    assert_eq!(
+                        mask.is_applied_to_point_projectile(point),
+                        x >= projectile_start && x <= 200 && y < projectile_y
+                    );
+                }
+            }
+        }
+    }
+}
+
 fn descriptor_with_compiled_masks() -> serde_json::Value {
     let mut descriptor: serde_json::Value =
         serde_json::from_slice(include_bytes!("fixtures/asset-lift.level.json")).unwrap();

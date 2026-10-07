@@ -237,3 +237,15 @@ export function wallDisconnectedLightFixture() {
   ];
   return fixture;
 }
+
+export function wallDisconnectedBoundaryFixture() {
+  const fixture = wallMaterialFixture();
+  const { document, asset } = fixture;
+  const local = (x: number, y: number) => sceneToGame(document.camera, [x, y, 0]);
+  const mask = asset.gameplay!.masks![0]!;
+  mask.characterBoundaryClosed = false;
+  mask.characterBoundary = [local(-40, 5), local(80, 5), local(80, -5), local(10, -5)];
+  mask.projectileBoundaryClosed = false;
+  mask.projectileBoundary = [local(-30, -15), local(80, -15), local(80, -25), local(20, -25)];
+  return fixture;
+}

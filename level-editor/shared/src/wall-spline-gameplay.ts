@@ -422,8 +422,8 @@ export function wallSplineGameplay(
             repeat,
           );
           let boundaryMissing = false;
-          const boundary = (points: Vec3[] | undefined, closed = true): Vec3[] | undefined => {
-            if (!points) return undefined;
+          const boundary = (points: Vec3[] | undefined, closed = true): Vec3[][] => {
+            if (!points) return [];
             let local = points.map((p) => source(mask.node, p));
             if (run && closed)
               local = clip(clip(local, axis, start, true), axis, limit, false).map((p): Vec3 => [
@@ -433,16 +433,20 @@ export function wallSplineGameplay(
               ]);
             if (local.length < (closed ? 3 : 2)) {
               boundaryMissing = true;
-              return undefined;
+              return [];
             }
             const line = closed ? [...local, local[0]!] : local;
             const fragments = run ? clipSplinePolyline(line, axis, start, limit, stations) : [line];
-            if (fragments.length !== 1 || fragments[0]!.length < (closed ? 4 : 2)) {
+            if (
+              !fragments.length ||
+              (closed && fragments.length !== 1) ||
+              fragments.some((fragment) => fragment.length < (closed ? 4 : 2))
+            ) {
               boundaryMissing = true;
-              return undefined;
+              return [];
             }
-            return (closed ? fragments[0]!.slice(0, -1) : fragments[0]!).map((p) =>
-              warp(p, repeat),
+            return fragments.map((fragment) =>
+              (closed ? fragment.slice(0, -1) : fragment).map((p) => warp(p, repeat)),
             );
           };
           const characterBoundary = boundary(mask.characterBoundary, mask.characterBoundaryClosed);
@@ -453,7 +457,10 @@ export function wallSplineGameplay(
           const obstacles = mask.obstacles.flatMap((id) => volumeRefs.get(id)?.get(repeat) ?? []);
           if (
             boundaryMissing ||
-            (!mask.view && !characterBoundary && !projectileBoundary && !obstacles.length)
+            (!mask.view &&
+              !characterBoundary.length &&
+              !projectileBoundary.length &&
+              !obstacles.length)
           ) {
             warnings.push(
               `Wall spline ${path.id}, mask ${mask.id}, repeat ${repeat}: cropping removed or disconnected its application boundary; mask omitted.`,
@@ -464,30 +471,44 @@ export function wallSplineGameplay(
             [anchor[0], anchor[1] - 1 / 1024, anchor[2] - 1 / 1024],
             [anchor[0], anchor[1] + 1 / 1024, anchor[2] + 1 / 1024],
           ];
-          out.masks!.push({
-            ...mask,
-            id: `mask-${out.masks!.length}`,
-            node: "$root",
-            triangles,
-            alphaCoverage: mask.alphaCoverage && {
-              textures: mask.alphaCoverage.textures,
-              triangles: alphaCoverage.get(repeat)!,
-            },
-            anchor,
-            receiverPoints: receiverPoints?.map((p) => warp(p, repeat)),
-            receiverSegment: receiver || receiverPoints ? undefined : receiverSegment,
-            receiverPolyline:
-              receiver && receiverFragments.length === 1
-                ? receiverFragments[0]!.map((p) => warp(p, repeat))
+          // Each native mask carries one continuous application line. Separate
+          // cropped fragments must not be reconnected across the trimmed span.
+          for (
+            let fragment = 0;
+            fragment < Math.max(1, characterBoundary.length, projectileBoundary.length);
+            fragment++
+          )
+            out.masks!.push({
+              ...mask,
+              id: `mask-${out.masks!.length}`,
+              node: "$root",
+              triangles,
+              alphaCoverage: mask.alphaCoverage && {
+                textures: mask.alphaCoverage.textures,
+                triangles: alphaCoverage.get(repeat)!,
+              },
+              anchor,
+              receiverPoints: receiverPoints?.map((p) => warp(p, repeat)),
+              receiverSegment: receiver || receiverPoints ? undefined : receiverSegment,
+              receiverPolyline:
+                receiver && receiverFragments.length === 1
+                  ? receiverFragments[0]!.map((p) => warp(p, repeat))
+                  : undefined,
+              receiverPolylines:
+                receiverFragments.length > 1
+                  ? receiverFragments.map((line) => line.map((p) => warp(p, repeat)))
+                  : undefined,
+              view: fragment === 0 && mask.view,
+              obstacles: fragment === 0 ? obstacles : [],
+              characterBoundary: characterBoundary[fragment],
+              characterBoundaryClosed: characterBoundary[fragment]
+                ? mask.characterBoundaryClosed
                 : undefined,
-            receiverPolylines:
-              receiverFragments.length > 1
-                ? receiverFragments.map((line) => line.map((p) => warp(p, repeat)))
+              projectileBoundary: projectileBoundary[fragment],
+              projectileBoundaryClosed: projectileBoundary[fragment]
+                ? mask.projectileBoundaryClosed
                 : undefined,
-            obstacles,
-            ...(characterBoundary ? { characterBoundary } : {}),
-            ...(projectileBoundary ? { projectileBoundary } : {}),
-          });
+            });
         }
       }
       for (const region of data.materials ?? []) {

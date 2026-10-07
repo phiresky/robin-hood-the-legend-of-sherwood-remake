@@ -2728,6 +2728,10 @@ Spline masks now retain disconnected receiving-probe fragments after trimming.
 Asset masks can author `receiverPolylines`; export intersects each fragment
 independently and rejects competing receiving layers without connecting the gaps.
 
+Spline masks also preserve disconnected open character/projectile application
+boundaries after trimming. Each fragment becomes a separate native mask with its
+own application range; shared view and obstacle rules are emitted only once.
+
 Spline lighting also preserves disconnected receiving-probe fragments after
 trimming, retaining valid light regions and their ambience filters.
 

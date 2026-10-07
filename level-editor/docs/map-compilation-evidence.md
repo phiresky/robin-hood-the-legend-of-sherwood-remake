@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Split spline mask application boundaries (2026-10-08)
+
+Cropping a spline source can split an open character or projectile application
+line into disconnected fragments. Export previously omitted the complete mask.
+The compiler now emits separate masks using the existing native format, retaining
+each fragment's range without inventing a joining edge. Bitmap/alpha coverage and
+receiver probes follow each fragment; view and obstacle rules occur only once per
+repeat. Character and projectile fragment counts can differ without leaking an
+absent boundary or closure flag into another record. Closed-boundary splits and
+fully removed application boundaries retain explicit omission warnings.
+
+The shared wall and mask geometry suites plus editor wall exports pass 36 tests,
+including equivalence to separately authored fragments on curved, rising walls
+at 0, 37 and 180 degrees.
+The new synthetic mask fixture matches editor export, with all other descriptor
+fields equal to the existing material-wall fixture. Three older wall fixtures
+were refreshed with explicit receiving-plane anchors; removing only those new
+fields reproduces their previous descriptors exactly. Native loading and 35,964
+character/projectile point-query checks pass across three repeats, including
+points outside each fragment and on both sides of its boundary. The broader
+native suite passed 64 tests, failed three and skipped five. The failures are a
+stale plane in an edited test receiver and two terrain-load polygon-union panics;
+their fixes are being validated separately. No runtime implementation changes
+are required for the mask split.
+
 ## Upper castle stairs and independently owned receiving contacts (2026-10-06)
 
 `stage-upper-castle-stair-contacts.mjs` authors four contact edges in three

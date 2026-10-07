@@ -5,12 +5,127 @@ import {
   wallMaterialFixture,
   wallDisconnectedMaskFixture,
   wallDisconnectedLightFixture,
+  wallDisconnectedBoundaryFixture,
 } from "../test-fixtures/wall-spline.ts";
 import { wallSplineGameplay } from "./wall-spline-gameplay.ts";
 import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
 import { validateAssetGameplay } from "./asset-gameplay.ts";
 import { sceneToGame } from "./geometry.ts";
 import { splineCurve } from "./spline-sampling.ts";
+
+test("cropped open mask boundaries retain separate character and projectile applications", () => {
+  const { document, asset, assets, bounds } = wallDisconnectedBoundaryFixture();
+  const before = structuredClone(asset);
+  const generated = wallSplineGameplay(document, assets, false);
+  assert.deepEqual(generated.warnings, []);
+  const masks = generated.descriptors[0]!.gameplay!.masks!;
+  assert.equal(masks.length, 6);
+  validateAssetGameplay(generated.descriptors[0]!.gameplay, generated.descriptors[0]!);
+  for (let repeat = 0; repeat < 3; repeat++) {
+    const first = masks[repeat * 2]!,
+      second = masks[repeat * 2 + 1]!;
+    assert.equal(first.view, true);
+    assert.equal(second.view, false);
+    assert.ok(first.obstacles.length);
+    assert.deepEqual(second.obstacles, []);
+    assert.deepEqual(first.triangles, second.triangles);
+    for (const output of [first, second]) {
+      assert.equal(output.characterBoundaryClosed, false);
+      assert.equal(output.projectileBoundaryClosed, false);
+      for (const boundary of [output.characterBoundary!, output.projectileBoundary!])
+        assert.ok(boundary.every((p) => Math.abs(p[1] - boundary[0]![1]) < 1e-8));
+    }
+  }
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.equal(compiled.masks!.length, 6);
+  assert.deepEqual(
+    compiled.masks!.map((mask) => mask.mask_type),
+    [23, 3, 23, 3, 23, 3],
+  );
+  assert.deepEqual(asset, before);
+});
+
+test("split mask applications do not inherit another fragment's boundary or closure flag", () => {
+  for (const splitRule of ["character", "projectile"] as const) {
+    const { document, asset, assets, bounds } = wallDisconnectedBoundaryFixture();
+    const mask = asset.gameplay!.masks![0]!;
+    if (splitRule === "character") mask.projectileBoundary!.splice(2);
+    else mask.characterBoundary!.splice(2);
+    const generated = wallSplineGameplay(document, assets, false);
+    assert.deepEqual(generated.warnings, []);
+    for (const descriptor of generated.descriptors) {
+      validateAssetGameplay(descriptor.gameplay, descriptor);
+      for (const [index, output] of descriptor.gameplay!.masks!.entries()) {
+        if (index % 2 === 0) continue;
+        if (splitRule === "character") {
+          assert.equal(output.projectileBoundary, undefined);
+          assert.equal(output.projectileBoundaryClosed, undefined);
+        } else {
+          assert.equal(output.characterBoundary, undefined);
+          assert.equal(output.characterBoundaryClosed, undefined);
+        }
+      }
+    }
+    assert.deepEqual(
+      compileAssetGameplay(document, assets, bounds).masks!.map((m) => m.mask_type),
+      [
+        23,
+        splitRule === "character" ? 1 : 2,
+        23,
+        splitRule === "character" ? 1 : 2,
+        23,
+        splitRule === "character" ? 1 : 2,
+      ],
+    );
+  }
+});
+
+test("split mask boundaries match separately authored fragments on moved bent and rising walls", () => {
+  for (const angle of [0, 37, 180]) {
+    const { document, asset, assets, bounds } = wallDisconnectedBoundaryFixture();
+    asset.gameplay!.materials = [];
+    asset.gameplay!.lights = [];
+    asset.gameplay!.sounds = [];
+    asset.gameplay!.masks![0]!.receiverSegment = [
+      sceneToGame(document.camera, [-40, 0, -100]),
+      sceneToGame(document.camera, [-40, 0, 100]),
+    ];
+    const radians = (angle * Math.PI) / 180;
+    const path = document.splines![0]!;
+    path.curved = true;
+    path.points = [
+      [-120, 0, 20],
+      [0, 25, 30],
+      [120, 0, 40],
+    ].map(([x, y, z]) => [
+      250 + x! * Math.cos(radians) - y! * Math.sin(radians),
+      250 + x! * Math.sin(radians) + y! * Math.cos(radians),
+      z!,
+    ]);
+    path.repeatLength = splineCurve(path, document.camera).getLength() / 3;
+    const generated = wallSplineGameplay(document, assets, false);
+    assert.deepEqual(generated.warnings, []);
+    const split = generated.descriptors[0]!.gameplay!.masks!;
+    assert.ok(split.length >= 4);
+    const original = asset.gameplay!.masks![0]!;
+    const second = structuredClone(original);
+    second.id = "second-fragment";
+    second.view = false;
+    second.obstacles = [];
+    second.characterBoundary = original.characterBoundary!.slice(2);
+    second.projectileBoundary = original.projectileBoundary!.slice(2);
+    original.characterBoundary = original.characterBoundary!.slice(0, 2);
+    original.projectileBoundary = original.projectileBoundary!.slice(0, 2);
+    asset.gameplay!.masks!.push(second);
+    const separate = wallSplineGameplay(document, assets, false);
+    assert.deepEqual(separate.warnings, []);
+    const ordered = (masks: typeof split) =>
+      masks.map(({ id: _id, ...mask }) => JSON.stringify(mask)).sort();
+    assert.deepEqual(ordered(split), ordered(separate.descriptors[0]!.gameplay!.masks!));
+    // Validate transformed application lines through the normal mask compiler too.
+    assert.ok(compileAssetGameplay(document, assets, bounds).masks!.length >= 4);
+  }
+});
 
 test("spline volume headroom survives repeated deformation", () => {
   const { document, asset, assets } = wallSplineFixture();
