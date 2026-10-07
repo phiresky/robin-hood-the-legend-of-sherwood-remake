@@ -65,7 +65,7 @@ def curve_acceleration_bound(curve, start, end):
     return float(np.abs(curve(times,2)).max())
 
 
-def main(fit_path=None, midpoint_hinge_offsets=None, transition_candidates=None, registration_controls=None, depth_trials=None, continuous_height_curve=None, sweep_subdivisions=8, dense_pose_steps=None, geometry_helper=None, geometry_helper_sha256=None, receiver_asset_ids=('croisement02-tree-01','croisement02-tree-02')):
+def main(fit_path=None, midpoint_hinge_offsets=None, transition_candidates=None, registration_controls=None, depth_trials=None, continuous_height_curve=None, sweep_subdivisions=8, dense_pose_steps=None, geometry_helper=None, geometry_helper_sha256=None, receiver_asset_ids=('croisement02-tree-01','croisement02-tree-02'), first_witness_only=False):
     assert not OUT.exists(),'Preserve prior evidence'
     fitp=Path(fit_path) if fit_path else B/'butterfly07-pose-fit-v1/fit.json';fit=json.loads(fitp.read_text());rows={r['phase']:r for r in fit['rows']};bound_geometry,radii,binding=geometry_binding(fit,geometry_helper,geometry_helper_sha256)
     curve=None if continuous_height_curve is None else CubicSpline(continuous_height_curve['times'],continuous_height_curve['heights'],bc_type='periodic')
@@ -152,6 +152,7 @@ def main(fit_path=None, midpoint_hinge_offsets=None, transition_candidates=None,
         eligible_units=np.flatnonzero(np.all(unit_highs>=low.min(0),axis=1)&np.all(unit_lows<=high.max(0),axis=1))
         for unit_index in eligible_units:
             unit=units[unit_index]
+            if first_witness_only and unit['contacts'][placed['id']]:continue
             indexes=np.flatnonzero(np.all(high>=unit['low'],axis=1)&np.all(low<=unit['high'],axis=1))
             for idx in indexes:
                 poly=clip_planes(attrs[idx],unit['planes'])
@@ -161,6 +162,7 @@ def main(fit_path=None, midpoint_hinge_offsets=None, transition_candidates=None,
                 assert opaque or abs(value-alpha(mat,witness[3:5],True))<1e-6
                 unit['contacts'][placed['id']]+=1
                 if len(unit['witnesses'])<1:unit['witnesses'].append({'receiver':placed['id'],'node':node.get('name'),'triangle':int(idx),'primitive':pi,'material':mat.get('name'),'world_zup':witness[:3].tolist(),'alpha':value,'uv':witness[3:5].tolist()})
+                if first_witness_only:break
     def finish(rays,assets,map_path):
         results={}
         for u in units:
@@ -168,7 +170,7 @@ def main(fit_path=None, midpoint_hinge_offsets=None, transition_candidates=None,
             for owner,count in u['contacts'].items():row['contact_counts'][owner]=row['contact_counts'].get(owner,0)+count;row['parts'][u['part']]=row['parts'].get(u['part'],0)+count
             if len(row['witnesses'])<5:row['witnesses']+=u['witnesses']
         report={'status':'PRIVATE_ANATOMY_AND_CONSERVATIVE_SWEEP_DIAGNOSTIC','fit_sha256':reader.sha(fitp),'map_sha256':reader.sha(map_path),'recipe_sha256':reader.sha(Path(__file__)),'assets':assets,'results':results,'method':'Exact transformed receiver triangles clipped to closed triangulated ellipsoid body or zero-thickness wing fan triangles; bilinear level0 alpha maximized on intersections. Both depth branches tested only without a candidate trial pool; pools test the selected branch. Recorded bounded rotational subintervals per adjacent pose; slerped body rotation and linear hinges, anchors and registration. Each endpoint convex hull expanded by rigorous second-derivative chord-error bound. Swept contacts are conservative, not proof of an actual intermediate intersection.','limits':[f"{sum(row['missing'] for row in fit['rows'])} own-source pixels remain outside fitted anatomy. This tests inferred geometry, not final butterfly approval.",f'Tested {len(rows)} poses / {len(phase_intervals)} adjacent intervals; full 99-phase cycle requires 99 poses and 99 intervals.','Wing fans are inferred solid surfaces; UV/material pattern unbuilt.','Opposite-depth poses project identically; source cannot select them.','Numerical closed-contact tolerance1e-8 world units; level0 alpha only.','No path lifting, canopy edit, render or library write.']}
-        report.update(geometry_binding=binding,receiver_asset_ids=None if receiver_asset_ids is None else sorted(receiver_asset_ids),tested_pose_count=len(rows),tested_phase_intervals=phase_intervals,sweep_subdivisions=sweep_subdivisions,dense_pose_steps=dense_pose_steps,continuous_height_curve=continuous_height_curve,depth_trials=depth_trials,midpoint_hinge_offsets=midpoint_hinge_offsets,registration_controls=registration_controls,transition_candidate_counts={k:len(v)for k,v in (transition_candidates or {}).items()})
+        report.update(contact_count_semantics='At most one exact witness per tested body/wing triangle or swept unit per receiver' if first_witness_only else 'Intersecting receiver triangle count',geometry_binding=binding,receiver_asset_ids=None if receiver_asset_ids is None else sorted(receiver_asset_ids),tested_pose_count=len(rows),tested_phase_intervals=phase_intervals,sweep_subdivisions=sweep_subdivisions,dense_pose_steps=dense_pose_steps,continuous_height_curve=continuous_height_curve,depth_trials=depth_trials,midpoint_hinge_offsets=midpoint_hinge_offsets,registration_controls=registration_controls,transition_candidate_counts={k:len(v)for k,v in (transition_candidates or {}).items()})
         report['limits'].append('Control and graph samples are inferred between observed frames; sampled clearance is not swept clearance.')
         OUT.mkdir();payload=json.dumps(report,indent=2)+'\n';assert len(payload)<2*1024**2;(OUT/'report.json').write_text(payload)
         print(json.dumps({k:v['contact_counts'] for k,v in results.items()}),flush=True)
