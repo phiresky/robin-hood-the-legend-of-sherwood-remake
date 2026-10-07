@@ -10,6 +10,7 @@ from render_slots import acquire
 R=ROOT/'level-editor/work/croisement01-refinement/restart2';source=R/'tree08-v12-chain-cpu-v3';out=R/'tree08-wood-prototype-v12-local-origin';cap=32*1024**2;round_cap=128*1024**2;floor=10*1024**3
 
 def guard(reserve=1024**2):
+ available=next(int(line.split()[1])*1024 for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:'));assert available>=6*1024**3,('6GiB available-memory floor',available)
  folders=list(R.glob('tree08-wood-prototype-v12*'))+list(R.glob('tree08-v12-*'));used=sum(p.stat().st_size for folder in folders for p in folder.rglob('*') if p.is_file())
  assert used+reserve<=cap,('Complete v12 round32MiB cap',used,reserve)
  total=sum(p.stat().st_size for d in R.glob('tree08-wood-prototype-v*') for p in d.rglob('*') if p.is_file())
