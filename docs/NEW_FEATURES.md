@@ -2662,3 +2662,10 @@ Mission-state previews can play, seek and reset an individual source-artwork
 patch while retaining its mission context. These previews validate pinned source
 resources and expose no 3D endpoint controls unless physical states are supplied
 separately; switching missions or leaving the preview retires playback.
+
+Prepared physical state previews can replace terrain with matching receiver
+fragments and independently hide each applied aperture cap. Reset restores the
+selected cap, mission changes restore the original receivers, and shared render
+resources retire once with the map. The Croisement02 hole integration remains a
+private geometry review fixture; no new terrain derivative is published by this
+runtime support.

@@ -14,6 +14,10 @@ import {
 } from "../../shared/src/state-delivery.ts";
 import { StateDelivery, type StateDeliveryMode } from "./state-delivery.ts";
 import {
+  StateAperturePreview,
+  type PreparedStateAperturePreview,
+} from "./state-aperture-preview.ts";
+import {
   NativeStatePresentation,
   NativeArtworkSurface,
   nativeLibraryReader,
@@ -580,6 +584,8 @@ export class EditorViewport {
   private stateMission = "";
   private readonly nativeArt = new NativeStatePresentation();
   private readonly stateDelivery = new StateDelivery();
+  private aperturePreview: StateAperturePreview | undefined;
+  private readonly apertureResourceRoots = new Set<THREE.Object3D>();
   private deliveryMission = "";
   private deliveryFamilies = new Map<string, Set<number>>();
   private deliveryFamily: string | undefined;
@@ -592,7 +598,9 @@ export class EditorViewport {
     return this.stateDelivery.ready ? this.stateDelivery.native : this.nativeArt;
   }
   private syncRefinedMissionTargets() {
+    this.syncStateAperturePreview();
     this.syncDeliveredStaticPlacements();
+    this.syncStateAperturePreview();
     if (!(this.entities instanceof MissionEntities)) return;
     const indices = new Set(
       this.entities.missionName === this.stateMission ? this.refinedMissionTargets : [],
@@ -623,6 +631,57 @@ export class EditorViewport {
     for (const object of document.objects) {
       const view = this.partViews.get(object.id);
       if (view) view.wrapper.visible = !object.hidden && !suppressed.has(object.id);
+    }
+  }
+  /** Adopt a prepared, reviewed receiver derivative in the map's Z-up frame.
+   * Shared render resources are retained until map retirement, then disposed once with the map.
+   */
+  setStateAperturePreview(prepared: PreparedStateAperturePreview) {
+    if (this.disposed || !this.stateDelivery.ready || !this.deliveryStaticContract)
+      throw new Error("State delivery must be ready before aperture preparation");
+    for (const receiver of prepared.originalReceivers) {
+      let parent: THREE.Object3D | null = receiver;
+      while (parent && parent !== this.mapRoot) parent = parent.parent;
+      if (!parent) throw new Error("Aperture receiver is not in the displayed map");
+    }
+    const families = new Set(this.deliveryStaticContract.families.map((f) => f.id));
+    for (const binding of prepared.bindings)
+      if (binding.mission === this.deliveryMission && !families.has(binding.family))
+        throw new Error("Aperture family is not in the delivered mission");
+    this.clearStateAperturePreview();
+    this.mapRoot.add(prepared.root);
+    let preview: StateAperturePreview | undefined;
+    try {
+      preview = new StateAperturePreview(prepared);
+      preview.selectMission(this.deliveryMission);
+      this.aperturePreview = preview;
+      this.apertureResourceRoots.add(prepared.root);
+      this.syncRefinedMissionTargets();
+      this.clippingBoundsDirty = true;
+    } catch (error) {
+      preview?.dispose();
+      prepared.root.removeFromParent();
+      throw error;
+    }
+  }
+  clearStateAperturePreview() {
+    this.aperturePreview?.dispose();
+    this.aperturePreview = undefined;
+    this.stateDelivery.physical.visible =
+      this.deliveryEndpointActive && this.deliveryEntitiesVisible;
+    this.clippingBoundsDirty = true;
+  }
+  private syncStateAperturePreview() {
+    const enabled = this.deliveryEndpointActive && this.deliveryEntitiesVisible;
+    this.stateDelivery.physical.visible =
+      enabled && !(this.deliveryFamily && this.aperturePreview?.handles(this.deliveryFamily));
+    if (!this.aperturePreview) return;
+    try {
+      this.aperturePreview.selectEnabled(enabled);
+    } catch (error) {
+      this.clearStateAperturePreview();
+      this.stateDelivery.physical.visible = enabled;
+      this.bindings.onError?.(String(error));
     }
   }
   async setStateDelivery(
@@ -680,6 +739,7 @@ export class EditorViewport {
     }
   }
   clearStateDelivery() {
+    this.clearStateAperturePreview();
     this.setStatePresentationMode("physical");
     this.stateDelivery.clear();
     this.deliveryMission = "";
@@ -704,6 +764,8 @@ export class EditorViewport {
     this.stateDelivery.selectEndpoint(family, endpoint);
     this.deliveryFamily = family;
     this.deliveryEndpoint = endpoint;
+    if (this.aperturePreview?.handles(family))
+      this.aperturePreview.selectEndpoint(family, endpoint);
     this.syncRefinedMissionTargets();
     this.clippingBoundsDirty = true;
   }
@@ -713,6 +775,9 @@ export class EditorViewport {
   }
   resetDeliveredState(family: string) {
     this.stateDelivery.reset(family);
+    if (this.aperturePreview?.handles(family))
+      this.aperturePreview.selectEndpoint(family, "initial");
+    this.syncRefinedMissionTargets();
     this.nativeSurface?.update(this.stateDelivery.native.pixels());
   }
   activateDeliveredState(family: string) {
@@ -1231,8 +1296,10 @@ export class EditorViewport {
     disposeObjectResources([
       this.overlayRoot,
       ...(this.sourceAsset ? [this.sourceAsset] : []),
+      ...this.apertureResourceRoots,
       ...(this.groundNode ? [this.groundNode] : []),
     ]);
+    this.apertureResourceRoots.clear();
     this.groundNode?.removeFromParent();
     this.sourceAsset = null;
     this.ground = null;
@@ -1918,6 +1985,7 @@ export class EditorViewport {
     box.expandByObject(this.scenery.root);
     box.expandByObject(this.missionStates.root);
     if (this.stateDelivery.physical.visible) box.expandByObject(this.stateDelivery.physical);
+    if (this.aperturePreview?.root.visible) box.expandByObject(this.aperturePreview.root);
     box.expandByObject(this.splines.root);
     box.expandByObject(this.terrain.root);
     // Initial camera framing is a viewport preference, never an authored boundary.
@@ -2104,6 +2172,7 @@ export class EditorViewport {
       this.partViews.delete(id);
     }
     this.syncDeliveredStaticPlacements(d);
+    this.syncStateAperturePreview();
     if (!rebuildFraming) {
       // Incremental revisions still change lighting, casters, and terrain bounds.
       this.refreshSunLighting(d);
