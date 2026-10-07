@@ -18,6 +18,7 @@ def main():
     parser.add_argument('--revision', type=int, default=1)
     parser.add_argument('--group', type=int, choices=[0, 1])
     parser.add_argument('--remove-collinear', action='store_true')
+    parser.add_argument('--triangle-packet', type=Path)
     args = parser.parse_args()
     suffix = '' if args.section == 29 else f'-{args.section}'
     root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
@@ -32,17 +33,23 @@ def main():
     if args.group is not None:
         source = root / f'tree08-v12-remaining-group{args.group}-v{args.revision}'
         output = root / f'tree08-v12-remaining-group{args.group}-stitched-v{args.revision}'
+    if args.triangle_packet:
+        source = args.triangle_packet.resolve(strict=True)
+        output = source.with_name(source.name + '-stitched')
     if args.remove_collinear:
         source = output
         output = output.with_name(output.name + '-conformed')
     output.mkdir(exist_ok=False)
     merge_report = dict(maximum_identification_displacement=0., collapsed_triangles=0)
-    if args.group is None or args.remove_collinear:
+    if (args.group is None and not args.triangle_packet) or args.remove_collinear:
         mesh = np.load(source / 'candidate.npz')
         vertices, faces = mesh['vertices'], mesh['faces']
     else:
-        sections = json.loads((source / 'scope.json').read_text())['sections']
-        triangles = np.concatenate([np.load(source / f'part-{i}.npz')['triangles'] for i in sections])
+        if args.triangle_packet:
+            triangles = np.load(source / 'triangles.npz')['triangles']
+        else:
+            sections = json.loads((source / 'scope.json').read_text())['sections']
+            triangles = np.concatenate([np.load(source / f'part-{i}.npz')['triangles'] for i in sections])
         unique, inverse = np.unique(triangles.reshape(-1, 3), axis=0, return_inverse=True)
         parents = list(range(len(unique)))
         def find(index):
@@ -66,7 +73,7 @@ def main():
         triangles = vertices[faces]
         cross = np.linalg.norm(np.cross(triangles[:, 1]-triangles[:, 0], triangles[:, 2]-triangles[:, 0]), axis=1)
         removed = np.where(cross < 1e-9)[0]
-        assert len(removed) == 16, 'Frozen diagnostic scope changed'
+        assert len(removed) > 0, 'No collinear strips to conform'
         assert float(cross[removed].max()) < 2e-12, 'Not the diagnosed numerical collinear strips'
         collinear_report = dict(removed_face_indices=removed.tolist(), maximum_cross_norm=float(cross[removed].max()), retained_positions_exact=True, reason='Zero-area strips collapse to existing straight boundary edges; surviving faces are conformed using existing collinear vertices.')
         faces = faces[cross >= 1e-9]

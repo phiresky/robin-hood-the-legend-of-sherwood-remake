@@ -1,6 +1,7 @@
 """Check a local source-surface junction before allowing broader construction."""
 import argparse
 import json
+from decimal import Decimal, localcontext
 from pathlib import Path
 
 import numpy as np
@@ -33,6 +34,31 @@ def intersection(a, b):
                     return False
         return True
     return bool(vtkTriangle.TrianglesIntersect(*a, *b))
+
+
+
+def precise_plane_separation(first, second, adjacent):
+    """Confirm strict separation using stored coordinates, without epsilon changes."""
+    with localcontext() as context:
+        context.prec = 80
+        triangles = []
+        for source in [first, second]:
+            triangle = [[Decimal(float(value)) for value in row] for row in source]
+            if adjacent:
+                center = [sum(row[j] for row in triangle) / 3 for j in range(3)]
+                triangle = [[center[j] + (row[j]-center[j])*Decimal('0.9999999')
+                             for j in range(3)] for row in triangle]
+            triangles.append(triangle)
+        def determinant(a, b, c, d):
+            x, y, z = [[point[j]-a[j] for j in range(3)] for point in [b, c, d]]
+            return (x[0]*(y[1]*z[2]-y[2]*z[1])
+                    - x[1]*(y[0]*z[2]-y[2]*z[0])
+                    + x[2]*(y[0]*z[1]-y[1]*z[0]))
+        for a, b in [triangles, triangles[::-1]]:
+            signs = [determinant(*a, point) for point in b]
+            if all(value > 0 for value in signs) or all(value < 0 for value in signs):
+                return True
+    return False
 
 
 def native_depth(sections):
@@ -100,6 +126,7 @@ def main():
     locator.SetDataSet(poly(vertices, faces))
     locator.BuildLocator()
     failures, counts = [], dict(nonadjacent=0, adjacent_interior=0)
+    precise_separations = []
     centers = triangles.mean(1)
     # Inset is only for shared-index pairs, where boundary contact is required.
     # It does not replace exact nonadjacent intersection testing.
@@ -130,7 +157,11 @@ def main():
                 continue
             counts[key] += 1
             if intersection(a, b):
+                if precise_plane_separation(triangle, triangles[j], adjacent):
+                    precise_separations.append(dict(faces=[i, j], kind=key))
+                    continue
                 failures.append(dict(faces=[i, j], kind=key))
+    (packet / 'precise-plane-separations.json').write_text(json.dumps(dict(method='80-digit Decimal determinants; original stored coordinates, existing shared-boundary inset only; strict signs, no tolerance relaxation', separated=precise_separations), indent=2) + '\n')
     source = np.load(root / 'tree08-v12-local-fork-cpu-v1/minimal-forks.npz')
     ids = [29, 93] if args.threeway else [args.section]
     if args.fiveway:
