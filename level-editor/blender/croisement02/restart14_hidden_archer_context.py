@@ -65,8 +65,8 @@ def load_meshes(scene,path,asset,expected=None):
     return added
 
 
-def main(root=None,audit_only=False,wood_contact=False):
-    root=Path(root) if root else OUT/'restart14-hidden-archer/candidate-v2'
+def main(root=None,audit_only=False,wood_contact=False,opacity_trial=False,opacity_version=1):
+    root=Path(root) if root else OUT/('restart14-hidden-archer/candidate-v3' if opacity_trial else 'restart14-hidden-archer/candidate-v2')
     audit=OUT/'restart14-hidden-archer/audit-v1'
     authority=json.loads((audit/'first-hit-v1/report.json').read_text())
     profiles=json.loads((audit/'source-authority.json').read_text())['profiles']
@@ -77,7 +77,7 @@ def main(root=None,audit_only=False,wood_contact=False):
         expected[replacement['asset']]={o.name:[list(row) for row in o.matrix_world]
             for o in bpy.context.scene.objects if o.type=='MESH' and o.get('asset_group')==replacement['asset']}
     for number in [1,2,5]:
-        destination=root/f'profile-{number:02d}-context-{"audit" if audit_only else "wood-contact-v1" if wood_contact else "v1"}'
+        destination=root/f'profile-{number:02d}-context-{f"opacity-v{opacity_version}" if opacity_trial else "audit" if audit_only else "wood-contact-v1" if wood_contact else "v1"}'
         destination.mkdir(exist_ok=False)
         assert sha(authority['source'])==authority['source_sha256']
         bpy.ops.wm.open_mainfile(filepath=authority['source'])
@@ -87,6 +87,21 @@ def main(root=None,audit_only=False,wood_contact=False):
             assert sha(replacement['model'])==replacement['model_sha256']
             objects=[o for o in objects if o.get('asset_group')!=replacement['asset']]
             objects+=load_meshes(scene,replacement['model'],replacement['asset'],expected[replacement['asset']])
+        trial=None
+        if opacity_trial:
+            trial_path=OUT/f'restart14-hidden-archer/crown-opacity-trial-v{opacity_version}/preservation.json'
+            trial=json.loads(trial_path.read_text());assert sha(trial['model'])==trial['model_sha256']
+            removed={r['parent_object'] for r in trial['records']}
+            old=[o for o in objects if o.name in removed]
+            assert len(old)==len(removed)
+            objects=[o for o in objects if o.name not in removed]
+            before=set(bpy.data.objects)
+            with bpy.data.libraries.load(trial['model'],link=False) as (src,dst):dst.objects=src.objects
+            added=[o for o in bpy.data.objects if o not in before and o.type=='MESH']
+            assert len(added)==len(removed)
+            for obj in added:scene.collection.objects.link(obj)
+            objects+=added
+            bpy.context.view_layer.update()
         row=next(p for p in profiles if p['profile'].endswith(f'{number:02d}'))
         x0,y0,x1,y1=row['crop'];context=[]
         for obj in objects:
@@ -152,7 +167,7 @@ def main(root=None,audit_only=False,wood_contact=False):
         write_json(destination/'evidence.json',dict(status='Private context review; no geometry or endpoint approval',
             source_scene=authority['source'],source_scene_sha256=authority['source_sha256'],
             replacements=authority['replacements'],endpoints=pins,crop=row['crop'],records=records,
-            linked_dependencies=dependencies,reopened_source_world_matrices=expected,
+            linked_dependencies=dependencies,reopened_source_world_matrices=expected,private_opacity_trial=trial,
             context_objects=[o.name for o in context],diagnostic_suppressed_crowns=suppressed,limits=[
                 'Diagnostic crown suppression, when listed, changes only render visibility to expose wood/foliage contact; full-context native audit remains authoritative.',
                 'Static scene uses the explicitly pinned local tree replacements; other later derivatives may be absent.',
@@ -163,5 +178,5 @@ def main(root=None,audit_only=False,wood_contact=False):
 
 if __name__=='__main__':
     acquire()
-    try:main(audit_only='--audit-only' in sys.argv,wood_contact='--wood-contact' in sys.argv)
+    try:main(audit_only='--audit-only' in sys.argv,wood_contact='--wood-contact' in sys.argv,opacity_trial='--opacity-trial' in sys.argv,opacity_version=2 if '--opacity-v2' in sys.argv else 1)
     finally:release()
