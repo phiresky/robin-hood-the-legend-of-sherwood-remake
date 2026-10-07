@@ -21,7 +21,7 @@ for o in banks:
  for f in o.data.polygons:
   normal=(o.matrix_world.to_3x3().inverted().transposed()@f.normal).normalized()
   if normal.z>.1:faces.append(tuple(off+k for k in f.vertices));owners.append(o.get('source_node'))
-assert faces;top_tree=BVHTree.FromPolygons(points,faces);step=4.;xs=np.arange(math.floor(min(p.x for p in points)/step)*step-step,math.ceil(max(p.x for p in points)/step)*step+step*1.1,step);ys=np.arange(math.floor(min(p.y for p in points)/step)*step-step,math.ceil(max(p.y for p in points)/step)*step+step*1.1,step);z0=np.zeros((len(xs),len(ys)));domain=np.zeros_like(z0,dtype=bool);labels=np.full_like(z0,-1,dtype=int)
+assert faces;top_tree=BVHTree.FromPolygons(points,faces);step=4.;padding=64. if tree_id==5 and a.revision>=5 else step;xs=np.arange(math.floor(min(p.x for p in points)/step)*step-padding,math.ceil(max(p.x for p in points)/step)*step+padding+step*.1,step);ys=np.arange(math.floor(min(p.y for p in points)/step)*step-padding,math.ceil(max(p.y for p in points)/step)*step+padding+step*.1,step);z0=np.zeros((len(xs),len(ys)));domain=np.zeros_like(z0,dtype=bool);labels=np.full_like(z0,-1,dtype=int)
 for i,x in enumerate(xs):
  for j,y in enumerate(ys):
   hit,_,index,_=top_tree.ray_cast(Vector((x,y,5000)),Vector((0,0,-1)),10000)
@@ -47,6 +47,15 @@ if (tree_id==4 and a.revision>=2) or (tree_id==5 and a.revision>=4):
   while len(upper)>=2 and cross(upper[-2],upper[-1],point)<=0:upper.pop()
   upper.append(point)
  hull=lower[:-1]+upper[:-1];image=Image.new('L',(len(ys),len(xs)));ImageDraw.Draw(image).polygon([(j,i) for i,j in hull],fill=255);closed=np.asarray(image)>0
+extension=np.zeros_like(domain)
+if tree_id==5 and a.revision>=5:
+ # A rounded shoulder joins the observed root to the low unchanged background.
+ radius_squared=(xs[:,None]-411)**2+(ys[None,:]+866)**2
+ extension=(radius_squared<=55**2)&~closed;closed|=extension
+ background=[o for o in collection.all_objects if o.type=='MESH' and o.get('source_node') in {'building-000','ground'}];background_tree,_=make_bvh(background)
+ for i,j in np.argwhere(extension):
+  hit,_,_,_=background_tree.ray_cast(Vector((xs[i],ys[j],5000)),Vector((0,0,-1)),10000);assert hit is not None
+  z0[i,j]=hit.z;labels[i,j]=nodes.index('building-006')
 closed[[0,-1]]=False;closed[:,[0,-1]]=False
 filled=closed&~domain
 for _ in range(max(len(xs),len(ys))):
@@ -56,6 +65,10 @@ for _ in range(max(len(xs),len(ys))):
   near=[(labels[ii,jj],z0[ii,jj]) for ii,jj in [(i-1,j),(i+1,j),(i,j-1),(i,j+1)] if 0<=ii<len(xs) and 0<=jj<len(ys) and labels[ii,jj]>=0]
   if near:labels[i,j]=collections.Counter(x[0] for x in near).most_common(1)[0][0];z0[i,j]=sum(x[1] for x in near)/len(near)
 assert not np.any(closed&(labels<0));domain=closed;boundary=domain&~erode(domain)
+if tree_id==5 and a.revision>=5:
+ for i,j in np.argwhere(boundary&(radius_squared<85**2)):
+  hit,_,_,_=background_tree.ray_cast(Vector((xs[i],ys[j],5000)),Vector((0,0,-1)),10000);assert hit is not None
+  t=min(1.,max(0.,(math.sqrt(radius_squared[i,j])-55)/30));weight=1-(t*t*(3-2*t));z0[i,j]=z0[i,j]*(1-weight)+hit.z*weight
 if a.revision==3:
  # Match the outside support height instead of retaining tall proxy walls.
  context=[o for o in collection.all_objects if o.type=='MESH' and o not in banks and o.get('source_node') in {'ground'}|{f'building-{i:03d}' for i in range(10)}]
@@ -88,7 +101,8 @@ def constrain(objects,mask_id,mask_path,label):
  root_constraints.append(dict(asset=label,mask=mask_id,domain_sha256=sha(mask_path),native_rays=count,root_grid_constraints=root_fixed))
 wood=[o for o in collection.all_objects if o.type=='MESH' and o.get('source_node')==f'scenery-tree{tree_id:02d}-wood'];constrain(wood,tree_id,source.parents[1]/'wood-domain.png',cfg['asset_id'])
 neighbors=[(0,'approved-tree00-wood-fill-v1/croisement01-tree-00/baked-v4-support/worker.blend','tree00-v4/wood-domain.png'),(1,'approved-tree01-isolated-wood-fill-v1/croisement01-tree-01/baked-v1-luminance/worker.blend','tree01-source-prep-v1/wood-domain-proposal.png'),(2,'tree02-v8/assets/croisement01-tree-02/model.blend','tree02-v8/wood-domain.png'),(3,'approved-tree03-fill-v1/croisement01-tree-03/baked-v1-luminance/worker.blend','tree03-v4/wood-domain.png')]
-if tree_id==5 and a.revision>=4:neighbors.append((6,'tree06-v6/assets/croisement01-tree-06/model.blend','tree06-v6/wood-domain.png'))
+if tree_id==5 and a.revision>=4:
+ root_revision=7 if a.revision>=5 else 6;neighbors.append((6,f'tree06-v{root_revision}/assets/croisement01-tree-06/model.blend',f'tree06-v{root_revision}/wood-domain.png'))
 for n,path,mask in neighbors:
  path=R/path
  with bpy.data.libraries.load(str(path),link=False) as (src,dst):dst.objects=list(src.objects)
@@ -97,12 +111,12 @@ for n,path,mask in neighbors:
  bpy.context.view_layer.update()
  targets=[o for o in loaded if o.type=='MESH' and o.get('asset_group')==f'croisement01-tree-{n:02d}' and 'foliage' not in o.get('source_node','') and o.get('projection_component')!='crown']
  assert targets
- reference=next(row for row in json.loads((R/('bank-neighbor-transform-reference-v2.json' if n==6 else 'bank-neighbor-transform-reference-v1.json')).read_text())['sources'] if row['mask']==n);assert reference['model_sha256']==sha(path)
+ reference=next(row for row in json.loads((R/(('bank-neighbor-transform-reference-tree06-v7.json' if a.revision>=5 else 'bank-neighbor-transform-reference-v2.json') if n==6 else 'bank-neighbor-transform-reference-v1.json')).read_text())['sources'] if row['mask']==n);assert reference['model_sha256']==sha(path)
  assert len(reference['objects'])==len(targets)
  for target in targets:
   expected=[row for row in reference['objects'] if row['source_node']==target.get('source_node')];assert len(expected)==1
   assert max(abs(target.matrix_world[i][j]-expected[0]['matrix_world'][i][j]) for i in range(4) for j in range(4))<1e-5,'Neighbor evaluated transform mismatch'
- constrain(targets,n,R/mask,f'croisement01-tree-{n:02d}');root_constraints[-1]['model_sha256']=sha(path)
+ constrain(targets,n,R/mask,f'croisement01-tree-{n:02d}');root_constraints[-1]['model_sha256']=sha(path);root_constraints[-1]['model_path']=str(path);root_constraints[-1]['domain_path']=str(R/mask)
  for o in loaded:bpy.data.objects.remove(o,do_unlink=True)
 violations=int(np.count_nonzero(boundary&(caps<z0-.01)));z=np.minimum(z,caps);z[~domain]=0
 for it in range(4000):
@@ -158,4 +172,4 @@ for label,bank in enumerate(banks):
  bank.data=mesh;mesh_reports.append(dict(node=bank['source_node'],vertices=len(verts),faces=len(polys),components=components,nonmanifold_edges=bad,degenerate_faces=deg))
 assert all(geom(o)==protected[o.get('source_node')] for o in collection.all_objects if o.type=='MESH' and o not in banks)
 bpy.data.orphans_purge(do_recursive=True);(worker/'modified').mkdir(parents=True);(worker/'inspection').mkdir();shutil.copy2(source/'modified/views.json',worker/'modified/views.json');(worker/'workspace.json').write_text(json.dumps(cfg,indent=2)+'\n');bpy.ops.wm.save_as_mainfile(filepath=str(worker/'model.blend'));assert sha(source/'model.blend')==source_hash
-(dest/'construction.json').write_text(json.dumps(dict(status='Private complete-bank hypothesis; root and user approval pending',source_sha256=source_hash,model_sha256=sha(worker/'model.blend'),wood_and_unrelated_geometry_unchanged=True,changed_nodes=nodes,grid_step=step,inferred='Smooth complete adjacent bank surfaces within their combined native footprint; no rectangular patch. Original elevations are soft constraints. Root geometry/native visibility constrained, no canonical gameplay changes.',root_constraints=root_constraints,boundary_visibility_conflicts=violations,filled_gap_grid_samples=int(filled.sum()),iterations=it+1,convergence=delta,max_raise=float(np.max((z-z0)[domain])),max_lower=float(np.max((z0-z)[domain])),topology=mesh_reports),indent=2)+'\n');print(worker)
+(dest/'construction.json').write_text(json.dumps(dict(status='Private complete-bank hypothesis; root and user approval pending',source_sha256=source_hash,model_sha256=sha(worker/'model.blend'),wood_and_unrelated_geometry_unchanged=True,changed_nodes=nodes,grid_step=step,inferred='Smooth complete adjacent bank surfaces within their combined native footprint; no rectangular patch. Original elevations are soft constraints. Root geometry/native visibility constrained, no canonical gameplay changes.',root_constraints=root_constraints,boundary_visibility_conflicts=violations,filled_gap_grid_samples=int(filled.sum()),rounded_root_shoulder_grid_samples=int(extension.sum()),iterations=it+1,convergence=delta,max_raise=float(np.max((z-z0)[domain])),max_lower=float(np.max((z0-z)[domain])),topology=mesh_reports),indent=2)+'\n');print(worker)

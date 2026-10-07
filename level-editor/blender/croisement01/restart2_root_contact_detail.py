@@ -10,7 +10,7 @@ from render_slots import acquire,release
 from evidence_io import sha
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('workspace',type=Path);p.add_argument('--overlay-worker',type=Path);p.add_argument('--overlay-asset');p.add_argument('--color-terrain-owner',action='store_true');p.add_argument('--context-node',action='append',default=[]);p.add_argument('--scale',type=float,default=160);p.add_argument('--wood-node',action='append',default=[]);p.add_argument('--output-name',default='root-contact-detail');a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);w=a.workspace.resolve();out=w/'inspection'/a.output_name
+ p=argparse.ArgumentParser();p.add_argument('workspace',type=Path);p.add_argument('--hide-terrain',action='store_true');p.add_argument('--overlay-worker',type=Path);p.add_argument('--overlay-asset');p.add_argument('--color-terrain-owner',action='store_true');p.add_argument('--context-node',action='append',default=[]);p.add_argument('--scale',type=float,default=160);p.add_argument('--wood-node',action='append',default=[]);p.add_argument('--output-name',default='root-contact-detail');a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);w=a.workspace.resolve();out=w/'inspection'/a.output_name
  if Path(a.output_name).name!=a.output_name or a.scale<=0:raise ValueError('Invalid detail output or scale')
  if out.exists():raise FileExistsError(out)
  acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'));cfg=json.loads((w/'workspace.json').read_text())
@@ -22,7 +22,7 @@ def main():
   imported=[o for o in dst.objects if o is not None]
   for obj in imported:bpy.context.scene.collection.objects.link(obj)
   bpy.context.view_layer.update();targets=[o for o in imported if o.type=='MESH' and o.get('asset_group')==a.overlay_asset];assert targets
-  reference_path=ROOT/'level-editor/work/croisement01-refinement/restart2/bank-neighbor-transform-reference-v2.json';reference=next(row for row in json.loads(reference_path.read_text())['sources'] if row['model_sha256']==sha(model))
+  reference_root=ROOT/'level-editor/work/croisement01-refinement/restart2';reference_files=[reference_root/'bank-neighbor-transform-reference-v2.json',*reference_root.glob('bank-neighbor-transform-reference-tree06-v*.json')];matches=[(path,row) for path in reference_files for row in json.loads(path.read_text())['sources'] if row['model_sha256']==sha(model)];assert matches;reference_path,reference=matches[-1]
   for obj in targets:
    expected=[row for row in reference['objects'] if row['source_node']==obj.get('source_node')]
    if not expected:
@@ -42,7 +42,7 @@ def main():
   for i,node in enumerate(sorted(nodes)):
    color=(*colorsys.hsv_to_rgb(i/len(nodes),.65,.8),1);m=mat.copy();m.name='Diagnostic '+node;m.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value=color;owner_colors[node]=list(color);owner_materials[node]=m
  for obj in review_objects:
-  target=obj.get('asset_group')==target_asset;terrain=obj.get('source_node') in nodes
+  target=obj.get('asset_group')==target_asset;terrain=(obj.get('source_node') in nodes) and not a.hide_terrain
   if obj.type!='MESH' or not(target or terrain):continue
   copy=obj.copy();copy.parent=None;copy.matrix_world=obj.matrix_world.copy();copy.hide_render=False
   if terrain:
@@ -60,5 +60,5 @@ def main():
   v=packet['views'][i];camera.matrix_world=Matrix(v['camera_matrix_world']);data.ortho_scale=a.scale;camera.location=center+camera.matrix_world.to_3x3()@Vector((0,0,5000));scene.render.filepath=str(out/f'view-{i}.png');bpy.ops.render.render(write_still=True,scene=scene.name);images.append(Image.open(scene.render.filepath).convert('RGB'))
  sheet=Image.new('RGB',(768,768))
  for i,im in enumerate(images):sheet.paste(im,((i%2)*384,(i//2)*384))
- sheet.save(out/'sheet.png');(out/'evidence.json').write_text(json.dumps(dict(status='diagnostic; context is not approved final terrain',overlay=overlay_proof,terrain_owner_colors=owner_colors,additional_context_nodes=a.context_node,additional_wood_nodes=a.wood_node,model_sha256=sha(w/'model.blend'),views_sha256=sha(camera_worker/'modified/views.json'),sheet_sha256=sha(out/'sheet.png'),camera_indices=[0,1,3,5],camera_direction_preserved=True,root_center=list(center),detail_scale=a.scale,terrain_material_override='neutral diffuse; saved asset materials preserved'),indent=2)+'\n');release()
+ sheet.save(out/'sheet.png');(out/'evidence.json').write_text(json.dumps(dict(status='diagnostic; context is not approved final terrain',terrain_hidden=a.hide_terrain,overlay=overlay_proof,terrain_owner_colors=owner_colors,additional_context_nodes=a.context_node,additional_wood_nodes=a.wood_node,model_sha256=sha(w/'model.blend'),views_sha256=sha(camera_worker/'modified/views.json'),sheet_sha256=sha(out/'sheet.png'),camera_indices=[0,1,3,5],camera_direction_preserved=True,root_center=list(center),detail_scale=a.scale,terrain_material_override='neutral diffuse; saved asset materials preserved'),indent=2)+'\n');release()
 if __name__=='__main__':main()
