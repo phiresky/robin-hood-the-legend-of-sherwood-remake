@@ -80,6 +80,7 @@ def main():
   target.data.update()
  if args.revision>=3:
   changes=[]
+  original_volume=BVHTree.FromPolygons([obj.matrix_world@v.co for v in obj.data.vertices],[tuple(face.vertices) for face in obj.data.polygons])
   for vertex in obj.data.vertices:
    p=obj.matrix_world@vertex.co;sy=-p.y*SIN-p.z*COS
    if sy<540:continue
@@ -91,8 +92,12 @@ def main():
      nearest=support;break
     remaining-=distance+.02;origin=support-ray*.02
    if nearest is None:continue
-   weight=min(1,max(0,(sy-540)/35));target=nearest+ray*.08;vertex.co=obj.matrix_world.inverted()@(p.lerp(target,weight));changes.append(dict(vertex=vertex.index,distance=float((target-p).dot(ray)),weight=weight))
-  obj.data.update();(dest/'basal-ray-support.json').write_text(json.dumps(dict(method='Smooth basal continuation onto nearby upward archival bank faces along native camera rays; projected source unchanged.',vertices=changes,terrain_provisional=True),indent=2)+'\n')
+   weight=min(1,max(0,(sy-540)/35));thickness=0.0
+   if args.revision>=4:
+    rear,_,_,_=original_volume.ray_cast(p-ray*300,ray,600)
+    if rear is not None:thickness=max(0.0,(p-rear).dot(ray))
+   target=nearest+ray*(.08+thickness);vertex.co=obj.matrix_world.inverted()@(p.lerp(target,weight));changes.append(dict(vertex=vertex.index,distance=float((target-p).dot(ray)),weight=weight))
+  obj.data.update();(dest/'basal-ray-support.json').write_text(json.dumps(dict(method=('Basal bank support preserves each original camera-ray wood interval thickness; source projection unchanged.' if args.revision>=4 else 'Smooth basal continuation onto nearby upward archival bank faces along native camera rays; projected source unchanged.'),vertices=changes,terrain_provisional=True),indent=2)+'\n')
  (dest/'support-placement.json').write_text(json.dumps(dict(hit=list(hit),owner=owners[index],shift=list(shift),skipped=skipped,claim='Private placement only; contact review required'),indent=2)+'\n')
  keep={o for o in working.all_objects if o.type=='MESH' and (o in [obj,crown] or o.get('source_node') in terrain_nodes)}
  for other in list(bpy.data.objects):

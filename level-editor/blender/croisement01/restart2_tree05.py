@@ -29,7 +29,8 @@ def main():
  trace=[(320,222,17),(326,211,18),(329,190,16),(331,165,11),(331,139,9),(330,117,8)]
  body=tube('Rear forked trunk',[point(x,y) for x,y,r in trace],[r for x,y,r in trace]);body['defer_union']=True;rng=random.Random(105)
  if args.revision>=2:
-  domain=np.asarray(alpha)>0;domain[:140]=False;domain[208:]=False;xx=np.arange(domain.shape[1])+265;domain[175:]&=(xx>=306)&(xx<=350)
+  domain=np.asarray(alpha)>0;domain[:140]=False;domain[208:]=False;xx=np.arange(domain.shape[1])+265
+  if args.revision<3:domain[175:]&=(xx>=306)&(xx<=350)
   fit_native_width(body,domain,'west-cut',x0=265,y0=0)
   for vertex in body.data.vertices:
    sy=-vertex.co.y*SIN-vertex.co.z*COS
@@ -45,14 +46,27 @@ def main():
    fit_native_width(part,domain,'west-cut',x0=265,y0=0)
   union(body,part)
  if args.revision>=2:
-  for x,y in [(282,201),(296,220),(344,219),(360,204)]:
-   union(body,tube('Source-supported tapered root',[point(329,190),point((329+x)/2,(190+y)/2),point(x,y)],[8,4,.5]))
+  roots=[(282,201),(296,220),(344,219),(360,204)]
+  for n,(x,y) in enumerate(roots):
+   root=tube('Source-supported tapered root',[point(329,190),point((329+x)/2,(190+y)/2),point(x,y)],[8,4,.5])
+   if args.revision>=3:
+    domain=np.asarray(alpha)>0;domain[:190]=False
+    for sy in range(190,domain.shape[0]):
+     centers=[np.interp(sy,[190,yy],[329,xx]) for xx,yy in roots];domain[sy]&=np.argmin(np.abs((np.arange(domain.shape[1])+265)[:,None]-np.asarray(centers)),axis=1)==n
+    if np.count_nonzero(np.any(domain,axis=1))>=20:fit_native_width(root,domain,'west-cut',x0=265,y0=0)
+   union(body,root)
  else:
   for angle in [.2,1.9,3.5,5]:
    base=point(325,220);tip=base+Vector((math.cos(angle)*29,math.sin(angle)*34,0));tip.z=.1;union(body,tube('Tapered root flare',[point(328,203),base.lerp(tip,.6)+Vector((0,0,2)),tip],[5,3,.35]))
  for i in range(9):
   angle=math.tau*i/9;start=Vector((330,base_y,340+i%3*12));tip=Vector((330+math.cos(angle)*80,base_y+math.sin(angle)*92,430+rng.uniform(-15,20)));union(body,tube('Inferred supported bough',[start,start.lerp(tip,.55)+Vector((0,0,10)),tip],[4,2,.3]))
  bpy.context.view_layer.objects.active=body;modifier=body.modifiers.new('Continuous rear forked wood','REMESH');modifier.mode='VOXEL';modifier.voxel_size=.8;modifier.use_remove_disconnected=False;bpy.ops.object.modifier_apply(modifier=modifier.name)
+ if args.revision>=3:
+  domain=np.asarray(alpha)>0;domain[:145]=False;domain[208:]=False
+  before=[v.co.copy() for v in body.data.vertices];fit_native_width(body,domain,'west-cut',x0=265,y0=0)
+  for vertex,old in zip(body.data.vertices,before):
+   sy=-old.y*SIN-old.z*COS;weight=min(1,max(0,(sy-145)/10))*min(1,max(0,(215-sy)/7));vertex.co=old.lerp(vertex.co,weight)
+  body.data.update()
  for vertex in body.data.vertices:
   sy=-vertex.co.y*SIN-vertex.co.z*COS
   if sy>227:vertex.co+=Vector((0,SIN,COS))*(sy-227)
@@ -80,6 +94,22 @@ def main():
  for target in [obj,crown]:
   for vertex in target.data.vertices:vertex.co+=shift
   target.data.update()
+ if args.revision>=3:
+  original_volume=BVHTree.FromPolygons([obj.matrix_world@v.co for v in obj.data.vertices],[tuple(face.vertices) for face in obj.data.polygons]);changes=[]
+  for vertex in obj.data.vertices:
+   p=obj.matrix_world@vertex.co;sy=-p.y*SIN-p.z*COS
+   if sy<165:continue
+   origin=p+ray*80;remaining=160;nearest=None
+   while remaining>0:
+    support,normal,index,distance=tree.ray_cast(origin,-ray,remaining)
+    if support is None:break
+    if normal.z>.25 and abs((support-p).dot(ray))<80:nearest=support;break
+    remaining-=distance+.02;origin=support-ray*.02
+   if nearest is None:continue
+   rear,_,_,_=original_volume.ray_cast(p-ray*300,ray,600)
+   if rear is None:continue
+   thickness=max(0.0,(p-rear).dot(ray));weight=min(1,max(0,(sy-165)/43));target=nearest+ray*(.08+thickness);vertex.co=obj.matrix_world.inverted()@p.lerp(target,weight);changes.append(dict(vertex=vertex.index,thickness=thickness,weight=weight))
+  obj.data.update();(dest/'basal-volume-support.json').write_text(json.dumps(dict(method='Preserve each original native camera ray wood interval while seating its rear on nearby upward archival terrain; source projection unchanged.',vertices=changes,terrain_provisional=True),indent=2)+'\n')
  (dest/'support-placement.json').write_text(json.dumps(dict(hit=list(hit),owner=owners[index],shift=list(shift),skipped=skipped,claim='Private placement only; contact review required'),indent=2)+'\n')
  keep={o for o in working.all_objects if o.type=='MESH' and (o in [obj,crown] or o.get('source_node') in terrain_nodes)}
  for other in list(bpy.data.objects):
