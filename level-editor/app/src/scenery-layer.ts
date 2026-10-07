@@ -1,3 +1,4 @@
+import { ScenerySourceClocks } from "./scenery-source-clocks.ts";
 import * as THREE from "three";
 import { gameToScene, partMatrix, sceneToGame, type Level3D } from "@rle/shared";
 import type { GameplayAssetDescriptor } from "../../shared/src/asset-gameplay.ts";
@@ -9,6 +10,8 @@ type Frames = Awaited<ReturnType<typeof loadSceneryFrames>>;
 interface Effect {
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   key: string;
+  descriptorSha256?: string;
+  clockError?: string;
   start: number;
   frames?: Frames;
   place?: () => void;
@@ -17,6 +20,7 @@ interface Effect {
 /** Borrowed map placements; owned preview resources stay outside the bake roots. */
 export class SceneryLayer {
   readonly root = new THREE.Group();
+  readonly sourceClocks = new ScenerySourceClocks();
   private library: FileSystemDirectoryHandle | null = null;
   private document: Level3D | null = null;
   private descriptors = new Map<string, GameplayAssetDescriptor>();
@@ -46,6 +50,7 @@ export class SceneryLayer {
   }
   clear() {
     this.epoch++;
+    this.sourceClocks.clear();
     for (const effect of this.effects.values()) this.remove(effect);
     this.effects.clear();
     for (const resource of this.resources.values())
@@ -134,7 +139,12 @@ export class SceneryLayer {
           );
           mesh.userData.sceneryPart = part.id;
           mesh.name = `${part.name}: ${animation.id}`;
-          effect = { mesh, key, start: performance.now() };
+          effect = {
+            mesh,
+            key,
+            descriptorSha256: pin?.descriptor_sha256,
+            start: performance.now(),
+          };
           this.effects.set(id, effect);
           this.root.add(mesh);
           let resource = this.resources.get(key);
@@ -159,10 +169,9 @@ export class SceneryLayer {
               if (this.effects.get(id) !== own) return;
               own.mesh.geometry.dispose();
               own.frames = frames;
-              own.start = performance.now();
               own.mesh.material.color.setHex(0xffffff);
               own.mesh.material.needsUpdate = true;
-              this.update(own.start);
+              this.update(performance.now());
               this.changed();
             },
             (error) => {
@@ -209,16 +218,32 @@ export class SceneryLayer {
     this.changed();
   }
   update(now: number) {
-    for (const effect of this.effects.values()) {
+    for (const [id, effect] of this.effects) {
       effect.place?.();
       if (!effect.frames) continue;
       const frames = effect.frames.frames;
+      let external: number | undefined;
+      try {
+        external = this.sourceClocks.frame(id, effect.descriptorSha256, frames.length);
+        effect.clockError = undefined;
+      } catch (error) {
+        const message = `${effect.mesh.name}: ${String(error)}`;
+        if (effect.clockError !== message) this.warning(message);
+        effect.clockError = message;
+        effect.mesh.visible = false;
+        continue;
+      }
+      if (external === -1) {
+        effect.mesh.visible = false;
+        continue;
+      }
       const frame =
         frames[
-          sceneryFrameAtTick(
-            frames.map((frame) => frame.delay),
-            Math.max(0, Math.floor((now - effect.start) / 40)),
-          )
+          external ??
+            sceneryFrameAtTick(
+              frames.map((frame) => frame.delay),
+              Math.max(0, Math.floor((now - effect.start) / 40)),
+            )
         ]!;
       effect.mesh.geometry = frame.geometry;
       effect.mesh.material.map = frame.texture;

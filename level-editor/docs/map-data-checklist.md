@@ -42,6 +42,17 @@ jumps, traversal callbacks or complete actor playthroughs. Counts are Wychford
 Lincoln 182, Nottingham 188, Sherwood 52 and York 280. The debug audit took
 531 seconds; Wychford alone spent 394 seconds in path queries. This is a
 performance investigation target, not a release-game latency measurement.
+Path-corridor grid queries now restrict each row to a conservative range around
+the corridor sides before applying the unchanged exact cell-intersection test.
+Regression tests compare the selected lines and their order with an exhaustive
+rectangle scan across layers and active states, including cell-boundary cases.
+This reduces candidate-cell scanning without changing geometry or actor clearance.
+The same ten byte-identical descriptor snapshots pass all 1,126 routes with this
+optimization (`row-filtered-route-audit-shou7alr`). The debug audit fell from
+531.38 to 353.71 seconds; Wychford path queries fell from 394.18 to 262.53 seconds.
+These single-run measurements show roughly one-third less audit time, not a
+release-game latency guarantee. All 51 grid tests, 22 pathfinder tests and 66
+enabled map-compilation integration tests pass, as does the main game build.
 
 Rounded landing contours now repair crossed subpixel corners consistently in
 the compiler and native validator while retaining their exact contours. The

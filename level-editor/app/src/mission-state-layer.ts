@@ -5,6 +5,7 @@ import {
   type MissionStateContract,
 } from "../../shared/src/mission-state.ts";
 import { SceneAssetLoader, captureLoadedStateAppearance } from "./scene-assets.ts";
+import type { SourceContractClockBinding } from "./source-contract-clock-binding.ts";
 import { StateAppearancePlayer } from "./state-appearance-player.ts";
 import { placementHeight } from "./entity-projection.ts";
 import { disposeObjectResources } from "./resources.ts";
@@ -97,6 +98,7 @@ export class MissionStateLayer {
   private epoch = 0;
   private retired: (() => void) | undefined;
   private disposed = false;
+  private clocks: SourceContractClockBinding | undefined;
   private replaced = new Set<number>();
   constructor(
     privateChanged: (targets: ReadonlySet<number>) => void = () => {},
@@ -119,7 +121,11 @@ export class MissionStateLayer {
   }
   clear() {
     this.epoch++;
-    for (const { player } of this.players.values()) player.dispose();
+    for (const [id, { player }] of this.players) {
+      this.clocks?.detachPhysical(id);
+      player.dispose();
+    }
+    this.clocks = undefined;
     this.players.clear();
     this.root.clear();
     this.replaced = new Set();
@@ -131,9 +137,11 @@ export class MissionStateLayer {
     contract: MissionStateContract,
     library: FileSystemDirectoryHandle,
     source: MissionStateSource,
+    clocks?: SourceContractClockBinding,
   ): Promise<void> {
     if (this.disposed) throw new Error("Mission state layer is disposed");
     this.clear();
+    this.clocks = clocks;
     const epoch = this.epoch;
     const current = () => !this.disposed && epoch === this.epoch;
     const frozen = structuredClone(contract),
@@ -164,6 +172,7 @@ export class MissionStateLayer {
     try {
       await Promise.all(
         resolved.map(async (row) => {
+          const token = clocks?.physicalToken(row.binding.id);
           let player: StateAppearancePlayer | undefined;
           try {
             const asset = await loader.load(row.binding.source);
@@ -171,7 +180,7 @@ export class MissionStateLayer {
             if (!current()) return;
             const template = captureLoadedStateAppearance(asset);
             if (!template) throw new Error("Pinned state model has no animation clips");
-            player = new StateAppearancePlayer(template);
+            player = new StateAppearancePlayer(template, !!clocks);
             // Validate every declared action before replacing the existing source target.
             for (const action of row.binding.actions) player.select(action.clip, action.timing);
             const action = row.binding.actions.find((a) => a.action === row.action)!;
@@ -186,6 +195,17 @@ export class MissionStateLayer {
               actionPosition: row.actionPosition,
               representation: row.binding.representation,
             };
+            if (clocks && token) {
+              const consumer = player;
+              clocks.attachPhysical(
+                row.binding.id,
+                {
+                  internallyPlaying: () => consumer.playing,
+                  sampleExternalTick: (tick) => consumer.sampleExternalTick(tick),
+                },
+                token,
+              );
+            }
             this.players.set(row.binding.id, { player, binding: row.binding });
             this.root.add(player.object);
             this.replaced.add(row.binding.target_index);
@@ -207,15 +227,23 @@ export class MissionStateLayer {
     const binding = entry.binding.actions.find((a) => a.action === action);
     if (!binding) throw new Error(`Mission state missing action ${action}`);
     entry.player.select(binding.clip, binding.timing);
+    this.clocks?.seekPhysical(id, 0);
   }
   seek(id: string, tick: number) {
     const entry = this.players.get(id);
     if (!entry) throw new Error(`Mission state missing instance ${id}`);
-    entry.player.pause();
-    entry.player.seek(tick);
+    if (this.clocks) this.clocks.seekPhysical(id, tick);
+    else {
+      entry.player.pause();
+      entry.player.seek(tick);
+    }
   }
   setPlaying(playing: boolean) {
-    for (const { player } of this.players.values()) {
+    for (const [id, { player }] of this.players) {
+      if (this.clocks) {
+        this.clocks.setPhysicalPlaying(id, playing);
+        continue;
+      }
       if (playing) player.play();
       else player.pause();
     }
@@ -224,6 +252,7 @@ export class MissionStateLayer {
     let changed = false;
     if (this.root.visible)
       for (const { player } of this.players.values()) {
+        if (player.externallyClocked) continue;
         const tick = player.tick;
         player.advance(seconds);
         changed ||= tick !== player.tick;

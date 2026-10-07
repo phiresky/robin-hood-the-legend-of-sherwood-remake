@@ -59,7 +59,10 @@ export default function StatePreview(props: {
     );
   };
   function applyMode(view: "art" | "initial" | "applied", familyId: string) {
-    if (loopContract() || patchContract()) props.viewport.setStatePresentationMode("native-art");
+    if (loopContract() || patchContract())
+      props.viewport.setStatePresentationMode(
+        view === "initial" && loopContract()?.physical ? "physical" : "native-art",
+      );
     else if (view === "art") props.viewport.setDeliveredStateMode("native-art");
     else {
       props.viewport.setDeliveredStateMode("physical-endpoint");
@@ -88,11 +91,7 @@ export default function StatePreview(props: {
         loaded.kind === "native-patch"
           ? await props.viewport.setNativePatchPresentation(loaded.contract, root, loaded.source)
           : loaded.kind === "native-loop"
-            ? await props.viewport.setNativeArtPresentation(
-                loaded.contract.native,
-                root,
-                loaded.source,
-              )
+            ? await props.viewport.setNativeLoopPresentation(loaded.contract, root, loaded.source)
             : await props.viewport.setStateDelivery(loaded.contract, root, loaded.source);
       if (!ready || context !== generation || attempt !== request) return;
       if (loaded.kind === "native-patch") {
@@ -236,7 +235,7 @@ export default function StatePreview(props: {
     }
     if (loopContract()) {
       props.viewport.setNativeArtPlaying(false);
-      props.viewport.seekNativeArt(0);
+      props.viewport.seekNativeArt(0, loopContract()?.physical ? family() : undefined);
       setTick(0);
       setPlaying(false);
       return;
@@ -276,7 +275,9 @@ export default function StatePreview(props: {
             {patchContract()
               ? "Original artwork previews this change. Physical states are not included in this preview."
               : loopContract()
-                ? "Original artwork repeats the selected animation. Nearby animation keeps its own timing."
+                ? loopContract()?.physical
+                  ? "Original artwork and 3D animation share timing. The 3D preview does not yet reproduce all overlaps with moving characters and effects."
+                  : "Original artwork repeats the selected animation. Nearby animation keeps its own timing."
                 : "Original artwork plays the recorded transition. 3D views show the object when present in each state."}
           </p>
           <Show when={(contract()?.families.length ?? 0) > 1}>
@@ -301,14 +302,18 @@ export default function StatePreview(props: {
             View
             <select
               aria-label="State preview view"
-              disabled={!!loopContract() || !!patchContract()}
+              disabled={(!!loopContract() && !loopContract()?.physical) || !!patchContract()}
               value={mode()}
               onChange={(event) => {
-                props.viewport.setDeliveredStatePlaying(false);
+                if (loopContract()) props.viewport.setNativeArtPlaying(false);
+                else props.viewport.setDeliveredStatePlaying(false);
                 setMode(event.currentTarget.value as "art" | "initial" | "applied");
               }}
             >
               <option value="art">Original artwork</option>
+              <Show when={loopContract()?.physical}>
+                <option value="initial">3D animation</option>
+              </Show>
               <Show when={contract()}>
                 <option value="initial">3D initial</option>
                 <option value="applied">3D final</option>
@@ -324,7 +329,7 @@ export default function StatePreview(props: {
           >
             <p class="hint">No object is present in this state.</p>
           </Show>
-          <Show when={mode() === "art"}>
+          <Show when={mode() === "art" || !!loopContract()?.physical}>
             <div class="actions">
               <button type="button" onClick={play}>
                 {playing() ? "Pause" : "Play"}
@@ -349,7 +354,10 @@ export default function StatePreview(props: {
                     setPatchStarted(true);
                   } else if (loopContract()) {
                     props.viewport.setNativeArtPlaying(false);
-                    props.viewport.seekNativeArt(t);
+                    props.viewport.seekNativeArt(
+                      t,
+                      loopContract()?.physical ? family() : undefined,
+                    );
                   } else {
                     props.viewport.setDeliveredStatePlaying(false);
                     props.viewport.seekDeliveredState(family(), t);

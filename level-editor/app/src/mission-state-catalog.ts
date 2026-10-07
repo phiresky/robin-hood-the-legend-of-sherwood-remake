@@ -10,7 +10,7 @@ import {
   type StateDeliveryContract,
 } from "../../shared/src/state-delivery.ts";
 import { verifyNativePresentationSource } from "./native-state-presentation.ts";
-import type { MissionStateSource } from "./mission-state-layer.ts";
+import { resolveMissionStateTargets, type MissionStateSource } from "./mission-state-layer.ts";
 
 interface PinnedJson {
   path: string;
@@ -135,6 +135,8 @@ export async function loadMissionStatePreview(
     camera: { kind: "oblique-orthographic", elevation_deg: native.camera_elevation_deg },
   };
   await verifyNativePresentationSource(native, source);
+  if (loop && (contract as NativeLoopPreviewContract).physical)
+    await resolveMissionStateTargets((contract as NativeLoopPreviewContract).physical!, source);
   if (patch)
     return { kind: "native-patch", contract: contract as NativePatchPreviewContract, source };
   return loop

@@ -1,3 +1,4 @@
+import type { SourceContractClockBinding } from "./source-contract-clock-binding.ts";
 import { decode } from "fast-png";
 import {
   nativePresentationFrame,
@@ -258,6 +259,8 @@ export class NativeStatePresentation {
   private backgrounds = new Map<string, { phase: NativeBackgroundPhase; offset: number }>();
   private seconds = 0;
   private currentTick = 0;
+  private externalClock = false;
+  private externalSignature = "";
   private playing = false;
   private revision = 0;
   private cached: { revision: number; pixels: NativePixels } | undefined;
@@ -283,6 +286,8 @@ export class NativeStatePresentation {
     this.patches.clear();
     this.verifiedDisjointPair = undefined;
     this.currentTick = 0;
+    this.externalClock = false;
+    this.externalSignature = "";
     this.seconds = 0;
     this.playing = false;
     this.cached = undefined;
@@ -407,9 +412,11 @@ export class NativeStatePresentation {
     return true;
   }
   setPlaying(value: boolean) {
+    if (this.externalClock) throw new Error("External source clock owns playback");
     this.playing = value;
   }
   setElementState(id: string, active: boolean, tick = 0) {
+    if (this.externalClock) throw new Error("External source clock owns element state");
     if (!this.contract?.elements.some((e) => e.id === id))
       throw new Error(`Unknown native preview element: ${id}`);
     if (typeof active !== "boolean" || !Number.isSafeInteger(tick) || tick < 0)
@@ -440,6 +447,7 @@ export class NativeStatePresentation {
     this.revision++;
   }
   seek(tick: number, id?: string) {
+    if (this.externalClock) throw new Error("External source clock owns seek");
     if (!this.contract) throw new Error("Native artwork preview is not loaded");
     if (!Number.isSafeInteger(tick) || tick < 0) throw new Error("Invalid native preview tick");
     this.playing = false;
@@ -454,10 +462,46 @@ export class NativeStatePresentation {
     }
     this.revision++;
   }
+  /** Atomic read-only clock consumption; patch activation keeps its separate timing path. */
+  sampleExternalClocks(rows: ReturnType<SourceContractClockBinding["snapshot"]>, focus: string) {
+    if (!this.contract) throw new Error("Native artwork preview is not loaded");
+    if (this.contract.patch_states?.length || this.contract.background_states?.length)
+      throw new Error("Loop clock snapshots cannot own patch timing");
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    if (byId.size !== rows.length || rows.length !== this.contract.elements.length)
+      throw new Error("External source clock inventory differs");
+    for (const e of this.contract.elements) {
+      const r = byId.get(e.id);
+      if (
+        !r ||
+        r.source.kind !== e.source.kind ||
+        r.source.index !== e.source.index ||
+        r.source.sha256 !== e.source.sha256 ||
+        !Number.isSafeInteger(r.tick) ||
+        r.tick < 0
+      )
+        throw new Error("External source clock identity differs");
+    }
+    const selected = byId.get(focus);
+    if (!selected) throw new Error("Unknown loop clock focus");
+    const signature = JSON.stringify(rows.map((r) => [r.id, r.tick, r.active, r.playing]));
+    if (signature === this.externalSignature) return false;
+    this.externalClock = true;
+    this.externalSignature = signature;
+    this.currentTick = selected.tick;
+    this.seconds = 0;
+    this.playing = rows.some((r) => r.active && r.playing);
+    for (const r of rows) {
+      this.offsets.set(r.id, r.tick - this.currentTick);
+      this.activeElements.set(r.id, r.active);
+    }
+    this.revision++;
+    return true;
+  }
   advance(seconds: number) {
     if (!Number.isFinite(seconds) || seconds < 0)
       throw new Error("Invalid native preview elapsed time");
-    if (!this.playing || !this.contract) return false;
+    if (this.externalClock || !this.playing || !this.contract) return false;
     this.seconds += seconds;
     const ticks = Math.floor(this.seconds * 25 + 1e-9);
     if (!ticks) return false;
