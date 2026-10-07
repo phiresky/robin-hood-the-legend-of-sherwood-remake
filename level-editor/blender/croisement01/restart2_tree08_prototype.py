@@ -67,6 +67,21 @@ for trace_id in selected:
  faces.extend([tuple(start+j for j in reversed(range(sides))),tuple(start+(len(path)-1)*sides+j for j in range(sides))]);section_ranges.append(dict(trace_id=trace_id,vertex_start=start,vertex_count=len(path)*sides))
 mesh=bpy.data.meshes.new('Connected source scaffold sections');mesh.from_pydata(verts,[],faces);mesh.update();obj=bpy.data.objects.new('Tree08 private wood scaffold - unresolved crossings',mesh);scene.collection.objects.link(obj)
 obj['scope']=f'Initial wood geometry hypothesis only;{len(selected)} separate swept source sections, junction overlaps not welded; no crown or terrain';obj['source_node']='scenery-tree08-wood-prototype'
+if revision>=4:
+ sys.path.insert(0,str(Path(__file__).parent))
+ from restart2_tree08_correction import build_sections,consolidate,DEPTH_FAMILIES
+ prior_misses=json.loads((R/'tree08-wood-prototype-v3/coverage.json').read_text())['miss_native_pixels']
+ assert len(prior_misses)==207,'Bind corrected source obligations to reviewed v3'
+ corrected,miss_assignment=build_sections(trace['polylines'],selected,prior_misses)
+ guard(32*1024**2)
+ bpy.data.objects.remove(obj,do_unlink=True);bpy.data.meshes.remove(mesh)
+ obj=consolidate(bpy,scene.collection,corrected);mesh=obj.data
+ obj['source_node']='scenery-tree08-wood-prototype';obj['scope']='Initial wood trial; coherent main volume, held crossings unmerged, source and terrain review pending'
+ verts=[v.co.copy() for v in mesh.vertices];faces=[tuple(f.vertices) for f in mesh.polygons]
+ section_ranges=[dict(trace_id=q['trace_id'],held_crossing=q['held_crossing']) for q in corrected]
+ save_json('correction-plan-executed.json',dict(depth_families=DEPTH_FAMILIES,source_center_projection_preserved=True,previous207miss_obligations=miss_assignment,held_crossing_remesh_excluded=True,basal_continuation='Inferred rounded burial volume; no receiver/contact proof',post_remesh_source_coverage_required=True))
+ estimate=len(mesh.vertices)*48+len(mesh.loops)*24+len(mesh.polygons)*40+2*1024**2
+ assert estimate<=32*1024**2,('Conservative serialized model estimate exceeds cap',estimate)
 uv=mesh.uv_layers.new(name='Native source projection')
 for loop in mesh.loops:
  p=mesh.vertices[loop.vertex_index].co;uv.data[loop.index].uv=((p.x-331)/446,1-(-p.y*s-p.z*c-11)/461)
@@ -79,9 +94,9 @@ for yy,xx in np.argwhere(core):
  else:hit_count+=1
 save_json('coverage.json',dict(core_pixels=int(core.sum()),covered=hit_count,misses=len(miss),miss_native_pixels=miss,claim='Initial scaffold coverage only; no permission to discard uncovered native wood. Exact known-core texture packed unchanged.',source_rgba_sha256=hashlib.sha256(image_path.read_bytes()).hexdigest()))
 # Graph connectivity is distinct from welded physical connectivity.
-save_json('construction.json',dict(status='PRIVATE INITIAL PROTOTYPE; not final geometry or contact proof',selected_trace_count=len(selected),vertices=len(verts),faces=len(faces),sections=section_ranges,source_plan_sha256=hashlib.sha256((R/'tree08-topology-plan-v1/plan.json').read_bytes()).hexdigest(),root_terrain_anchors=plan['root_terrain_anchors'],limitations=['Source graph connected; swept sections overlap at intended junctions but are not welded.','Projected crossings8/14 remain hypotheses; no false ownership resolution.','Disconnected tips not joined. Unselected source traces retained externally.','Root depth is initial slope hypothesis without terrain receiver/contact proof.','Only reviewed bark-core RGB is displayed; other pixels remain neutral, no leaf synthesis.','No crown, terrain, gameplay or canonical changes.']))
+save_json('construction.json',dict(status='PRIVATE INITIAL PROTOTYPE; not final geometry or contact proof',selected_trace_count=len(selected),vertices=len(verts),faces=len(faces),sections=section_ranges,source_plan_sha256=hashlib.sha256((R/'tree08-topology-plan-v1/plan.json').read_bytes()).hexdigest(),root_terrain_anchors=plan['root_terrain_anchors'],limitations=[('Main family consolidated; disputed crossing sections remain unwelded.' if revision>=4 else 'Source graph connected; swept sections overlap at intended junctions but are not welded.'),'Projected crossings8/14 remain hypotheses; no false ownership resolution.','Disconnected tips not joined. Unselected source traces retained externally.','Root depth is initial slope hypothesis without terrain receiver/contact proof.','Only reviewed bark-core RGB is displayed; other pixels remain neutral, no leaf synthesis.','No crown, terrain, gameplay or canonical changes.']))
 guard(32*1024**2);bpy.ops.wm.save_as_mainfile(filepath=str(out/'model.blend'),compress=True);assert (out/'model.blend').stat().st_size<=32*1024**2
 # Small native-camera diagnostic only; all8 follows coverage/construction review.
 scene.render.engine='CYCLES';scene.cycles.samples=4;scene.cycles.device='CPU';scene.render.resolution_x=446;scene.render.resolution_y=461;scene.render.resolution_percentage=100;scene.render.image_settings.file_format='PNG';scene.world=bpy.data.worlds.new('Neutral world');scene.world.color=(.08,.08,.08)
-camdata=bpy.data.cameras.new('Original game camera');cam=bpy.data.objects.new('Original game camera',camdata);scene.collection.objects.link(cam);camdata.type='ORTHO';camdata.ortho_scale=461;target=right*554+down*241.5;cam.location=target+ray*1500;cam.rotation_euler=(-ray).to_track_quat('-Z','Y').to_euler();scene.camera=cam;scene.render.filepath=str(out/'native-prototype.png');guard(4*1024**2);bpy.ops.render.render(write_still=True)
+camdata=bpy.data.cameras.new('Original game camera');cam=bpy.data.objects.new('Original game camera',camdata);scene.collection.objects.link(cam);camdata.type='ORTHO';camdata.clip_end=10000;camdata.ortho_scale=461;target=right*554+down*241.5;cam.location=target+ray*1500;cam.rotation_euler=(-ray).to_track_quat('-Z','Y').to_euler();scene.camera=cam;scene.render.filepath=str(out/'native-prototype.png');guard(4*1024**2);bpy.ops.render.render(write_still=True)
 save_json('saved-receipt.json',dict(model_sha256=hashlib.sha256((out/'model.blend').read_bytes()).hexdigest(),model_bytes=(out/'model.blend').stat().st_size,total_bytes=sum(p.stat().st_size for p in out.rglob('*') if p.is_file()),threads=2,coverage=[hit_count,int(core.sum())],canonical_unchanged=True));print('TREE08 PROTOTYPE COMPLETE',hit_count,int(core.sum()),flush=True)
