@@ -96,10 +96,12 @@ export class NativeActorComposition {
     for (const element of loop.orderOnly ?? []) {
       if (!element.active || element.frames.length !== 0)
         throw new Error("Order-only effect must be active with explicitly empty artwork");
-      const identity = `${element.source.kind}:${element.source.index}`;
+      const identity = `${element.source.kind}:${element.source.index}`,
+        creation = rank(identity);
+      if (this.authority.backgroundEffects.has(identity)) continue;
       ordered.push({
         identity,
-        rank: rank(identity),
+        rank: creation,
         order: element.display_order,
         mapPosition: element.sort_position,
         polyline: element.polyline,

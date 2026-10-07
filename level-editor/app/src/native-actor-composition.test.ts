@@ -140,3 +140,26 @@ test("explicit empty active effects retain ordering identity without a fabricate
   );
   composition.dispose();
 });
+
+test("pixel-empty background effects never enter the foreground polyline merge", () => {
+  const composition = new NativeActorComposition({
+    epoch: 3,
+    mission: "S03_FoB_MP",
+    creationRanks: new Map([
+      ["soldiers:0", 40],
+      ["mission-target:4", 104],
+    ]),
+    backgroundEffects: new Set(["mission-target:4"]),
+  });
+  const element = {
+    ...loop.draws[0]!.element,
+    polyline: [
+      [0, 50],
+      [100, 50],
+    ] as [number, number][],
+  };
+  const prepared = composition.prepare({ ...loop, draws: [], orderOnly: [element] }, snapshot);
+  assert.deepEqual(prepared.identities, ["soldiers:0"]);
+  assert.equal(prepared.draws.length, 1);
+  composition.dispose();
+});
