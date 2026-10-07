@@ -1,3 +1,24 @@
+## Hub approval and texture preparation
+
+The user approved all32 cards/38 scopes in the grouped hub. C3's exact subset
+is archived in `approved-hub-v17-v23-plus-two-v1/`:14 member scopes,13 effective
+assets and372 rehashed files. Apply originalTree03 approval first, then the
+exactleaf2787 derivative. Wholebank remains HOLD. New appearance is not approved.
+
+The approved trio receiver is prepared at exact1408x960 with17,447 editable
+pixels and two approved observed floor references. Its four-vertex/two-triangle
+unlit planar geometry and content-addressed external index buffer were verified.
+Input/solid/mask/reference images were inspected. The repository OpenRouter
+request exited with `fetch failed`; the escalation retry was withdrawn after
+an inaccessible subagent approval prompt. No generation result or process
+remains. Prior API authorization persists; coordinator resolves the network gate.
+
+`restart2_prepare_hub_wood.py` is ready for a boundedTree11 preparation lane.
+It preserves world triangles/UV/materials, protected crowns and sourceRGBA.
+Use approvedTree05 barkv2 andTree06 barkv3. Trees02/08/09 need packed-material
+binding checks; Trees12/14 retain prior approved bark fill and new native static
+crowns. Queue/status files remain private; no canonical writes or API retry.
+
 ## Native-visibility CPU correction ready
 
 `bank-whole-geometry-plan-v4/geometry.json` fixes the failed bank sightlines.
