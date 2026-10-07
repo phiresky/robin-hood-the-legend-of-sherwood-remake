@@ -1108,7 +1108,7 @@ fn plan_interactive_pacing(
         runtime
             .multiplayer()
             .timing()
-            .deadline_ms(runtime.frame_number())
+            .pacing_deadline_ms(runtime.frame_number(), frame_end_ms)
     } else {
         None
     };

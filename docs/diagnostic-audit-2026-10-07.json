@@ -146,5 +146,57 @@
     "Replay recovery schema 66: full unit, integration and documentation suites passed for robin_engine, robin_rs (audio,multiplayer), robin_replay_format, robin_run_protocol, robin_replay_verifier and robin_highscores (test-support, including 17 router tests). Client suite passed 2335 tests with 26 documented ignores. Regression covers forward/backward exact-state playback through JSONL and compact bytes, required network hashes, rejection of save-load fixups, production network/rollback recording, and schema 64/65 JSONL upgrades. An earlier compilation ran out of disk space; cargo clean of this worktree robin_rs build outputs freed 28.2 GiB and the rerun passed.",
     "Schema-66 native robin build and formatting/diff checks passed. Built export_runtime_contract, regenerated wasm-www/runtime-contract.json from compiled constants (network 67, replay 66, shipping datadir 23), then passed its --check gate. The checked-in contract previously advertised network 64, replay 56 and shipping datadir 20. No production deployment was performed.",
     "Speech rollback correction: robin_engine unit suite passed 4379 tests (29 ignored); robin_rs audio,multiplayer unit suite passed 2336 tests (26 ignored). Integration, example and documentation tests passed after updating the structural reconstruction routing table to inspect the shared complete-frame helper. Regressions cover stale tick and paused speech, a late command introducing speech into a previously silent frame, strict replay of corrected history, and transactional failure for both dense and sparse reconstruction."
-  ]
+  ],
+  "follow_up_2026_10_08": {
+    "database_total": 259,
+    "latest_report_received_at_utc": "2026-10-07T23:09:44Z",
+    "reported_build": "c7bc7c05569431e6b02dbc4b1225946c13e5ce58",
+    "issues": [
+      {
+        "issue": "Snapshot/campaign transition byte comparison rejects valid maps",
+        "report_ids": [
+          "909cd6983072",
+          "ce01110c3a90",
+          "ef6e2d96f437"
+        ],
+        "status": "fixed_in_source_report_retest_pending",
+        "finding": "Save JSON and native snapshots contain unordered property maps. Re-encoding is not a canonical identity check. Keep typed save schema/mission validation and compare deterministic state hashes across campaign snapshot attachment. Tests pass nonempty property maps through prepare, acknowledgement, matching commit and exact restored state."
+      },
+      {
+        "issue": "Cached BeginSim during a prepared transition",
+        "report_ids": [
+          "e68154a613b4"
+        ],
+        "status": "fixed_in_source_report_retest_pending",
+        "finding": "Reconnect queued PrepareSnapshotTransition followed by cached BeginSim. The latter asserted when a transition payload was parked. Suppress fresh/cached server start barriers while a transition is pending; clients retain the prepared hold when a cached barrier arrives. Matching commit remains mandatory."
+      },
+      {
+        "issue": "Multiplayer slowdown and Ambush second-scroll freeze",
+        "report_ids": [
+          "909cd6983072",
+          "e68154a613b4"
+        ],
+        "status": "pacing_defects_fixed_exact_mission_report_unverified",
+        "finding": "Adjacent client diagnostics show 964 ms and 1308 ms pacing sleeps. Full corrective waits blocked network ingress and modal input. A regression reproduced the 964 ms wait. Limit waits to 40 ms, bound prediction to one host clock publication interval, and rebase the local clock while shared story acknowledgement is pending. Tests model long pauses and delayed host clocks. Reports do not identify the exact Godfather slowdown or Ambush second-scroll session; live two-player confirmation remains pending."
+      },
+      {
+        "issue": "Excess dependency DEBUG logging",
+        "report_ids": [
+          "ce01110c3a90",
+          "ef6e2d96f437"
+        ],
+        "status": "fixed_in_source",
+        "finding": "Geometry dependency DEBUG output accounts for over 32 MB of each 33.5 MB diagnostic ring. Filter the synchronous diagnostic/file layer to game DEBUG events, frame timings and dependency WARN/ERROR. The stderr environment filter alone did not limit this independent layer."
+      },
+      {
+        "issue": "York soldier loading references unmappable sector slot 168",
+        "report_ids": [
+          "078c49693055"
+        ],
+        "status": "not_reproduced_with_local_gog_assets",
+        "finding": "Host loading S05_Yrk_EC fails while resolving a soldier position. Context lists quick-mission and other local overlays; no replay or affected mission assets were attached. An isolated authored-mission construction test successfully loaded S05_Yrk_EC with local full GOG assets and a two-player co-op configuration. The affected installation remains unavailable; this does not establish whether its content differs or another runtime condition caused the report."
+      }
+    ],
+    "validation": "Client unit suite: 2221 passed, 21 ignored. Native robin binary build, formatting and diff checks passed. Authored full-GOG Godfather and Save Stuteley startup scroll tests passed for both simulated peers. A separate temporary York construction test passed. Live two-player reproduction of the reported Ambush scroll freeze and Godfather slowdown remains pending."
+  }
 }

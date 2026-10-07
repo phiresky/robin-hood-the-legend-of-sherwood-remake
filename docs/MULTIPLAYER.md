@@ -217,6 +217,12 @@ validation. If reconstruction still fails, a client requests a host snapshot.
 This is predictive rollback, not strict lockstep. Clients are paced close to
 the host clock but do not wait for every possible input before each tick.
 
+Client pacing waits are capped at one 40 ms tick so clock corrections cannot
+block network ingress or modal acknowledgements. Prediction stops one hash
+publication interval beyond the newest host clock sample until a fresh sample
+arrives. Shared story waits rebase the local clock without advancing its host
+frame watermark, so reading a scroll does not create fast-forward catch-up debt.
+
 The host broadcasts a pre-tick state hash every 25 frames. Peers compare at the
 same frame boundary used by replay recording. Hash mismatch is an error and
 must not be repaired by silently adopting a new default Engine.
