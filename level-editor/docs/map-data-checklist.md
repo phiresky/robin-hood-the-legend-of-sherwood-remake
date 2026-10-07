@@ -226,9 +226,10 @@ disable physical navigation at 37 degrees. The latest unpublished candidate
 emits physical navigation at all eight placements but fails all 48 actor routes,
 including the twelve routes previously using projected navigation.
 
-The current library-wide audit (`gameplay-coverage-3RzSpw`) finds 59 of 1,279
-indexed assets without gameplay definitions. Of these, 31 are placed: 29 in
-Croisement02, one in Croisement01, and Croisement03's stream fallen log.
+The current library-wide audit (`gameplay-coverage-cykIvk`) finds 34 of 1,279
+indexed assets without gameplay definitions. Six are placed: Croisement02's
+upright fences 94/95 and supplemental wood 09/44, Croisement01 tree 03, and
+Croisement03's stream fallen log.
 The timber bridge and both ferns have published draft definitions. These counts
 reflect the current asset inventory, not gameplay certification.
 
@@ -308,6 +309,12 @@ including both ferns, and all nine transition checks pass. Shrubs 62–67 are al
 published as compact drafts after sixty placement/native checks and exact bitmap
 comparisons with their previous definitions. Croisement02 retains all six without
 receiver omissions and exports 28 masks.
+The next 25 foliage definitions are also published after 250 placement/native
+checks. The combined Croisement02 export contains 52 masks and passes native
+construction and nine transition checks. Shrub 77 is still omitted with a
+receiving-surface warning in that saved scene, although its isolated terrain
+placements pass. Rendered bitmap edges and approximate canopy boundaries remain
+open; definition presence is not gameplay certification.
 The Croisement03 timber bridge was developed from an asset-only deck candidate.
 Ten rotated/elevated exports join its two end edges to matching terrain and
 reject twenty one-unit height mismatches; all ten native construction checks

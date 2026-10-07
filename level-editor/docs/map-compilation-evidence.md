@@ -10133,3 +10133,41 @@ rendered character/projectile contact is unverified. The subsequent inventory
 `gameplay-coverage-3RzSpw` finds 59 missing definitions among 1,279 assets, with
 31 placed in saved scenes. Only the stream fallen log remains without gameplay
 in Croisement03; definition presence does not establish full map parity.
+
+### Remaining Croisement02 foliage draft publication
+
+Four compact stages cover 25 previously missing foliage definitions:
+
+| Stage | Assets | Placement/native cases |
+|---|---|---:|
+| `fern-gameplay-IiW8JD` | Shrubs 70–72 and 75–77 | 60 |
+| `fern-gameplay-vn3AlI` | Shrubs 78–83 | 60 |
+| `fern-gameplay-fcZjIO` | Shrubs 84–89 | 60 |
+| `fern-gameplay-gIA8lV` | Shrubs 90–93, canopy fringe 22, northwest boundary shrub 54, west shrub bank | 70 |
+
+All 250 exports pass native bitmap decoding, mask layer registration, obstacle
+link checks and geometry construction; all reject receiving ground displaced
+down by one unit. Shrubs 70–72 and 75 additionally match the earlier clipped
+bitmaps exactly across forty placements, with equal source model hashes.
+The definitions retain 226,389 source triangles instead of 4,574,110 expanded
+triangles; their serialized mask metadata totals 184,369,042 bytes. This remains
+a material storage cost, despite the reduction in geometry expansion.
+
+Combined stage `foliage-combined-qUMEcd` produces saved-scene export
+`saved-map-exports-qR9I0v`: 52 masks, successful native construction and nine
+successful control apply/reset checks. Shrub 77 still has no matching receiving
+surface in its saved placement and is omitted with an explicit warning. Other
+warnings include four missing wooden/fence definitions and collapsed movement
+holes; these successes do not establish full scene parity.
+
+The four `compact-foliage-publish-<stage suffix>` reports install all 25 definitions
+and update saved scene pins. Each retains warnings for approximate canopy
+boundaries and unverified rendered character/projectile contact. No visual
+parity claim is made for this batch.
+
+Post-publication inventory `gameplay-coverage-cykIvk` finds 34 missing definitions
+among 1,279 assets, six placed: Croisement02 fences 94/95 and supplemental wood
+09/44, Croisement01 tree 03, and the Croisement03 stream fallen log. Twenty-six
+missing library assets have possible component owners but still need local
+geometry/control review. Shrub 77's receiving failure is a separate known issue
+and is not included in the missing-definition count.
