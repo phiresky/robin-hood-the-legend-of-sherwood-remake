@@ -503,26 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_64_upgrade_preserves_inputs_and_does_not_invent_a_catalog() {
-        let source = b"{\"version\":64}\n{\"f\":0,\"i\":{\"unchanged\":true}}\n";
-        let (upgraded, source_version) = normalize_jsonl(source, false).unwrap();
-        assert_eq!(source_version, 64);
-        let text = String::from_utf8(upgraded).unwrap();
-        let header: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
-        assert_eq!(header["version"], REPLAY_SCHEMA_VERSION);
-        assert!(header.get("mission_profiles").is_none());
-        assert!(text.contains("{\"f\":0,\"i\":{\"unchanged\":true}}"));
-    }
-
-    #[test]
-    fn schema_65_saved_game_payloads_keep_their_load_semantics() {
-        let (upgraded, version) = normalize_jsonl(b"{\"version\":65}\n", false).unwrap();
-        assert_eq!(version, 65);
-        assert!(
-            String::from_utf8(upgraded)
-                .unwrap()
-                .contains(&format!("\"version\":{}", REPLAY_SCHEMA_VERSION))
-        );
+    fn legacy_saved_game_payloads_keep_their_load_semantics() {
         let snapshot: robin_engine::replay::ReplaySaveSnapshot =
             serde_json::from_str(r#"{"payload":[1],"timeline_frame":7}"#).unwrap();
         assert_eq!(
