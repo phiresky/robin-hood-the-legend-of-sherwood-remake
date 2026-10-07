@@ -1,7 +1,7 @@
 """Private source-led winch components; no runtime coupling or source material assignment."""
 import hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/winch-geometry-v3'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/winch-geometry-v4'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
@@ -28,18 +28,30 @@ def beam(name,a,b,r,m=wood):
  a,b=Vector(a),Vector(b);bpy.ops.mesh.primitive_cylinder_add(vertices=8,radius=r,depth=(b-a).length,location=(a+b)/2);o=own(bpy.context.object,name,m);o.rotation_euler=(b-a).to_track_quat('Z','Y').to_euler();return o
 # Floor is obstacle98 at90.00101. Frame footprint and hidden depth are inferred.
 for y in (1055,1064):
- beam('Angled left frame brace',world(2391,y,90.00101),world(2398,y,113),1.8)
- beam('Angled right frame brace',world(2412,y,90.00101),world(2405,y,113),1.8)
- beam('Frame top saddle',world(2397,y,113),world(2407,y,113),2.0)
+ top=110.5 if y==1055 else 113
+ beam('Angled left frame brace',world(2391,y,90.00101),world(2398,y,top),2.2)
+ beam('Angled right frame brace',world(2412,y,90.00101),world(2405,y,top),2.2)
+ beam('Frame top saddle',world(2397,y,top),world(2407,y,top),2.0)
  beam('Frame foot rail',world(2390,y,91),world(2413,y,91),1.7)
 center=world(2410,1064,104);rear=world(2402,1050,104);axle=(center-rear).normalized();lateral=axle.cross(Vector((0,0,1))).normalized()
 beam('Broad timber winding drum',rear,center,4.3)
 beam('Crank axle pin',rear-axle*2,center+axle*2,1.8,iron)
 for i in range(8):
  angle=i*math.tau/8;end=center+(lateral*math.cos(angle)+Vector((0,0,1))*math.sin(angle))*17;crank.append(beam('Crank spoke',center,end,.9))
-for x,y,lo,hi in ((2398,1059,113,177),(2410,1064,111,182)):
- for n,z in enumerate([lo+j*1.7 for j in range(math.ceil((hi-lo)/1.7))]):
-  bpy.ops.mesh.primitive_torus_add(major_segments=8,minor_segments=4,major_radius=.85,minor_radius=.4,location=world(x,y,z));o=own(bpy.context.object,'Suspended chain link',iron);o.rotation_euler=(math.pi/2,0,n%2*math.pi/2)
+# Native enclosed openings constrain front-link centers. Link depth and
+# alternate edge-facing links are inferred, with source holes kept explicit.
+for y,centers,base_x in ((1059,[5.5,12.5,19.5,26.5,33.5,40.5,47.5,54.5,60.5],2400.5),
+                       (1064,[7.5,14.5,21,27.5,34,40,46.5,53.5,60.5],2410.0)):
+ entries=[(v,False) for v in centers]+[((a+b)/2,True) for a,b in zip(centers,centers[1:])]
+ for sy,edge in entries:
+  x=base_x+(0.5 if y==1059 else 1.0)*max(0,min(1,(sy-28)/25))
+  z=y-(882+sy)
+  bpy.ops.mesh.primitive_torus_add(major_segments=16,minor_segments=6,major_radius=1.45,minor_radius=.55,location=world(x,y,z))
+  o=own(bpy.context.object,'Suspended chain link',iron)
+  # Torus local XY becomes vertical; its smaller edge profile leaves the
+  # adjacent front-facing opening visible from the native camera.
+  o.scale.y=1.2 if edge else 1.4
+  o.rotation_euler=(math.pi/2,0,math.pi/2 if edge else 0)
 # The descending round part is preserved as a full ring with crossed spokes.
 wheel_center=world(2398,1059,170)
 bpy.ops.mesh.primitive_torus_add(major_segments=20,minor_segments=6,major_radius=7.5,minor_radius=1.3,location=wheel_center);o=own(bpy.context.object,'Travelling round part rim',wood);o.rotation_euler.x=math.pi/2;moving.append(o)
