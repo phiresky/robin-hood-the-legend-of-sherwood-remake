@@ -24,14 +24,29 @@ def main():
  def point(x,y):return Vector((x,base_y,(590-y)/COS))
  trace=[(215,589,28),(213,570,28),(213,535,24),(212,480,25),(210,410,26),(213,350,28),(223,300,24),(226,240,23),(232,160,22),(234,80,22),(232,0,23),(230,-60,22)]
  body=tube('Foreground continuous main trunk',[point(x,y) for x,y,r in trace]+[Vector((230,base_y,880)),Vector((230,base_y,990))],[r for x,y,r in trace]+[20,9]);body['defer_union']=True;rng=random.Random(104)
+ if args.revision>=2:
+  domain=np.asarray(wood)>0;xx=np.arange(domain.shape[1])+81
+  for sy in range(domain.shape[0]):
+   if sy<240:domain[sy]&=(xx>=200)&(xx<=244)
+   elif sy<350:domain[sy]&=xx>=190
+  fit_native_width(body,domain,'west-cut',x0=81,y0=0)
+
  for label,branch in [('Left high fork',[(216,342,16),(209,270,12),(201,190,10),(190,110,8),(180,40,8),(182,-50,9)]),('Right high fork',[(224,275,16),(246,215,11),(257,145,10),(272,75,10),(282,20,10),(283,-55,11)]),('Broken left branch',[(216,358,21),(181,342,17),(146,325,13),(129,313,12),(125,293,12),(118,281,12),(101,280,9),(83,277,6)])]:
-  union(body,tube(label,[point(x,y) for x,y,r in branch],[r for x,y,r in branch]))
+  coords=[point(x,y) for x,y,r in branch];radii=[r for x,y,r in branch]
+  if args.revision>=2 and label!='Broken left branch':
+   coords.extend([Vector((branch[-1][0],base_y,870)),Vector((branch[-1][0]+(-20 if label.startswith('Left') else 20),base_y,1000))]);radii.extend([7,2])
+  union(body,tube(label,coords,radii))
  for angle in [.5,2.4,4.4]:
   base=point(215,588);tip=base+Vector((math.cos(angle)*39,math.sin(angle)*45,0));tip.z=.1
   union(body,tube('Natural low buttress',[point(214,565),base.lerp(tip,.6)+Vector((0,0,3)),tip],[9,5,.6]))
  for i in range(12):
   angle=math.tau*i/12;start=Vector((230,base_y,850+i%3*15));tip=Vector((230+math.cos(angle)*175,base_y+math.sin(angle)*195,1020+rng.uniform(-40,45)));union(body,tube('Inferred supported bough',[start,start.lerp(tip,.55)+Vector((0,0,20)),tip],[10,5,1]))
  bpy.context.view_layer.objects.active=body;modifier=body.modifiers.new('Continuous forked foreground wood','REMESH');modifier.mode='VOXEL';modifier.voxel_size=1.2;modifier.use_remove_disconnected=False;bpy.ops.object.modifier_apply(modifier=modifier.name)
+ if args.revision>=2:
+  for vertex in body.data.vertices:
+   sy=-vertex.co.y*SIN-vertex.co.z*COS
+   if sy>589.5:vertex.co+=Vector((0,SIN,COS))*(sy-589.5)
+  body.data.update()
  mesh=body.data.copy();bpy.data.objects.remove(body,do_unlink=True);dummy=bpy.data.meshes.new('Decorative wood slot');fallback=bpy.data.materials.new('Unknown decorative wood');fallback.diffuse_color=(.34,.34,.34,1);dummy.materials.append(fallback);obj=bpy.data.objects.new('Tree04 decorative wood',dummy);working.objects.link(obj);obj['source_node']=wood_node;obj['asset_group']=asset;obj['asset_name']=name;obj['part_name']='Scenery wood; no gameplay obstacle';assign_mesh(obj,mesh)
  verts=[];faces=[]
  for i in range(2400):
