@@ -226,10 +226,10 @@ disable physical navigation at 37 degrees. The latest unpublished candidate
 emits physical navigation at all eight placements but fails all 48 actor routes,
 including the twelve routes previously using projected navigation.
 
-The current library-wide audit (`gameplay-coverage-T88GIW`) finds 33 of 1,279
-indexed assets without gameplay definitions. Five are placed: Croisement02's
-upright fences 94/95 and supplemental wood 09/44, and Croisement01 tree 03.
-The timber bridge, both ferns and fallen log have published draft definitions. These counts
+The current library-wide audit (`gameplay-coverage-Gz1Zvi`) finds 31 of 1,279
+indexed assets without gameplay definitions. Three are placed: Croisement02's
+supplemental wood 09/44 and Croisement01 tree 03.
+The timber bridge, both ferns, fallen log and upright fences 94/95 have published draft definitions. These counts
 reflect the current asset inventory, not gameplay certification.
 
 The asset-only physical-mesh preflight (`physical-mesh-audit-dpmilw`) checks
@@ -267,7 +267,39 @@ compilation still omits 39–60 collapsed grid fragments per isolated placement
 and 69 in the full scene. Dense collision cost, rendered behavior and any
 traversal surface/jump remain unverified. Publication backup:
 `log-gameplay-publish-8tyX7n`; authoring tool:
-`refinement/stage-log-gameplay.mjs`. All ten saved scenes reopen after publication.
+`refinement/stage-wood-gameplay.mjs`. All ten saved scenes reopen after publication.
+
+Fence authoring now explicitly records collinear seam faces while retaining
+their edges for closed-shell validation; open surfaces and repeated vertices
+still reject. The two upright fences each contain one such seam face. Their
+unsimplified shells also have intersecting cap faces (`physical-mesh-audit-9e2Z1l`).
+Independent shell simplification with a 0.1-unit approximate error budget
+removes those intersections. This error is an appearance metric, not a certified
+maximum collision displacement. Convex half-plane subtraction avoids numerical
+polygon-sweep failures while retaining air gaps, footprint coverage and enclosed
+volume (`physical-mesh-audit-Lok9hk`). No rail/post components are pruned or
+combined into a whole-fence hull.
+
+Upright fences 94/95 have published draft definitions with 515/1,133 wood volumes
+(`wood-gameplay-DSnD9U`, `wood-gameplay-Wc4Vpa`). Across twenty rotated/elevated
+placements, native construction, forty movement checks and 2,000 sight/projectile
+checks pass, including 960 gap checks. Authoring records 39/67 omitted numerical
+slivers with total footprint areas 0.00000018181093644842008 and
+0.00000037805480106778876 square game units. Dense collision, integer-grid
+fragmentation, rendered contact and traversal authoring still need review.
+Publication backup: `fence-gameplay-publish-GPs4kN`.
+
+Movement-control coverage now uses the same fixed-precision subtraction recovery
+as permanent collision. This fixes a full-scene polygon-sweep failure when the
+fences meet existing navigation, while retaining state bits and permanent
+exclusions. Full Croisement02 (`saved-map-exports-E6S3PE`) constructs five areas,
+1,802 sight obstacles, five doors, four jump pairs, 8,575 grid blocks and 57
+elevation boundaries; all nine controls apply/reset. It still warns about 741
+collapsed movement fragments, seven collapsed holes, seven repaired corners,
+the missing wood 09/44 definitions and shrub 77's unavailable mask receiver.
+These warnings and the unverified rendered behavior remain parity work.
+Fresh published Croisement02 (`saved-map-exports-WtURUm`) exactly matches the
+native-tested descriptor, and all ten saved scenes reopen after publication.
 
 Croisement02 ground plants 111–123 now have published draft asset-derived mask
 definitions. All 130 rotated/elevated exports construct native geometry, preserve
@@ -279,7 +311,7 @@ Mask authoring now preserves mixed material sidedness after alpha clipping.
 Shrub 55 passes ten native construction checks, but its browser review exposes
 small mask/texture disagreements, including isolated discrepancies at 0° and
 90°. It is published as a draft with an occlusion-review warning; rendered parity
-is not established. The current saved Croisement02 scene compiles using published
+is not established. That stage compiled Croisement02 using published
 definitions with fourteen masks; native construction and nine control apply/reset
 checks pass. These construction checks do not certify a rendered playthrough.
 

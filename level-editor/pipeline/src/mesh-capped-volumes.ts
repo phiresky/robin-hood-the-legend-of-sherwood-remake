@@ -1,8 +1,6 @@
 import type { MaskTriangle } from "../../shared/src/compile-mask-geometry.ts";
 import type { ObstaclePoint, Point } from "../../shared/src/level.ts";
 import { closedMeshComponents } from "./closed-mesh-components.ts";
-import clipping, { type MultiPolygon } from "polygon-clipping";
-import earcut, { flatten } from "earcut";
 
 const cross = (a: Point, b: Point, c: Point) =>
   (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
@@ -14,26 +12,44 @@ const area = (ring: Point[]) =>
     }, 0),
   ) / 2;
 
-function intersection(subject: Point[], clip: Point[]): Point[] {
-  let result = subject;
-  for (let i = 0; i < clip.length; i++) {
-    const a = clip[i]!,
-      b = clip[(i + 1) % clip.length]!;
-    const input = result;
-    result = [];
-    for (let j = 0; j < input.length; j++) {
-      const p = input[j]!,
-        q = input[(j + 1) % input.length]!;
-      const dp = cross(a, b, p),
-        dq = cross(a, b, q);
-      if (dp >= 0) result.push(p);
-      if (dp < 0 !== dq < 0) {
-        const t = dp / (dp - dq);
-        result.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
-      }
+function halfPlane(input: Point[], a: Point, b: Point, sign = 1): Point[] {
+  const result: Point[] = [];
+  for (let j = 0; j < input.length; j++) {
+    const p = input[j]!,
+      q = input[(j + 1) % input.length]!;
+    const dp = sign * cross(a, b, p),
+      dq = sign * cross(a, b, q);
+    if (dp >= 0) result.push(p);
+    if (dp < 0 !== dq < 0) {
+      const t = dp / (dp - dq);
+      result.push([p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t]);
     }
   }
   return cleanRing(result);
+}
+
+function intersection(subject: Point[], clip: Point[]): Point[] {
+  let result = subject;
+  for (let i = 0; i < clip.length; i++)
+    result = halfPlane(result, clip[i]!, clip[(i + 1) % clip.length]!);
+  return result;
+}
+
+/** Partition the difference of two convex rings into convex pieces. Each
+ * outside piece is emitted once; only the still-inside piece reaches the next
+ * clip edge. This also represents holes without a polygon sweep or triangulation. */
+function difference(subject: Point[], clip: Point[]): Point[][] {
+  if (area(intersection(subject, clip)) <= 1e-9) return [subject];
+  const result: Point[][] = [];
+  let remaining = subject;
+  for (let i = 0; i < clip.length && remaining.length >= 3; i++) {
+    const a = clip[i]!,
+      b = clip[(i + 1) % clip.length]!;
+    const outside = halfPlane(remaining, a, b, -1);
+    if (area(outside) > 1e-9) result.push(outside);
+    remaining = halfPlane(remaining, a, b);
+  }
+  return result;
 }
 
 function cleanRing(input: Point[]): Point[] {
@@ -66,8 +82,11 @@ function cleanRing(input: Point[]): Point[] {
  * entry/exit faces along vertical rays, retaining gaps between solid intervals.
  * Crossing or coincident cap faces fail rather than silently filling cavities.
  * Nothing here chooses material, movement or sight semantics for the asset. */
-export function meshCappedVolumes(mesh: readonly MaskTriangle[]): ObstaclePoint[][] {
-  const components = closedMeshComponents(mesh);
+export function meshCappedVolumes(
+  mesh: readonly MaskTriangle[],
+  onCollinearFace?: (face: number) => void,
+): ObstaclePoint[][] {
+  const components = closedMeshComponents(mesh, 1e-5, onCollinearFace);
   if (components.length !== 1) throw new Error("Capped conversion requires one closed shell");
   const triangles = components[0]!;
   const origin = triangles[0]![0];
@@ -132,7 +151,9 @@ export function meshCappedVolumes(mesh: readonly MaskTriangle[]): ObstaclePoint[
       if (size <= 1e-9) continue;
       const deltas = ring.map((p) => a.height(p) - b.height(p));
       if (Math.min(...deltas) < -1e-6 && Math.max(...deltas) > 1e-6)
-        throw new Error(`Physical shell has intersecting cap faces ${i}/${j}`);
+        throw new Error(
+          `Physical shell has intersecting cap faces ${i}/${j}: overlap area ${size}, height difference ${Math.min(...deltas)}..${Math.max(...deltas)}`,
+        );
       if (deltas.every((delta) => Math.abs(delta) < 1e-8))
         throw new Error(`Physical shell has coincident cap faces ${i}/${j}`);
       overlaps.set(key(i, j), ring);
@@ -147,7 +168,7 @@ export function meshCappedVolumes(mesh: readonly MaskTriangle[]): ObstaclePoint[
       const top = a.top ? a : b,
         bottom = a.top ? b : a;
       if (top.height(centre(ring)) <= bottom.height(centre(ring))) continue;
-      let regions: MultiPolygon = [[ring]];
+      let regions: Point[][] = [ring];
       for (let k = 0; k < faces.length && regions.length; k++) {
         if (k === i || k === j || !overlaps.has(key(i, k)) || !overlaps.has(key(j, k))) continue;
         const other = faces[k]!;
@@ -156,59 +177,41 @@ export function meshCappedVolumes(mesh: readonly MaskTriangle[]): ObstaclePoint[
         const p = centre(overlap),
           z = other.height(p);
         if (z > bottom.height(p) && z < top.height(p))
-          regions = clipping.difference(regions, [other.ring]);
+          regions = regions.flatMap((region) => difference(region, other.ring));
       }
       for (const region of regions) {
-        const outer = cleanRing(region[0]!);
-        if (outer.length < 3) continue;
-        if (cross(outer[0]!, outer[1]!, outer[2]!) < 0) outer.reverse();
-        let polygons: Point[][];
+        const polygon = cleanRing(region);
+        if (polygon.length < 3) continue;
+        if (cross(polygon[0]!, polygon[1]!, polygon[2]!) < 0) polygon.reverse();
         if (
-          region.length === 1 &&
-          outer.every(
-            (p, index) =>
-              cross(p, outer[(index + 1) % outer.length]!, outer[(index + 2) % outer.length]!) > 0,
+          !polygon.every(
+            (p, i) =>
+              cross(p, polygon[(i + 1) % polygon.length]!, polygon[(i + 2) % polygon.length]!) > 0,
           )
-        ) {
-          // Native obstacles already support convex polygons; triangulating
-          // them adds collision seams without improving the represented shape.
-          polygons = [outer];
-        } else {
-          const flattened = flatten(region);
-          const indices = earcut(flattened.vertices, flattened.holes, flattened.dimensions);
-          polygons = [];
-          for (let offset = 0; offset < indices.length; offset += 3) {
-            const polygon: Point[] = indices
-              .slice(offset, offset + 3)
-              .map((index) => [flattened.vertices[index * 2]!, flattened.vertices[index * 2 + 1]!]);
-            if (cross(polygon[0]!, polygon[1]!, polygon[2]!) < 0) polygon.reverse();
-            polygons.push(polygon);
-          }
+        )
+          throw new Error("Capped difference produced a nonconvex piece");
+        const size = area(polygon);
+        if (size <= 1e-9) continue;
+        const points = polygon.map((p) => {
+          let z_bottom = bottom.height(p),
+            z_top = top.height(p);
+          if (z_bottom > z_top + 1e-6)
+            throw new Error("Physical shell has crossing top and bottom caps");
+          if (z_bottom > z_top) z_bottom = z_top = (z_bottom + z_top) / 2;
+          return { x: p[0], y: p[1], z_bottom, z_top };
+        });
+        for (let k = 1; k < points.length - 1; k++) {
+          const triangleArea = Math.abs(cross(polygon[0]!, polygon[k]!, polygon[k + 1]!)) / 2;
+          volume +=
+            (triangleArea *
+              [points[0]!, points[k]!, points[k + 1]!].reduce(
+                (sum, p) => sum + p.z_top - p.z_bottom,
+                0,
+              )) /
+            3;
         }
-        for (const polygon of polygons) {
-          const size = area(polygon);
-          if (size <= 1e-9) continue;
-          const points = polygon.map((p) => {
-            let z_bottom = bottom.height(p),
-              z_top = top.height(p);
-            if (z_bottom > z_top + 1e-6)
-              throw new Error("Physical shell has crossing top and bottom caps");
-            if (z_bottom > z_top) z_bottom = z_top = (z_bottom + z_top) / 2;
-            return { x: p[0], y: p[1], z_bottom, z_top };
-          });
-          for (let k = 1; k < points.length - 1; k++) {
-            const triangleArea = Math.abs(cross(polygon[0]!, polygon[k]!, polygon[k + 1]!)) / 2;
-            volume +=
-              (triangleArea *
-                [points[0]!, points[k]!, points[k + 1]!].reduce(
-                  (sum, p) => sum + p.z_top - p.z_bottom,
-                  0,
-                )) /
-              3;
-          }
-          coveredArea += size;
-          volumes.push(points);
-        }
+        coveredArea += size;
+        volumes.push(points);
       }
     }
   }

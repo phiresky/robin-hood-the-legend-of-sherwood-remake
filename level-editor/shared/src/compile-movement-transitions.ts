@@ -8,6 +8,7 @@ import { quantizeGeneratedMotionPolygon, simplifyMotionRing } from "./motion-qua
 import { preserveMovementBoundary } from "./preserve-movement-boundary.ts";
 import { assembleMovementContour } from "./assemble-movement-contour.ts";
 import { fixedClipping } from "./fixed-polygon-boolean.ts";
+import { subtractMovementCollision } from "./subtract-movement-collision.ts";
 
 export interface PlacedTransitionBlocker {
   transition: string;
@@ -126,8 +127,8 @@ function compileTransitionObstaclesInFrame(
   // Movement obstacles can cross the area's outer contour.
   const coverage = (polygon: Point[], blockers: Point[][]): MultiPolygon =>
     blockers.length
-      ? polygonClipping.difference(
-          [polygon],
+      ? subtractMovementCollision(
+          [[polygon]],
           blockers.map((b) => [b]),
         )
       : [[polygon]];

@@ -6,10 +6,19 @@ import { loadSceneModel } from "../pipeline/src/scene-assets.ts";
 import { maskRecoveryMesh } from "../pipeline/src/mask-recovery-mesh.ts";
 import { closedMeshComponents } from "../pipeline/src/closed-mesh-components.ts";
 import { meshCappedVolumes } from "../pipeline/src/mesh-capped-volumes.ts";
+import { simplifyPhysicalShell } from "../pipeline/src/simplify-physical-shell.ts";
 import { sceneToGame, gltfToScene } from "../shared/src/geometry.ts";
 
 const capped = process.argv.includes("--caps");
-const ids = process.argv.slice(2).filter((arg) => arg !== "--caps");
+const retainCollinear = process.argv.includes("--retain-collinear");
+const simplifyOption = process.argv.find((arg) => arg.startsWith("--simplify="));
+const simplifyError = simplifyOption
+  ? Number(simplifyOption.slice("--simplify=".length))
+  : undefined;
+assert.ok(simplifyError === undefined || (Number.isFinite(simplifyError) && simplifyError >= 0));
+const ids = process.argv
+  .slice(2)
+  .filter((arg) => arg !== "--caps" && arg !== "--retain-collinear" && arg !== simplifyOption);
 assert.ok(ids.length && ids.every((id) => !id.startsWith("-")), "Supply library asset IDs");
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json")).assets;
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
@@ -38,16 +47,52 @@ for (const id of ids) {
   const parts = [];
   for (const part of descriptor.parts) {
     let triangles;
+    const collinearFaces = [];
+    const simplifications = [];
     try {
       triangles = maskRecoveryMesh(model, part.node, (p) => sceneToGame(camera, gltfToScene(p)));
-      const components = closedMeshComponents(triangles);
+      let components = closedMeshComponents(
+        triangles,
+        1e-5,
+        retainCollinear ? (face) => collinearFaces.push(face) : undefined,
+      );
+      if (simplifyError !== undefined) {
+        const simplified = [];
+        for (const [index, component] of components.entries()) {
+          const reported = [];
+          const candidate = await simplifyPhysicalShell(
+            component,
+            simplifyError,
+            retainCollinear ? (face) => reported.push(face) : undefined,
+          );
+          simplifications.push({
+            component: index,
+            sourceTriangles: component.length,
+            triangles: candidate.triangles.length,
+            approximateError: candidate.error,
+            collinearFaces: reported,
+          });
+          simplified.push(candidate.triangles);
+        }
+        components = simplified;
+      }
       let cappedVolumes;
       if (capped) {
         assert.ok(
           components.every((component) => component.length <= 5000),
           "Cap decomposition preflight is limited to 5000 triangles per shell; simplify the physical mesh first",
         );
-        cappedVolumes = components.flatMap((component) => meshCappedVolumes(component));
+        const componentCollinearFaces = [];
+        cappedVolumes = components.flatMap((component, index) =>
+          meshCappedVolumes(
+            component,
+            retainCollinear
+              ? (face) => componentCollinearFaces.push({ component: index, face })
+              : undefined,
+          ),
+        );
+        if (simplifyError === undefined)
+          assert.equal(componentCollinearFaces.length, collinearFaces.length);
         await fs.writeFile(
           `${output}/${id}-${parts.length}-caps.json`,
           JSON.stringify(cappedVolumes),
@@ -56,6 +101,8 @@ for (const id of ids) {
       parts.push({
         node: part.node,
         triangles: triangles.length,
+        collinearFaces,
+        simplifications,
         cappedVolumes: cappedVolumes?.length,
         closedComponents: components.map((component) => ({
           triangles: component.length,
@@ -74,7 +121,13 @@ for (const id of ids) {
         })),
       });
     } catch (error) {
-      parts.push({ node: part.node, triangles: triangles?.length, error: String(error) });
+      parts.push({
+        node: part.node,
+        triangles: triangles?.length,
+        collinearFaces,
+        simplifications,
+        error: String(error),
+      });
     }
   }
   results.push({
@@ -89,6 +142,8 @@ await fs.writeFile(
   JSON.stringify(
     {
       scope: "topology-preflight-only-not-solid-or-gameplay-certification",
+      retainCollinearFaces: retainCollinear,
+      requestedSimplificationError: simplifyError,
       results,
     },
     null,

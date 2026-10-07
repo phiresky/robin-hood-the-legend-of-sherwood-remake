@@ -3,6 +3,36 @@ import test from "node:test";
 import { closedMeshComponents } from "./closed-mesh-components.ts";
 import type { MaskTriangle } from "../../shared/src/compile-mask-geometry.ts";
 import type { Vec3 } from "../../shared/src/scene.ts";
+import { meshCappedVolumes } from "./mesh-capped-volumes.ts";
+
+test("explicitly reported collinear seam faces retain closure without adding solid geometry", () => {
+  const mesh = tetra();
+  const [a, b, c] = mesh.shift()!;
+  const middle: Vec3 = [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2, (a[2] + c[2]) / 2];
+  mesh.push([a, b, middle], [middle, b, c], [a, middle, c]);
+  assert.throws(() => closedMeshComponents(mesh), /Degenerate/);
+  const reported: number[] = [];
+  assert.equal(closedMeshComponents(mesh, 1e-5, (face) => reported.push(face)).length, 1);
+  assert.deepEqual(reported, [5]);
+  const volumes = meshCappedVolumes(mesh, () => {});
+  assert.ok(volumes.length > 0);
+  assert.throws(() => closedMeshComponents(mesh.slice(1), 1e-5, () => {}), /incident faces/);
+  assert.throws(
+    () =>
+      closedMeshComponents(
+        [
+          [
+            [0, 0, 0],
+            [0, 0, 0],
+            [1, 0, 0],
+          ],
+        ],
+        1e-5,
+        () => {},
+      ),
+    /Collapsed/,
+  );
+});
 
 function tetra(offset: Vec3 = [0, 0, 0]): MaskTriangle[] {
   const points: Vec3[] = [

@@ -1,4 +1,4 @@
-// Stage physical log collision from a hash-pinned asset mesh audit.
+// Stage physical wood collision from a hash-pinned asset mesh audit.
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -6,10 +6,13 @@ import { compileMap } from "../app/src/map-compile.ts";
 import { insertProjectionAsset } from "../app/src/asset-commands.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
+import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 
 const [audit] = process.argv.slice(2);
 assert.ok(audit, "Supply a physical-mesh audit directory produced with --caps");
-const id = "croisement03-stream-fallen-log";
+const id =
+  process.argv.find((arg) => arg.startsWith("--asset="))?.slice(8) ??
+  "croisement03-stream-fallen-log";
 const report = JSON.parse(await fs.readFile(`${audit}/report.json`));
 const reviewed = report.results.find((result) => result.id === id);
 assert.ok(reviewed && reviewed.parts.length === 1 && reviewed.parts[0].cappedVolumes > 0);
@@ -70,14 +73,19 @@ descriptor.gameplay = {
   })),
   draft: {
     issues: [
-      "Mesh-derived log collision is under review. Native movement, sight/projectile contact and rendered integration are not yet certified; no traversal surface or jump is authored.",
+      "Mesh-derived wood collision is under review. Native movement, sight/projectile contact and rendered integration are not yet certified; no traversal surface or jump is authored.",
       `Removed ${discarded.length} numerically degenerate cap fragments with total footprint area ${discardedArea} square game units.`,
       `Dense mesh-derived collision uses ${retained.length} capped pieces. Integer-grid movement fragmentation and runtime cost need further review.`,
+      ...(reviewed.parts[0].simplifications?.length
+        ? [
+            `Physical mesh was simplified independently per shell with maximum reported approximate appearance error ${Math.max(...reviewed.parts[0].simplifications.map((item) => item.approximateError))}; this is not a certified contact displacement bound.`,
+          ]
+        : []),
     ],
   },
 };
 validateAssetGameplay(descriptor.gameplay, descriptor);
-const output = await fs.mkdtemp("work/map-compile/log-gameplay-");
+const output = await fs.mkdtemp("work/map-compile/wood-gameplay-");
 console.log(JSON.stringify({ output, caps: retained.length, discardedArea }));
 await fs.writeFile(
   `${output}/review.json`,
@@ -163,7 +171,7 @@ for (const elevation of [0, 40])
         };
       });
       ray_probes.push({
-        name: "above-log",
+        name: "above-wood",
         clear: true,
         endpoints: [
           [minX - 20, minY, highest + 5],
@@ -172,6 +180,47 @@ for (const elevation of [0, 40])
       });
       const ground = geometry.sight_obstacles.find((shape) => shape.projection_area !== null)
         .points[0].z_top;
+      const shapes = wood.map((shape) => ({
+        points: shape.points,
+        bottom: heightPlane(shape.points.map((p) => [p.x, p.y, p.z_bottom])),
+        top: heightPlane(shape.points.map((p) => [p.x, p.y, p.z_top])),
+      }));
+      let gapCount = 0;
+      for (const candidate of [...wood].sort((a, b) => footprintArea(b) - footprintArea(a))) {
+        const p = candidate.points.reduce(
+          (sum, p) => [
+            sum[0] + p.x / candidate.points.length,
+            sum[1] + p.y / candidate.points.length,
+          ],
+          [0, 0],
+        );
+        const intervals = shapes
+          .filter((shape) =>
+            shape.points.every((a, i) => {
+              const b = shape.points[(i + 1) % shape.points.length];
+              return (b.x - a.x) * (p[1] - a.y) - (b.y - a.y) * (p[0] - a.x) >= -1e-8;
+            }),
+          )
+          .map((shape) => [planeHeight(shape.bottom, p), planeHeight(shape.top, p)])
+          .sort((a, b) => a[0] - b[0]);
+        let end = ground;
+        for (const [bottom, top] of intervals) {
+          if (bottom - end > 1 && end >= ground) {
+            ray_probes.push({
+              name: `wood-gap-${gapCount++}`,
+              clear: true,
+              endpoints: [
+                [...p, end + (bottom - end) / 3],
+                [...p, bottom - (bottom - end) / 3],
+              ],
+            });
+          }
+          end = Math.max(end, top);
+          if (gapCount >= 12) break;
+        }
+        if (gapCount >= 12) break;
+      }
+      if (id.includes("fence")) assert.ok(gapCount > 0, "Fence review needs rail-gap probes");
       const layer = geometry.motion_data.layers.findIndex((layer) => layer.length > 0);
       const centre = selected[0].points.reduce(
         (sum, p) => [

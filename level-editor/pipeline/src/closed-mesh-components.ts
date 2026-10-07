@@ -7,6 +7,7 @@ import type { Vec3 } from "../../shared/src/scene.ts";
 export function closedMeshComponents(
   triangles: readonly MaskTriangle[],
   tolerance = 1e-5,
+  onCollinearFace?: (face: number) => void,
 ): MaskTriangle[][] {
   if (!Number.isFinite(tolerance) || tolerance <= 0 || triangles.length === 0)
     throw new Error("Closed mesh requires triangles and a positive weld tolerance");
@@ -46,8 +47,13 @@ export function closedMeshComponents(
         u[0]! * v[1]! - u[1]! * v[0]!,
       ) <=
       tolerance * tolerance
-    )
-      throw new Error(`Degenerate physical mesh triangle ${face}`);
+    ) {
+      if (!onCollinearFace) throw new Error(`Degenerate physical mesh triangle ${face}`);
+      // A collinear face can join a subdivided edge to an unsplit neighbour.
+      // Retain its edges for the closed-shell check, but require callers to
+      // explicitly record this exception. Repeated vertices still reject.
+      onCollinearFace(face);
+    }
     for (let i = 0; i < 3; i++) {
       const from = ids[i]!;
       const to = ids[(i + 1) % 3]!;
