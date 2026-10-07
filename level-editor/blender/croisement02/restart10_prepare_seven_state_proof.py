@@ -38,7 +38,7 @@ def main():
                 pin(path)
     for folder in ('level-editor/app/src', 'level-editor/shared/src'):
         for path in (ROOT / folder).rglob('*'):
-            if path.is_file() and path.suffix in ('.ts', '.tsx', '.css'):
+            if path.is_file() and path.suffix in ('.ts', '.tsx', '.css') and '.test.' not in path.name:
                 pin(path)
     stage = WORK / 'restart2-state/remaining-seven-package-v2'
     manifest = json.loads((stage / 'manifest.json').read_text())
