@@ -2738,6 +2738,11 @@ Spline masks also preserve disconnected open character/projectile application
 boundaries after trimming. Each fragment becomes a separate native mask with its
 own application range; shared view and obstacle rules are emitted only once.
 
+Generated receiving polygons are checked at native coordinate precision before
+export. Pinched contours are triangulated with their height planes and materials
+intact; zero-area pieces are omitted with explicit warnings. The editor/native
+terrain fixture verifies valid polygons, hill heights and routes across a ford.
+
 Spline lighting also preserves disconnected receiving-probe fragments after
 trimming, retaining valid light regions and their ambience filters.
 

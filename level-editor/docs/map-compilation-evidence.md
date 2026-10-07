@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Generated receivers at native coordinate precision (2026-10-08)
+
+The terrain integration fixture had drifted from current editor output and
+contained a self-intersecting receiving polygon. It crashed native floor union.
+Fresh compiler output removed that old defect but still contained two triangles
+which collapse to lines in binary32, plus narrow contours which pinch or cross
+after conversion.
+
+Generated receivers now retain simple native contours unchanged, triangulate
+only contours which become non-simple, and omit only pieces with zero native
+area. Every repair/omission produces a warning. Triangulation retains the full
+material partition's explicit height-plane anchors and material bindings.
+Authored physical volumes are outside this repair path. The refreshed fixture
+matches editor compilation and has 214 valid native receiver polygons, with
+two triangulation warnings and three zero-area omission warnings. Explicit ring
+closures remain intact. Local export `grid-terrain-review-2YQRkk` records the
+final descriptor.
+
+All 164 focused compiler/material/terrain/wall checks pass, including preservation of
+representable subpixel floors and both sides of a pinched notch. The native
+`asset_map_compilation` suite passes 67 tests, with five data-dependent audits
+ignored. It validates all receiver polygons after native decoding, hill heights,
+ford/river/crop restrictions and collision-connected route samples. The test
+which intentionally changes receiver heights now removes stale explicit anchors
+before deriving its baseline. No engine implementation change was needed.
+
 ## Split spline mask application boundaries (2026-10-08)
 
 Cropping a spline source can split an open character or projectile application
@@ -26,7 +52,7 @@ character/projectile point-query checks pass across three repeats, including
 points outside each fragment and on both sides of its boundary. The broader
 native suite passed 64 tests, failed three and skipped five. The failures are a
 stale plane in an edited test receiver and two terrain-load polygon-union panics;
-their fixes are being validated separately. No runtime implementation changes
+these are resolved by the receiver checks above. No runtime implementation changes
 are required for the mask split.
 
 ## Upper castle stairs and independently owned receiving contacts (2026-10-06)

@@ -467,6 +467,8 @@ fn authored_receiving_plane_survives_polygon_vertex_changes() {
     ))
     .unwrap();
     let obstacle = &mut descriptor["asset_geometry"]["sight_obstacles"][0];
+    // This baseline intentionally derives a new plane from the edited vertices.
+    obstacle.as_object_mut().unwrap().remove("projection_plane");
     for point in obstacle["points"].as_array_mut().unwrap() {
         let previous = point["z_top"].as_f64().unwrap();
         point["y"] = (point["y"].as_f64().unwrap() + 200.001 - previous).into();
@@ -3010,12 +3012,30 @@ fn materials_shift_interior_constructors_without_breaking_entrances() {
 
 #[test]
 fn editable_grid_hill_river_ford_and_export_crop_construct_native_gameplay() {
+    use geo::Validation;
     use robin_engine::coordinates::MapPoint;
+    let loaded =
+        LoadedLevel::hackable_from_json(include_bytes!("fixtures/grid-terrain.level.json"))
+            .unwrap();
+    for (index, receiver) in loaded.proto.sight_obstacles.iter().enumerate() {
+        let polygon = geo::Polygon::new(
+            geo::LineString::from(
+                receiver
+                    .points
+                    .iter()
+                    .map(|p| (p.x, p.y))
+                    .collect::<Vec<_>>(),
+            ),
+            vec![],
+        );
+        assert!(
+            polygon.is_valid(),
+            "native terrain receiver {index}: {:?}",
+            polygon.validation_errors()
+        );
+    }
     let mut assets = LevelAssets::new();
-    let engine = construct(
-        include_bytes!("fixtures/grid-terrain.level.json"),
-        &mut assets,
-    );
+    let engine = construct_loaded(loaded, &mut assets);
     let grid = engine.fast_grid();
     let layer = grid.level.sectors[0].layer;
     // The receiver planes retain the hill's interpolated elevation after cropping.

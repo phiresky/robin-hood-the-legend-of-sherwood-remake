@@ -50,6 +50,7 @@ import {
   partitionProjectionMaterials,
   type ProjectionMaterialSupport,
 } from "./partition-projection-materials.ts";
+import { nativeReceiverGeometry } from "./native-receiver-geometry.ts";
 import { partMatrix, transformedObstacle, type Level3D, type Level3DObject } from "./level3d.ts";
 import { gameToScene, type Vec3 } from "./scene.ts";
 import { sceneToGame } from "./geometry.ts";
@@ -2064,21 +2065,27 @@ function compileAssetGameplayAttempt(
         const receivingPlane = material.planePoints
           ? heightPlane(material.planePoints.map(([x, y, z]) => [x, y - z, z]))
           : piece.plane;
-        sight.push({
-          projection_plane:
-            material.planePoints ?? projectionPlaneAnchors(material.polygon, receivingPlane),
-          points: material.polygon.map(([x, y]) => {
-            const height = planeHeight(receivingPlane, [x, y]);
-            return { x, y: y + height, z_bottom: height, z_top: height };
-          }),
-          projection_area: [sector, layer],
-          opaque: false,
-          solid: false,
-          mouse: true,
-          show_shadow_polygon: false,
-          default_material: material.defaultMaterial,
-          material_indices: material.materialIndices,
+        const points = material.polygon.map(([x, y]) => {
+          const height = planeHeight(receivingPlane, [x, y]);
+          return { x, y: y + height, z_bottom: height, z_top: height };
         });
+        for (const nativePoints of nativeReceiverGeometry(
+          points,
+          `Receiving material partition in ${sector}:${layer}`,
+          warnings,
+        ))
+          sight.push({
+            projection_plane:
+              material.planePoints ?? projectionPlaneAnchors(material.polygon, receivingPlane),
+            points: nativePoints,
+            projection_area: [sector, layer],
+            opaque: false,
+            solid: false,
+            mouse: true,
+            show_shadow_polygon: false,
+            default_material: material.defaultMaterial,
+            material_indices: material.materialIndices,
+          });
       }
     }
     sector +=
