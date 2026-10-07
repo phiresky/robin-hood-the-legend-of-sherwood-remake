@@ -1,3 +1,7 @@
+## Additional checkpoint: Tree09 frozen and Tree08 reviewed privately
+
+Tree09 root-reviewed model a1f42a5d is frozen at restart2/geometry-round8-tree09-v2-correct-id; the older packet retained a wrong card ID and is obsolete. Only the corrected card belongs in the next pool. Tree08 private model1d778f8c has370 proposed bark and1127 frame0 leaf samples unchanged, complete actual/alpha-aware eight views, source comparison, joint context and converged transparency. Root request0293c605 is pending. No API, browser or live writes; the existing trio terrain/publication hold and pending user scopes remain unchanged.
+
 # Croisement03 restart2 status
 
 ## Current checkpoint — 2026-10-07
