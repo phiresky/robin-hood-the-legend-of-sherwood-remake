@@ -80,10 +80,13 @@ render_review(OUT / 'modified', scene_name=scene.name, collection_name=collectio
               source_mask_manifest=OUT / 'source-masks.json', projection_layers=[layer],
               render_object_names=[OBJECT])
 assert before == {o.name: _geometry(o, protect_appearance=True) for o in scene.objects if o.name in before}
+views = json.loads((OUT / 'modified/views.json').read_text())
+source_counts = [v['counts']['source'] for v in views['views']]
+assert source_counts[0] > 0, 'Native input has no accepted source pixels; do not synthesize'
 (OUT / 'input-review.json').write_text(json.dumps({
     'status': 'Visual input review pending; no provider request',
     'geometry_uv_materials_preserved': True, 'approved_shape_model_sha256': member['model_sha256'], 'orientation_candidate_sha256': sha(model),
-    'texture_receiver_object_names': [OBJECT], 'views_sha256': sha(OUT / 'modified/views.json'),
+    'texture_receiver_object_names': [OBJECT], 'source_counts': source_counts, 'views_sha256': sha(OUT / 'modified/views.json'),
     'authority_sha256': sha(OUT / 'authority.json'), 'orientation_guard_sha256': sha(WORK / 'jamb-orientation-v2/validation.json'),
 }, indent=2) + '\n')
 print('JAMB INPUTS COMPLETE', flush=True)
