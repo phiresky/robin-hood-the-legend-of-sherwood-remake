@@ -59,7 +59,8 @@ def main():
  if args.revision>=9:
   # A short continuous flare occupies the fern-hidden basal domain; the thin
   # observed descending root remains distinct farther down the bank.
-  flare=tube('Inferred continuous fern-hidden basal flare',[point(386,352),point(386,359),point(386,365),point(387,370)],[13,17,21,23]);union(body,flare)
+  flare=tube('Inferred continuous fern-hidden basal flare',[point(386,352),point(386,359),point(386,365),point(387,370)],[13,17,21,23])
+  union(body,flare)
  # The native source includes a thin crossing twig between the observed forks.
  branch_trace=[(357,109),(376,104),(396,101),(410,98)]
  twig=tube('Observed crossing twig',[point(x,y)+Vector((0,-COS,SIN))*15 for x,y in branch_trace],[1.8,2.2,1.8,1]);union(body,twig)
@@ -91,7 +92,7 @@ def main():
  for target in [obj,crown]:
   for vertex in target.data.vertices:vertex.co+=shift
   target.data.update()
- (dest/'root-centerline.json').write_text(json.dumps(dict(method='Full swept wood tube along a gently descending forward root centerline; native screen trace fixed, soil extension separately required',local_centers=[list(p) for p in root_centers],future_shift=list(future_shift),support_is_archived_hypothesis=True),indent=2)+'\n')
+ (dest/'root-centerline.json').write_text(json.dumps(dict(method='Full swept wood tube along a gently descending forward root centerline; native screen trace fixed, soil extension separately required',local_centers=[list(p) for p in root_centers],future_shift=list(shift),support_is_archived_hypothesis=True),indent=2)+'\n')
  (dest/'support-placement.json').write_text(json.dumps(dict(hit=list(hit),owner=anchor_owner,shift=list(shift),skipped=skipped,claim='Private placement only; contact review required'),indent=2)+'\n')
  keep={o for o in working.all_objects if o.type=='MESH' and (o in [obj,crown] or o.get('source_node') in terrain_nodes)}
  for other in list(bpy.data.objects):

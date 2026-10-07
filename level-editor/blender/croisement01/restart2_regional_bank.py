@@ -34,15 +34,22 @@ def clip_region(poly):
   inside,part=split_polygon(inside,axis,bound,keep_low)
   if len(part)>=3:outside.append(part)
  return inside,outside
-preserved_background=[];background_original_faces=[]
+preserved_background=[];background_original_faces=[];preserved_materials=[];exterior_schema=[]
 protected={o.get('source_node'):geom(o) for o in collection.all_objects if o.type=='MESH'};points=[];faces=[];owners=[]
 for o in banks:
  off=len(points);points.extend(o.matrix_world@v.co for v in o.data.vertices)
+ if o.get('source_node')=='building-000':
+  exterior_schema=[('uv',layer.name,2) for layer in o.data.uv_layers]+[('color',layer.name,4) for layer in o.data.color_attributes if layer.domain=='CORNER']
  for f in o.data.polygons:
   normal=(o.matrix_world.to_3x3().inverted().transposed()@f.normal).normalized()
   poly=[o.matrix_world@o.data.vertices[k].co for k in f.vertices]
   if o.get('source_node')=='building-000':
-   background_original_faces.append([list(v) for v in poly]);poly,exterior=clip_region(poly);preserved_background.extend(exterior)
+   background_original_faces.append([list(v) for v in poly]);payload=[]
+   for point,loop_index in zip(poly,f.loop_indices):
+    values=list(point)
+    for kind,name,width in exterior_schema:values.extend(o.data.uv_layers[name].data[loop_index].uv if kind=='uv' else o.data.color_attributes[name].data[loop_index].color)
+    payload.append(np.asarray(values,dtype=float))
+   clipped,exterior=clip_region(payload);poly=[Vector(row[:3]) for row in clipped];preserved_background.extend(exterior);preserved_materials.extend([f.material_index]*len(exterior))
   if normal.z>.1 and len(poly)>=3:
    start=len(points);points.extend(poly);faces.append(tuple(range(start,len(points))));owners.append(o.get('source_node'))
 assert faces;top_tree=BVHTree.FromPolygons(points,faces);step=4.;padding=64.;xs=np.arange(math.floor(min(p.x for p in points)/step)*step-padding,math.ceil(max(p.x for p in points)/step)*step+padding+step*.1,step);ys=np.arange(math.floor(min(p.y for p in points)/step)*step-padding,math.ceil(max(p.y for p in points)/step)*step+padding+step*.1,step);z0=np.zeros((len(xs),len(ys)));domain=np.zeros_like(z0,dtype=bool);labels=np.full_like(z0,-1,dtype=int)
@@ -77,13 +84,22 @@ assert not np.any(closed&(labels<0));domain=closed;boundary=domain&~erode(domain
 z=z0.copy();fixed=boundary.copy();caps=np.full_like(z,np.inf);root_constraints=[];native=json.loads((R.parent/'baseline/masks/manifest.json').read_text());sine,cosine=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-cosine,sine))
 def constrain(objects,mask_id,mask_path,label):
  global caps,z,fixed
- bvh,verts=make_bvh(objects);low=min(p.z for p in verts);root_fixed=0
+ bvh,verts=make_bvh(objects);low=min(p.z for p in verts);root_fixed=0;root_samples=[];root_plane=None
  for i,x in enumerate(xs):
   if x<min(p.x for p in verts)-step or x>max(p.x for p in verts)+step:continue
   for j,y in enumerate(ys):
    if not domain[i,j]:continue
    hit,_,_,_=bvh.ray_cast(Vector((x,y,-500)),Vector((0,0,1)),2000)
-   if hit is not None and hit.z<low+45:z[i,j]=hit.z-.5;fixed[i,j]=True;root_fixed+=1
+   if hit is not None and hit.z<low+45:
+    root_samples.append((i,j,float(hit.z)));z[i,j]=hit.z+(8. if mask_id==6 and a.revision>=3 else -.5);fixed[i,j]=True;root_fixed+=1
+ if mask_id==6 and a.revision>=4:
+  # Embed the hidden basal volume beneath one gentle slope. Do not trace
+  # every underside vertex into the ground or reveal a closed root end cap.
+  sy=np.asarray([ys[j] for i,j,h in root_samples]);front=np.quantile(sy,.1);back=np.quantile(sy,.75)
+  front_rows=[(ys[j],h) for i,j,h in root_samples if ys[j]<=front];back_rows=[(ys[j],h) for i,j,h in root_samples if ys[j]>=back]
+  yf=float(np.mean([y for y,h in front_rows]));yb=float(np.mean([y for y,h in back_rows]));zf=float(np.median([h for y,h in front_rows]))+.5;zb=float(np.quantile([h for y,h in back_rows],.25))+8.;slope=(zb-zf)/(yb-yf)
+  for i,j,h in root_samples:z[i,j]=zf+(ys[j]-yf)*slope
+  root_plane=dict(front=[yf,zf],back=[yb,zb],dz_dy=slope,status='Inferred ground slope anchored to front root and embedded rear base; native visibility caps remain authoritative')
  row=next(r for r in native['masks'] if r['index']==mask_id);left,top=row['box_top_left'];mask=np.asarray(Image.open(mask_path))>0;count=0
  for py,px in zip(*np.nonzero(mask)):
   x=left+px+.5
@@ -91,10 +107,11 @@ def constrain(objects,mask_id,mask_path,label):
   origin=Vector((x,-(top+py+.5)/sine,0))+ray*5000;hit,_,_,_=bvh.ray_cast(origin,-ray,10000)
   if hit is None:continue
   i=min(len(xs)-2,max(0,int(np.searchsorted(xs,x)-1)));limit=hit.z+(hit.y-ys)*sine/cosine-.5;limit=np.where(ys<=hit.y+step,limit,np.inf);caps[i]=np.minimum(caps[i],limit);caps[i+1]=np.minimum(caps[i+1],limit);count+=1
- root_constraints.append(dict(asset=label,mask=mask_id,domain_sha256=sha(mask_path),native_rays=count,root_grid_constraints=root_fixed))
+ root_constraints.append(dict(asset=label,mask=mask_id,domain_sha256=sha(mask_path),native_rays=count,root_grid_constraints=root_fixed,inferred_root_embedding=(8. if mask_id==6 and a.revision>=3 else -.5),root_plane=root_plane))
 wood=[o for o in collection.all_objects if o.type=='MESH' and o.get('source_node')==f'scenery-tree{tree_id:02d}-wood'];constrain(wood,tree_id,source.parents[1]/'wood-domain.png',cfg['asset_id'])
 neighbors=[(0,'approved-tree00-wood-fill-v1/croisement01-tree-00/baked-v4-support/worker.blend','tree00-v4/wood-domain.png'),(1,'approved-tree01-isolated-wood-fill-v1/croisement01-tree-01/baked-v1-luminance/worker.blend','tree01-source-prep-v1/wood-domain-proposal.png'),(2,'tree02-v8/assets/croisement01-tree-02/model.blend','tree02-v8/wood-domain.png'),(3,'approved-tree03-fill-v1/croisement01-tree-03/baked-v1-luminance/worker.blend','tree03-v4/wood-domain.png')]
-neighbors.extend([(4,'tree04-v6/assets/croisement01-tree-04/model.blend','tree04-v6/wood-domain.png'),(6,'tree06-v8/assets/croisement01-tree-06/model.blend','tree06-v8/wood-domain.png')])
+root_revision=9 if a.revision>=2 else 8
+neighbors.extend([(4,'tree04-v6/assets/croisement01-tree-04/model.blend','tree04-v6/wood-domain.png'),(6,f'tree06-v{root_revision}/assets/croisement01-tree-06/model.blend',f'tree06-v{root_revision}/wood-domain.png')])
 for n,path,mask in neighbors:
  path=R/path
  with bpy.data.libraries.load(str(path),link=False) as (src,dst):dst.objects=list(src.objects)
@@ -103,7 +120,7 @@ for n,path,mask in neighbors:
  bpy.context.view_layer.update()
  targets=[o for o in loaded if o.type=='MESH' and o.get('asset_group')==f'croisement01-tree-{n:02d}' and 'foliage' not in o.get('source_node','') and o.get('projection_component')!='crown']
  assert targets
- reference=next(row for row in json.loads((R/'bank-neighbor-transform-reference-tree06-v8.json').read_text())['sources'] if row['mask']==n);assert reference['model_sha256']==sha(path)
+ reference=next(row for row in json.loads((R/f'bank-neighbor-transform-reference-tree06-v{root_revision}.json').read_text())['sources'] if row['mask']==n);assert reference['model_sha256']==sha(path)
  assert len(reference['objects'])==len(targets)
  for target in targets:
   expected=[row for row in reference['objects'] if row['source_node']==target.get('source_node')];assert len(expected)==1
@@ -140,9 +157,10 @@ for label,bank in enumerate(banks):
   for uses,(x,y) in counts.values():
    if uses==1:polys.append((offset+x,offset+n+x,offset+n+y,offset+y))
   components+=1
+ exterior_face_start=len(polys)
  if bank['source_node']=='building-000':
   for poly in preserved_background:
-   offset=len(verts);verts.extend(tuple(v) for v in poly);polys.append(tuple(range(offset,len(verts))))
+   offset=len(verts);verts.extend(tuple(v[:3]) for v in poly);polys.append(tuple(range(offset,len(verts))))
  mesh=bpy.data.meshes.new('Complete inferred bank surface');mesh.from_pydata(verts,[],polys);mesh.update();bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bad=sum(not e.is_manifold for e in bm.edges);deg=sum(f.calc_area()<1e-8 for f in bm.faces);bm.to_mesh(mesh);bm.free();inverse=bank.matrix_world.inverted()
  for v in mesh.vertices:v.co=inverse@v.co
  # Supply the same heightfield normal on both owners' shared border.
@@ -164,7 +182,23 @@ for label,bank in enumerate(banks):
    else:normals[loop_index]=f.normal
  mesh.normals_split_custom_set(normals)
  for mat in bank.data.materials:mesh.materials.append(mat)
+ if bank['source_node']=='building-000':
+  for kind,name,width in exterior_schema:
+   if kind=='uv':mesh.uv_layers.new(name=name)
+   else:mesh.color_attributes.new(name=name,type='FLOAT_COLOR',domain='CORNER')
+  # bmesh preserved face order here; explicitly bind each exterior loop to its
+  # clipped original coordinate before copying its interpolated corner data.
+  for index,(payload,material_index) in enumerate(zip(preserved_background,preserved_materials)):
+   face=mesh.polygons[exterior_face_start+index];face.material_index=material_index
+   for loop_index in face.loop_indices:
+    world=bank.matrix_world@mesh.vertices[mesh.loops[loop_index].vertex_index].co
+    matches=[row for row in payload if (Vector(row[:3])-world).length<.001];assert matches
+    row=matches[0];cursor=3
+    for kind,name,width in exterior_schema:
+     if kind=='uv':mesh.uv_layers[name].data[loop_index].uv=row[cursor:cursor+width]
+     else:mesh.color_attributes[name].data[loop_index].color=row[cursor:cursor+width]
+     cursor+=width
  bank.data=mesh;mesh_reports.append(dict(node=bank['source_node'],vertices=len(verts),faces=len(polys),components=components,nonmanifold_edges=bad,degenerate_faces=deg))
 assert all(geom(o)==protected[o.get('source_node')] for o in collection.all_objects if o.type=='MESH' and o not in banks)
 bpy.data.orphans_purge(do_recursive=True);(worker/'modified').mkdir(parents=True);(worker/'inspection').mkdir();shutil.copy2(source/'modified/views.json',worker/'modified/views.json');(worker/'workspace.json').write_text(json.dumps(cfg,indent=2)+'\n');bpy.ops.wm.save_as_mainfile(filepath=str(worker/'model.blend'));assert sha(source/'model.blend')==source_hash
-(dest/'construction.json').write_text(json.dumps(dict(status='Private complete-bank hypothesis; root and user approval pending',source_sha256=source_hash,model_sha256=sha(worker/'model.blend'),wood_and_unrelated_geometry_unchanged=True,changed_nodes=nodes,grid_step=step,inferred='Broad regional slope for banks006/007 plus bounded background000 splice. Exterior000 planar geometry retained by exact clipping. Tree06 lowered along native camera rays; original proxy heights are weak priors, not observations. Unknown soil appearance, seams and topology require review.',root_constraints=root_constraints,background_region=list(region),preserved_background_polygons=len(preserved_background),preserved_background_surface_sha256=hashlib.sha256(json.dumps([[list(v) for v in poly] for poly in preserved_background],separators=(',',':')).encode()).hexdigest(),boundary_visibility_conflicts=violations,filled_gap_grid_samples=int(filled.sum()),rounded_root_shoulder_grid_samples=int(extension.sum()),iterations=it+1,convergence=delta,max_raise=float(np.max((z-z0)[domain])),max_lower=float(np.max((z0-z)[domain])),topology=mesh_reports),indent=2)+'\n');print(worker)
+(dest/'construction.json').write_text(json.dumps(dict(status='Private complete-bank hypothesis; root and user approval pending',source_sha256=source_hash,model_sha256=sha(worker/'model.blend'),wood_and_unrelated_geometry_unchanged=True,changed_nodes=nodes,grid_step=step,inferred='Broad regional slope for banks006/007 plus bounded background000 splice. Exterior000 planar geometry retained by exact clipping. Tree06 lowered along native camera rays; original proxy heights are weak priors, not observations. Unknown soil appearance, seams and topology require review.',root_constraints=root_constraints,background_region=list(region),preserved_background_polygons=len(preserved_background),preserved_exterior_corner_schema=exterior_schema,preserved_background_surface_sha256=hashlib.sha256(json.dumps([[list(v) for v in poly] for poly in preserved_background],separators=(',',':')).encode()).hexdigest(),boundary_visibility_conflicts=violations,filled_gap_grid_samples=int(filled.sum()),rounded_root_shoulder_grid_samples=int(extension.sum()),iterations=it+1,convergence=delta,max_raise=float(np.max((z-z0)[domain])),max_lower=float(np.max((z0-z)[domain])),topology=mesh_reports),indent=2)+'\n');print(worker)
