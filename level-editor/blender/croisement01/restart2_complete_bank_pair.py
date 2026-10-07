@@ -34,7 +34,7 @@ def erode(m):return ~dilate(~m)
 closed=domain.copy()
 for _ in range(2):closed=dilate(closed)
 for _ in range(2):closed=erode(closed)
-if tree_id==4 and a.revision>=2:
+if (tree_id==4 and a.revision>=2) or (tree_id==5 and a.revision>=4):
  # The selected banks are disconnected archaeological proxy footprints.
  # Bridge their intervening soil with a separately reviewed inferred slope.
  coords=sorted(set((int(i),int(j)) for i,j in np.argwhere(domain)))
@@ -88,6 +88,7 @@ def constrain(objects,mask_id,mask_path,label):
  root_constraints.append(dict(asset=label,mask=mask_id,domain_sha256=sha(mask_path),native_rays=count,root_grid_constraints=root_fixed))
 wood=[o for o in collection.all_objects if o.type=='MESH' and o.get('source_node')==f'scenery-tree{tree_id:02d}-wood'];constrain(wood,tree_id,source.parents[1]/'wood-domain.png',cfg['asset_id'])
 neighbors=[(0,'approved-tree00-wood-fill-v1/croisement01-tree-00/baked-v4-support/worker.blend','tree00-v4/wood-domain.png'),(1,'approved-tree01-isolated-wood-fill-v1/croisement01-tree-01/baked-v1-luminance/worker.blend','tree01-source-prep-v1/wood-domain-proposal.png'),(2,'tree02-v8/assets/croisement01-tree-02/model.blend','tree02-v8/wood-domain.png'),(3,'approved-tree03-fill-v1/croisement01-tree-03/baked-v1-luminance/worker.blend','tree03-v4/wood-domain.png')]
+if tree_id==5 and a.revision>=4:neighbors.append((6,'tree06-v6/assets/croisement01-tree-06/model.blend','tree06-v6/wood-domain.png'))
 for n,path,mask in neighbors:
  path=R/path
  with bpy.data.libraries.load(str(path),link=False) as (src,dst):dst.objects=list(src.objects)
@@ -96,7 +97,7 @@ for n,path,mask in neighbors:
  bpy.context.view_layer.update()
  targets=[o for o in loaded if o.type=='MESH' and o.get('asset_group')==f'croisement01-tree-{n:02d}' and 'foliage' not in o.get('source_node','') and o.get('projection_component')!='crown']
  assert targets
- reference=next(row for row in json.loads((R/'bank-neighbor-transform-reference-v1.json').read_text())['sources'] if row['mask']==n);assert reference['model_sha256']==sha(path)
+ reference=next(row for row in json.loads((R/('bank-neighbor-transform-reference-v2.json' if n==6 else 'bank-neighbor-transform-reference-v1.json')).read_text())['sources'] if row['mask']==n);assert reference['model_sha256']==sha(path)
  assert len(reference['objects'])==len(targets)
  for target in targets:
   expected=[row for row in reference['objects'] if row['source_node']==target.get('source_node')];assert len(expected)==1
