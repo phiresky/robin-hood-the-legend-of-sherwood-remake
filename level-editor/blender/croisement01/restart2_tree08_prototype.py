@@ -70,9 +70,13 @@ obj['scope']=f'Initial wood geometry hypothesis only;{len(selected)} separate sw
 if revision>=4:
  sys.path.insert(0,str(Path(__file__).parent))
  from restart2_tree08_correction import build_sections,consolidate,DEPTH_FAMILIES
- prior_misses=json.loads((R/'tree08-wood-prototype-v3/coverage.json').read_text())['miss_native_pixels']
- assert len(prior_misses)==207,'Bind corrected source obligations to reviewed v3'
- corrected,miss_assignment=build_sections(trace['polylines'],selected,prior_misses)
+ prior_misses=json.loads((R/('tree08-wood-prototype-v5' if revision>=6 else 'tree08-wood-prototype-v3')/'coverage.json').read_text())['miss_native_pixels']
+ assert len(prior_misses)==(110 if revision>=6 else 207),'Bind corrected source obligations to reviewed predecessor'
+ if revision>=6:
+  from restart2_tree08_hierarchy import build_hierarchy_sections
+  core_support=[[int(x)+331,int(y)+11] for y,x in np.argwhere(np.asarray(Image.open(R/'tree08-semantic-source-v1/bark-core-proposal.png'))>0)] if revision>=7 else None
+  corrected,miss_assignment,hierarchy=build_hierarchy_sections(trace['polylines'],selected,plan['root_native'],prior_misses,core_support,continuous_nodes=revision>=8);save_json('rooted-depth-hierarchy.json',hierarchy)
+ else:corrected,miss_assignment=build_sections(trace['polylines'],selected,prior_misses)
  guard(32*1024**2)
  bpy.data.objects.remove(obj,do_unlink=True);bpy.data.meshes.remove(mesh)
  obj=consolidate(bpy,scene.collection,corrected);mesh=obj.data
@@ -83,7 +87,7 @@ if revision>=4:
  obj['source_node']='scenery-tree08-wood-prototype';obj['scope']='Initial wood trial; coherent main volume, held crossings unmerged, source and terrain review pending'
  verts=[v.co.copy() for v in mesh.vertices];faces=[tuple(f.vertices) for f in mesh.polygons]
  section_ranges=[dict(trace_id=q['trace_id'],held_crossing=q['held_crossing']) for q in corrected]
- save_json('correction-plan-executed.json',dict(depth_families=DEPTH_FAMILIES,source_center_projection_preserved=True,previous207miss_obligations=miss_assignment,held_crossing_remesh_excluded=True,basal_continuation='Inferred rounded burial volume; no receiver/contact proof',post_remesh_source_coverage_required=True))
+ save_json('correction-plan-executed.json',dict(depth_families=(None if revision>=6 else DEPTH_FAMILIES),source_center_projection_preserved=True,previous_miss_count=len(prior_misses),previous_miss_obligations=miss_assignment,held_crossing_remesh_excluded=True,basal_continuation='Inferred rounded burial volume; no receiver/contact proof',post_remesh_source_coverage_required=True))
  estimate=len(mesh.vertices)*48+len(mesh.loops)*24+len(mesh.polygons)*40+2*1024**2
  assert estimate<=32*1024**2,('Conservative serialized model estimate exceeds cap',estimate)
 uv=mesh.uv_layers.new(name='Native source projection')
