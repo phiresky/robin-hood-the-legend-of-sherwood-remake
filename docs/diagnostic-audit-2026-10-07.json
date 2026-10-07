@@ -97,8 +97,8 @@
     },
     {
       "issue": "Non-host gesture combat only recognizes spin",
-      "status": "sparse_gesture_capture_fixed_report_retest_pending",
-      "finding": "Drag capture omitted the press position. Two move events yielded only two samples and rejected a short D/E attack. Capture now seeds the press position; a down/move/move/up regression recognizes ThrustD. A real non-host session still needs confirmation."
+      "status": "per_player_gesture_and_combat_selection_fixed_report_retest_pending",
+      "finding": "Drag capture omitted the press position. Two move events yielded only two samples and rejected a short D/E attack. Capture now seeds the press position; a down/move/move/up regression recognizes ThrustD. Follow-up on 2026-10-08: separate-player gesture resolution passes across all 16 facings, independent cameras and primary-opponent changes, with advanced gestures on/off. Same-frame attack dispatch preserves separate actors, targets, and optional approach sequences in either delivery order. Two regressions reproduced host-only combat selection checks: a client-selected hero incorrectly proposed an autonomous strike and queued a post-hit taunt. Combat automation now respects hero selection by every active player, including automatic movement, retreat, and parry suppression. Full engine unit suite: 4406 passed, 32 ignored. A real non-host session still needs confirmation."
     },
     {
       "issue": "Tying an already tied enemy unties it",

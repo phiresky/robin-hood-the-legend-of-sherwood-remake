@@ -3019,8 +3019,7 @@ fn evaluated_step_back_aborted_before_motion_terminal_preserves_history() {
     );
 }
 
-#[test]
-fn unselected_rescue_pc_proposes_strike_before_step_back() {
+fn autonomous_pc_duel_fixture() -> (EngineInner, LevelAssets, EntityId, EntityId) {
     let mut engine = make_engine();
     let owner = engine.add_test_entity(make_pc(
         WorldPoint3D::new(0.0, 100.0, 0.0),
@@ -3080,6 +3079,66 @@ fn unselected_rescue_pc_proposes_strike_before_step_back() {
     profiles.soldiers[0].fighting = 100;
     profiles.hth_weapons[0].distance[crate::weapons::WeaponDistance::Uber as usize] = 30;
 
+    (engine, assets, owner, opponent)
+}
+
+#[test]
+fn player_selected_combat_does_not_inject_autonomous_strikes_or_parries() {
+    for seat in [0, 1] {
+        let (mut engine, assets, owner, opponent) = autonomous_pc_duel_fixture();
+        engine.pc_mut(owner).command_interface =
+            crate::human_control::CommandInterface::HeroActions;
+        engine.pc_mut(owner).mission_role = crate::human_control::MissionRole::PlayerParty;
+        engine.ensure_seat(crate::player_command::PlayerId(1));
+        engine.players.seats[1].connected = true;
+        engine.players.seats[seat].selection = vec![owner];
+        // Leave the other player's selection different from this fighter.
+        let other = engine.add_test_entity(make_pc(wp(500.0, 500.0), None));
+        engine.players.seats[1 - seat].selection = vec![other];
+        engine.control.rng = SimulationRng::with_original_replay(vec![0, 99, 0]);
+        engine.with_simulation_context(|engine, sim| {
+            engine.tick_waiting_sword_execute_for(TickCtx::new(sim, &assets), owner);
+        });
+        assert!(
+            !engine
+                .orders
+                .sequence_manager
+                .has_live_element_for_actor_matching(owner, Command::is_swordstrike),
+            "seat {seat}: selected fighter must not choose an autonomous attack",
+        );
+        assert_eq!(
+            engine.control.rng.original_replay_sites(0..1).unwrap(),
+            vec![crate::sim_rng::RngSite::SmalltalkStrikeSide],
+            "seat {seat}: selected fighter must skip automatic strike and retreat decisions",
+        );
+        let before = engine.control.rng.original_replay_cursor();
+        let sequences_before = bitcode::encode(&engine.orders.sequence_manager);
+        engine.with_simulation_context(|engine, sim| {
+            assert!(!engine.update_swordfight_distance(TickCtx::new(sim, &assets), owner));
+            assert!(
+                engine
+                    .is_step_back_needed(TickCtx::new(sim, &assets), owner)
+                    .is_none()
+            );
+            engine.warn_for_strike(
+                TickCtx::new(sim, &assets),
+                opponent,
+                &[owner],
+                SwordStrike::A,
+            );
+        });
+        assert_eq!(engine.control.rng.original_replay_cursor(), before);
+        assert_eq!(
+            bitcode::encode(&engine.orders.sequence_manager),
+            sequences_before,
+            "seat {seat}: selected fighter must retain manual movement/parry control"
+        );
+    }
+}
+
+#[test]
+fn unselected_rescue_pc_proposes_strike_before_step_back() {
+    let (mut engine, assets, owner, _) = autonomous_pc_duel_fixture();
     // The first draw accepts strike A. The second reaches the step-back
     // decision and rejects the one-point friendly strength against the
     // opponent's 100 points. Original proposes the strike first even though

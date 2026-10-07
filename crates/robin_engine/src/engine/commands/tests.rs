@@ -946,6 +946,94 @@ fn shared_hero_client_swing_dispatch_matches_host_sequence() {
 }
 
 #[test]
+fn simultaneous_players_keep_separate_sword_targets_and_attack_sequences() {
+    for reverse_delivery in [false, true] {
+        for seeks in [[false, false], [true, false], [false, true], [true, true]] {
+            let (mut engine, assets, first_actor) = setup_pc_engine(&[]);
+            let actors = [first_actor, spawn_pc_at(&mut engine, 410.0, 210.0)];
+            let targets = [
+                spawn_pc_at(&mut engine, 90.0, 10.0),
+                spawn_pc_at(&mut engine, 490.0, 210.0),
+            ];
+            engine.control.sim_config.coop.control = crate::coop::CharacterControl::Shared;
+            let sim = crate::sim_rng::test_context();
+            engine.apply_frame_commands_with_mode(
+                TickCtx::new(&sim, &assets),
+                &[PlayerInput::host(PlayerCommand::ConnectSeat {
+                    player_id: PlayerId(1),
+                    nickname: "Client".into(),
+                })],
+                SelectionCommandBatchMode::InferNestedSelection,
+            );
+            let strikes = [Command::SwordstrikeThrustD, Command::SwordstrikeThrustE];
+            let mut commands: Vec<_> = (0..2)
+                .map(|seat| {
+                    PlayerInput::new(
+                        PlayerId(seat as u8),
+                        PlayerCommand::SwordStrikeCmd {
+                            actor: actors[seat],
+                            target: targets[seat],
+                            command: strikes[seat],
+                            composite: None,
+                            gesture_quality: GestureQuality::PERFECT,
+                            with_seek: seeks[seat],
+                            seek_distance: seeks[seat].then_some(54.0 + seat as f32),
+                        },
+                    )
+                })
+                .collect();
+            if reverse_delivery {
+                commands.reverse();
+            }
+            let received: Vec<PlayerInput> = bitcode::decode(&bitcode::encode(&commands)).unwrap();
+            engine.apply_frame_commands_with_mode(
+                TickCtx::new(&sim, &assets),
+                &received,
+                SelectionCommandBatchMode::InferNestedSelection,
+            );
+            let queued: Vec<_> = engine
+                .orders
+                .sequence_manager
+                .sequences_iter()
+                .filter_map(|sequence| sequence.get(0))
+                .collect();
+            assert_eq!(queued.len(), 2);
+            for seat in 0..2 {
+                let first = queued
+                    .iter()
+                    .find(|element| element.owner == Some(actors[seat]))
+                    .expect("each player's fighter retains its own sequence");
+                let (owner, command, target) = if seeks[seat] {
+                    assert_eq!(first.command, Command::Seek);
+                    let SequenceElementData::Movement {
+                        tolerance,
+                        post_seek_sequence: Some(post),
+                        ..
+                    } = &first.data
+                    else {
+                        panic!("expected approach with retained attack");
+                    };
+                    assert_eq!(*tolerance, 54.0 + seat as f32);
+                    let attack = post.elements.first().unwrap();
+                    let SequenceElementData::Interaction { antagonist } = attack.data else {
+                        panic!("expected retained sword attack");
+                    };
+                    (attack.owner, attack.command, antagonist)
+                } else {
+                    let SequenceElementData::Interaction { antagonist } = first.data else {
+                        panic!("expected direct sword attack");
+                    };
+                    (first.owner, first.command, antagonist)
+                };
+                assert_eq!(owner, Some(actors[seat]));
+                assert_eq!(command, strikes[seat]);
+                assert_eq!(target, Some(targets[seat]));
+            }
+        }
+    }
+}
+
+#[test]
 fn manual_sword_strike_executes_without_recording_a_quick_action() {
     let (mut engine, assets, pc_id) = setup_pc_engine(&[(Action::Hit, 1)]);
     let target = spawn_pc_at(&mut engine, 90.0, 10.0);
