@@ -69,6 +69,8 @@ def validate(path):
     for target, row in retirements.items():
         if target.name != 'asset.json' or publisher.sha(target) != row['sha256']:
             raise ValueError('Retired descriptor changed: ' + str(target))
+        if json.loads(target.read_text()).get('id') != row['id']:
+            raise ValueError('Retirement descriptor identity mismatch')
     return manifest, retirements
 
 def main():
