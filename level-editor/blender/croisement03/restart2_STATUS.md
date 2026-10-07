@@ -1,3 +1,24 @@
+## Full-bank saved prototype — private HOLD
+
+`bank-full-prototype-v2/worker.blend` is a bounded complete support prototype
+(884,664bytes, round about5.2MiB), hash16fdafec29ac3263. Saved/reopened actual
+and solid eight views, native source comparison and west-contact close-up were
+inspected. All three solids are closed/manifold with no degenerate faces.
+Path94–97 geometry/UVs are exact; transform flattening differs by at most1.686e-7.
+Native gameplay metadata is retained verbatim and no canonical files changed.
+
+All3,446 proposed rock pixels receive per-face native first-hit ownership.
+Tree02/03 source domains and tested Tree04–07 bark proposal rays are unchanged.
+The coarse Tree01 mask guard changes575 rays atx123–148,y277–316; their plotted
+source is foreground shelf rock, not demonstrated bark. This mixed ownership
+requires classification before enforcing those coarse hits as tree constraints.
+
+The model remains HOLD: long vertical planes and planar ramps are support
+geometry, not the finished source rock strata and softened shelf breaks.
+`visual-review.json` binds the evidence and next corrections. It is excluded
+from all approval galleries; no texture generation is permitted from this
+prototype. Construction/render jobs have exited and the bounded lane is released.
+
 ## Full-bank construction scope prepared
 
 `bank-west-transition-v1/surface-scope.json` refines the earlier join finding:
