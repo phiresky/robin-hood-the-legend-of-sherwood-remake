@@ -16,7 +16,7 @@ def bvh(objects):
  for obj in objects:
   offset=len(verts);verts.extend(obj.matrix_world@v.co for v in obj.data.vertices);faces.extend(tuple(offset+i for i in face.vertices) for face in obj.data.polygons)
  return BVHTree.FromPolygons(verts,faces)
-wood=bvh([o for o in objects if o.get('source_node')==f'scenery-tree{a.tree:02d}-wood']);terrain_nodes={'ground',f'tree{a.tree:02d}-local-soil-joint'}|{f'building-{i:03d}' for i in [*range(10),*range(76,81)]};terrain=bvh([o for o in objects if o.type=='MESH' and o.get('source_node') in terrain_nodes]);banks=[o for o in objects if o.type=='MESH' and o.get('source_node') in terrain_nodes];topology=[]
+wood=bvh([o for o in objects if o.get('source_node')==f'scenery-tree{a.tree:02d}-wood']);terrain_nodes={'ground',f'tree{a.tree:02d}-local-soil-joint'}|{f'building-{i:03d}' for i in [*range(10),*range(76,81)]};terrain_objects=[o for o in objects if o.type=='MESH' and o.get('source_node') in terrain_nodes];terrain_owners=[o.get('source_node') for o in terrain_objects for face in o.data.polygons];terrain=bvh(terrain_objects);banks=[o for o in objects if o.type=='MESH' and o.get('source_node') in terrain_nodes];topology=[]
 for bank in banks:
  bm=bmesh.new();bm.from_mesh(bank.data);topology.append(dict(node=bank.get('source_node'),vertices=len(bm.verts),faces=len(bm.faces),nonmanifold_edges=sum(not e.is_manifold for e in bm.edges),degenerate_faces=sum(f.calc_area()<1e-8 for f in bm.faces)));bm.free()
 mask_path=a.domain.resolve();mask=np.asarray(Image.open(mask_path).convert('L'))>0;direction=Vector((0,-COS,SIN));hidden=[];missing=[]
@@ -25,7 +25,7 @@ for y,x in zip(*np.nonzero(mask)):
  origin=Vector((float(left+x)+.5,-(float(top+y)+.5)/SIN,0))+direction*5000
  hit,normal,index,distance=wood.ray_cast(origin,-direction,20000)
  if hit is None:missing.append([int(x),int(y)]);continue
- ground,_,_,ground_distance=terrain.ray_cast(origin,-direction,20000)
- if ground is not None and ground_distance<distance-.01:hidden.append([int(x),int(y),float(distance-ground_distance)])
+ ground,_,ground_index,ground_distance=terrain.ray_cast(origin,-direction,20000)
+ if ground is not None and ground_distance<distance-.01:hidden.append([int(x),int(y),float(distance-ground_distance),terrain_owners[ground_index]])
 report=dict(model_sha256=sha(worker/'model.blend'),source_domain_sha256=sha(mask_path),source_pixels=int(mask.sum()),wood_projection_misses=missing,wood_pixels_occluded_by_terrain=hidden,bank_topology=topology,status='Measurement only; no source ownership or geometry approval implied')
 (worker/'inspection/joint-source-proof.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps({**report,'wood_projection_misses':len(missing),'wood_pixels_occluded_by_terrain':len(hidden)},indent=2))
