@@ -35,7 +35,15 @@ def main():
   coords=[point(x,y) for x,y,r in branch];radii=[r for x,y,r in branch]
   if args.revision>=2 and label!='Broken left branch':
    coords.extend([Vector((branch[-1][0],base_y,870)),Vector((branch[-1][0]+(-20 if label.startswith('Left') else 20),base_y,1000))]);radii.extend([7,2])
-  union(body,tube(label,coords,radii))
+  branch_obj=tube(label,coords,radii)
+  if args.revision>=3:
+   domain=np.asarray(wood)>0;xx=np.arange(domain.shape[1])+81
+   for sy in range(domain.shape[0]):
+    if label=='Left high fork':domain[sy]&=(xx<210)&(sy<235)
+    elif label=='Right high fork':domain[sy]&=(xx>240)&(sy<225)
+    else:domain[sy]&=(xx<190)&(sy>=265)&(sy<348)
+   fit_native_width(branch_obj,domain,'west-cut',x0=81,y0=0)
+  union(body,branch_obj)
  for angle in [.5,2.4,4.4]:
   base=point(215,588);tip=base+Vector((math.cos(angle)*39,math.sin(angle)*45,0));tip.z=.1
   union(body,tube('Natural low buttress',[point(214,565),base.lerp(tip,.6)+Vector((0,0,3)),tip],[9,5,.6]))
@@ -70,6 +78,21 @@ def main():
  for target in [obj,crown]:
   for vertex in target.data.vertices:vertex.co+=shift
   target.data.update()
+ if args.revision>=3:
+  changes=[]
+  for vertex in obj.data.vertices:
+   p=obj.matrix_world@vertex.co;sy=-p.y*SIN-p.z*COS
+   if sy<540:continue
+   origin=p+ray*80;remaining=160;nearest=None
+   while remaining>0:
+    support,normal,index,distance=tree.ray_cast(origin,-ray,remaining)
+    if support is None:break
+    if normal.z>.25 and abs((support-p).dot(ray))<80:
+     nearest=support;break
+    remaining-=distance+.02;origin=support-ray*.02
+   if nearest is None:continue
+   weight=min(1,max(0,(sy-540)/35));target=nearest+ray*.08;vertex.co=obj.matrix_world.inverted()@(p.lerp(target,weight));changes.append(dict(vertex=vertex.index,distance=float((target-p).dot(ray)),weight=weight))
+  obj.data.update();(dest/'basal-ray-support.json').write_text(json.dumps(dict(method='Smooth basal continuation onto nearby upward archival bank faces along native camera rays; projected source unchanged.',vertices=changes,terrain_provisional=True),indent=2)+'\n')
  (dest/'support-placement.json').write_text(json.dumps(dict(hit=list(hit),owner=owners[index],shift=list(shift),skipped=skipped,claim='Private placement only; contact review required'),indent=2)+'\n')
  keep={o for o in working.all_objects if o.type=='MESH' and (o in [obj,crown] or o.get('source_node') in terrain_nodes)}
  for other in list(bpy.data.objects):

@@ -20,15 +20,36 @@ def main():
  for row in native['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
  row=next(r for r in native['masks'] if r['index']==5);assert row['obstacle_indices']==[];alpha=Image.open(row['png']).convert('L');wood=alpha.copy()
  foreground=next(r for r in native['masks'] if r['index']==4);cut=Image.new('L',alpha.size);cut.paste(Image.open(foreground['png']).convert('L'),(foreground['box_top_left'][0]-row['box_top_left'][0],foreground['box_top_left'][1]-row['box_top_left'][1]));wood=ImageChops.subtract(wood,cut)
+ if args.revision>=2:
+  for index in [6,8]:
+   foreground=next(r for r in native['masks'] if r['index']==index);cut=Image.new('L',alpha.size);cut.paste(Image.open(foreground['png']).convert('L'),(foreground['box_top_left'][0]-row['box_top_left'][0],foreground['box_top_left'][1]-row['box_top_left'][1]));wood=ImageChops.subtract(wood,cut)
  wood.save(dest/'wood-domain.png');ImageChops.subtract(alpha,wood).save(dest/'deferred-domain.png');native['masks'].append(dict(row,index=205,png=str(dest/'wood-domain.png')))
  base_y=-225/SIN
  def point(x,y):return Vector((x,base_y,(225-y)/COS))
  trace=[(320,222,17),(326,211,18),(329,190,16),(331,165,11),(331,139,9),(330,117,8)]
  body=tube('Rear forked trunk',[point(x,y) for x,y,r in trace],[r for x,y,r in trace]);body['defer_union']=True;rng=random.Random(105)
+ if args.revision>=2:
+  domain=np.asarray(alpha)>0;domain[:140]=False;domain[208:]=False;xx=np.arange(domain.shape[1])+265;domain[175:]&=(xx>=306)&(xx<=350)
+  fit_native_width(body,domain,'west-cut',x0=265,y0=0)
+  for vertex in body.data.vertices:
+   sy=-vertex.co.y*SIN-vertex.co.z*COS
+   if sy>208:vertex.co+=Vector((0,SIN,COS))*(sy-208)
+  body.data.update()
+
  for n,branch in enumerate([[(330,135,8),(317,110,6),(305,70,5),(295,30,5),(293,-25,5)],[(330,137,7),(328,100,5),(322,60,5),(317,15,5),(318,-25,5)],[(331,137,7),(342,94,5),(351,48,5),(360,10,5),(366,-25,4)]]):
-  coords=[point(x,y) for x,y,r in branch]+[Vector((branch[-1][0],base_y,365)),Vector((330+(n-1)*40,base_y,430))];union(body,tube('Connected observed fork '+str(n),coords,[r for x,y,r in branch]+[4,1]))
- for angle in [.2,1.9,3.5,5]:
-  base=point(325,220);tip=base+Vector((math.cos(angle)*29,math.sin(angle)*34,0));tip.z=.1;union(body,tube('Tapered root flare',[point(328,203),base.lerp(tip,.6)+Vector((0,0,2)),tip],[5,3,.35]))
+  coords=[point(x,y) for x,y,r in branch]+[Vector((branch[-1][0],base_y,365)),Vector((330+(n-1)*40,base_y,430))];part=tube('Connected observed fork '+str(n),coords,[r for x,y,r in branch]+[4,1])
+  if args.revision>=2:
+   domain=np.asarray(alpha)>0;domain[135:]=False;xx=np.arange(domain.shape[1])+265
+   for sy in range(135):
+    centers=[np.interp(sy,[-25,15,30,70,110,135],[293,294,295,305,317,330]),np.interp(sy,[-25,15,60,100,137],[318,317,322,328,330]),np.interp(sy,[-25,10,48,94,137],[366,360,351,342,331])];domain[sy]&=np.argmin(np.abs(xx[:,None]-np.array(centers)),axis=1)==n
+   fit_native_width(part,domain,'west-cut',x0=265,y0=0)
+  union(body,part)
+ if args.revision>=2:
+  for x,y in [(282,201),(296,220),(344,219),(360,204)]:
+   union(body,tube('Source-supported tapered root',[point(329,190),point((329+x)/2,(190+y)/2),point(x,y)],[8,4,.5]))
+ else:
+  for angle in [.2,1.9,3.5,5]:
+   base=point(325,220);tip=base+Vector((math.cos(angle)*29,math.sin(angle)*34,0));tip.z=.1;union(body,tube('Tapered root flare',[point(328,203),base.lerp(tip,.6)+Vector((0,0,2)),tip],[5,3,.35]))
  for i in range(9):
   angle=math.tau*i/9;start=Vector((330,base_y,340+i%3*12));tip=Vector((330+math.cos(angle)*80,base_y+math.sin(angle)*92,430+rng.uniform(-15,20)));union(body,tube('Inferred supported bough',[start,start.lerp(tip,.55)+Vector((0,0,10)),tip],[4,2,.3]))
  bpy.context.view_layer.objects.active=body;modifier=body.modifiers.new('Continuous rear forked wood','REMESH');modifier.mode='VOXEL';modifier.voxel_size=.8;modifier.use_remove_disconnected=False;bpy.ops.object.modifier_apply(modifier=modifier.name)
