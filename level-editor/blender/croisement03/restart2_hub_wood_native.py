@@ -15,7 +15,7 @@ def main(number):
  config={6:((535,0,620,220),154,10,75,'07'),7:((600,0,735,280),154,10,130,'07'),8:((736,0,792,190),135,6,39,'06'),9:((769,0,811,180),135,6,31,'06'),10:((794,0,856,195),135,6,56,'06'),11:((844,0,952,195),135,6,102,'06')}
  box,leafheight,leafleft,leafright,sprite=config[number];asset=f'croisement03-tree-{number:02}';leafgroup=f'croisement03-arbre{sprite}-fragment-tree{number:02}-provisional'
  assert shutil.disk_usage(ROOT).free>10*1024**3;available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024;assert available>=6*1024**3
- out=B/f'approved-hub-textures-v1/{asset}/wood-input-v1';assert not (out/'native-audit.json').exists();norm=json.loads((out/'normalization.json').read_text());assert sha(out/'normalized.blend')==norm['normalized_model_sha256'];assert sha(norm['approved_model'])==norm['approved_model_sha256'];acquire()
+ out=B/f'approved-hub-textures-v1/{asset}/wood-input-v1';assert not (out/'native-audit.json').exists();norm=json.loads((out/'normalization.json').read_text());assert sha(out/'normalized.blend')==norm['normalized_model_sha256'];assert sha(Path(norm['approved_model']))==norm['approved_model_sha256'];acquire()
  try:
   bpy.ops.wm.open_mainfile(filepath=str(out/'normalized.blend'));scene=bpy.data.scenes['Croisement03 Refinement'];rows=[]
   for obj in [o for o in scene.objects if o.type=='MESH']:
