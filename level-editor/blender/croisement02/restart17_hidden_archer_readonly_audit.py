@@ -13,7 +13,7 @@ from evidence_io import sha,write_json
 from tree_geometry import RAY,SIN
 from refinement_review import _tree
 from render_slots import acquire,release
-BASE=OUT/'restart14-hidden-archer';DEST=BASE/'climbing-v17/readonly-role-support-v1'
+BASE=OUT/'restart14-hidden-archer';DEST=BASE/'climbing-v17/readonly-role-support-v2'
 
 def main():
     assert not DEST.exists();DEST.mkdir();inputs={};records=[]
@@ -55,7 +55,17 @@ def main():
             polygon=mesh.polygons[tri.polygon_index];uv=mesh.uv_layers['Foliage UV'];p0,p1,p2=[obj.matrix_world@mesh.vertices[v].co for v in tri.vertices];e,f,v=p1-p0,p2-p0,hit-p0;ee,ef,ff=e.dot(e),e.dot(f),f.dot(f);den=ee*ff-ef*ef;b=(ff*v.dot(e)-ef*v.dot(f))/den;c=(ee*v.dot(f)-ef*v.dot(e))/den;u=uv.data[tri.loops[0]].uv*(1-b-c)+uv.data[tri.loops[1]].uv*b+uv.data[tri.loops[2]].uv*c;sample=[math.floor(u.x*w),h-1-math.floor(u.y*h)]
             role='native paired back' if polygon.index<native_faces else 'inferred supporting stem' if polygon.index<native_faces+stem_faces else 'inferred side leaf'
             exceptions.append(dict(pixel=[int(ox+x),int(oy+y)],world=list(hit),triangle=index,polygon=polygon.index,material=mat.name,material_slot=tri.material_index,construction_role=role,source_sample_local=sample,expected_sample_local=[int(x),int(y)],exact_source_sample=sample==[int(x),int(y)],source_ownership=[float(mesh.color_attributes['Source ownership'].data[k].color[0]) for k in tri.loops]))
-        records.append(dict(state=state,model_sha256=inputs[str(model)],native_pixels=native_count,missing=missing,nonobserved_first_hits=exceptions,planned_support_graph=dict(core_chains=core_count,lobe_twigs=len(lobes),chains=len(chains),stem_segments=len(segments),edges=[list(e) for e in sorted(edges)],root_guide_chains=list(range(len(guides))),reachable_from_root_guides=sorted(reachable),unreached_chains=sorted(set(adjacency)-reachable),endpoints=endpoint_rows),limitations=['Endpoint-to-segment radius proximity tests planned tubes, not actual triangle intersection or opaque material continuity. Interior/interior crossings may add contacts not recorded.','Gray detached-looking leaf packets require actual twig-to-leaf and rock/bank context review; an ellipsoid envelope is not a physical support surface.']))
+        stem_uv_error=0.;offmap_triangles=[];material_roles=[]
+        for slot,mat in enumerate(mesh.materials):
+            shader=next(n for n in mat.node_tree.nodes if n.type=='BSDF_PRINCIPLED');alpha=shader.inputs['Alpha'];tex=alpha.links[0].from_node if alpha.links else None
+            material_roles.append(dict(slot=slot,name=mat.name,alpha_link_node=tex.type if tex else None,alpha_texture_extension=tex.extension if tex and tex.type=='TEX_IMAGE' else None,alpha_packed_image_sha256=__import__('hashlib').sha256(tex.image.packed_file.data).hexdigest() if tex and tex.type=='TEX_IMAGE' and tex.image.packed_file else None))
+        for tri in mesh.loop_triangles:
+            if not native_faces<=tri.polygon_index<native_faces+stem_faces:continue
+            positions=[obj.matrix_world@mesh.vertices[v].co for v in tri.vertices];sy=[-p.y*math.sin(math.radians(35))-p.z*math.cos(math.radians(35)) for p in positions]
+            for position,source_y,loop in zip(positions,sy,tri.loops):
+                actual=mesh.uv_layers['Foliage UV'].data[loop].uv;expected=np.array([(position.x-ox)/w,1-(source_y-oy)/h]);stem_uv_error=max(stem_uv_error,float(np.max(np.abs(np.array(actual)-expected))))
+            if max(sy)<oy-.001:offmap_triangles.append(dict(triangle=tri.index,polygon=tri.polygon_index,material_slot=tri.material_index,source_y_range=[min(sy),max(sy)]))
+        records.append(dict(state=state,model_sha256=inputs[str(model)],native_pixels=native_count,missing=missing,nonobserved_first_hits=exceptions,stem_opacity=dict(maximum_saved_uv_projection_error=stem_uv_error,materials=material_roles,whole_triangles_beyond_source_top=offmap_triangles,conclusion='Recorded stem triangles lie wholly outside the native alpha image. CLIP alpha makes them invisible, while gray off-map leaf fans use explicit opaque donor UVs.'),planned_support_graph=dict(core_chains=core_count,lobe_twigs=len(lobes),chains=len(chains),stem_segments=len(segments),edges=[list(e) for e in sorted(edges)],root_guide_chains=list(range(len(guides))),reachable_from_root_guides=sorted(reachable),unreached_chains=sorted(set(adjacency)-reachable),endpoints=endpoint_rows),limitations=['Endpoint-to-segment radius proximity tests planned tubes, not actual triangle intersection or opaque material continuity. Interior/interior crossings may add contacts not recorded.','Gray detached-looking leaf packets require actual twig-to-leaf and rock/bank context review; an ellipsoid envelope is not a physical support surface.']))
     for path,digest in inputs.items():assert sha(Path(path))==digest
     result=dict(status='READ_ONLY_AUDIT; geometry readiness remains held',inputs=inputs,records=records,model_saved=False,rendered=False,output_cap_bytes=2*1024**2)
     encoded=json.dumps(result,indent=2)+'\n';assert len(encoded.encode())<2*1024**2;(DEST/'report.json').write_text(encoded);print(DEST/'report.json',flush=True)
