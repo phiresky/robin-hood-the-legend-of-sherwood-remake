@@ -1,3 +1,5 @@
+import type { ScenerySourceClockBinding } from "./scenery-source-clocks.ts";
+import { SourceContractClockBinding } from "./source-contract-clock-binding.ts";
 import { FramingBounds } from "./framing-bounds.ts";
 import { nearestSplineSection } from "./spline-insertion.ts";
 import { TerrainControls, type TerrainEditMode } from "./terrain-controls.ts";
@@ -9,6 +11,8 @@ import type { NativeStatePresentationContract } from "../../shared/src/native-st
 import {
   verifyStaticStateReplacements,
   validateNativePatchPreview,
+  validateNativeLoopPreview,
+  type NativeLoopPreviewContract,
   type NativePatchPreviewContract,
   type StateDeliveryContract,
 } from "../../shared/src/state-delivery.ts";
@@ -793,6 +797,54 @@ export class EditorViewport {
       playing: this.stateDelivery.ready && this.stateDelivery.native.isPlaying,
     };
   }
+  private readonly loopClocks = new SourceContractClockBinding();
+  private loopFocus: string | undefined;
+  private loopSequence = 0;
+  private loopEpoch = 0;
+  private sampleLoopClocks() {
+    if (!this.loopClocks.ready || !this.loopFocus || !this.nativeArt.ready) return false;
+    const rows = this.loopClocks.snapshot();
+    this.scenery.sourceClocks.sample(rows);
+    return this.nativeArt.sampleExternalClocks(rows, this.loopFocus);
+  }
+  /** Animated physical loops are separate from endpoint delivery and its clip rejection. */
+  async setNativeLoopPresentation(
+    contract: NativeLoopPreviewContract,
+    library: FileSystemDirectoryHandle,
+    source: MissionStateSource,
+  ) {
+    validateNativeLoopPreview(contract);
+    if (!contract.physical) return this.setNativeArtPresentation(contract.native, library, source);
+    if (this.disposed) throw new Error("Disposed viewport");
+    this.clearNativeArtPresentation();
+    const epoch = this.loopEpoch;
+    const current = () => !this.disposed && epoch === this.loopEpoch;
+    const frozen = structuredClone(contract),
+      resolvedSource = structuredClone({ ...source, level: this.bindings.level() ?? source.level });
+    if (this.entities instanceof MissionEntities && this.entities.missionName !== source.name)
+      throw new Error("Physical loop does not match the displayed mission");
+    try {
+      if (
+        !(await this.loopClocks.set(frozen.native, frozen.physical!, resolvedSource)) ||
+        !current()
+      )
+        return false;
+      this.loopFocus = frozen.focus_element_id;
+      this.loopSequence = 0;
+      this.stateMission = frozen.native.mission;
+      const [ready] = await Promise.all([
+        this.nativeArt.set(frozen.native, resolvedSource, nativeLibraryReader(library)),
+        this.missionStates.set(frozen.physical!, library, resolvedSource, this.loopClocks),
+      ]);
+      if (!current() || !ready) return false;
+      this.sampleLoopClocks();
+      return true;
+    } catch (error) {
+      if (!current()) return false;
+      this.clearNativeArtPresentation();
+      throw error;
+    }
+  }
   private nativePatchFocus: string | undefined;
   private nativeSurface: NativeArtworkSurface | undefined;
   private nativeControlState: { orbit: boolean; gizmo: boolean } | undefined;
@@ -841,7 +893,10 @@ export class EditorViewport {
   }
   setStatePresentationMode(mode: "physical" | "native-art") {
     if (mode === "physical") {
-      this.currentNativeArt.setPlaying(false);
+      if (this.loopClocks.ready) {
+        this.loopClocks.setAllPlaying(false);
+        this.sampleLoopClocks();
+      } else this.currentNativeArt.setPlaying(false);
       if (this.stateDelivery.ready) this.stateDelivery.selectMode("physical-endpoint");
       this.stateDelivery.physical.visible = false;
       this.deliveryEndpointActive = false;
@@ -874,8 +929,14 @@ export class EditorViewport {
     this.nativeSurface.update(this.currentNativeArt.pixels());
   }
   clearNativeArtPresentation() {
-    this.nativePatchFocus = undefined;
+    this.loopEpoch++;
     this.setStatePresentationMode("physical");
+    if (this.loopClocks.ready) this.missionStates.clear();
+    this.loopClocks.clear();
+    this.scenery.sourceClocks.clear();
+    this.loopFocus = undefined;
+    this.loopSequence = 0;
+    this.nativePatchFocus = undefined;
     this.nativeArt.clear();
     this.clearStateDelivery();
   }
@@ -887,11 +948,20 @@ export class EditorViewport {
     };
   }
   setNativeArtPlaying(playing: boolean) {
+    if (this.loopClocks.ready) {
+      this.loopClocks.setAllPlaying(playing);
+      this.sampleLoopClocks();
+      return;
+    }
     if (this.stateDelivery.ready) this.stateDelivery.setPlaying(playing);
     else this.nativeArt.setPlaying(playing);
   }
   seekNativeArt(tick: number, id?: string) {
-    this.currentNativeArt.seek(tick, id);
+    if (this.loopClocks.ready) {
+      if (id !== undefined) this.loopClocks.seek(id, tick);
+      else for (const row of this.loopClocks.snapshot()) this.loopClocks.seek(row.id, tick);
+      this.sampleLoopClocks();
+    } else this.currentNativeArt.seek(tick, id);
     this.nativeSurface?.update(this.currentNativeArt.pixels());
   }
   private readonly missionStates = new MissionStateLayer(
@@ -910,6 +980,7 @@ export class EditorViewport {
     if (this.disposed) throw new Error("Disposed viewport");
     if (this.entities instanceof MissionEntities && this.entities.missionName !== source.name)
       throw new Error("Refined states do not match the displayed mission");
+    if (this.loopClocks.ready) this.clearNativeArtPresentation();
     this.stateMission = contract.mission;
     await this.missionStates.set(contract, library, {
       ...source,
@@ -917,7 +988,8 @@ export class EditorViewport {
     });
   }
   clearMissionStates() {
-    this.missionStates.clear();
+    if (this.loopClocks.ready) this.clearNativeArtPresentation();
+    else this.missionStates.clear();
   }
   setMissionStatesPlaying(playing: boolean) {
     this.missionStates.setPlaying(playing);
@@ -949,7 +1021,16 @@ export class EditorViewport {
       return matrix;
     },
   );
+  bindScenerySourceClocks(bindings: readonly ScenerySourceClockBinding[]) {
+    if (!this.loopClocks.ready) throw new Error("Scenery source clocks are not ready");
+    this.scenery.sourceClocks.bind(bindings);
+    this.sampleLoopClocks();
+  }
+  private sourceClockLibrary: FileSystemDirectoryHandle | null = null;
   setSceneryLibrary(root: FileSystemDirectoryHandle | null) {
+    if (root !== this.sourceClockLibrary && this.loopClocks.ready)
+      this.clearNativeArtPresentation();
+    this.sourceClockLibrary = root;
     this.scenery.setLibrary(root);
   }
   private cancelMissionDrag: (() => void) | null = null;
@@ -1323,6 +1404,7 @@ export class EditorViewport {
     this.observer?.disconnect();
     this.retireMap();
     this.missionStates.dispose();
+    this.loopClocks.dispose();
     this.nativeArt.dispose();
     this.stateDelivery.dispose();
     for (const control of this.controls.reverse()) control.dispose();
@@ -1482,8 +1564,15 @@ export class EditorViewport {
     );
     this.animate((elapsed) => {
       if (!this.renderer || !this.camera) return;
+      if (this.loopClocks.ready) {
+        this.loopClocks.advance(this.loopSequence++, elapsed);
+        if (this.sampleLoopClocks()) {
+          this.clippingBoundsDirty = true;
+          this.nativeSurface?.update(this.nativeArt.pixels());
+        }
+      }
       if (this.nativeSurface) {
-        if (this.currentNativeArt.advance(elapsed))
+        if (!this.loopClocks.ready && this.currentNativeArt.advance(elapsed))
           this.nativeSurface.update(this.currentNativeArt.pixels());
         return;
       }

@@ -529,3 +529,42 @@ test("overlapping context-only initial rows cannot be activated or stamp backgro
   assert.throws(() => p.setPatchState("bag", "forward", 0), /Context-only/);
   assert.deepEqual(Array.from(p.pixels().data.slice(0, 3)), [200, 0, 0]);
 });
+
+test("external native source sampling preserves exact phase without acquiring a second clock", async () => {
+  const f = await fixture(),
+    art = new NativeStatePresentation();
+  await art.set(f.contract, f.source, f.read);
+  const e = f.contract.elements[0]!;
+  const row = {
+    id: e.id,
+    source: e.source,
+    epoch: 1,
+    key: "bound",
+    generation: 1,
+    tick: 2,
+    active: true,
+    playing: true,
+    frame: 1,
+  };
+  assert.equal(art.sampleExternalClocks([row], e.id), true);
+  assert.equal(art.tick, 2);
+  assert.equal(art.advance(100), false);
+  assert.deepEqual(Array.from(art.pixels().data.slice(0, 4)), [0, 200, 0, 255]);
+  assert.equal(art.sampleExternalClocks([row], e.id), false);
+  assert.throws(() => art.seek(0), /External/);
+  assert.throws(() => art.setPlaying(false), /External/);
+  assert.throws(
+    () =>
+      art.sampleExternalClocks(
+        [{ ...row, source: { ...row.source, sha256: "f".repeat(64) } }],
+        e.id,
+      ),
+    /identity differs/,
+  );
+  assert.equal(art.tick, 2);
+  art.clear();
+  await art.set(f.contract, f.source, f.read);
+  art.setPlaying(true);
+  assert.equal(art.advance(0.08), true);
+  art.dispose();
+});

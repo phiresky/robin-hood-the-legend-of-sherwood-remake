@@ -276,3 +276,23 @@ test("real GLTFLoader bindings survive restored source names and selected-group 
   );
   player.dispose();
 });
+
+test("external sampling wraps long-lived ticks without owning play, pause, seek or advance", () => {
+  const f = fixture(),
+    player = new StateAppearancePlayer(f.template, true);
+  player.select("native", { mode: "loop", cycleTicks: 6 });
+  player.sampleExternalTick(2 ** 24 + 3);
+  assert.equal(player.tick, (2 ** 24 + 3) % 6);
+  assert.equal(player.playing, false);
+  for (const change of [
+    () => player.play(),
+    () => player.pause(),
+    () => player.seek(0),
+    () => player.advance(0.04),
+  ])
+    assert.throws(change, /External-clock/);
+  const before = player.tick;
+  assert.throws(() => player.sampleExternalTick(Number.MAX_SAFE_INTEGER + 1), /Invalid/);
+  assert.equal(player.tick, before);
+  player.dispose();
+});

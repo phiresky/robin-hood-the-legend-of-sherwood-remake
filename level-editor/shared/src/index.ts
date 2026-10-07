@@ -29,3 +29,5 @@ export type { GameplayAssetDescriptor } from "./asset-gameplay.ts";
 
 export * from "./spline-sampling.ts";
 export * from "./terrain-materials.ts";
+
+export * from "./native-animation-clocks.ts";

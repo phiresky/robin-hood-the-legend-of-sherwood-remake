@@ -1,3 +1,4 @@
+import { validateMissionStateContract, type MissionStateContract } from "./mission-state.ts";
 import { safeLibraryPath } from "./projection-assets.ts";
 import type { SceneAssetSource, Level3D, GameTransform } from "./level3d.ts";
 import {
@@ -252,6 +253,8 @@ export interface NativeLoopPreviewContract {
   scope: "controlled-native-loop-preview";
   native: NativeStatePresentationContract;
   focus_element_id: string;
+  /** Optional separately pinned animated model delivery; never an endpoint asset. */
+  physical?: MissionStateContract;
 }
 export function validateNativeLoopPreview(
   value: unknown,
@@ -271,6 +274,42 @@ export function validateNativeLoopPreview(
     contract.native.elements.some((e) => e.frames.length && !e.loop)
   )
     throw new Error("Native loop preview requires a visible looping focus and independent loops");
+  if (contract.physical) {
+    const p = contract.physical,
+      n = contract.native;
+    validateMissionStateContract(p);
+    if (
+      p.mission !== n.mission ||
+      p.mission_data_sha256 !== n.mission_data_sha256 ||
+      p.level_data_sha256 !== n.level_data_sha256 ||
+      p.camera_elevation_deg !== n.camera_elevation_deg
+    )
+      throw new Error("Physical/native loop sources differ");
+    const bound = new Set<number>();
+    for (const target of p.targets) {
+      const e = n.elements.find(
+        (e) => e.source.kind === "mission-target" && e.source.index === target.target_index,
+      );
+      if (
+        !e ||
+        !e.loop ||
+        !e.frames.length ||
+        e.source.sha256 !== target.target_sha256 ||
+        target.representation !== "physical"
+      )
+        throw new Error("Physical loop target lacks exact native source identity");
+      const cycle = e.frames.reduce((sum, f) => sum + f.delay + 1, 0);
+      if (target.actions.some((a) => a.timing.mode !== "loop" || a.timing.cycleTicks !== cycle))
+        throw new Error("Physical/native loop cycle differs");
+      bound.add(target.target_index);
+    }
+    if (
+      n.elements.some(
+        (e) => e.source.kind === "mission-target" && e.frames.length && !bound.has(e.source.index),
+      )
+    )
+      throw new Error("Missing physical loop target");
+  }
 }
 export function nativeLoopPreviewPeriod(contract: NativeLoopPreviewContract): number {
   validateNativeLoopPreview(contract);

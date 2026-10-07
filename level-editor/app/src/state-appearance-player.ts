@@ -129,7 +129,9 @@ export class StateAppearancePlayer {
   private running = false;
   private disposed = false;
 
-  constructor(template: StateAppearanceTemplate) {
+  readonly externallyClocked: boolean;
+  constructor(template: StateAppearanceTemplate, externallyClocked = false) {
+    this.externallyClocked = externallyClocked;
     this.content = cloneHierarchy(template.sourceRoot);
     this.object.add(this.content);
     for (const captured of template.clips) {
@@ -175,6 +177,7 @@ export class StateAppearancePlayer {
   }
 
   seek(tick: number) {
+    this.assertInternalClock();
     this.assertSelected();
     integerTick(tick, "Seek tick");
     this.cursor =
@@ -187,16 +190,19 @@ export class StateAppearancePlayer {
   }
 
   play() {
+    this.assertInternalClock();
     this.assertSelected();
     this.running = this.timing!.mode === "loop" || this.tick < this.timing!.terminalTick;
   }
 
   pause() {
+    this.assertInternalClock();
     this.assertAlive();
     this.running = false;
   }
 
   advance(seconds: number) {
+    this.assertInternalClock();
     this.assertSelected();
     const delta = seconds * HZ;
     if (!Number.isFinite(delta) || delta < 0)
@@ -213,6 +219,22 @@ export class StateAppearancePlayer {
       }
     }
     this.sample();
+  }
+
+  /** Sample an authoritative source cursor without acquiring play/pause ownership. */
+  sampleExternalTick(tick: number) {
+    this.assertSelected();
+    if (!this.externallyClocked) throw new Error("Player does not use an external clock");
+    if (!Number.isSafeInteger(tick) || tick < 0) throw new Error("Invalid external source tick");
+    this.cursor =
+      this.timing!.mode === "loop"
+        ? tick % this.timing!.cycleTicks
+        : Math.min(tick, this.timing!.terminalTick);
+    this.sample();
+  }
+
+  private assertInternalClock() {
+    if (this.externallyClocked) throw new Error("External-clock player cannot own time controls");
   }
 
   dispose() {
