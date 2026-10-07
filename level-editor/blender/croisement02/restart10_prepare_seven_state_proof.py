@@ -26,11 +26,16 @@ def main():
         resources[str(path.relative_to(ROOT))] = sha(path)
     pin(document)
     pin(LIB / 'mission-states/index.json')
+    pin(LIB / '3d-assets/index.json')
+    pin(LIB / 'game-data/index.json')
     for row in doc['assetSources'] + doc['sceneAssets']:
         for field in ('model', 'descriptor'):
             path = LIB / row[field]
             assert sha(path) == row[field + '_sha256'], str(path)
             pin(path)
+        for path in (LIB / row['model']).parent.iterdir():
+            if path.is_file():
+                pin(path)
     for folder in ('level-editor/app/src', 'level-editor/shared/src'):
         for path in (ROOT / folder).rglob('*'):
             if path.is_file() and path.suffix in ('.ts', '.tsx', '.css'):
