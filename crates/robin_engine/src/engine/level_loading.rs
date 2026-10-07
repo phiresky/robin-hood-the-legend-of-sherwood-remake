@@ -2425,12 +2425,15 @@ impl EngineInner {
                     .expect("physical landing sector uses the null identity");
                 let handle = crate::position_interface::SectorHandle::from_number(number)
                     .with_arena_index(index);
+                // Physical approaches retain subpixel positions. Their rounded
+                // compatibility coordinates can lie outside a narrow receiver.
+                let outside = bound.definition.doors[door_index].outside;
                 let receiver = self
                     .find_projection_area_at(
                         assets,
                         door.layer_out,
                         handle,
-                        MapPoint::new(f32::from(door.point_out.0), f32::from(door.point_out.1)),
+                        MapPoint::new(outside[0], outside[1] - outside[2]),
                     )
                     .map(|index| {
                         self.sight_obstacles(assets)
@@ -4344,7 +4347,12 @@ impl EngineInner {
             // up from the grid later.
             let lift_wall =
                 crate::sector::LiftType::from_u8(lift.lift_type) == crate::sector::LiftType::Wall;
-            for raw in &lift.doors {
+            for (local, raw) in lift.doors.iter().enumerate() {
+                let world_endpoints = raw.world_endpoints.as_ref().or_else(|| {
+                    lift.physical_navigation
+                        .as_ref()
+                        .map(|navigation| &navigation.doors[local])
+                });
                 let (sector_out, sector_out_index) =
                     Self::resolve_sparse_position_sector(assets, raw.sector_out);
                 let (sector_in, sector_in_index) =
@@ -4373,7 +4381,7 @@ impl EngineInner {
                         locked_npc_villain_after_patch: raw.locked_npc_villain_after_patch,
                         locked_npc_civilian_after_patch: raw.locked_npc_civilian_after_patch,
                         unlockable_after_patch: raw.unlockable_after_patch,
-                        point_out: raw.world_endpoints.as_ref().map_or(
+                        point_out: world_endpoints.map_or(
                             MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
                             |points| {
                                 MapPoint::new(
@@ -4382,13 +4390,13 @@ impl EngineInner {
                                 )
                             },
                         ),
-                        point_in: raw.world_endpoints.as_ref().map_or(
+                        point_in: world_endpoints.map_or(
                             MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
                             |points| {
                                 MapPoint::new(points.inside[0], points.inside[1] - points.inside[2])
                             },
                         ),
-                        point_mid: raw.world_endpoints.as_ref().map_or(
+                        point_mid: world_endpoints.map_or(
                             MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
                             |points| {
                                 MapPoint::new(points.middle[0], points.middle[1] - points.middle[2])

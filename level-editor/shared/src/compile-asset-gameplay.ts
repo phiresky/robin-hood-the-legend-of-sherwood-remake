@@ -2402,6 +2402,10 @@ function compileAssetGameplayAttempt(
   });
   // Runtime construction order is motion, materials, projection planes, then buildings.
   // Motion adds an out-of-map sector; each door also consumes a constructor slot.
+  // Physical endpoints reach the runtime unchanged. Rounding before binding
+  // can move a supported approach outside a narrow receiving roof.
+  const doorProjection = (door: (typeof doors)[number], point: Vec3): Point =>
+    door.lift && physicalStairs.has(door.lift) ? [point[0], point[1] - point[2]] : project(point);
   const resolveDoorOutside = (door: (typeof doors)[number], lift?: string | null) => {
     const label = `${door.name} outside`;
     if (door.outsideReceiverSegment) {
@@ -2409,7 +2413,13 @@ function compileAssetGameplayAttempt(
       door.outside = resolveReceivingSegment(door.outsideReceiverSegment, door.outside, label);
       door.outsideAnchor = door.outside;
     }
-    return resolve(door.outsideAnchor, label, lift);
+    return resolve(
+      door.outsideAnchor,
+      label,
+      lift,
+      false,
+      doorProjection(door, door.outsideAnchor),
+    );
   };
   const resolveDoorInside = (door: (typeof doors)[number], lift?: string | null) => {
     const label = `${door.name} inside`;
@@ -2417,14 +2427,14 @@ function compileAssetGameplayAttempt(
       door.inside = resolveReceivingSegment(door.insideReceiverSegment, door.inside, label);
       door.insideAnchor = door.inside;
     }
-    return resolve(door.insideAnchor, label, lift);
+    return resolve(door.insideAnchor, label, lift, false, doorProjection(door, door.insideAnchor));
   };
   const omittedDoors = new Set<string>();
   if (options.bestEffort || cropped) {
     for (const door of doors.filter((door) => door.lift)) {
       try {
-        resolve(door.outsideAnchor, `${door.name} outside`);
-        resolve(door.insideAnchor, `${door.name} inside`, door.lift);
+        resolveDoorOutside(door);
+        resolveDoorInside(door, door.lift);
       } catch (error) {
         if (!(error instanceof UnresolvedSurface)) throw error;
         const owner = placements

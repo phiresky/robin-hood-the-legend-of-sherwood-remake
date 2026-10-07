@@ -6,7 +6,22 @@ import { compileMap } from "../app/src/map-compile.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 import { assembleLiftSegments } from "../shared/src/assemble-lift-segments.ts";
 
-const [stage, mode, selectedStair, companionStair] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const rotationOptions = args.filter((value) => value.startsWith("--rotations="));
+const positional = args.filter((value) => !value.startsWith("--rotations="));
+assert.ok(rotationOptions.length <= 1 && positional.length <= 4);
+const rotations = rotationOptions.length
+  ? rotationOptions[0]
+      .slice("--rotations=".length)
+      .split(",")
+      .map((value) => {
+        assert.ok(value.trim(), "Rotation values must not be empty");
+        return Number(value);
+      })
+  : [0, 37, 90, 180];
+assert.ok(rotations.length <= 72 && new Set(rotations).size === rotations.length);
+assert.ok(rotations.every((value) => Number.isFinite(value) && value >= 0 && value < 360));
+const [stage, mode, selectedStair, companionStair] = positional;
 assert.ok(
   stage &&
     (mode === undefined ||
@@ -181,6 +196,19 @@ const centers = gatehouse
 const output = await fs.mkdtemp(`work/map-compile/${stair}-neighbour-placements-`);
 const results = [],
   rejected = [];
+const report = (complete) =>
+  fs.writeFile(
+    `${output}/diagnostics.json`,
+    JSON.stringify({
+      scope: "static-geometry-only-not-gameplay-parity",
+      complete,
+      gameplayStage: stage,
+      rotations,
+      results,
+    }),
+  );
+console.log(output);
+await report(false);
 // Exercise both integer and fractional world origins: collision clipping must
 // not turn a real landing gap into an apparently usable rounded connection.
 const originOffsets =
@@ -189,7 +217,7 @@ const originOffsets =
     : [0];
 for (const originOffset of originOffsets)
   for (const height of [0, 40])
-    for (const rotation of [0, 37, 90, 180]) {
+    for (const rotation of rotations) {
       const document = {
         version: 1,
         map: "courtyard-west-stair-neighbours",
@@ -243,6 +271,13 @@ for (const originOffset of originOffsets)
         }
       const compile = (d) => compileMap(d, [0, 0, ...d.size], assets, { bestEffort: true });
       const compiled = compile(document);
+      // Keep the exact failed placement reviewable without treating an
+      // interrupted or rejected batch as a complete native-audit input.
+      const file = `courtyard-west-stair-${height}-${rotation}${originOffset ? "-fractional" : ""}.level.json`;
+      await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
+      await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
+      results.push({ file, map: file, warnings: compiled.warnings });
+      await report(false);
       assert.equal(
         compiled.descriptor.asset_geometry.lifts?.length,
         2 * liftCount,
@@ -259,10 +294,6 @@ for (const originOffset of originOffsets)
         centers.flatMap(() => entranceCounts).sort((a, b) => a - b),
         "Every copied flight must retain all authored entrances",
       );
-      const file = `courtyard-west-stair-${height}-${rotation}${originOffset ? "-fractional" : ""}.level.json`;
-      await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
-      await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
-      results.push({ file, map: file, warnings: compiled.warnings });
       if (
         (riverside && !physicalTerrace) ||
         market ||
@@ -308,16 +339,8 @@ for (const originOffset of originOffsets)
           rejected.push({ file, group: group.id, kind, warnings: invalid.warnings });
         }
     }
-await fs.writeFile(
-  `${output}/diagnostics.json`,
-  JSON.stringify({
-    scope: "static-geometry-only-not-gameplay-parity",
-    complete: true,
-    gameplayStage: stage,
-    results,
-  }),
-);
 await fs.writeFile(`${output}/rejected.json`, JSON.stringify(rejected));
+await report(true);
 console.log(
   JSON.stringify({
     output,

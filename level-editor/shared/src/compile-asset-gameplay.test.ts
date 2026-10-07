@@ -102,7 +102,9 @@ for (const type of [1, 2, 3] as const)
     const document = parseLevel3D(nearEdgeOnStair.document);
     assert.ok(document.size);
     const asset = parseProjectionAssetDescriptor(nearEdgeOnStair.asset);
-    for (const lift of asset.gameplay!.lifts!) lift.type = type;
+    assert.ok("gameplay" in asset);
+    validateAssetGameplay(asset.gameplay, asset);
+    for (const lift of asset.gameplay.lifts!) lift.type = type;
     const compiled = compileAssetGameplay(document, new Map([[asset.id, asset]]), [
       0,
       0,
@@ -116,6 +118,29 @@ for (const type of [1, 2, 3] as const)
       assert.equal(lift.physical_navigation.obstacles.length, 0);
     }
   });
+
+test("physical lift entrances retain a supported fractional position near a grid edge", () => {
+  for (const type of [1, 2, 3] as const) {
+    const { document, assets, hut } = liftAssetCompilerFixture();
+    const authored = hut.gameplay!.lifts![0]!;
+    authored.type = type;
+    // Rounding this supported point lands exactly on the excluded grid edge.
+    // Keep its authored position; do not move the landing boundary.
+    authored.doors[0]!.outside[1] = 0.25;
+    const compiled = compileAssetGameplay(document, assets, [0, 0, 1000, 1000]);
+    const lift = compiled.lifts![0]!;
+    assert.ok(lift.physical_navigation);
+    assert.equal(lift.physical_navigation.doors[0]!.outside[1], 300.25);
+    assert.equal(lift.doors[0]!.point_out[1], 300);
+    // A genuinely unsupported anchor must not gain physical traversal.
+    authored.doors[0]!.outside[1] = -0.25;
+    const unsupported = compileAssetGameplay(document, assets, [0, 0, 1000, 1000], {
+      bestEffort: true,
+    });
+    assert.ok(unsupported.lifts?.every((lift) => !lift.physical_navigation) ?? true);
+    assert.ok(unsupported.warnings?.some((warning) => warning.includes("stairs-low")));
+  }
+});
 
 test("best-effort collapsed mask boundaries retain independent rules and control bindings", () => {
   for (const obstacles of [true, false]) {

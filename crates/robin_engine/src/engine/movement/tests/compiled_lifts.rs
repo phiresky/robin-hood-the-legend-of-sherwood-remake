@@ -27,6 +27,42 @@ pub(super) fn physical_stair_fixture() -> serde_json::Value {
     document
 }
 
+#[test]
+fn physical_landing_binding_uses_the_unrounded_approach() {
+    for explicit_endpoints in [false, true] {
+        let mut document = physical_stair_fixture();
+        let geometry = &mut document["asset_geometry"];
+        geometry["sight_obstacles"][1]["points"] = serde_json::json!([
+            {"x":410,"y":300,"z_bottom":100,"z_top":100},
+            {"x":500,"y":400,"z_bottom":100,"z_top":100},
+            {"x":410,"y":400,"z_bottom":100,"z_top":100}
+        ]);
+        let lift = &mut geometry["lifts"][0];
+        lift["physical_navigation"]["doors"][1]["outside"] = serde_json::json!([420, 311.25, 100]);
+        lift["doors"][1]["point_out"] = serde_json::json!([420, 211]);
+        if explicit_endpoints {
+            lift["doors"][1]["world_endpoints"] = lift["physical_navigation"]["doors"][1].clone();
+        }
+        let (engine, assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+        let door = &engine.script_domains.interactables.doors[1];
+        let sector = door.sector_out;
+        let handle = crate::position_interface::SectorHandle::from_number(sector)
+            .with_arena_index(door.sector_out_index.unwrap());
+        assert!(
+            engine
+                .find_projection_area_at(&assets, 1, handle, MapPoint::new(420., 211.))
+                .is_none()
+        );
+        assert!(
+            engine
+                .find_projection_area_at(&assets, 1, handle, MapPoint::new(420., 211.25))
+                .is_some()
+        );
+        assert!(assets.navigation.physical_stairs[&3].has_landing(1, 2));
+        assert_eq!(door.point_out, MapPoint::new(420., 211.25));
+    }
+}
+
 fn edge_on_physical_stair_fixture() -> serde_json::Value {
     let mut document = physical_stair_fixture();
     let compiled: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(

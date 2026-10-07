@@ -20,6 +20,10 @@
   Raised receiving volumes can supply a ladder landing when their point anchor
   binds to one walking region. Boundary and hole checks still require actual
   navigation support; receiver height alone cannot bridge a gap.
+  Physical lift entrances preserve their fractional world coordinates through
+  sector resolution and receiver binding. Integer compatibility coordinates no
+  longer discard a supported entrance merely because rounding crosses a roof
+  edge. This does not extend receiver geometry or relax collision clearance.
   Such landings can retain an optional precise walking-area boundary, validated
   against the existing integer-grid polygon. Runtime binding intersects it with
   the actual receiver while retaining obstacle states. Replay schema 61 accounts

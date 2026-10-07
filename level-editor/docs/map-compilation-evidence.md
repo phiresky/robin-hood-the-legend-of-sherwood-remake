@@ -9697,6 +9697,64 @@ overhanging surfaces remain outside the current height-field representation.
 All 66 enabled map-compilation integration tests, Rust formatting and the main
 game build also pass with the final clearance implementation.
 
+### Wider climb placement checks and precise entrance binding (2026-10-07)
+
+`check-courtyard-west-stair-neighbours.mjs` accepts an explicit `--rotations=`
+list; its default remains 0/37/90/180 degrees. It retains each compiled descriptor
+and editor scene before asserting connectivity, marking diagnostics incomplete
+until every placement and disconnected-neighbour rejection has passed.
+
+The gable authoring helper can slide the upper doorway along the equal-height
+flight/roof seam by at most one local XY unit. It retains both planes, the slab,
+and collision rules. The half-unit candidate `york-gable-roof-contact-iM9TlQ`
+still passes only 24/32 routes (`...gable-house-neighbour-placements-CbUzcx`).
+The one-unit candidate `york-gable-roof-contact-KiNzCZ` compiles 50 placements at
+25 angles, two elevations and two copies, and rejects 300 disconnected-neighbour
+cases (`...gable-house-neighbour-placements-9FaGRH`). Only 144/200 native routes
+pass. Full York `saved-map-exports-tU05vA` passes 38/40 climbs: the lower gable
+entrance cannot bind physical landing support and falls back to projected
+navigation. The mesh review retains 596/602 sampled flight hits, maximum nearest
+mesh height residual 0.872101 and maximum uncovered edge distance 0.039980.
+The upper approach is on the separate roof and receives no support from the
+climb asset mesh alone. These asset edits remain unpublished.
+
+With surface clearance, the existing keep-annex candidate's original eight
+placements (`lincoln-keep-annex-neighbour-placements-jlgO6X`) now pass all 32
+native routes. The expanded sweep initially stops at 150 degrees; retained
+failure `...keep-annex-neighbour-placements-er7ULT` shows that an exact supported
+outside point projects to [1429.643952, 1299.807472], while [1430, 1300] lies
+0.301092 units outside its receiving polygon. Increasing collision tolerances
+would not address that loss of entrance precision.
+
+Physical lift resolution now uses the exact projected world anchor. The loader
+uses the existing physical navigation endpoints for runtime doors and selects
+landing receivers using the physical outside point. Integer coordinates remain
+compatibility identities; no duplicate endpoint data is needed in the export.
+A compiler regression covers stairs, ladders and walls and verifies that genuinely
+unsupported points do not gain physical traversal. A native regression verifies
+receiver binding when the rounded approach lies outside a triangular roof, both
+with and without explicit door endpoint fields. Floor contours, obstacle bounds,
+and movement tolerances are unchanged. The expanded keep-annex compilation now
+passes all 50 placements and rejects 200 missing/raised neighbours in
+`lincoln-keep-annex-neighbour-placements-TjltD7`; native handoff verification
+passes 196/200 routes and detects four receiver mismatches at 150 degrees, so
+the asset is unpublished. Final exports without duplicate endpoint fields are
+in `lincoln-keep-annex-neighbour-placements-qVQyOl`; their complete native rerun
+confirms the same 196/200 result and the same four 150-degree handoff failures.
+
+All ten saved scenes compile in `saved-map-exports-1tkbkL`. Fresh final exports
+of Derby, Leicester, Lincoln, Sherwood and York in `saved-map-exports-sghWnY`
+are identical after removing only the intermediate batch's redundant endpoint
+fields; all 84 complete-character climb routes and all 192 stair routes pass.
+All 139 compiler tests,
+48 regular compiled-navigation tests and four changing-climb actor tests pass,
+including 72 mid-climb barrier reopening checks. App typechecking and focused
+lint pass. Pipeline typechecking remains blocked by unrelated state-delivery
+test types. Two app export fixture comparisons (merged platform and sloped
+terrain sockets) also fail with the unchanged compiler, verified by rerunning
+those two cases against its HEAD version; they are not marked as passing here.
+The final game build and Rust/editor formatting checks pass.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms
