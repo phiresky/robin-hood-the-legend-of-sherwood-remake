@@ -141,6 +141,7 @@ def main(fit_path=None, midpoint_hinge_offsets=None, transition_candidates=None,
                     joined=np.vstack([v,w]);hull=ConvexHull(joined,qhull_options='QJ');planes=hull.equations.copy();planes[:,3]-=pad
                     assert np.max(joined@planes[:,:3].T+planes[:,3])<=EPS
                     add(f'{branch}:sweep:{phase}-{phase+1}',name,joined,planes,pad)
+    unit_lows=np.array([u['low'] for u in units]);unit_highs=np.array([u['high'] for u in units])
     queries=[{'screen':r['source']['alpha_centroid_display'],'hits':[]} for r in rows.values()]
     def inspect(placed,node,ni,pi,tri,uvs,mat,alpha,texture_record):
         world=np.stack([tri[:,:,0],-tri[:,:,2],tri[:,:,1]],axis=2)
@@ -148,7 +149,9 @@ def main(fit_path=None, midpoint_hinge_offsets=None, transition_candidates=None,
         attrs=np.concatenate([world,uv],axis=2);low=world.min(1);high=world.max(1)
         opaque=mat.get('alphaMode','OPAQUE')=='OPAQUE';image,sampler,factor=(None,{},1.) if opaque else texture_record(mat)
         cutoff=mat.get('alphaCutoff',.5) if mat.get('alphaMode')=='MASK' else .01
-        for unit in units:
+        eligible_units=np.flatnonzero(np.all(unit_highs>=low.min(0),axis=1)&np.all(unit_lows<=high.max(0),axis=1))
+        for unit_index in eligible_units:
+            unit=units[unit_index]
             indexes=np.flatnonzero(np.all(high>=unit['low'],axis=1)&np.all(low<=unit['high'],axis=1))
             for idx in indexes:
                 poly=clip_planes(attrs[idx],unit['planes'])
