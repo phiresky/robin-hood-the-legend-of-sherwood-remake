@@ -14,6 +14,33 @@ pub struct BoundPhysicalWalkingSurface {
 }
 
 impl BoundPhysicalWalkingSurface {
+    pub fn contains_world_position(&self, point: [f32; 3]) -> bool {
+        use robin_level_data::stair_navigation::StairNavigationPlane;
+        if !StairNavigationPlane::new(self.geometry.plane)
+            .expect("bound walking plane")
+            .contains_runtime_position(point)
+        {
+            return false;
+        }
+        let point = Point::new(f64::from(point[0]), f64::from(point[1]));
+        polygon(&self.geometry.boundary)
+            .expect("bound walking boundary")
+            .intersects(&point)
+            && !self.geometry.holes.iter().any(|hole| {
+                polygon(hole)
+                    .expect("bound walking hole")
+                    .intersects(&point)
+            })
+    }
+
+    pub fn world_point_from_screen(&self, point: MapPoint) -> Option<[f32; 3]> {
+        let [a, b, c] = self.geometry.plane;
+        let x = f64::from(point.x);
+        let y = (f64::from(point.y) + a * x + c) / (1.0 - b);
+        let result = [x as f32, y as f32, (a * x + b * y + c) as f32];
+        result.iter().all(|v| v.is_finite()).then_some(result)
+    }
+
     /// Bind a coplanar receiver group to its motion region. Different heights
     /// and disconnected components remain separate physical floors.
     pub fn bind(
@@ -101,6 +128,7 @@ impl BoundPhysicalWalkingSurface {
                         holes: floor.interiors().iter().map(ring).collect(),
                         plane,
                         obstacles: obstacles.clone(),
+                        support: vec![],
                     },
                     obstacle_states: motion.obstacles.iter().map(|o| o.state_id).collect(),
                 })
@@ -133,6 +161,7 @@ impl BoundPhysicalWalkingSurface {
             boundary: self.geometry.boundary.clone(),
             holes: self.geometry.holes.clone(),
             plane: self.geometry.plane,
+            support: vec![],
         }
     }
 }

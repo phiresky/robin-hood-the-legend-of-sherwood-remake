@@ -268,27 +268,29 @@ fn tick_compiled_route(
         action,
     );
     assert!(
-        matches!(outcome, MovePathOutcome::Pending),
+        matches!(outcome, MovePathOutcome::Pending | MovePathOutcome::Success),
         "dispatch {outcome:?}; actor position {:?}, box {:?}",
         engine.ent(owner).element_data().position_map(),
         engine.ent(owner).position_iface().get_move_box_map()
     );
-    // Exercise the real queued request, path handoff and order postprocessing.
+    // Projected routes use the queued pathfinder; physical routes retain one
+    // world goal and re-query the corridor before each committed actor step.
     for _ in 0..2 {
         engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
     }
     assert!(engine.orders.pending_path_requests.waiting.is_empty());
     assert!(engine.orders.pending_path_requests.in_flight.is_none());
-    assert!(
-        engine
-            .orders
-            .sequence_manager
-            .get_element(sequence, 0)
-            .unwrap()
-            .orders
-            .len()
-            > 1
-    );
+    let orders = &engine
+        .orders
+        .sequence_manager
+        .get_element(sequence, 0)
+        .unwrap()
+        .orders;
+    if matches!(outcome, MovePathOutcome::Pending) {
+        assert!(orders.len() > 1);
+    } else {
+        assert!(orders.iter().any(|order| order.physical_walking.is_some()));
+    }
     engine.select_sequence_element(owner, Some((sequence, 0)));
     let mut previous = source;
     let mut samples = vec![];
@@ -564,8 +566,24 @@ fn actor_receiver_result(
     }
     let expected_height = current
         .map(|receiver| {
-            assets.environment.static_sight_obstacles[usize::from(receiver)]
-                .compute_top_z_from_projection(position.x, position.y)
+            let receiver = &assets.environment.static_sight_obstacles[usize::from(receiver)];
+            if engine
+                .current_physical_walking_floor(assets, owner)
+                .is_some()
+            {
+                // Validate the physical pose forward. Inverting a compressed
+                // screen projection amplifies coordinate rounding into a false
+                // height error even when the actor is on its receiving plane.
+                let world = engine.ent(owner).position_iface().get_position();
+                let plane = crate::position_interface::PlaneZCoeffs::from_plane_points(
+                    &receiver.top_plane_points,
+                );
+                (f64::from(plane.az) * f64::from(world.x)
+                    + f64::from(plane.bz) * f64::from(world.y)
+                    + f64::from(plane.dz)) as f32
+            } else {
+                receiver.compute_top_z_from_projection(position.x, position.y)
+            }
         })
         .unwrap_or(0.);
     let actual_height = engine.ent(owner).element_data().position().z;

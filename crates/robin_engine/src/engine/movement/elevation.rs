@@ -262,6 +262,9 @@ impl EngineInner {
             }
             return supported;
         }
+        if let Some(floor) = self.current_physical_walking_floor(assets, owner) {
+            return self.extract_physical_walking_source(assets, owner, floor);
+        }
         let (entity_layer, pf_idx, move_box_map) = {
             let entity = self
                 .world
@@ -728,18 +731,17 @@ impl EngineInner {
     ) {
         #[cfg(test)]
         observe_post_execute_crossing(self, entity_id);
-        let physical_stair = self
-            .actor_installed_order(entity_id)
-            .is_some_and(|order| order.physical_stair.is_some())
-            || self
-                .get_entity(entity_id)
-                .and_then(|entity| entity.element_data().sector())
-                .is_some_and(|sector| {
-                    tcx.assets
-                        .navigation
-                        .physical_stairs
-                        .contains_key(&sector.get())
-                });
+        let physical_floor = self.actor_installed_order(entity_id).is_some_and(|order| {
+            order.physical_stair.is_some() || order.physical_walking.is_some()
+        }) || self
+            .get_entity(entity_id)
+            .and_then(|entity| entity.element_data().sector())
+            .is_some_and(|sector| {
+                tcx.assets
+                    .navigation
+                    .physical_stairs
+                    .contains_key(&sector.get())
+            });
         let (old_pos, new_pos, layer, posture, is_carried, is_human) = {
             let entity = self
                 .world
@@ -797,7 +799,7 @@ impl EngineInner {
         // overlaps must not reattach it to an unrelated receiving plane. The
         // entry callback changes sector before the first physical walking
         // order is installed, so membership also authorizes the physical floor.
-        let crossed_elevation = !physical_stair
+        let crossed_elevation = !physical_floor
             && self.check_for_elevation_line_crossing_indices(
                 tcx.assets,
                 entity_id,
@@ -806,7 +808,7 @@ impl EngineInner {
                 layer,
                 elevation_indices,
             );
-        if !physical_stair && (crossed_elevation || crossing_count > 1) {
+        if !physical_floor && (crossed_elevation || crossing_count > 1) {
             if is_human {
                 self.update_roll_after_crossing(tcx.assets, entity_id);
             }

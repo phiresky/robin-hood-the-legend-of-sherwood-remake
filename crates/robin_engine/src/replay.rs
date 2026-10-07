@@ -173,7 +173,8 @@ pub struct ReplayHeader {
 /// Version 64 retains connected physical stair floor patches.
 /// Version 65 persists the mission profile catalog in the replay header.
 /// Version 66 distinguishes exact network state adoption from saved-game loads.
-pub const REPLAY_SCHEMA_VERSION: u32 = 66;
+/// Version 67 retains ordinary physical floor identities on movement orders.
+pub const REPLAY_SCHEMA_VERSION: u32 = 67;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

@@ -346,7 +346,9 @@ pub(super) fn gather_disturbing(
     box_future: &MapBBox,
     increment: MapVec,
 ) -> (Vec<RepulsivePoint>, Vec<crate::repulsive::RepulsiveLine>) {
-    gather_disturbing_in_space(mover, world, box_future, increment, false, &|_| false)
+    gather_disturbing_in_space(mover, world, box_future, increment, false, false, &|_| {
+        false
+    })
 }
 
 /// Physical stair routing uses the same owner/target/posture filters, but
@@ -363,7 +365,26 @@ pub(super) fn gather_physical_stair_neighbours(
         boundary,
         MapVec::ZERO,
         true,
+        false,
         landing_neighbour,
+    )
+    .0
+}
+
+pub(super) fn gather_physical_walking_neighbours(
+    mover: &CollisionMover,
+    world: CollisionWorld<'_>,
+    boundary: &MapBBox,
+    compatible_floor: &dyn Fn(&Entity) -> bool,
+) -> Vec<RepulsivePoint> {
+    gather_disturbing_in_space(
+        mover,
+        world,
+        boundary,
+        MapVec::ZERO,
+        true,
+        true,
+        compatible_floor,
     )
     .0
 }
@@ -374,6 +395,7 @@ fn gather_disturbing_in_space(
     box_future: &MapBBox,
     increment: MapVec,
     physical: bool,
+    require_floor_match: bool,
     landing_neighbour: &dyn Fn(&Entity) -> bool,
 ) -> (Vec<RepulsivePoint>, Vec<crate::repulsive::RepulsiveLine>) {
     let mut points = Vec::new();
@@ -390,7 +412,7 @@ fn gather_disturbing_in_space(
         // stairs additionally admit neighbours on explicitly bound landings.
         let same_area = elem.optional_layer().map(|layer| layer.get()) == Some(mover.layer)
             && elem.sector() == mover.sector;
-        if !same_area && !(physical && landing_neighbour(other)) {
+        if (!same_area || require_floor_match) && !(physical && landing_neighbour(other)) {
             continue;
         }
         // Target-element filter: mover never treats its own target
@@ -1066,6 +1088,35 @@ mod tests {
             configure(&mut mover, &mut other);
             let mut entities = Entities::from_legacy_slots(vec![Some(mover), Some(other)]);
             assert_eq!(step(&mut entities, 1.0, true), (1.0, 0.0), "{name}");
+        }
+    }
+
+    #[test]
+    fn physical_walking_neighbours_require_compatible_heights_even_in_one_sector() {
+        let profiles = ProfileManager::new();
+        let mut entities = Entities::from_legacy_slots(vec![
+            Some(pc(0., Posture::Upright)),
+            Some(pc(8., Posture::Upright)),
+        ]);
+        let bounds = MapBBox::from_coords(-20., -20., 20., 20.);
+        for (height, expected) in [(0., true), (100., false), (0., true)] {
+            entities
+                .get_mut(PcId(1))
+                .unwrap()
+                .position_iface_mut()
+                .set_position(crate::coordinates::WorldPoint3D::new(8., 0., height));
+            let (entity, neighbours) = entities.split_owner(PcId(0)).unwrap();
+            let mover = CollisionMover::new(PcId(0).into(), entity);
+            let points = gather_physical_walking_neighbours(
+                &mover,
+                CollisionWorld {
+                    neighbours,
+                    profiles: &profiles,
+                },
+                &bounds,
+                &|other| other.element_data().position().z == 0.,
+            );
+            assert_eq!(!points.is_empty(), expected);
         }
     }
 

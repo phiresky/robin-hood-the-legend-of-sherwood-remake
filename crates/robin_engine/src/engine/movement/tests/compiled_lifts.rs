@@ -39,6 +39,71 @@ fn ordinary_walking_binding_does_not_require_a_lift() {
 }
 
 #[test]
+fn physical_walking_extraction_keeps_supported_narrow_sources_without_teleporting() {
+    for (width, walkable) in [(11, true), (9, false)] {
+        let mut document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/asset-lift.level.json"
+        )))
+        .unwrap();
+        let geometry = &mut document["asset_geometry"];
+        for lift in geometry["lifts"].as_array_mut().unwrap() {
+            lift.as_object_mut().unwrap().remove("physical_navigation");
+        }
+        geometry["motion_data"]["layers"][1][0]["polygon"]["points"] = serde_json::json!([
+            [410, 200],
+            [410 + width, 200],
+            [410 + width, 300],
+            [410, 300]
+        ]);
+        geometry["sight_obstacles"][1]["points"] = serde_json::json!([
+            {"x":410,"y":300,"z_bottom":100,"z_top":100},
+            {"x":410+width,"y":300,"z_bottom":100,"z_top":100},
+            {"x":410+width,"y":400,"z_bottom":100,"z_top":100},
+            {"x":410,"y":400,"z_bottom":100,"z_top":100}
+        ]);
+        let (mut engine, mut assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+        let door = &engine.script_domains.interactables.doors[1];
+        let handle = crate::position_interface::SectorHandle::from_number(door.sector_out)
+            .with_arena_index(door.sector_out_index.unwrap());
+        let source = MapPoint::new(410. + width as f32 * 0.5, 250.);
+        let receiver = engine
+            .get_projection_area_index(&assets, handle, 1, source)
+            .unwrap();
+        let owner = walking_pc(&mut engine, &mut assets, source, 1, handle);
+        engine.set_obstacle_and_material(&assets, owner, Some(receiver));
+        let position = crate::coordinates::WorldPoint3D::new(source.x, 350., 100.);
+        engine
+            .world
+            .entities
+            .get_mut(owner)
+            .unwrap()
+            .position_iface_mut()
+            .set_position(position);
+        let index = engine
+            .current_physical_walking_floor(&assets, owner)
+            .unwrap();
+        let floor =
+            assets.navigation.physical_walking[index as usize].snapshot(&engine.world.pathfinder);
+        assert!(
+            floor
+                .recover_source(
+                    [position.x, position.y, position.z],
+                    MoveBoxHalfDiagonal::new(6., 3.),
+                    10.
+                )
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            engine.extract_move_instruction_owner(&assets, owner),
+            walkable
+        );
+        assert_eq!(engine.ent(owner).position_iface().get_position(), position);
+    }
+}
+
+#[test]
 fn ordinary_walking_binding_retains_the_full_receiver() {
     let document = physical_stair_fixture();
     let (engine, assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());

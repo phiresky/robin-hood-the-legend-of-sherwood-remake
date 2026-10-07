@@ -161,6 +161,17 @@ mod tests {
         );
         pathfinder.states[1][0] = 0;
         assert!(route(&pathfinder).is_some());
+        assert!(!bound.walking_support(&pathfinder, 0, 0, [0.; 3]).is_empty());
+        assert!(
+            bound
+                .walking_support(&pathfinder, 0, 0, [0., 0., 400.])
+                .is_empty()
+        );
+        bound.climbing = true;
+        assert!(
+            bound.walking_support(&pathfinder, 0, 0, [0.; 3]).is_empty(),
+            "a climb cannot support an ordinary standing footprint"
+        );
     }
 
     #[test]
@@ -1010,6 +1021,7 @@ impl BoundPhysicalStair {
                 boundary: landing.boundary.clone(),
                 holes: landing.holes.clone(),
                 plane: landing.plane,
+                support: vec![],
                 obstacles: landing
                     .obstacles
                     .iter()
@@ -1030,6 +1042,55 @@ impl BoundPhysicalStair {
         self.landings
             .iter()
             .any(|landing| landing.layer == usize::from(layer) && landing.sector == sector)
+    }
+
+    /// A connected flight can support a walking footprint at its receiving
+    /// edge. Keep live flight solids out of that support and retain the walking
+    /// receiver as the only owner of the actor center.
+    pub(crate) fn walking_support(
+        &self,
+        pathfinder: &PathFinder,
+        layer: u16,
+        sector: u16,
+        plane: [f64; 3],
+    ) -> Vec<Polygon<f64>> {
+        // Walls and ladders are traversal surfaces, not places on which an
+        // ordinary standing footprint can rest beside a roof edge.
+        if self.climbing {
+            return vec![];
+        }
+        if !self.landings.iter().any(|landing| {
+            landing.layer == usize::from(layer)
+                && landing.sector == sector
+                && landing.plane == plane
+        }) {
+            return vec![];
+        }
+        let mut free = geo::MultiPolygon::from(vec![
+            polygon(&self.definition.boundary)
+                .expect("bound flight")
+                .map_coords(|p| geo::Coord {
+                    x: f64::from(p.x),
+                    y: f64::from(p.y),
+                }),
+        ]);
+        for obstacle in &self.definition.obstacles {
+            if pathfinder.is_motion_obstacle_active(
+                self.layer,
+                self.area,
+                self.obstacle_states[usize::from(obstacle.motion_obstacle)],
+            ) {
+                free = free.difference(
+                    &polygon(&obstacle.polygon)
+                        .expect("bound flight obstacle")
+                        .map_coords(|p| geo::Coord {
+                            x: f64::from(p.x),
+                            y: f64::from(p.y),
+                        }),
+                );
+            }
+        }
+        free.0
     }
 
     /// A newly closed landing obstacle can overlap a stair actor's supported footprint.

@@ -1,6 +1,6 @@
 # Post-port Features
 
-- **Physical walking floor queries (integration in progress).** Precise receiving
+- **Physical walking on receiving floors (integration in progress).** Precise receiving
   floors support world-coordinate routes and bounded source recovery, retaining
   holes and current collision. Walking clearance uses its normal inset; source
   authorization checks the full standing box and recovery adds a half-unit margin.
@@ -9,7 +9,12 @@
   coplanar pieces, holes and live obstacle identities. This works without a lift
   and keeps floors available when their artwork is hidden. Disconnected patches
   and different receiving planes remain separate.
-  The actor movement loop does not yet use these ordinary-floor queries.
+  Point moves and gate approaches on one bound floor now execute these queries
+  with live barriers and compatible-height neighbours, preserving physical
+  position, receiver identity and material. Failed expanded source recovery can
+  retain a position supported by the normal movement footprint. Connected stairs
+  can support footprints at their landing; climb walls cannot. Seek/line orders,
+  cross-floor routing and ordinary soft repulsion still need integration.
 
 - **Physical ladder and wall navigation.** Compatible planar climbs export world-space
   floors and live collision alongside stairs. Ladder entry/exit climbing orders

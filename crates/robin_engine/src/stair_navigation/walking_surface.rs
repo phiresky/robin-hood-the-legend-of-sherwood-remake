@@ -1,7 +1,8 @@
 //! Ordinary floor queries in physical XY, independent of screen projection.
 
 use super::*;
-use geo::{Closest, ClosestPoint, ConvexHull, MultiPoint, MultiPolygon, Relate};
+use geo::algorithm::buffer::{BufferStyle, LineJoin};
+use geo::{Buffer, Closest, ClosestPoint, ConvexHull, MultiPoint, MultiPolygon, Relate};
 use robin_level_data::stair_navigation::StairNavigationPlane;
 
 /// A current collision snapshot of one planar receiving floor. Callers rebuild
@@ -14,10 +15,20 @@ pub struct PhysicalWalkingSurface {
     pub holes: Vec<Vec<[f64; 2]>>,
     pub plane: [f64; 3],
     pub obstacles: Vec<Vec<[f64; 2]>>,
+    /// Connected, height-matched neighbouring floors supply foot support only.
+    #[serde(default)]
+    pub support: Vec<Polygon<f64>>,
 }
 
 impl PhysicalWalkingSurface {
     fn geometry(&self) -> Result<(Polygon<f64>, Vec<Polygon<f64>>), String> {
+        if self
+            .support
+            .iter()
+            .any(|floor| !floor.is_valid() || floor.unsigned_area() <= 0.0)
+        {
+            return Err("invalid neighbouring walking support".into());
+        }
         StairNavigationPlane::new(self.plane)?;
         let boundary = polygon(&self.boundary)?;
         let holes = self
@@ -64,13 +75,31 @@ impl PhysicalWalkingSurface {
         if !plane.contains_runtime_position(source) || !plane.contains_runtime_position(goal) {
             return Ok(None);
         }
+        // Ordinary movement treats contact with a solid as blocked. Reserve
+        // coordinate-scale rounding clearance so an f32 waypoint at a computed
+        // tangent cannot land on the wall after the route is committed.
+        let rounding = self
+            .boundary
+            .iter()
+            .flatten()
+            .fold(1.0_f64, |scale, value| scale.max(value.abs()))
+            * f64::from(f32::EPSILON)
+            * 4.0;
+        let solids = solids
+            .iter()
+            .flat_map(|solid| {
+                solid
+                    .buffer_with_style(BufferStyle::new(rounding).line_join(LineJoin::Bevel))
+                    .0
+            })
+            .collect::<Vec<_>>();
         super::landing_support::route_on_surface(
             &floor,
             &solids,
             [source[0], source[1]],
             [goal[0], goal[1]],
             &clearance,
-            &[],
+            &self.support,
         )
     }
 
@@ -105,12 +134,16 @@ impl PhysicalWalkingSurface {
         {
             return Ok(None);
         }
-        let support = MultiPolygon::from(vec![floor.clone()]);
+        let mut support = MultiPolygon::from(vec![floor.clone()]);
+        for neighbour in &self.support {
+            support = support.union(neighbour);
+        }
         let full_centers = super::landing_support::clearance_centers(&support, &solids, &full);
         if full_centers.relate(&source).is_covers() {
             return Ok(Some(plane.world_position([source.x(), source.y()])?));
         }
-        let centers = super::landing_support::clearance_centers(&support, &solids, &recovery);
+        let centers = super::landing_support::clearance_centers(&support, &solids, &recovery)
+            .intersection(&floor);
         let mut free = support;
         for solid in &solids {
             free = free.difference(solid);
@@ -173,6 +206,7 @@ mod tests {
             holes: vec![],
             plane,
             obstacles: vec![],
+            support: vec![],
         }
     }
 
@@ -294,6 +328,23 @@ mod tests {
             "the recovered source must retain a supported approach to the doorway"
         );
         assert!((recovered[2] - f64::from(source[2])).abs() < 3.);
+    }
+
+    #[test]
+    fn neighbouring_support_never_grants_center_ownership() {
+        let mut floor = surface([0.; 3]);
+        let half = MoveBoxHalfDiagonal::new(6., 3.);
+        let source = [58., 20., 0.];
+        assert!(floor.route(source, source, half).unwrap().is_none());
+        floor
+            .support
+            .push(polygon(&[[60., 0.], [80., 0.], [80., 40.], [60., 40.]]).unwrap());
+        assert!(floor.route(source, source, half).unwrap().is_some());
+        assert!(floor.route(source, [68., 20., 0.], half).unwrap().is_none());
+        assert_eq!(
+            floor.recover_source(source, half, 3.).unwrap(),
+            Some([58., 20., 0.])
+        );
     }
 
     #[test]

@@ -18,6 +18,7 @@ mod elevation;
 mod formation;
 mod path_scheduling;
 mod physical_stair;
+mod physical_walking;
 mod rider_charge;
 mod routing;
 // Phase methods of `tick_one_movement_actor`. The file lives next to
@@ -2384,6 +2385,7 @@ struct FinalTol {
 struct SelectedMovementOrder {
     goal: MapPoint,
     physical_stair: Option<u16>,
+    physical_walking: Option<u32>,
     physical_goal: crate::coordinates::WorldPoint3D,
     action_state: crate::element::ActionState,
     order_id: Option<std::num::NonZeroU32>,
@@ -4551,7 +4553,8 @@ impl EngineInner {
             order_tolerance,
             entity.position_iface().is_deviated(),
         ) {
-            if selected_order.physical_stair.is_some() {
+            if selected_order.physical_stair.is_some() || selected_order.physical_walking.is_some()
+            {
                 entity
                     .position_iface_mut()
                     .set_position(selected_order.physical_goal);
@@ -4810,6 +4813,7 @@ impl EngineInner {
         };
         let goal = MapPoint::new(order.target_x, order.target_y);
         let physical_stair = order.physical_stair;
+        let physical_walking = order.physical_walking;
         let physical_goal = crate::coordinates::WorldPoint3D::new(
             order.destination_3d[0],
             order.destination_3d[1],
@@ -4861,6 +4865,7 @@ impl EngineInner {
         Some(SelectedMovementOrder {
             goal,
             physical_stair,
+            physical_walking,
             physical_goal,
             action_state: actor.action_state,
             order_id,
@@ -5316,6 +5321,46 @@ impl EngineInner {
             physical_point = true;
         }
 
+        let walking_goal = if physical_goal.is_none() {
+            self.current_physical_walking_floor(tcx.assets, owner)
+                .and_then(|index| {
+                    let floor = &tcx.assets.navigation.physical_walking[index as usize];
+                    let element = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
+                    let crate::sequence::SequenceElementData::Movement {
+                        gate_id,
+                        element: None,
+                        flags,
+                        ..
+                    } = &element.data
+                    else {
+                        return None;
+                    };
+                    if flags.intersects(
+                        crate::sequence::MoveFlags::SEEK | crate::sequence::MoveFlags::LINE,
+                    ) {
+                        return None;
+                    }
+                    let explicit = gate_id.and_then(|gate| {
+                        let door = &self.script_domains.interactables.doors[usize::from(gate)];
+                        let points = self
+                            .physical_stair_door(tcx.assets, gate)
+                            .map(|(_, _, points)| points)
+                            .or_else(|| door.world_endpoints.clone())?;
+                        if u16::from(door.sector_out) == floor.sector {
+                            Some(points.outside)
+                        } else if u16::from(door.sector_in) == floor.sector {
+                            Some(points.inside)
+                        } else {
+                            None
+                        }
+                    });
+                    let goal = explicit.or_else(|| floor.world_point_from_screen(dest))?;
+                    floor.contains_world_position(goal).then_some((index, goal))
+                })
+        } else {
+            None
+        };
+
         // Before queuing a path request, if the move is flagged
         // MAP / STRAIGHT, or the source→dest segment is
         // thick-reachable, skip the pathfinder entirely and emit a
@@ -5359,6 +5404,7 @@ impl EngineInner {
                 entity_layer,
             );
         let current_layer_reachable = physical_goal.is_none()
+            && walking_goal.is_none()
             && self
                 .world
                 .fast_grid
@@ -5368,6 +5414,7 @@ impl EngineInner {
         // so defer to the same current-layer thick-reachability result that
         // Original performs instead of forcing either outcome.
         let straight_ok = physical_goal.is_some()
+            || walking_goal.is_some()
             || movement_path_dispatch_is_direct(
                 move_flags,
                 movement_goal_crosses_layer,
@@ -5543,6 +5590,32 @@ impl EngineInner {
         }
 
         self.finish_move_path(tcx.sim, request, vec![source, dest]);
+        if let Some((index, goal)) = walking_goal {
+            let floor = &tcx.assets.navigation.physical_walking[index as usize];
+            let element = self
+                .orders
+                .sequence_manager
+                .get_element_mut(seq_id, elem_idx)
+                .expect("physical walking element disappeared during emission");
+            for order in element
+                .orders
+                .iter_mut()
+                .filter(|order| order_turns_before_motion(order.order_type))
+            {
+                let point = MapPoint::new(order.target_x, order.target_y);
+                let world = if point == dest {
+                    goal
+                } else {
+                    floor
+                        .world_point_from_screen(point)
+                        .expect("physical walking order lost its floor")
+                };
+                order.physical_walking = Some(index);
+                order.destination_3d = world;
+                order.target_x = world[0];
+                order.target_y = world[1] - world[2];
+            }
+        }
         if let Some((sector, goal)) = physical_goal {
             let element = self
                 .orders

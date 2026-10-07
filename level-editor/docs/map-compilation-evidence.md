@@ -9870,6 +9870,47 @@ together. Motion imported only as projected contours still cannot reconstruct
 an exactly edge-on ordinary floor; that case requires explicit world collision.
 Neither the unchanged actor result nor these binding tests certify full parity.
 
+### Ordinary physical walking execution (2026-10-07)
+
+Point moves and gate approaches whose source and goal share a bound ordinary
+floor now preserve world-space movement orders. Each step queries current solid
+and neighbour collision, retains the receiving plane, and updates the actual
+receiver and material. Neighbours on incompatible heights do not obstruct the
+route. Connected ordinary stairs can support a footprint at their landing without
+granting center ownership outside the floor; climb walls cannot support standing.
+
+Source recovery stays within one actor-footprint radius plus half a unit. If the
+expanded recovery box cannot fit a narrow roof, a position supported by the normal
+movement inset can remain in place. Unsupported sources are still rejected.
+Solid-boundary clearance includes a conservative coordinate-rounding guard;
+native swept-footprint assertions remain unchanged. A same-XY endpoint with a
+separately rounded, validated height no longer requires a nonexistent horizontal
+waypoint. Height auditing evaluates the actual receiver at physical XY, avoiding
+unstable inverse projection while retaining its 0.001-unit tolerance.
+
+`physical-walking-placements-mmrlqy57` passes **200/200 complete-character routes**
+across 25 angles, two elevations and two copies. This resolves the previous four
+150-degree approach failures without widening roofs or moving door anchors.
+The keep-annex candidate remains unpublished because its independent mesh review
+still disagrees with the authored flight geometry. Passing these routes does not
+certify rendered traversal or all navigation behavior.
+
+`physical-walking-saved-w3g_sn36` also passes all **84 saved-map climb routes**:
+Derby 4, Leicester 22, Lincoln 8, Sherwood 10 and York 40. These are exported
+editor scenes tested through complete-character movement, not visual playthroughs.
+The same exports pass all **192 complete-character stair routes**: Derby 28,
+Leicester 16, Lincoln 16, Sherwood 2 and York 130. The game build and Rust
+formatting checks pass.
+
+The regular compiled-navigation suite passes 51 tests; 15 external-fixture tests
+remain explicitly ignored in that invocation. All 38 physical-navigation tests,
+two focused physical-walking regressions, 29 engine replay tests, 27 replay-format
+tests and four changing-climb
+tests pass, including 72 mid-climb reopening checks. Movement orders now retain
+ordinary floor identities, requiring replay schema 67. Seek/line orders,
+cross-floor routing, ordinary soft repulsion and exactly edge-on ordinary floors
+remain outside this integration.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

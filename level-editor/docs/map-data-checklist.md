@@ -884,25 +884,27 @@ entrance-rounding error: a supported exact point was discarded after rounding
 outside its roof. Physical lift endpoints now retain their world coordinates
 through compilation and receiving-floor binding. All 50 expanded placements
 compile, with 200 missing/raised-neighbour rejections. Native traversal passes
-196/200 routes; four approach receiver mismatches remain at 150 degrees.
-The native trace locates these before entry: projected move-box recovery moves
+200/200 routes after ordinary physical-floor movement integration. The previous
+196/200 result exposed four approach receiver mismatches at 150 degrees.
+The native trace located these before entry: projected move-box recovery moved
 the actor off its supporting roof. The exact outside point supports the normal
 inset world-XY movement footprint, but not its projected rectangle; the full
 world-XY source box still has a small uncovered corner. Walking-source recovery and
-approach clearance on steep rotated receiving floors still need physical-space
-handling; changing the climb endpoint or padding the roof is not a proven fix.
+approach clearance now operate in physical space for point moves and gate
+approaches on one bound floor.
 Physical walking floor queries now provide precise routing and bounded source
 recovery with holes and current obstacles. They distinguish the inset walking
-footprint from the full standing box and expanded recovery box. These are query
-infrastructure: ordinary actor movement is not yet wired to them, and the native
-placement result remains 196/200. The entire problematic projected landing has
+footprint from the full standing box and expanded recovery box. Actor dispatch,
+stepping, live barriers and compatible-height neighbour collision now use them.
+The entire problematic projected landing has
 no valid center for any of those three footprints, so relocating its outside
 anchor cannot solve the projected clearance problem.
 The loader now binds complete ordinary receiving floors separately from trimmed
 stair landing contacts, using only exported motion and receiver geometry. Both
 copied 150-degree roof approaches have supported recovery positions about 1.15
-world units away on these full floors. The focused actor audit still fails 2/4
-routes until ordinary movement dispatch and stepping use the bindings. Projected
+world units away on these full floors. Both elevations now pass all eight focused
+routes, and the expanded sweep passes all 200. Seek/line movement, cross-floor
+routing and ordinary soft repulsion still need integration. Projected
 collision cannot reconstruct an exactly edge-on ordinary receiver; that case
 still needs explicit world collision data.
 Reliable new-map placement, rather than matching an existing layout, is the

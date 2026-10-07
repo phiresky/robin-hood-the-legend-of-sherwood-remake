@@ -986,7 +986,9 @@ impl EngineInner {
                 let diagnostic_pre =
                     sprite_row_diagnostic.then(|| sprite.sprite_row_diagnostic_pre());
                 let played_direction = u16::from(sprite.position_iface.get_direction().as_u8());
-                let result = if selected_order.physical_stair.is_some() {
+                let result = if selected_order.physical_stair.is_some()
+                    || selected_order.physical_walking.is_some()
+                {
                     sprite
                         .perform_physical_motion(
                             tcx.sim,
@@ -1215,7 +1217,9 @@ impl EngineInner {
             }
             let call_motion = if is_transition_anim && !tolerance_arrival {
                 'transition: {
-                    let goal_reached = if selected_order.physical_stair.is_some() {
+                    let goal_reached = if selected_order.physical_stair.is_some()
+                        || selected_order.physical_walking.is_some()
+                    {
                         let was_at_goal = self
                             .world
                             .entities
@@ -1224,7 +1228,7 @@ impl EngineInner {
                             .position_iface()
                             .get_position()
                             == selected_order.physical_goal;
-                        let motion = self.commit_physical_stair_step(
+                        let motion = self.commit_physical_floor_step(
                             tcx,
                             entity_id,
                             selected_order,
@@ -1505,8 +1509,10 @@ impl EngineInner {
                     }
                     movement_execute_visible_motion(raw_motion_state, false, entity_target_seek)
                 }
-            } else if selected_order.physical_stair.is_some() {
-                self.commit_physical_stair_step(
+            } else if selected_order.physical_stair.is_some()
+                || selected_order.physical_walking.is_some()
+            {
+                self.commit_physical_floor_step(
                     tcx,
                     entity_id,
                     selected_order,
