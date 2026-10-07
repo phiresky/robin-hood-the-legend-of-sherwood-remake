@@ -79,16 +79,25 @@ for (let face = 0; face < indices.length / 3; face++) {
 }
 assert.equal(faces.length, 2, "Review changed deck topology");
 assert.equal(underside.length, 2, "Review changed deck underside topology");
-const ground = faces.flatMap((face) => face.points).reduce((sum, p) => sum + p[2], 0) / 6;
+const measuredGround = faces.flatMap((face) => face.points).reduce((sum, p) => sum + p[2], 0) / 6;
+// The authored deck lies on scene Z=0. Retain that contact in asset-local
+// coordinates rather than averaging mesh-export noise into its placement.
+const ground = flatDeck
+  ? -descriptor.source_origin_scene[2] * Math.cos((35 * Math.PI) / 180)
+  : measuredGround;
+assert.ok(Math.abs(ground - measuredGround) < 0.001, "Review changed deck contact height");
 let planeFitError = 0;
 if (flatDeck)
   for (const triangles of [faces, underside]) {
-    const height = triangles.flatMap((f) => f.points).reduce((sum, p) => sum + p[2], 0) / 6;
+    const height =
+      triangles === faces
+        ? ground
+        : triangles.flatMap((f) => f.points).reduce((sum, p) => sum + p[2], 0) / 6;
     for (const p of triangles.flatMap((f) => f.points)) {
       planeFitError = Math.max(planeFitError, Math.abs(p[2] - height));
       p[2] = height;
     }
-    assert.ok(planeFitError < 0.0001, "Deck plane fit exceeds export rounding");
+    assert.ok(planeFitError < 0.001, "Deck plane fit exceeds export rounding");
   }
 descriptor.gameplay = {
   version: 1,

@@ -9822,3 +9822,28 @@ the bridge candidate (`saved-map-exports-6W8tQm`) passes native construction:
 68 elevation boundaries. All nine state apply/reset checks pass. This verifies
 loading and control construction, not original-scene bridge crossings or rendered
 actor occlusion. The bridge remains unpublished pending that integration review.
+
+`check-saved-bridge-contact.mjs` now compiles the saved Croisement03 scene from
+its pinned editor assets, transforms the bridge's end sockets and emits both
+contact diagnostics and a native actor-crossing manifest. Unlike the isolated
+fixtures, this scene uses `croisement03-terrain` as a background asset rather
+than an authored terrain grid. Its ground still includes the old bridge's
+walking footprint.
+
+The asset's nominal deck plane is scene Z=0; averaging exported vertex heights
+had placed it 0.000146346 game units below that plane at its saved placement.
+Staging now converts that authored contact into asset-local coordinates, with
+an explicit 0.001-unit maximum fit error, instead of retaining the export drift.
+`croisement-bridge-gameplay-pT76XG` still passes all forty isolated actor crossings
+and 3,120 ray checks. Its saved-scene contacts now have exactly zero height.
+This authoring correction does not introduce level-data access in the compiler.
+
+Saved-scene candidate `saved-bridge-contact-GKNHyl` exposes the remaining issue:
+inside both bridge ends, layer zero has two overlapping areas (bridge sector
+zero and background sector one); outside, only background sector one remains.
+The native crossing fails on entry at [1024.1682, 743.276]: it acquires bridge
+receiver 632 while the actor remains in background sector one. This is an
+integration failure, not a successful original-scene roundtrip. Floor ownership
+and connections to background terrain need correction; moving the bridge must
+not leave its old crossing embedded in the terrain asset. Publication and
+rendered occlusion verification remain pending.
