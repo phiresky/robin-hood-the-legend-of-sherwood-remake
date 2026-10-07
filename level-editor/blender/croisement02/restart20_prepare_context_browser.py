@@ -7,7 +7,7 @@ ROOT = Path.cwd()
 STATE = ROOT / 'level-editor/work/croisement02-refinement/restart2-state'
 OLD = STATE / 'installed41-normal-http-chunk-1-v1'
 PLAN = STATE / 'restart17-initial-context-publication-v3'
-OUT = STATE / 'restart20-initial-context-browser-v2'
+OUT = STATE / 'restart20-initial-context-browser-v3'
 sha = lambda data: hashlib.sha256(data).hexdigest()
 
 def main():
@@ -51,6 +51,12 @@ def main():
     states = states.replace("const entry=${JSON.stringify(entry)},contract=", "const expectedPhases=${JSON.stringify(oracle.records.find(r=>r.id===id).phases)},entry=${JSON.stringify(entry)},contract=")
     states = states.replace("const initialDigest=await digest();const canvases=[];", "const initialDigest=await digest();check('native initial reviewed CPU bytes',initialDigest===expectedPhases.find(p=>p.phase==='initial').rgba_sha256);const p=v.stateDelivery.native;for(const f of contract.families){for(const id of f.background_ids??[])p.setBackgroundState(id,'applied',0);for(const id of f.patch_ids??[])p.setPatchState(id,'applied',0);for(const id of f.element_ids??[])p.setElementState(id,true,f.body_terminal_tick)}const appliedDigest=await digest();check('native applied reviewed CPU bytes',appliedDigest===expectedPhases.find(p=>p.phase==='applied').rgba_sha256);v.resetDeliveredState(family.id);const canvases=[];")
     states = states.replace("initialDigest,resetDigest,scope:", "initialDigest,appliedDigest,resetDigest,scope:")
+    # Mission controls restore their previous value while async import runs. Do not
+    # synthesize a change for the already selected mission or race its replacement.
+    states = states.replace("select('Mission',entry.mission);await until(()=>document.querySelector('[aria-label=\"State preview asset\"] option[value=\"'+entry.id+'\"]'));", "if(document.querySelector('select[aria-label=\"Mission\"]').value!==entry.mission){select('Mission',entry.mission);await until(()=>document.querySelector('select[aria-label=\"Mission\"]')?.value===entry.mission&&!document.querySelector('.map-load-dialog'))}await until(()=>document.querySelector('[aria-label=\"State preview asset\"] option[value=\"'+entry.id+'\"]'));")
+    states = states.replace("throw Error('State readiness timeout')", "throw Error('State readiness timeout '+JSON.stringify({entry:entry.id,mission:document.querySelector('select[aria-label=\"Mission\"]')?.value,asset:document.querySelector('[aria-label=\"State preview asset\"]')?.value,status:document.querySelector('[aria-label=\"State preview\"] [role=\"status\"]')?.textContent,pageStatus:document.querySelector('#result')?.textContent,dialog:document.querySelector('.map-load-dialog')?.textContent,ready:window.reviewViewport?.stateDelivery.ready,loadedMission:window.reviewViewport?.stateDelivery.contract?.native.mission,loadedFamily:window.reviewViewport?.stateDelivery.contract?.families[0]?.id}))")
+    states = states.replace("checks.push(...result.checks);", "const screenshot=await stateProofCommand(ws,nextId,'Page.captureScreenshot',{format:'png',captureBeyondViewport:false},commandTimeoutMs);await writeFile(join(out,id+'-native-reset-ui.png'),Buffer.from(screenshot.data,'base64'));checks.push(...result.checks);")
+    assert "if(document.querySelector('select[aria-label=\"Mission\"]').value!==entry.mission)" in states
     (OUT / 'states.mjs').write_text(states)
     run = (OLD / 'run.mjs').read_text().replace(str(OLD / 'states.mjs'), str(OUT / 'states.mjs'))
     start = run.index('const stateRoot=')
