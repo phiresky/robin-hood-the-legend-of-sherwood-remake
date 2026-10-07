@@ -9862,3 +9862,24 @@ endpoint helper keeps a fixed sector and cannot verify a route through the two
 open passages. Native pathfinding/actor traversal, alternate background
 placements, rendered occlusion and publication remain pending. The terrain hole
 is an asset-authoring correction; compilation still reads only editor assets.
+
+The two-passage candidate is superseded: both banks share a sector, and the
+native gate planner returns an empty route between identical sector identities.
+An artificial forced gate route would not demonstrate a normal map click.
+Asset surfaces now explicitly opt into ground attachment with
+`acceptsNavigationJoins`. Matching exterior sockets join placed floors directly
+to current ground geometry; coplanar floors own their coverage. Changed or
+joined preserved ground is rebuilt as generated navigation. Ordinary boundaries
+without exterior sockets remain separate.
+
+Candidate `bridge-ground-ownership-zS6rzH` and contact export
+`saved-bridge-contact-q9AzRp` now pass both native actor crossings across the
+saved scene's bridge, including ground/deck receiver handoffs. Native loading
+constructs 11 areas, 633 sight obstacles and 15 doors with the bridge; removal
+constructs 13 areas, 106 sight obstacles and 15 doors. Both retain 10 jump pairs
+and 5,016 grid blocks and pass all nine native control apply/reset checks.
+Five interior removal probes still find no walkable area. A compiler regression
+moves a deck away from a ground hole: the old gap becomes impassable while the
+new floor remains connected, without adding ground sockets for either location.
+151 affected tests, application typecheck and focused lint pass. Native moved
+placements, rendered review and publication remain pending.

@@ -276,12 +276,15 @@ candidate passes native construction and state apply/reset checks. Rendered
 actor occlusion remains unverified. The original-scene crossing check exposed
 overlapping bridge/background navigation areas. A new unpublished ownership
 candidate removes the deck footprint from background metadata and gives the
-bridge two local open passages. Five interior samples have exactly one walkable
-owner with the bridge and none after its removal; both passage endpoints resolve
-uniquely. Native construction passes with and without the bridge. Actual actor
-paths through those passages and rearranged background placements remain
-unverified. The staged deck also removes 0.000146 units of mesh-export contact
-drift. This asset is still unpublished and counted as missing.
+bridge local exterior sockets. Asset ground can now opt into accepting these
+sockets with `acceptsNavigationJoins`, using current placement and height.
+Five interior samples have exactly one walkable owner with the bridge and none
+after its removal. The saved scene passes both native actor crossing directions,
+construction and all nine state controls. A moved-deck compiler regression keeps
+the new floor walkable and restores the old gap. Native movement on rearranged
+background placements and rendered integration remain unverified. The staged
+deck also removes 0.000146 units of mesh-export contact drift. This asset is still
+unpublished and counted as missing.
 An unpublished mesh-derived bridge deck candidate passes ten complete native
 crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes

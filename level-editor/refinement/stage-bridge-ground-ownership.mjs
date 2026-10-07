@@ -61,6 +61,7 @@ for (const surface of ground.gameplay.surfaces) {
   assert.equal(surface.holes.length, surface.holeContours.length);
   surface.holes.push(deck);
   surface.holeContours.push(`${ground.id}/${surface.id}/bridge-owned-deck`);
+  surface.acceptsNavigationJoins = true;
   changed.push(surface.id);
 }
 assert.equal(changed.length, 1, "Review ambiguous bridge floor ownership");
@@ -144,10 +145,10 @@ const passages = bridge.gameplay.doors.map((door) => {
     assert.equal(areas.length, 1, `${door.id} must have unambiguous endpoints`);
     return { point, areas };
   });
-  assert.notDeepEqual(
+  assert.deepEqual(
     endpoints[0].areas,
     endpoints[1].areas,
-    `${door.id} must connect the background to the deck`,
+    `${door.id} must join the background and deck into continuous navigation`,
   );
   return { id: door.id, endpoints };
 });

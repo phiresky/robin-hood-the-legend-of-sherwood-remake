@@ -38,6 +38,9 @@ export interface AssetWalkableSurface {
   movementContour?: string;
   /** Asset-local navigation region, optionally spanning height planes; distinct regions never merge. */
   navigationRegion?: string;
+  /** Ground accepts exterior sockets from placed floors at matching height.
+   * Coplanar placed floors own their coverage; ordinary door boundaries stay separate. */
+  acceptsNavigationJoins?: boolean;
   /** Local 3D outer-edge sockets joining navigation regions of separately placed assets.
    * Endpoints coincide unless both owners opt into a minimum shared span; unmatched edges stay separate. */
   navigationJoins?: import("./assemble-navigation-joins.ts").NavigationJoin[];
@@ -1209,6 +1212,15 @@ export function validateAssetGameplay(
         data.lifts?.some((lift) => lift.surface === surface.id))
     )
       fail("navigation regions require nonempty labels on ordinary walkable surfaces");
+    if (
+      surface.acceptsNavigationJoins !== undefined &&
+      (typeof surface.acceptsNavigationJoins !== "boolean" ||
+        (surface.acceptsNavigationJoins &&
+          (!surface.navigationRegion ||
+            !data.surfaces.includes(surface) ||
+            data.lifts?.some((lift) => lift.surface === surface.id))))
+    )
+      fail("ground navigation connections require labelled ordinary walkable surfaces");
     if (
       surface.navigationJoins !== undefined &&
       (!surface.navigationRegion ||
