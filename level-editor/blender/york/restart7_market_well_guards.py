@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
-B=ROOT/'level-editor/work/york-refinement';D=B/'restart7-market-well-v3'
+B=ROOT/'level-editor/work/york-refinement';D=B/'restart7-market-well-v4'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def main():
  construction=json.loads((D/'construction.json').read_text());assert sha(D/'model.blend')==construction['model_sha256']
