@@ -1123,6 +1123,47 @@ fn block_index_from_cell_raw(
         + (grid_width as usize) * ((cy as usize) + (layer as usize) * (grid_height as usize))
 }
 
+#[inline]
+fn segment_row_cell_range(
+    segment: geo::Line<f32>,
+    row: u16,
+    min: u16,
+    max: u16,
+) -> Option<(u16, u16)> {
+    let [ax, ay, bx, by] = [
+        segment.start.x,
+        segment.start.y,
+        segment.end.x,
+        segment.end.y,
+    ]
+    .map(f64::from);
+    if [ax, ay, bx, by].iter().any(|n| !n.is_finite()) {
+        return Some((min, max));
+    }
+    let bottom = f64::from(row) * 64.;
+    let low = bottom.max(ay.min(by));
+    let high = (bottom + 64.).min(ay.max(by));
+    if low > high {
+        return None;
+    }
+    let (left, right) = if ay == by {
+        (ax.min(bx), ax.max(bx))
+    } else {
+        let x = |y| ax + (bx - ax) * ((y - ay) / (by - ay));
+        (x(low).min(x(high)), x(low).max(x(high)))
+    };
+    // Conservative broad phase only. Include boundary-adjacent cells and a
+    // scale-aware interpolation margin; the exact segment test still decides.
+    let margin = ax.abs().max(bx.abs()).max(1.) * f64::EPSILON * 16.;
+    let first = (((left - margin) / 64.).floor() as i64)
+        .saturating_sub(1)
+        .max(i64::from(min));
+    let last = (((right + margin) / 64.).floor() as i64)
+        .saturating_add(1)
+        .min(i64::from(max));
+    (first <= last).then(|| (first as u16, last as u16))
+}
+
 /// Clamp a world-space rect to the inclusive grid-cell range it covers,
 /// returning `(x_min, y_min, x_max, y_max)`.
 ///
@@ -2547,6 +2588,23 @@ impl FastFindGrid {
         &self,
         layer: u16,
         rect: &Rect<f32>,
+        cell_filter: impl FnMut(u16, u16) -> bool,
+        visit: impl FnMut(LineIndex, &GridLine) -> bool,
+    ) {
+        self.visit_lines_in_cell_rows(
+            layer,
+            rect,
+            |_, min, max| Some((min, max)),
+            cell_filter,
+            visit,
+        );
+    }
+
+    fn visit_lines_in_cell_rows(
+        &self,
+        layer: u16,
+        rect: &Rect<f32>,
+        mut row_range: impl FnMut(u16, u16, u16) -> Option<(u16, u16)>,
         mut cell_filter: impl FnMut(u16, u16) -> bool,
         mut visit: impl FnMut(LineIndex, &GridLine) -> bool,
     ) {
@@ -2555,7 +2613,10 @@ impl FastFindGrid {
 
         let mut visited = QueryVisited::new(self.level.lines.len());
         for cy in y_min..=y_max {
-            for cx in x_min..=x_max {
+            let Some((first, last)) = row_range(cy, x_min, x_max) else {
+                continue;
+            };
+            for cx in first..=last {
                 let block_idx = self.block_index_from_cell(cx, cy, layer);
                 if block_idx >= self.level.blocks.len() {
                     continue;
@@ -2940,9 +3001,17 @@ impl FastFindGrid {
             return;
         };
 
-        self.visit_lines_in_cells(
+        self.visit_lines_in_cell_rows(
             layer,
             &rect,
+            |row, min, max| {
+                let a = segment_row_cell_range(seg1, row, min, max);
+                let b = segment_row_cell_range(seg2, row, min, max);
+                match (a, b) {
+                    (Some(a), Some(b)) => Some((a.0.min(b.0), a.1.max(b.1))),
+                    (a, b) => a.or(b),
+                }
+            },
             |cx, cy| {
                 // Check if the cell box intersects either segment
                 let cell_min =
@@ -3984,6 +4053,49 @@ mod tests {
     }
 
     #[test]
+    fn segment_rows_cover_exact_cell_intersections_without_scanning_the_whole_rectangle() {
+        use geo::Intersects;
+        let points = [
+            -1000., -0.001, 0., 63.99999, 64., 64.00001, 127.5, 512., 10000.,
+        ];
+        for &x in &points {
+            for &y in &points {
+                for (a, b) in [
+                    ([x, y], [511., 511.]),
+                    ([511., 511.], [x, y]),
+                    ([x, y], [x, 0.]),
+                    ([x, y], [0., y]),
+                ] {
+                    let line = geo::Line::new(a, b);
+                    for row in 0..8 {
+                        let range = segment_row_cell_range(line, row, 0, 7);
+                        for col in 0..8 {
+                            let rect = Rect::new(
+                                (f32::from(col) * 64., f32::from(row) * 64.),
+                                (f32::from(col + 1) * 64., f32::from(row + 1) * 64.),
+                            );
+                            if rect.intersects(&line) {
+                                assert!(
+                                    range.is_some_and(|(low, high)| col >= low && col <= high),
+                                    "{line:?}, cell {col}:{row}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let diagonal = geo::Line::new([0., 0.], [4095., 4095.]);
+        let cells: usize = (0..64)
+            .map(|row| {
+                let (low, high) = segment_row_cell_range(diagonal, row, 0, 63).unwrap();
+                usize::from(high - low + 1)
+            })
+            .sum();
+        assert!(cells < 64 * 6, "diagonal visited {cells} candidate cells");
+    }
+
+    #[test]
     fn streaming_path_corridors_match_collected_queries_across_layers_and_states() {
         let mut grid = FastFindGrid::new();
         grid.size_map(8, 8);
@@ -4025,6 +4137,29 @@ mod tests {
                             corridor.seg1,
                             corridor.seg2,
                             &corridor.bbox,
+                        );
+                        let mut exhaustive = Vec::new();
+                        grid.visit_lines_in_cells(
+                            layer,
+                            &corridor.bbox.0.unwrap(),
+                            |x, y| {
+                                use geo::Intersects;
+                                let rect = Rect::new(
+                                    (f32::from(x) * 64., f32::from(y) * 64.),
+                                    (f32::from(x + 1) * 64., f32::from(y + 1) * 64.),
+                                );
+                                rect.intersects(&corridor.seg1) || rect.intersects(&corridor.seg2)
+                            },
+                            |index, line| {
+                                if line.is_motion && grid.is_line_active(index) {
+                                    exhaustive.push(index);
+                                }
+                                true
+                            },
+                        );
+                        assert_eq!(
+                            candidates, exhaustive,
+                            "cell selection and line visit order must match"
                         );
                         let expected = !candidates.iter().any(|&index| {
                             let line = &grid.level.lines[usize::from(index)];
