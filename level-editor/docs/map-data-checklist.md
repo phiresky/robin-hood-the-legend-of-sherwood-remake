@@ -249,7 +249,12 @@ checks pass. These construction checks do not certify a rendered playthrough.
 The broader shrub batch exposed a storage problem: fourteen successful draft
 definitions occupy about 469 MB before publication, with one shrub alone at
 127 MB. The batch was stopped and those shrubs were not published. A compact
-mesh/UV/alpha representation is needed before scaling this authoring path.
+mesh/UV/alpha representation is now implemented and staged for shrub 69: its
+mask occupies 18.1 MB with 24,334 triangles, and all ten rotated/elevated exports
+match the prior bitmap coverage exactly and pass native construction. This
+format is not yet published; migration, further size reduction and rendered
+verification remain before scaling this authoring path. The experimental
+authoring command still computes clipped geometry temporarily for the footprint.
 Shrubs 73/74 also expose unsupported UV/sampler cases. Geometry-derived
 publication now supports reviewed model hashes in addition to descriptor hashes.
 

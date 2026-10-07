@@ -402,6 +402,7 @@ function compileAssetGameplayAttempt(
     receiverPolyline?: Vec3[];
     receiverPolylines?: Vec3[][];
     triangles: MaskTriangle[];
+    alphaCoverage?: import("./mask-alpha-sampler.ts").MaskAlphaCoverage;
     cullBackfaces?: boolean;
     rules: Omit<import("./level.ts").Mask, "layer" | "box_top_left" | "box_size" | "mask_data">;
   }[] = [];
@@ -788,6 +789,7 @@ function compileAssetGameplayAttempt(
             }
           : {}),
         cullBackfaces: mask.cullBackfaces,
+        alphaCoverage: mask.alphaCoverage,
         triangles: mask.triangles.map(([a, b, c]) => [
           transform(mask.node, a),
           transform(mask.node, b),
@@ -2284,6 +2286,7 @@ function compileAssetGameplayAttempt(
       mask.triangles,
       { ...mask.rules, layer },
       mask.cullBackfaces,
+      mask.alphaCoverage,
     );
     maskIndices.set(
       mask.id,

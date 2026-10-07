@@ -4,6 +4,20 @@ import { maskAlphaCoverage, type MaskAlphaImage } from "./mask-alpha-coverage.ts
 import type { Vec3 } from "../../shared/src/scene.ts";
 import type { MaskTriangle } from "../../shared/src/compile-mask-geometry.ts";
 import type { MaskCoverageRectangle } from "./recover-mask-bitmap.ts";
+import type { MaskAlphaCoverage, MaskTextureWrap } from "../../shared/src/mask-alpha-sampler.ts";
+
+export function maskRecoveryTexturedMesh(
+  model: Document,
+  part: string,
+  place: (point: Vec3) => Vec3,
+  textures?: ReadonlyMap<Texture, MaskAlphaImage>,
+) {
+  const alphaCoverage: MaskAlphaCoverage = { textures: [], triangles: [] };
+  const triangles = maskRecoveryMesh(model, part, place, textures, undefined, {
+    compactCoverage: alphaCoverage,
+  });
+  return { triangles, alphaCoverage };
+}
 
 /** Decode physical alpha only; opaque atlas alpha may instead encode provenance. */
 export async function maskRecoveryTextures(model: Document): Promise<Map<Texture, MaskAlphaImage>> {
@@ -38,7 +52,7 @@ export function maskRecoveryMesh(
   place: (point: Vec3) => Vec3,
   textures?: ReadonlyMap<Texture, MaskAlphaImage>,
   projectedBounds?: readonly MaskCoverageRectangle[],
-  options: { preserveMaterialSidedness?: boolean } = {},
+  options: { preserveMaterialSidedness?: boolean; compactCoverage?: MaskAlphaCoverage } = {},
 ): MaskTriangle[] {
   if (
     projectedBounds?.some(
@@ -59,6 +73,8 @@ export function maskRecoveryMesh(
   if (model.getRoot().listAnimations().length)
     throw new Error("Mask recovery requires a static model state");
   const triangles: MaskTriangle[] = [];
+  const compact = options.compactCoverage;
+  const textureIndices = new Map<Texture, number>();
   let sourceTriangles = 0;
   matches[0]!.traverse((node) => {
     if (node.getSkin()) throw new Error(`Mask recovery does not support skinned part ${part}`);
@@ -72,7 +88,7 @@ export function maskRecoveryMesh(
       // Do this after alpha clipping so the reverse face has identical holes.
       const append = (triangle: MaskTriangle) => {
         triangles.push(triangle);
-        if (options.preserveMaterialSidedness && material?.getDoubleSided())
+        if (!compact && options.preserveMaterialSidedness && material?.getDoubleSided())
           triangles.push([triangle[2], triangle[1], triangle[0]]);
       };
       const mode = material?.getAlphaMode() ?? "OPAQUE";
@@ -82,7 +98,9 @@ export function maskRecoveryMesh(
       const alphaImage = texture ? textures?.get(texture) : undefined;
       if (texture && !alphaImage)
         throw new Error(`Mask recovery needs texture coverage for ${part}`);
-      if (info && (info.getMagFilter() !== 9728 || info.listExtensions().length))
+      // Compact coverage samples the nearest base level, matching map baking's
+      // explicit texture display mode even when the source requests filtering.
+      if (info && ((!compact && info.getMagFilter() !== 9728) || info.listExtensions().length))
         throw new Error(
           `Mask recovery requires nearest alpha sampling without texture transforms: ${part}`,
         );
@@ -146,6 +164,18 @@ export function maskRecoveryMesh(
         }
         if (mode === "OPAQUE") {
           append(triangle);
+          if (compact)
+            compact.triangles.push({
+              uv: [
+                [0, 0],
+                [0, 0],
+                [0, 0],
+              ],
+              alpha: [1, 1, 1],
+              cutoff: 0,
+              wrap: ["clamp", "clamp"],
+              doubleSided: material?.getDoubleSided() ?? false,
+            });
           continue;
         }
         const indicesForTriangle = [0, 1, 2].map(
@@ -174,6 +204,37 @@ export function maskRecoveryMesh(
               : 1)
           );
         });
+        if (compact) {
+          let textureIndex: number | undefined;
+          if (texture && alphaImage) {
+            textureIndex = textureIndices.get(texture);
+            if (textureIndex === undefined) {
+              textureIndex = compact.textures.length;
+              compact.textures.push({
+                width: alphaImage.width,
+                height: alphaImage.height,
+                alphaBase64: Buffer.from(alphaImage.alpha).toString("base64"),
+              });
+              textureIndices.set(texture, textureIndex);
+            }
+          }
+          const wrap = (mode: number | undefined): MaskTextureWrap => {
+            if (mode === 33071) return "clamp";
+            if (mode === 33648) return "mirror";
+            if (mode === 10497 || mode === undefined) return "repeat";
+            throw new Error(`Unsupported mask texture wrap: ${mode}`);
+          };
+          triangles.push(triangle);
+          compact.triangles.push({
+            uv: coordinates as [[number, number], [number, number], [number, number]],
+            alpha: vertexAlpha as [number, number, number],
+            cutoff: material!.getAlphaCutoff(),
+            texture: textureIndex,
+            wrap: [wrap(info?.getWrapS()), wrap(info?.getWrapT())],
+            doubleSided: material!.getDoubleSided(),
+          });
+          continue;
+        }
         for (const covered of maskAlphaCoverage(
           triangle,
           coordinates,

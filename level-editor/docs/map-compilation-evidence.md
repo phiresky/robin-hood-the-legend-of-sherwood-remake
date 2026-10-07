@@ -9982,3 +9982,23 @@ edits. It checks model bytes before staging and again before installation;
 foliage authoring emits that hash. Five publication tests pass, including changed
 model bytes with an unchanged descriptor. Focused lint and formatting pass;
 pipeline typechecking remains blocked by unrelated state-delivery test types.
+
+### Compact foliage alpha coverage candidate
+
+`stage-fern-gameplay.mjs --compact --asset=croisement02-shrub-69` produced
+`fern-gameplay-hQfhNB`. Asset definitions retain mesh triangles, UV coordinates,
+material sidedness, cutoff, vertex alpha and texture alpha. The compiler samples
+these after placement; exported native masks retain their existing bitmap format.
+Spline splitting carries UVs and alpha through the same interpolation as geometry.
+
+The staged mask occupies 18,106,822 bytes with 24,334 stored triangles, compared
+with the previous 719,673 clipped triangles and roughly 127 MB definition.
+All ten cases (0/37/90/180/270 degrees at elevations 0/40) have exactly the same
+covered pixels as `fern-gameplay-SCMH3E`: no added or removed pixels. Each passes
+native geometry construction and rejects a receiving ground one unit lower.
+This measures representation fidelity, not rendered character/projectile parity.
+
+The candidate is not published. Authoring still computes the clipped mesh
+temporarily for its established canopy footprint; this does not yet solve the
+unsupported sampler cases or authoring memory cost. Published foliage migration,
+browser review support for compact coverage and further storage reduction remain.

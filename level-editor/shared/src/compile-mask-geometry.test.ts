@@ -6,6 +6,7 @@ import {
   type MaskTriangle,
 } from "./compile-mask-geometry.ts";
 import type { Mask, Point } from "./level.ts";
+import type { MaskAlphaCoverage } from "./mask-alpha-sampler.ts";
 
 const rules = {
   layer: 0,
@@ -26,6 +27,66 @@ const rectangle = (x: number, y: number, width: number, height: number): MaskTri
     [x, y + height, 0],
   ],
 ];
+test("compact alpha masks preserve transparent texels, UV placement and material sidedness", () => {
+  const triangles = rectangle(0, 0, 4, 4);
+  const coverage: MaskAlphaCoverage = {
+    textures: [{ width: 2, height: 1, alphaBase64: btoa(String.fromCharCode(255, 0)) }],
+    triangles: triangles.map((triangle) => ({
+      uv: triangle.map(([x, y]) => [x / 4, y / 4]) as [Point, Point, Point],
+      alpha: [1, 1, 1],
+      cutoff: 0.5,
+      texture: 0,
+      wrap: ["clamp", "clamp"],
+    })),
+  };
+  const count = (mesh: MaskTriangle[], cull = false) =>
+    rasterizeMaskGeometry(mesh, rules, cull, coverage)
+      .flatMap(decode)
+      .reduce((sum, n) => sum + n, 0);
+  assert.equal(count(triangles), 8);
+  assert.equal(count(triangles, true), 0);
+  for (const rule of coverage.triangles) rule.doubleSided = true;
+  assert.equal(count(triangles, true), 8);
+  const moved = triangles.map(
+    (triangle) => triangle.map(([x, y, z]) => [10 - y, 20 + x, z]) as MaskTriangle,
+  );
+  assert.equal(count(moved, true), 8);
+  const opaque = structuredClone(coverage);
+  opaque.textures[0]!.alphaBase64 = btoa(String.fromCharCode(255, 255));
+  assert.equal(
+    rasterizeMaskGeometry(triangles, rules, true, opaque)
+      .flatMap(decode)
+      .reduce((sum, n) => sum + n, 0),
+    16,
+  );
+  assert.throws(
+    () => rasterizeMaskGeometry(triangles, rules, false, { ...coverage, triangles: [] }),
+    /match/,
+  );
+  const invalid = structuredClone(coverage);
+  invalid.textures[0]!.alphaBase64 = "AAAA";
+  assert.throws(() => rasterizeMaskGeometry(triangles, rules, false, invalid), /size mismatch/);
+});
+
+test("compact alpha sampling retains repeat, mirrored repeat and cutoff equality", () => {
+  const triangles = rectangle(0, 0, 8, 2);
+  const coverage: MaskAlphaCoverage = {
+    textures: [{ width: 2, height: 1, alphaBase64: btoa(String.fromCharCode(255, 0)) }],
+    triangles: triangles.map((triangle) => ({
+      uv: triangle.map(([x, y]) => [x / 4 - 1, y / 2]) as [Point, Point, Point],
+      alpha: [0.5, 0.5, 0.5],
+      cutoff: 0.5,
+      texture: 0,
+      wrap: ["repeat", "clamp"],
+    })),
+  };
+  const pixels = () => rasterizeMaskGeometry(triangles, rules, false, coverage).flatMap(decode);
+  assert.deepEqual(pixels().slice(0, 8), [1, 1, 0, 0, 1, 1, 0, 0]);
+  for (const rule of coverage.triangles) rule.wrap[0] = "mirror";
+  assert.deepEqual(pixels().slice(0, 8), [0, 0, 1, 1, 1, 1, 0, 0]);
+  for (const rule of coverage.triangles) rule.alpha = [0.49, 0.49, 0.49];
+  assert.ok(pixels().every((pixel) => pixel === 0));
+});
 test("one-sided masks retain front faces and reject back faces after placement", () => {
   const back = rectangle(0, 0, 4, 4);
   const front = back.map(([a, b, c]): MaskTriangle => [c, b, a]);

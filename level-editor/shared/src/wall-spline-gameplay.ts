@@ -20,6 +20,7 @@ import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 import { clipSplinePolyline } from "./clip-spline-polyline.ts";
 import { splineLightReceivers } from "./spline-light-receivers.ts";
 import type { MaskTriangle } from "./compile-mask-geometry.ts";
+import type { MaskTriangleAlpha } from "./mask-alpha-sampler.ts";
 
 type Vertex = number[];
 function clip(vertices: Vertex[], axis: number, boundary: number, above: boolean) {
@@ -333,9 +334,14 @@ export function wallSplineGameplay(
       }
       for (const mask of data.masks ?? []) {
         const coverage = new Map<number, MaskTriangle[]>();
-        for (const triangle of mask.triangles)
+        const alphaCoverage = new Map<number, MaskTriangleAlpha[]>();
+        for (const [index, triangle] of mask.triangles.entries()) {
+          const sampling = mask.alphaCoverage?.triangles[index];
           pieces(
-            triangle.map((p) => source(mask.node, p)),
+            triangle.map((p, i) => [
+              ...source(mask.node, p),
+              ...(sampling ? [...sampling.uv[i]!, sampling.alpha[i]!] : []),
+            ]),
             (vertices, repeat) => {
               const warped = vertices.map((p) => warp([p[0]!, p[1]!, p[2]!], repeat));
               const world: MaskTriangle = [warped[0]!, warped[1]!, warped[2]!];
@@ -348,9 +354,19 @@ export function wallSplineGameplay(
               const triangles = coverage.get(repeat) ?? [];
               triangles.push(world);
               coverage.set(repeat, triangles);
+              if (sampling) {
+                const alpha = alphaCoverage.get(repeat) ?? [];
+                alpha.push({
+                  ...sampling,
+                  uv: vertices.map((v) => [v[3]!, v[4]!]) as MaskTriangleAlpha["uv"],
+                  alpha: [vertices[0]![5]!, vertices[1]![5]!, vertices[2]![5]!],
+                });
+                alphaCoverage.set(repeat, alpha);
+              }
             },
             true,
           );
+        }
         for (const [repeat, triangles] of coverage) {
           const limit = run
             ? Math.min(end, start + (end - start) * (length / run.repeatLength - repeat))
@@ -440,6 +456,10 @@ export function wallSplineGameplay(
             id: `mask-${out.masks!.length}`,
             node: "$root",
             triangles,
+            alphaCoverage: mask.alphaCoverage && {
+              textures: mask.alphaCoverage.textures,
+              triangles: alphaCoverage.get(repeat)!,
+            },
             anchor,
             receiverSegment: receiver ? undefined : receiverSegment,
             receiverPolyline:

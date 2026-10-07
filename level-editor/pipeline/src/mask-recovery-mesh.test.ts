@@ -2,7 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { Document } from "@gltf-transform/core";
 import sharp from "sharp";
-import { maskRecoveryMesh, maskRecoveryTextures } from "./mask-recovery-mesh.ts";
+import {
+  maskRecoveryMesh,
+  maskRecoveryTextures,
+  maskRecoveryTexturedMesh,
+} from "./mask-recovery-mesh.ts";
+import { rasterizeMaskGeometry } from "../../shared/src/compile-mask-geometry.ts";
+import { maskCoverage } from "./mask-roundtrip.ts";
 
 function fixture(indexed = true) {
   const model = new Document();
@@ -32,6 +38,61 @@ function fixture(indexed = true) {
   model.getRoot().setDefaultScene(scene);
   return { model, primitive, part, scene };
 }
+
+test("compact recovery matches clipped texels after placement without duplicating double-sided faces", () => {
+  const { model, primitive } = fixture(false);
+  const texture = model.createTexture();
+  const material = model
+    .createMaterial()
+    .setAlphaMode("MASK")
+    .setDoubleSided(true)
+    .setBaseColorTexture(texture)
+    .setAlphaCutoff(0.5);
+  material.getBaseColorTextureInfo()!.setMagFilter(9728).setWrapS(33071).setWrapT(33071);
+  primitive.setMaterial(material).setAttribute(
+    "TEXCOORD_0",
+    model
+      .createAccessor()
+      .setBuffer(model.getRoot().listBuffers()[0]!)
+      .setType("VEC2")
+      .setArray(new Float32Array([0, 0, 1, 0, 0, 1])),
+  );
+  const textures = new Map([
+    [texture, { width: 2, height: 2, alpha: new Uint8Array([255, 0, 255, 0]) }],
+  ]);
+  const rules = {
+    layer: 0,
+    mask_type: 4,
+    character_polyline: null,
+    projectile_polyline: null,
+    obstacle_indices: [],
+  };
+  for (const angle of [0, 37, 90, 180, 270]) {
+    const radians = (angle * Math.PI) / 180;
+    const place = ([x, y, z]: [number, number, number]): [number, number, number] => [
+      20.25 + 4 * (x * Math.cos(radians) - y * Math.sin(radians)),
+      30.75 + 4 * (x * Math.sin(radians) + y * Math.cos(radians)),
+      z,
+    ];
+    const compact = maskRecoveryTexturedMesh(model, "part", place, textures);
+    const clipped = maskRecoveryMesh(model, "part", place, textures, undefined, {
+      preserveMaterialSidedness: true,
+    });
+    assert.equal(compact.triangles.length, 1);
+    assert.equal(compact.alphaCoverage.triangles.length, 1);
+    assert.equal(compact.alphaCoverage.textures.length, 1);
+    const pixels = (masks: ReturnType<typeof rasterizeMaskGeometry>) =>
+      new Set(masks.flatMap((mask) => [...maskCoverage(mask)]));
+    assert.deepEqual(
+      pixels(rasterizeMaskGeometry(compact.triangles, rules, true, compact.alphaCoverage)),
+      pixels(rasterizeMaskGeometry(clipped, rules, true)),
+    );
+  }
+  material.setAlphaMode("OPAQUE");
+  const compact = maskRecoveryTexturedMesh(model, "part", (p) => p);
+  assert.equal(compact.triangles.length, compact.alphaCoverage.triangles.length);
+  assert.equal(compact.alphaCoverage.triangles[0]!.doubleSided, true);
+});
 
 test("mesh recovery applies descendant and parent transforms for indexed and raw triangles", () => {
   for (const indexed of [true, false]) {
