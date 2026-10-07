@@ -9737,3 +9737,22 @@ pass (one navigation area per scene). These fixtures have continuous terrain:
 they prove end-region matching, not actor crossings over a gap. Rail/pier solids,
 gap crossings, character masking and publication remain unfinished. No source
 level data is loaded by the authoring script or compiler.
+
+The bridge staging script now also builds two separate terrain banks from its
+transformed end edges, with no ground under the deck. Removing the bridge leaves
+two disconnected navigation areas. Deck-only candidate
+`croisement-bridge-gameplay-2Uriu3` passes all 40 directed native actor crossings:
+20 over continuous terrain and 20 across the gap at five rotations and two
+elevations. Twenty wrong-height landing checks still pass.
+
+The explicit `--solid-deck` candidate derives bottom heights from the mesh's
+two underside triangles and adds physical wooden slabs with upright headroom.
+Candidate `croisement-bridge-gameplay-3Y2wBi` passes 240 native sight/projectile
+checks through, above and below the slabs. Actor testing fails at the 270-degree
+gap seam: position [587.1412, 458.8348] has no current receiver while the native
+query finds a deck receiver. Binding the surfaces to those volumes also fails
+the same route (`g5vpPr`). Fitting horizontal planes was investigated but caused
+coplanar receiver conflicts and then a quantized collision sliver; that
+experiment was removed. No collision padding, actor-test relaxation or library
+publication was performed. The solid candidate remains explicit and unverified;
+rail/pier collision and rendered integration are still required.

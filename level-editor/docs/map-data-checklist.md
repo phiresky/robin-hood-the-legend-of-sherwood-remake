@@ -262,8 +262,12 @@ relaxing geometry validation; strict validation still rejects repeated warnings.
 The Croisement03 timber bridge now has an unpublished asset-only deck candidate.
 Ten rotated/elevated exports join its two end edges to matching terrain and
 reject twenty one-unit height mismatches; all ten native construction checks
-pass. Rail/pier collision, crossings over a terrain gap and rendered actor
-occlusion remain unverified, so this asset is still counted as missing.
+pass. The expanded deck-only candidate passes 40 directed actor crossings,
+including 20 over a gap whose banks are disconnected without the bridge.
+A separate solid-deck candidate passes 240 sight/projectile probes but fails
+actor receiver tracking at a 270-degree bank seam. Rail/pier collision and
+rendered actor occlusion remain unfinished; this asset is still unpublished
+and counted as missing.
 An unpublished mesh-derived bridge deck candidate passes ten complete native
 crossings and 754 sampled receiving-seam crossings at five rotations. Adding
 twelve inclined support hulls preserves those ten complete crossings, passes
