@@ -6,7 +6,7 @@ import type { NativeShadowKey } from "../../shared/src/native-state-presentation
 /** Byte-space compositor for native artwork. Callers own frame selection and draw order. */
 export class NativePixelCompositor {
   private readonly scene = new THREE.Scene();
-  private readonly camera = new THREE.Camera();
+  private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
   private readonly geometry = new THREE.PlaneGeometry(2, 2);
   private readonly material = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3,

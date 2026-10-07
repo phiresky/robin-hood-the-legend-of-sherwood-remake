@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { NativePixelCompositor } from "../src/native-pixel-compositor.ts";
 import { compositeNativePixels } from "../src/native-state-presentation.ts";
-const renderer = new THREE.WebGLRenderer();
+const reversedDepthBuffer = new URLSearchParams(location.search).has("reversed-depth");
+const renderer = new THREE.WebGLRenderer({ reversedDepthBuffer });
 renderer.setSize(32, 32);
 document.body.append(renderer.domElement);
 const compositor = new NativePixelCompositor();
@@ -97,6 +98,10 @@ try {
   borrowed.dispose();
   (window as any).proof = {
     ready: true,
+    reversedDepth: {
+      requested: reversedDepthBuffer,
+      enabled: renderer.capabilities.reversedDepthBuffer,
+    },
     results,
     emptyCopy: true,
     restoration: { success: true, injectedFailure: true },
