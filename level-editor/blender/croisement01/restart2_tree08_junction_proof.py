@@ -62,10 +62,13 @@ def native_depth(sections):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--section', type=int, choices=[29, 93, 33, 96], default=29)
+    parser.add_argument('--threeway', action='store_true')
     args = parser.parse_args()
     suffix = '' if args.section == 29 else f'-{args.section}'
     root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
     packet = root / f'tree08-v12-planar-junction{suffix}-stitched-v1'
+    if args.threeway:
+        packet = root / 'tree08-v12-threeway-stitched-v1'
     mesh = np.load(packet / 'candidate.npz')
     vertices, faces = mesh['vertices'], mesh['faces']
     triangles = vertices[faces]
@@ -104,7 +107,8 @@ def main():
             if intersection(a, b):
                 failures.append(dict(faces=[i, j], kind=key))
     source = np.load(root / 'tree08-v12-local-fork-cpu-v1/minimal-forks.npz')
-    before = native_depth([(source['continuation_vertices'], source['continuation_faces']), (source[f'vertices_{args.section}'], source[f'faces_{args.section}'])])
+    ids = [29, 93] if args.threeway else [args.section]
+    before = native_depth([(source['continuation_vertices'], source['continuation_faces'])] + [(source[f'vertices_{i}'], source[f'faces_{i}']) for i in ids])
     after = native_depth([(vertices, faces)])
     common = np.isfinite(before) & np.isfinite(after)
     lost = int((np.isfinite(before) & ~np.isfinite(after)).sum())
