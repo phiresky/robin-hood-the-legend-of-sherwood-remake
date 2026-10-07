@@ -9905,3 +9905,19 @@ Croisement01 asset and Croisement03's two ferns and stream fallen log. The bridg
 is no longer missing. The previous four-missing-placement count is historical;
 the current library has changed. Definition presence is not proof of gameplay
 completeness.
+
+The foliage authoring script now accepts explicit `--asset=<id>` selections and
+requires one-sided MASK materials with physical foliage opacity semantics.
+Opaque wooden geometry and mixed-sided foliage do not silently enter that path.
+The browser mask review now reads candidate IDs from the stage edits instead of
+hardcoding two ferns.
+
+Stage `fern-gameplay-wS3DZB` contains Croisement02 ground plants 111–123. Each
+uses its own mesh alpha coverage, local ground contact and authored closed
+canopy boundary. All 130 exports (thirteen assets, five rotations, two heights)
+pass native construction. The authoring checks require nonempty typed masks,
+coverage-spanning boundary polylines, rejection of a one-unit ground mismatch
+and no generated movement obstacles. These definitions remain unpublished:
+rendered character/projectile occlusion is unverified, and the closed canopy
+boundary is an explicit approximation. The library missing-definition count has
+not been reduced by these staged candidates.

@@ -232,6 +232,13 @@ Croisement02, one in Croisement01, and Croisement03's ferns 35/76 and stream
 fallen log. The timber bridge now has a published draft definition. These counts
 reflect the current asset inventory, not gameplay certification.
 
+Croisement02 ground plants 111–123 now have unpublished asset-derived mask
+candidates. All 130 rotated/elevated exports construct native geometry, preserve
+typed mask coverage, reject wrong-height ground and introduce no movement
+collision. Their authored canopy boundary and rendered character/projectile
+contact still require review. Mixed-sided shrubs and wooden objects need their
+own treatment; they are not assigned empty gameplay to reduce missing counts.
+
 The earlier library-wide audit found 38 of 1,297 indexed assets without gameplay
 definitions, including the composite Derby keep, several Nottingham buildings,
 and York market props. Four are placed in the current Croisement03 scene:

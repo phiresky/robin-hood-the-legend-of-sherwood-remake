@@ -1,4 +1,4 @@
-// Asset-only fern authoring candidate; no publication until rendered mask review.
+// Asset-only rooted foliage candidate. Rendered mask behavior needs review.
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -34,7 +34,16 @@ function hull(points) {
   };
   return [...chain(sorted), ...chain(sorted.toReversed())];
 }
-for (const id of ["croisement03-fern-35", "croisement03-fern-76"]) {
+const requested = process.argv.slice(2);
+assert.ok(
+  requested.every((arg) => arg.startsWith("--asset=")),
+  "Use --asset=<library-id>",
+);
+const selected = requested.length
+  ? requested.map((arg) => arg.slice("--asset=".length))
+  : ["croisement03-fern-35", "croisement03-fern-76"];
+assert.equal(new Set(selected).size, selected.length, "Duplicate selected foliage asset");
+for (const id of selected) {
   const entry = index.find((entry) => entry.id === id);
   assert.ok(entry);
   const bytes = await fs.readFile(`library/3d-assets/${entry.descriptor}`);
@@ -58,7 +67,13 @@ for (const id of ["croisement03-fern-35", "croisement03-fern-76"]) {
     model
       .getRoot()
       .listMaterials()
-      .every((material) => !material.getDoubleSided()),
+      .every(
+        (material) =>
+          !material.getDoubleSided() &&
+          material.getAlphaMode() === "MASK" &&
+          material.getExtras().foliage_physical_opacity === true,
+      ),
+    "Rooted foliage authoring requires one-sided physical-alpha materials",
   );
   const textures = await maskRecoveryTextures(model);
   const triangles = maskRecoveryMesh(
@@ -84,7 +99,7 @@ for (const id of ["croisement03-fern-35", "croisement03-fern-76"]) {
     maskOcclusionNodes: [node],
     masks: [
       {
-        id: "fern-cover",
+        id: "foliage-cover",
         node,
         triangles,
         cullBackfaces: true,
@@ -97,7 +112,7 @@ for (const id of ["croisement03-fern-35", "croisement03-fern-76"]) {
     ],
     draft: {
       issues: [
-        "Fern mask uses alpha-covered asset geometry and a closed canopy footprint on its ground plane. Front-envelope behavior is an authored approximation; rendered character/projectile contact still needs review.",
+        "Foliage mask uses alpha-covered asset geometry and a closed canopy footprint on its ground plane. Front-envelope behavior is an authored approximation; rendered character/projectile contact still needs review.",
       ],
     },
   };
