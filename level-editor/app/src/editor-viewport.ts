@@ -1,3 +1,9 @@
+import { assetNodeKey } from "@rle/shared";
+import {
+  currentReceiverMeshes,
+  northBankReceiverAuthority,
+  type ActorReceiverAuthority,
+} from "./actor-receiver-authority.ts";
 import type { ScenerySourceClockBinding } from "./scenery-source-clocks.ts";
 import { SourceContractClockBinding } from "./source-contract-clock-binding.ts";
 import { FramingBounds } from "./framing-bounds.ts";
@@ -674,6 +680,97 @@ export class EditorViewport {
       this.actorPreviewError = `Actor preview retired: ${String(error)}`;
       this.bindings.onError?.(this.actorPreviewError);
       return this.currentNativeArt.pixels();
+    }
+  }
+  private actorReceiverSelection:
+    | { editorId: string; placement: string; authority: ActorReceiverAuthority; revision: string }
+    | undefined;
+  private actorReceiverError: string | undefined;
+  actorPhysicalReceiverChoices() {
+    const document = this.bindings.document();
+    if (!document) return [];
+    const node = assetNodeKey(
+      northBankReceiverAuthority.asset,
+      northBankReceiverAuthority.physicalParts[0]!.node,
+    );
+    return document.groups
+      .filter((g) => document.objects.some((o) => o.group === g.id && o.node === node))
+      .map((g) => ({ id: g.id, name: g.name }));
+  }
+  setActorPhysicalReceiver(editorId: string, placement: string | null) {
+    if (!placement) {
+      this.clearActorPhysicalReceiver();
+      return;
+    }
+    const document = this.bindings.document();
+    if (!document || document.map.toLowerCase() !== "croisement02")
+      throw new Error("Physical character receiver is unavailable for this map");
+    const authority = northBankReceiverAuthority;
+    if (!this.externalAssetHashes.get(authority.asset)?.endsWith(authority.model_sha256))
+      throw new Error("Loaded receiver asset is not the reviewed model");
+    const current = currentReceiverMeshes(
+      document,
+      placement,
+      authority,
+      (id) => this.partViews.get(id)?.meshes,
+    );
+    this.missionMarkers.bindCharacterReceivers(
+      editorId,
+      current.revision,
+      current.evaluate(),
+      (document.camera.elevation_deg * Math.PI) / 180,
+    );
+    if (this.actorReceiverSelection?.editorId !== editorId && this.actorReceiverSelection)
+      this.missionMarkers.clearCharacterReceivers(this.actorReceiverSelection.editorId);
+    this.actorReceiverSelection = { editorId, placement, authority, revision: current.revision };
+    this.actorReceiverError = undefined;
+  }
+  clearActorPhysicalReceiver() {
+    if (this.actorReceiverSelection)
+      this.missionMarkers.clearCharacterReceivers(this.actorReceiverSelection.editorId);
+    this.actorReceiverSelection = undefined;
+    this.actorReceiverError = undefined;
+  }
+  actorPhysicalReceiverStatus() {
+    return {
+      selection: this.actorReceiverSelection?.placement,
+      ...(this.actorReceiverSelection
+        ? this.missionMarkers.characterReceiverStatus(this.actorReceiverSelection.editorId)
+        : {}),
+      error:
+        this.actorReceiverError ??
+        (this.actorReceiverSelection
+          ? this.missionMarkers.characterReceiverStatus(this.actorReceiverSelection.editorId)?.error
+          : undefined),
+    };
+  }
+  private syncActorPhysicalReceiver() {
+    const selection = this.actorReceiverSelection;
+    if (!selection) return;
+    const document = this.bindings.document();
+    try {
+      if (!document) throw new Error("Receiver map retired");
+      const status = this.missionMarkers.characterReceiverStatus(selection.editorId);
+      if (!status?.ready) throw new Error(status?.error ?? "Character receiver retired");
+      const current = currentReceiverMeshes(
+        document,
+        selection.placement,
+        selection.authority,
+        (id) => this.partViews.get(id)?.meshes,
+      );
+      if (current.revision !== selection.revision) {
+        this.missionMarkers.bindCharacterReceivers(
+          selection.editorId,
+          current.revision,
+          current.evaluate(),
+          (document.camera.elevation_deg * Math.PI) / 180,
+        );
+        selection.revision = current.revision;
+      }
+    } catch (error) {
+      this.clearActorPhysicalReceiver();
+      this.actorReceiverError = String(error);
+      this.bindings.onError?.(this.actorReceiverError);
     }
   }
   private readonly stateDelivery = new StateDelivery();
@@ -1442,6 +1539,7 @@ export class EditorViewport {
   }
 
   private retireMap() {
+    this.clearActorPhysicalReceiver();
     this.endMissionPaletteDrag();
     this.cancelMissionDrag?.();
     this.missionEdit = null;
@@ -1692,6 +1790,7 @@ export class EditorViewport {
         );
       }
       this.entities?.update(camera, this.spriteOrientationLock);
+      this.syncActorPhysicalReceiver();
       this.missionMarkers.update(camera, this.spriteOrientationLock);
       this.scenery.update(performance.now());
       if (this.assetDisplayMode === "outline") {

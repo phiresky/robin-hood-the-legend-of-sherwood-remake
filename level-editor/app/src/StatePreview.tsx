@@ -40,11 +40,31 @@ export default function StatePreview(props: {
     [actorEnabled, setActorEnabled] = createSignal(false),
     [actorHidden, setActorHidden] = createSignal(false),
     [actorBusy, setActorBusy] = createSignal(false);
+  const [actorReceiver, setActorReceiver] = createSignal("");
+  let receiverActor = "";
+  const receiverChoices = () => {
+    props.document();
+    return props.viewport.actorPhysicalReceiverChoices();
+  };
+  function chooseReceiver(placement: string) {
+    try {
+      props.viewport.setActorPhysicalReceiver(actorId(), placement || null);
+      setActorReceiver(placement);
+      receiverActor = actorId();
+    } catch (error) {
+      props.onError(String(error));
+    }
+  }
   let actorRequest = 0;
   const actors = () =>
     (props.document()?.mission?.soldiers ?? []).filter((a) => /^import-soldier-\d+$/.test(a.id));
   async function updateActor(enabled: boolean, id = actorId(), hidden = actorHidden()) {
     const attempt = ++actorRequest;
+    if (!enabled || (receiverActor && receiverActor !== id)) {
+      props.viewport.clearActorPhysicalReceiver();
+      setActorReceiver("");
+      receiverActor = "";
+    }
     setActorEnabled(false);
     props.viewport.clearNativeActorPreview();
     if (!enabled) {
@@ -77,6 +97,9 @@ export default function StatePreview(props: {
     }
   }
   function clearActor() {
+    props.viewport.clearActorPhysicalReceiver();
+    setActorReceiver("");
+    receiverActor = "";
     actorRequest++;
     setActorSource(null);
     setActorEnabled(false);
@@ -220,7 +243,16 @@ export default function StatePreview(props: {
     },
   );
   const timer = setInterval(() => {
-    if (actorEnabled() && !props.viewport.actorPreviewStatus().ready) setActorEnabled(false);
+    if (actorEnabled() && !props.viewport.actorPreviewStatus().ready) {
+      setActorEnabled(false);
+      props.viewport.clearActorPhysicalReceiver();
+      setActorReceiver("");
+      receiverActor = "";
+    }
+    if (actorReceiver() && !props.viewport.actorPhysicalReceiverStatus().ready) {
+      setActorReceiver("");
+      receiverActor = "";
+    }
     if (!contract() && !loopContract() && !patchContract()) return;
     const s =
       loopContract() || patchContract()
@@ -379,6 +411,25 @@ export default function StatePreview(props: {
               />{" "}
               Show hidden outline
             </label>
+            <Show when={receiverChoices().length}>
+              <label>
+                Shadow surface
+                <select
+                  aria-label="Character shadow surface"
+                  value={actorReceiver()}
+                  disabled={actorBusy() || !actorEnabled()}
+                  onChange={(event) => chooseReceiver(event.currentTarget.value)}
+                >
+                  <option value="">None</option>
+                  <For each={receiverChoices()}>
+                    {(receiver) => <option value={receiver.id}>{receiver.name}</option>}
+                  </For>
+                </select>
+              </label>
+              <p class="hint">
+                Choose the surface beneath this character to preview its shadow in 3D.
+              </p>
+            </Show>
             <p class="hint">
               Uses this character’s current edited position and facing. This preview does not play
               the mission.

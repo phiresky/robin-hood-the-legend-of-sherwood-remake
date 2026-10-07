@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { gameToScene, type Level3D } from "@rle/shared";
 import { disposeObjectResources } from "./resources.ts";
 import { MissionEntities, type MissionSpritePreview } from "./mission.ts";
+import type { PhysicalReceiverTriangle } from "./actor-shadow-receivers.ts";
 import type { MissionCharacterProfile } from "./mission-character-catalog.ts";
 
 interface Actor {
@@ -166,6 +167,23 @@ export class MissionLayer {
         sprite: { ...sprite, visible: this.spritesRoot.visible && sprite.visible },
       })),
     );
+  }
+
+  bindCharacterReceivers(
+    editorId: string,
+    revision: string,
+    triangles: readonly PhysicalReceiverTriangle[],
+    elevation: number,
+  ) {
+    const view = this.actors.get(editorId)?.view;
+    if (!view) throw new Error("Character preview is not ready");
+    view.bindCharacterReceivers(editorId, revision, triangles, elevation);
+  }
+  clearCharacterReceivers(editorId: string) {
+    this.actors.get(editorId)?.view?.clearCharacterReceivers();
+  }
+  characterReceiverStatus(editorId: string) {
+    return this.actors.get(editorId)?.view?.characterReceiverStatus();
   }
 
   hit(raycaster: THREE.Raycaster): string | undefined {
