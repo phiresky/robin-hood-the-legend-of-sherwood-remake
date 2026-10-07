@@ -245,6 +245,18 @@ is open and must not silently become a solid. No new gameplay definitions were
 published from this preflight. Reproduce it with
 `node refinement/audit-physical-meshes.mjs <asset-id> ...` from `level-editor`.
 
+The optional `--caps` audit converts a closed shell into convex pieces with
+independent planar bottom/top caps, retaining multiple solid intervals and the
+air between them. It rejects crossing/coincident caps and verifies footprint
+coverage and enclosed volume. Rotated/elevated sloped solids, concave corners,
+stacked rails and invalid intersecting caps have focused tests. The fallen log
+now converts from 436 triangles to 1,889 capped pieces
+(`physical-mesh-audit-91Ekbf`). This is an unpublished authoring result, not
+native gameplay evidence: simplification, material/movement semantics and
+native sight/projectile/navigation checks remain. The audit limits conversion
+to 5,000 triangles per shell; dense wood needs an authored physical mesh before
+using this decomposition.
+
 Croisement02 ground plants 111–123 now have published draft asset-derived mask
 definitions. All 130 rotated/elevated exports construct native geometry, preserve
 typed mask coverage, reject wrong-height ground and introduce no movement
