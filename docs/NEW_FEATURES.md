@@ -37,6 +37,11 @@
   transition path instead of walking at the wrong height.
   Explicit destinations on a different layer or sector also retain normal
   routing rather than being reinterpreted on the actor's current floor.
+  Building exits onto compiled physical floors select their receiver at the
+  actual handoff position. A later doorstep boundary crossing then installs
+  the raised floor instead of switching a prematurely selected receiver back
+  to the ground underneath. Complete-sprite entrance/exit coverage still has
+  unresolved approach failures on rotated doorsteps.
   Physical floor and stair-landing bindings fit receiver anchors in double
   precision, avoiding translation-sensitive edge gaps caused by rounding plane
   coefficients before reconstructing collision contours. Compatibility movement

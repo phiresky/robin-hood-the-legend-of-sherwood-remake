@@ -104,6 +104,90 @@ fn physical_walking_shortcut_respects_the_requested_destination_layer() {
 
 #[test]
 fn dispatched_walk_changes_receivers_between_overlapping_height_planes() {
+    let descriptor = overlapping_receiving_floors();
+    let (engine, assets) = compiled_walkway(&serde_json::to_vec(&descriptor).unwrap());
+    let ground = MapPoint::new(50., 30.);
+    let ramp = MapPoint::new(50., 45.);
+    for (source, goal) in [(ground, ramp), (ramp, ground)] {
+        assert_eq!(
+            dispatch_building_approach(engine.clone(), assets.clone(), 0, 0, source, goal, None),
+            Ok(())
+        );
+    }
+}
+
+#[test]
+fn compiled_building_exit_binds_the_floor_at_its_midpoint() {
+    let mut descriptor = overlapping_receiving_floors();
+    let layers = descriptor["asset_geometry"]["motion_data"]["layers"]
+        .as_array()
+        .unwrap()
+        .len();
+    descriptor["asset_geometry"]["buildings"] = serde_json::json!([{"Building": {"doors": [{
+        "door_type": 1, "active": true,
+        "locked_pc": false, "unlockable": false,
+        "locked_npc_villain": false, "locked_npc_civilian": false,
+        "locked_pc_after_patch": false, "unlockable_after_patch": false,
+        "locked_npc_villain_after_patch": false, "locked_npc_civilian_after_patch": false,
+        "door_sector": {"points": [[40, 10], [60, 10], [60, 30], [40, 30]]},
+        "point_out": [50, 45], "point_mid": [50, 30], "point_in": [50, 20],
+        "sector_out": 0, "layer_out": 0, "sector_in": 4, "layer_in": layers - 1
+    }]}}]);
+    for physical in [false, true] {
+        let (mut engine, mut assets) = compiled_walkway(&serde_json::to_vec(&descriptor).unwrap());
+        if !physical {
+            Arc::make_mut(&mut assets.navigation.physical_walking).clear();
+        }
+        let door = engine.script_domains.interactables.doors[0].clone();
+        let sector = crate::position_interface::SectorHandle::from_number(door.sector_out)
+            .with_arena_index(door.sector_out_index.unwrap());
+        assert_ne!(
+            engine.get_projection_area_index(&assets, sector, door.layer_out, door.point_mid),
+            engine.get_projection_area_index(&assets, sector, door.layer_out, door.point_out),
+            "the passage must cross between distinct receivers"
+        );
+        let owner = walking_pc(
+            &mut engine,
+            &mut assets,
+            door.point_out,
+            door.layer_out,
+            sector,
+        );
+        let sim = crate::sim_rng::test_context();
+        let index = crate::gate::DoorIndex::new(0).unwrap();
+        engine.execute_pass_door(TickCtx::new(&sim, &assets), owner, index, true);
+        engine
+            .ent_mut(owner)
+            .element_data_mut()
+            .set_position_map(door.point_mid);
+        engine.execute_pass_door(TickCtx::new(&sim, &assets), owner, index, false);
+        let expected_point = if physical {
+            door.point_mid
+        } else {
+            door.point_out
+        };
+        let receiver =
+            engine.get_projection_area_index(&assets, sector, door.layer_out, expected_point);
+        assert_eq!(
+            engine.ent(owner).position_iface().get_obstacle(),
+            receiver,
+            "physical={physical}"
+        );
+        if physical {
+            actor_receiver_result(
+                &engine,
+                &assets,
+                owner,
+                sector,
+                door.layer_out,
+                door.point_mid,
+            )
+            .unwrap();
+        }
+    }
+}
+
+fn overlapping_receiving_floors() -> serde_json::Value {
     let cases: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/asset-sloped-terrain-sockets.json"
@@ -135,31 +219,48 @@ fn dispatched_walk_changes_receivers_between_overlapping_height_planes() {
     })
     .collect::<Vec<_>>();
     geometry["sight_obstacles"] = serde_json::json!(receivers);
-    let (engine, assets) = compiled_walkway(&serde_json::to_vec(&descriptor).unwrap());
-    let ground = MapPoint::new(50., 30.);
-    let ramp = MapPoint::new(50., 45.);
-    for (source, goal) in [(ground, ramp), (ramp, ground)] {
-        assert_eq!(
-            dispatch_building_approach(engine.clone(), assets.clone(), 0, 0, source, goal),
-            Ok(())
-        );
-    }
+    descriptor
 }
 
 #[test]
 #[ignore = "requires exported building approaches via ROBIN_ASSET_MAP_DIAGNOSTICS"]
 fn exported_building_approaches_support_dispatched_actor_routes() {
+    audit_building_approaches(None, false);
+}
+
+#[test]
+#[ignore = "requires exported approaches and ROBIN_CLIMB_RHS"]
+fn exported_building_approaches_support_complete_sprite_routes() {
+    let sprite = super::exported_stairs::complete_climb_sprite();
+    audit_building_approaches(Some(&sprite), false);
+}
+
+#[test]
+#[ignore = "requires exported entrances and ROBIN_CLIMB_RHS"]
+fn exported_buildings_support_complete_sprite_round_trips() {
+    let sprite = super::exported_stairs::complete_climb_sprite();
+    audit_building_approaches(Some(&sprite), true);
+}
+
+fn audit_building_approaches(sprite: Option<&crate::sprite::Sprite>, round_trip: bool) {
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
             .unwrap();
     assert_eq!(manifest["complete"], true);
     let mut report = serde_json::json!({
-        "scope": "dispatched-building-approaches-not-interior-entry-or-rendering",
+        "scope": if round_trip { "building-entry-and-exit-not-rendering" } else { "dispatched-building-approaches-not-interior-entry-or-rendering" },
         "actor_half_diagonal": [6, 3],
+        "complete_sprite": sprite.is_some(),
         "complete": false, "audit_finished": false, "results": []
     });
-    let report_path = directory.join("actor-building-approach-report.json");
+    let report_path = directory.join(if round_trip {
+        "actor-building-round-trip-report.json"
+    } else if sprite.is_some() {
+        "actor-building-sprite-approach-report.json"
+    } else {
+        "actor-building-approach-report.json"
+    });
     std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     let mut checked = 0;
     let mut failed = 0;
@@ -216,15 +317,37 @@ fn exported_building_approaches_support_dispatched_actor_routes() {
                 .sector_out_index
                 .expect("bound building outside sector")
                 .get() as usize;
-            for (source, goal) in [(approach, door.point_out), (door.point_out, approach)] {
-                let outcome = dispatch_building_approach(
-                    engine.clone(),
-                    assets.clone(),
-                    door.layer_out,
-                    sector_index,
-                    source,
-                    goal,
-                );
+            let routes = if round_trip {
+                vec![(door.point_out, door.point_out)]
+            } else {
+                vec![(approach, door.point_out), (door.point_out, approach)]
+            };
+            for (source, goal) in routes {
+                let outcome = if round_trip {
+                    super::exported_stairs::walk_exported_building_round_trip(
+                        engine.clone(),
+                        assets.clone(),
+                        index,
+                        sprite.expect("complete building sprite"),
+                    )
+                    .and_then(|authorized| {
+                        if authorized {
+                            Ok(())
+                        } else {
+                            Err("building route was not authorized".into())
+                        }
+                    })
+                } else {
+                    dispatch_building_approach(
+                        engine.clone(),
+                        assets.clone(),
+                        door.layer_out,
+                        sector_index,
+                        source,
+                        goal,
+                        sprite,
+                    )
+                };
                 checked += 1;
                 if outcome.is_err() {
                     failed += 1;
@@ -248,7 +371,7 @@ fn exported_building_approaches_support_dispatched_actor_routes() {
     assert_eq!(
         failed,
         0,
-        "{failed}/{checked} building approach routes failed; see {}",
+        "{failed}/{checked} building routes failed; see {}",
         report_path.display()
     );
 }
@@ -260,6 +383,7 @@ fn dispatch_building_approach(
     sector_index: usize,
     source: MapPoint,
     goal: MapPoint,
+    sprite: Option<&crate::sprite::Sprite>,
 ) -> Result<(), String> {
     let sector = &engine.world.fast_grid.level.sectors[sector_index];
     let handle = crate::position_interface::SectorHandle::new(u16::from(sector.sector_number))
@@ -272,6 +396,12 @@ fn dispatch_building_approach(
         .get_projection_area_index(&assets, handle, layer, goal)
         .ok_or_else(|| format!("approach goal has no receiver: {goal:?}"))?;
     let owner = walking_pc(&mut engine, &mut assets, source, layer, handle);
+    if let Some(sprite) = sprite {
+        let element = engine.ent_mut(owner).element_data_mut();
+        let position = element.sprite.position_iface.clone();
+        element.sprite = sprite.clone();
+        element.sprite.position_iface = position;
+    }
     engine.set_obstacle_and_material(&assets, owner, Some(receiver));
     let action = OrderType::WalkingUpright;
     let mut movement = SequenceElement::new_movement(1, Command::Move, Some(owner), action);
@@ -303,12 +433,45 @@ fn dispatch_building_approach(
         engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
     }
     engine.select_sequence_element(owner, Some((sequence, 0)));
+    let mut last_order = None;
     for _ in 0..500 {
+        if let Some(order) = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .and_then(|element| element.orders.front())
+        {
+            last_order = Some(order.clone());
+        }
         engine.t_tick_actor_owner_envelopes(&assets);
         let position = engine.ent(owner).element_data().position_map();
         actor_receiver_result(&engine, &assets, owner, handle, layer, position)?;
         if (position - goal).length() < 0.01 {
             return Ok(());
+        }
+        // A zero-distance stop animation reserves 0.01 map units when
+        // inserted at the end of a walk, then plays without displacement.
+        // Require the completed order chain and that specific animation;
+        // moving or blocked actors do not get a wider arrival tolerance.
+        let stopped = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .is_some_and(|element| element.orders.is_empty());
+        let stop = OrderType::TransitionWalkingUprightWaitingUpright;
+        if stopped
+            && last_order
+                .as_ref()
+                .is_some_and(|order| order.order_type == stop)
+            && engine.ent(owner).sprite().distance_for_animation(stop) == 0
+        {
+            let rounding = [position.x, position.y, goal.x, goal.y]
+                .into_iter()
+                .map(|value| (value.next_up() - value).abs())
+                .fold(0.0_f32, f32::max);
+            if (position - goal).length() <= 0.01 + 4.0 * rounding {
+                return Ok(());
+            }
         }
     }
     let position = engine.ent(owner).element_data().position();
@@ -318,7 +481,7 @@ fn dispatch_building_approach(
         .get_element(sequence, 0)
         .map(|element| &element.orders);
     Err(format!(
-        "approach stalled at {position:?}; goal {goal:?}; orders {orders:?}"
+        "approach stalled at {position:?}; goal {goal:?}; orders {orders:?}; last_order {last_order:?}"
     ))
 }
 

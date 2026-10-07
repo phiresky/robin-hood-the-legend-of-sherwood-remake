@@ -965,11 +965,17 @@ movement-dispatch audit exposed incorrect floor selection on every incoming
 approach: a projected goal over the doorstep was unprojected onto the ground
 below. Dispatch now requires the destination receiver to belong to the selected
 physical floor. All **64/64 directed approaches** pass across all four tested
-angles, two elevations and copied placements, using the native walking fixture
-with a 6-by-3 half-diagonal. These checks do not exercise building entry/exit
-animations or complete character sprites. All six full-map geometry controls
-still apply and reset. Rendered contacts, complete building traversal and the
-remaining 15 feature omissions need review before publishing the candidate.
+angles, two elevations and copied placements, using a 6-by-3 half-diagonal.
+A subsequent complete-character-sprite audit also passes **64/64 approaches**;
+it accounts for the zero-distance stop animation's 0.01-unit reserved endpoint
+only after that animation's order chain finishes. Building entry/exit coverage
+initially passed only 4/32: 22 exits selected the destination floor prematurely,
+then an elevation crossing switched them back to the ground underneath.
+Compiled physical-floor exits now bind the receiver at their actual midpoint,
+and **26/32 round trips pass**. Six stone-tower approaches still fail before
+entry at 37 or 90 degrees; they remain explicit failures. All six earlier
+full-map geometry controls apply and reset. Rendered contacts, the remaining
+building failures and 15 feature omissions need review before publication.
 The receiving-plane loader now propagates f32 rounding through both the plane
 anchors and each receiver vertex. Steep valid planes no longer fail loading
 merely because assets are translated; the regression still rejects explicit

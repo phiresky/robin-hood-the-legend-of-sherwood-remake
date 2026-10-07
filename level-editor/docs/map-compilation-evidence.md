@@ -10274,6 +10274,47 @@ aborted in a direct-movement test). The existing doorstep batch
 Cargo formatting and the game build pass. General physical cross-floor routing, complete building
 entry/exit animations and rendered integration remain unfinished.
 
+### Complete-sprite doorstep approaches and building exits (2026-10-08)
+
+The `receiver-floor-placements-jzIo86` batch now has separate complete-sprite
+approach and building round-trip audits. Both use the complete RobinTown sprite
+with the existing 6-by-3 movement half-diagonal. Virtual building interiors have
+no receiving floor; receiver checks resume after the exit passage finishes.
+The round-trip audit requires actual entry, exit and completed passage orders,
+so merely reaching the outside door point cannot pass it.
+
+All **64/64 complete-sprite approaches** pass. Initially 40 were reported short
+by approximately 0.01 units despite completed orders. End-transition insertion
+reserves that distance for a zero-distance animation, which then plays without
+displacement. The audit permits this residual plus bounded coordinate rounding
+only after the matching zero-distance stop animation and order chain finish;
+receiver and height checks still run every tick.
+
+Building round trips initially passed **4/32**. Of the 28 failures, 22 completed
+the exit on an incorrect receiving floor and six failed before entering.
+Binding the outside receiver at a compiled building's midpoint prevents the
+later elevation crossing from toggling the preselected doorstep receiver back
+to underlying terrain. Compatibility exits without physical walking bindings
+retain their destination-point receiver rule. After the correction **26/32**
+round trips pass, with all 22 receiver mismatches resolved. The six remaining
+failures are stone-tower approaches: copy 1 at 37 degrees and both copies at
+90 degrees, each at heights 0 and 40. No entry/exit or rendering parity claim
+is made for those placements.
+
+The three report files distinguish synthetic approaches, complete-sprite
+approaches and complete-sprite round trips. Failed baselines are retained as
+`actor-building-round-trip-before-handoff.json` and
+`actor-building-sprite-approach-before-stop-contract.json`. Current round-trip
+output has `audit_finished: true` and `complete: false`; the unpublished asset
+candidate remains unpublished.
+
+The focused `compiled_building_exit_binds_the_floor_at_its_midpoint` regression
+checks both physical-floor and compatibility receiver selection against two
+distinct receiving planes. It passes after correcting the test fixture's
+interior sector identity. All 53 existing compiled-navigation tests and all
+33 door-passing tests pass; 18 external-data navigation audits remain ignored
+in the ordinary group. Formatting and the game build pass.
+
 `refinement/audit-gameplay-coverage.mjs` now provides a repeatable current-library
 inventory, checking descriptor hashes and identifying actual saved placements
 separately from unused library references. `gameplay-coverage-DfT8Rc` confirms

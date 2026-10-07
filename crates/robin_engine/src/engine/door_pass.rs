@@ -1465,6 +1465,24 @@ impl EngineInner {
                             .element_data()
                             .position_map()
                     })
+                })
+                .or_else(|| {
+                    // Compiled receiving floors have elevation edges between
+                    // the door midpoint and its outside waypoint. Bind the
+                    // floor at the actual handoff so crossing those edges
+                    // does not toggle a prematurely installed destination
+                    // receiver back to the ground underneath it.
+                    (left_building
+                        && !direct
+                        && tcx.assets.navigation.physical_walking.iter().any(|floor| {
+                            floor.layer == target_layer && floor.sector == target_sector.get()
+                        }))
+                    .then(|| {
+                        self.get_entity(entity_id)
+                            .expect("door owner disappeared")
+                            .element_data()
+                            .position_map()
+                    })
                 });
             let new_obstacle = self
                 .find_projection_area_at(

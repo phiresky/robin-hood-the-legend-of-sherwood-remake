@@ -301,6 +301,23 @@ fn walk_exported_lift(
     walk_exported_lift_with_tick(engine, assets, entrance, exit, sprite, |_, _, _| {})
 }
 
+pub(super) fn walk_exported_building_round_trip(
+    engine: EngineInner,
+    assets: LevelAssets,
+    door: usize,
+    sprite: &crate::sprite::Sprite,
+) -> Result<bool, String> {
+    let entrance = &engine.script_domains.interactables.doors[door];
+    assert_eq!(entrance.door_type, crate::gate::DoorType::Building);
+    let inside = entrance.sector_in_index.expect("building interior sector");
+    assert!(
+        engine.world.fast_grid.level.sectors[usize::from(inside)]
+            .sector_type
+            .is_building()
+    );
+    walk_exported_lift_with_tick(engine, assets, door, door, Some(sprite), |_, _, _| {})
+}
+
 fn walk_exported_lift_with_tick(
     mut engine: EngineInner,
     mut assets: LevelAssets,
@@ -317,6 +334,9 @@ fn walk_exported_lift_with_tick(
     let destination_sector = crate::position_interface::SectorHandle::from_number(leave.sector_out)
         .with_arena_index(leave.sector_out_index.unwrap());
     let lift_sector = enter.sector_in_index.unwrap();
+    let virtual_room = engine.world.fast_grid.level.sectors[usize::from(lift_sector)]
+        .sector_type
+        .is_building();
     let climbing = matches!(
         engine.world.fast_grid.level.sectors[usize::from(lift_sector)].lift_type,
         Some(crate::sector::LiftType::Ladder | crate::sector::LiftType::Wall)
@@ -426,7 +446,8 @@ fn walk_exported_lift_with_tick(
         );
         // Climbing preserves its approach receiver while animation motion
         // changes altitude; ordinary receiving lookup applies after landing.
-        if !passing && !(climbing && sector.arena_index() == Some(lift_sector)) {
+        // Virtual rooms have no receiving plane; check it again after exit.
+        if !passing && !((climbing || virtual_room) && sector.arena_index() == Some(lift_sector)) {
             actor_receiver_result(&engine, &assets, owner, sector, element.layer(), position)
                 .map_err(|error| {
                     let selected = engine
@@ -445,6 +466,7 @@ fn walk_exported_lift_with_tick(
             && (position - leave.point_out).length() < 0.01
             && element.layer() == leave.layer_out
             && sector == destination_sector
+            && (!virtual_room || !passing)
         {
             actor_receiver_result(&engine, &assets, owner, sector, element.layer(), position)?;
             return Ok(true);
@@ -692,7 +714,7 @@ fn joined_climbs_follow_both_floors_and_live_barriers() {
     }
 }
 
-fn complete_climb_sprite() -> crate::sprite::Sprite {
+pub(super) fn complete_climb_sprite() -> crate::sprite::Sprite {
     if std::env::var_os("ROBIN_LIFT_TRACE").is_some() {
         use tracing_subscriber::prelude::*;
         let _ = tracing_subscriber::registry()
