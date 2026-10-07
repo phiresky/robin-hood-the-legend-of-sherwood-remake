@@ -17,10 +17,10 @@ def derivative_bounds(curve):
         acceleration=max(acceleration,abs(2*b),abs(6*a*width+2*b))
     return float(speed),float(acceleration)
 
-def main():
+def main(corridor_path=None):
     assert not OUT.exists()
     assert audit.reader.sha(sample.FIT)==sample.FIT_SHA
-    source=sample.OUT/'corridor.json';corridor=json.loads(source.read_text())
+    source=sample.OUT/'corridor.json' if corridor_path is None else corridor_path;corridor=json.loads(source.read_text())
     assert all(w['selected'] is not None for w in corridor['windows']),'No sampled corridor for at least one window'
     fit=json.loads(sample.FIT.read_text());base=np.array([r['fixed_path_anchor_zup'][2] for r in fit['rows']])
     times=np.arange(0,99.01,.25);height=np.interp(times,np.arange(100),np.r_[base,base[0]])
