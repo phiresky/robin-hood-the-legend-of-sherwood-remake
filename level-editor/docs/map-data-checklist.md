@@ -233,6 +233,18 @@ Croisement03's stream fallen log.
 The timber bridge and both ferns have published draft definitions. These counts
 reflect the current asset inventory, not gameplay certification.
 
+The asset-only physical-mesh preflight (`physical-mesh-audit-dpmilw`) checks
+welded edge connectivity before collision authoring. Supplemental wood 09 has
+three closed shells, wood 44 has one, the fallen log has one, and tree 03's wood
+has ten. This proves edge topology only: self-intersections, nested shells,
+collision decomposition and gameplay behavior remain unchecked. Wood 44 alone
+has 601,032 triangles, so a direct per-face conversion would need substantial
+size reduction. Both upright fences contain zero-area triangles; their geometry
+needs cleanup that preserves rail gaps before solid conversion. Tree 03's crown
+is open and must not silently become a solid. No new gameplay definitions were
+published from this preflight. Reproduce it with
+`node refinement/audit-physical-meshes.mjs <asset-id> ...` from `level-editor`.
+
 Croisement02 ground plants 111–123 now have published draft asset-derived mask
 definitions. All 130 rotated/elevated exports construct native geometry, preserve
 typed mask coverage, reject wrong-height ground and introduce no movement
