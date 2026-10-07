@@ -91,8 +91,17 @@ neighbors=[(0,'approved-tree00-wood-fill-v1/croisement01-tree-00/baked-v4-suppor
 for n,path,mask in neighbors:
  path=R/path
  with bpy.data.libraries.load(str(path),link=False) as (src,dst):dst.objects=list(src.objects)
- loaded=[o for o in dst.objects if o is not None];targets=[o for o in loaded if o.type=='MESH' and o.get('asset_group')==f'croisement01-tree-{n:02d}' and 'foliage' not in o.get('source_node','') and o.get('projection_component')!='crown']
- assert targets;constrain(targets,n,R/mask,f'croisement01-tree-{n:02d}');root_constraints[-1]['model_sha256']=sha(path)
+ loaded=[o for o in dst.objects if o is not None]
+ for imported in loaded:bpy.context.scene.collection.objects.link(imported)
+ bpy.context.view_layer.update()
+ targets=[o for o in loaded if o.type=='MESH' and o.get('asset_group')==f'croisement01-tree-{n:02d}' and 'foliage' not in o.get('source_node','') and o.get('projection_component')!='crown']
+ assert targets
+ reference=next(row for row in json.loads((R/'bank-neighbor-transform-reference-v1.json').read_text())['sources'] if row['mask']==n);assert reference['model_sha256']==sha(path)
+ assert len(reference['objects'])==len(targets)
+ for target in targets:
+  expected=[row for row in reference['objects'] if row['source_node']==target.get('source_node')];assert len(expected)==1
+  assert max(abs(target.matrix_world[i][j]-expected[0]['matrix_world'][i][j]) for i in range(4) for j in range(4))<1e-5,'Neighbor evaluated transform mismatch'
+ constrain(targets,n,R/mask,f'croisement01-tree-{n:02d}');root_constraints[-1]['model_sha256']=sha(path)
  for o in loaded:bpy.data.objects.remove(o,do_unlink=True)
 violations=int(np.count_nonzero(boundary&(caps<z0-.01)));z=np.minimum(z,caps);z[~domain]=0
 for it in range(4000):

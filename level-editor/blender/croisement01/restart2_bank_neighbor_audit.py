@@ -8,7 +8,7 @@ from PIL import Image
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 from review_evidence import sha
-p=argparse.ArgumentParser();p.add_argument('worker',type=Path);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);w=a.worker.resolve();out=w/'inspection/neighbor-source-proof.json';assert not out.exists();R=ROOT/'level-editor/work/croisement01-refinement/restart2';construction=json.loads((w.parents[1]/'construction.json').read_text());acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'));cfg=json.loads((w/'workspace.json').read_text());objects=list(bpy.data.collections[cfg['collection_name']].all_objects)
+p=argparse.ArgumentParser();p.add_argument('worker',type=Path);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);w=a.worker.resolve();out=w/'inspection/neighbor-source-proof-v2.json';assert not out.exists();R=ROOT/'level-editor/work/croisement01-refinement/restart2';construction=json.loads((w.parents[1]/'construction.json').read_text());acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'));cfg=json.loads((w/'workspace.json').read_text());objects=list(bpy.data.collections[cfg['collection_name']].all_objects)
 def bvh(objects):
  points=[];faces=[]
  for o in objects:
@@ -19,7 +19,16 @@ neighbors=[(0,'approved-tree00-wood-fill-v1/croisement01-tree-00/baked-v4-suppor
 for n,path,mask_path in neighbors:
  path=R/path;mask_path=R/mask_path
  with bpy.data.libraries.load(str(path),link=False) as (src,dst):dst.objects=list(src.objects)
- loaded=[o for o in dst.objects if o is not None];targets=[o for o in loaded if o.type=='MESH' and o.get('asset_group')==f'croisement01-tree-{n:02d}' and 'foliage' not in o.get('source_node','') and o.get('projection_component')!='crown'];assert targets;wood=bvh(targets);mask=np.asarray(Image.open(mask_path).convert('L'))>0;left,top=next(r for r in native['masks'] if r['index']==n)['box_top_left'];hits=0;hidden=[]
+ loaded=[o for o in dst.objects if o is not None]
+ for imported in loaded:bpy.context.scene.collection.objects.link(imported)
+ bpy.context.view_layer.update()
+ targets=[o for o in loaded if o.type=='MESH' and o.get('asset_group')==f'croisement01-tree-{n:02d}' and 'foliage' not in o.get('source_node','') and o.get('projection_component')!='crown'];assert targets
+ reference=next(row for row in json.loads((R/'bank-neighbor-transform-reference-v1.json').read_text())['sources'] if row['mask']==n);assert reference['model_sha256']==sha(path)
+ assert len(reference['objects'])==len(targets)
+ for target in targets:
+  expected=[row for row in reference['objects'] if row['source_node']==target.get('source_node')];assert len(expected)==1
+  assert max(abs(target.matrix_world[i][j]-expected[0]['matrix_world'][i][j]) for i in range(4) for j in range(4))<1e-5,'Neighbor evaluated transform mismatch'
+ wood=bvh(targets);mask=np.asarray(Image.open(mask_path).convert('L'))>0;left,top=next(r for r in native['masks'] if r['index']==n)['box_top_left'];hits=0;hidden=[]
  for y,x in zip(*np.nonzero(mask)):
   origin=Vector((float(left+x)+.5,-(float(top+y)+.5)/sine,0))+direction*5000;hit,_,_,distance=wood.ray_cast(origin,-direction,20000)
   if hit is None:continue
