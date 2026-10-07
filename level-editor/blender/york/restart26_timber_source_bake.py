@@ -6,6 +6,9 @@ if OUT.exists():raise FileExistsError(OUT)
 assert shutil.disk_usage(ROOT).free>10*1024**3
 assert int(next(x.split()[1]for x in Path('/proc/meminfo').read_text().splitlines()if x.startswith('MemAvailable:')))*1024>6*1024**3
 assert hashlib.sha256((BASE/'model.blend').read_bytes()).hexdigest()=='0d877de4b63cbbe805ffe12c638e419e79a60dc9cc2a65efb1668447ddf08986'
+assert hashlib.sha256((WORK/'timber-observed-domains-v1/report.json').read_bytes()).hexdigest()=='13b315ac0a225fd37d2ae4899291e10a488dafa573de61acfe15761eba8669c3'
+assert hashlib.sha256((WORK/'timber-sawn-source-review-v1/source-classification.json').read_bytes()).hexdigest()=='e8c3d649c54d22e086d7f1fa056ebb47491be4f02e70fe4162f2986019f8d3a6'
+assert hashlib.sha256((WORK/'pair-v14/assets/york-southwest-square-west-house/reference/source.png').read_bytes()).hexdigest()=='3d83bfab6b8ff1c27f87c82c0c034dc854df44b4e2322a09e7e083db57fb409e'
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 acquire()
