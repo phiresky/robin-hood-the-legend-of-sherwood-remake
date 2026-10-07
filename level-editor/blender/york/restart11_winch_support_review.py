@@ -1,7 +1,7 @@
 """Review the saved support candidate in native-first isolated and room views."""
 import json,runpy,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2/winch-room-physical-v9'
+ROOT=Path(__file__).resolve().parents[3];VERSION=sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'winch-room-physical-v9';BASE=ROOT/'level-editor/work/york-refinement/restart2'/VERSION
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 acquire()
@@ -24,4 +24,4 @@ for state in ('transition-00','transition-44'):
  sheet=Image.new('RGBA',(1280,768))
  for i in range(8):sheet.paste(Image.open(out/f'renders/view-{i}-textured.png'),((i%4)*320,(i//4)*384))
  sheet.save(out/'solid8.png');labeled_copy(out/'solid8.png',out/'solid8-native-labeled.png')
- sys.argv=['restart2_winch_room_review.py','--','winch-room-physical-v9',state];runpy.run_path(str(Path(__file__).with_name('restart2_winch_room_review.py')),run_name='__main__')
+ sys.argv=['restart2_winch_room_review.py','--',VERSION,state];runpy.run_path(str(Path(__file__).with_name('restart2_winch_room_review.py')),run_name='__main__')
