@@ -17,7 +17,7 @@ def budget(*unused):
     assert used<CAP and shutil.disk_usage(BASE).free>=10*1024**3+CAP-used,'Bounded fringe reserve violated'
 
 def main():
-    budget();assert not DEST.exists();packet_path=OLD/'fringe-completion-cpu-v1/report.json';packet=json.loads(packet_path.read_text());assert packet['status']=='BOUNDED INFERRED-ONLY OFFMAP ADDITION; visual review pending'
+    budget();assert not DEST.exists();packet_path=OLD/'fringe-completion-cpu-v2/report.json';packet=json.loads(packet_path.read_text());assert packet['status']=='BOUNDED INFERRED-ONLY OFFMAP ADDITION; visual review pending'
     for path,digest in packet['inputs'].items():assert sha(Path(path))==digest
     DEST.mkdir();gray=DEST/'inferred-gray.png';Image.new('RGBA',(1,1),(158,158,158,255)).save(gray)
     for state in packet['states']:
