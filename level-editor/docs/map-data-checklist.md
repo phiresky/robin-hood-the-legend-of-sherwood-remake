@@ -226,10 +226,10 @@ disable physical navigation at 37 degrees. The latest unpublished candidate
 emits physical navigation at all eight placements but fails all 48 actor routes,
 including the twelve routes previously using projected navigation.
 
-The current library-wide audit (`gameplay-coverage-Gz1Zvi`) finds 31 of 1,279
-indexed assets without gameplay definitions. Three are placed: Croisement02's
-supplemental wood 09/44 and Croisement01 tree 03.
-The timber bridge, both ferns, fallen log and upright fences 94/95 have published draft definitions. These counts
+The current library-wide audit (`gameplay-coverage-Bi9ENk`) finds 29 of 1,279
+indexed assets without gameplay definitions. One is placed: Croisement01 tree 03.
+The timber bridge, both ferns, fallen log, upright fences 94/95 and supplemental
+wood 09/44 have published draft definitions. These counts
 reflect the current asset inventory, not gameplay certification.
 
 The asset-only physical-mesh preflight (`physical-mesh-audit-dpmilw`) checks
@@ -300,6 +300,32 @@ the missing wood 09/44 definitions and shrub 77's unavailable mask receiver.
 These warnings and the unverified rendered behavior remain parity work.
 Fresh published Croisement02 (`saved-map-exports-WtURUm`) exactly matches the
 native-tested descriptor, and all ten saved scenes reopen after publication.
+
+Supplemental wood 09/44 now have published asset-only physical drafts. Wood 09's
+10,116 triangles simplify to 776 across three closed shells with a maximum
+reported approximate error of 0.099032 units (`physical-mesh-audit-FyXkPe`).
+Its definition retains 2,083 capped volumes after recording 29 numerical slivers
+with total footprint area 0.00000024031062583832577 square game units.
+Wood 44's 601,032-triangle shell produces 13,687 capped pieces at a 0.1-unit
+budget; a 0.5-unit budget reduces it to 676 triangles and 1,930 capped pieces
+without discarded cap fragments (`physical-mesh-audit-yIE4Rh`). Its reported
+approximate error is 0.4981 units. These metrics do not certify maximum physical
+displacement or rendered contact; the visual meshes remain unchanged.
+
+Both candidates (`wood-gameplay-G6DBB5`, `wood-gameplay-ZhF0mn`) pass twenty
+rotated/elevated native construction cases, forty movement checks and 2,000
+sight/projectile checks. Full Croisement02 (`saved-map-exports-7GAUMW`) constructs
+five areas, 5,815 sight obstacles, five doors, four jump pairs, 8,575 grid blocks
+and 57 elevation boundaries; all nine controls apply/reset. Missing-definition
+warnings disappear from this scene. It still reports 2,165 collapsed movement
+fragments, seven collapsed holes, seven repaired corners and shrub 77's missing
+mask receiver. Dense collision cost, those warnings and rendered integration
+remain open.
+Publication backup: `wood-gameplay-publish-1Q743w`; both published definitions
+exactly match their tested candidates. Fresh published Croisement02
+(`saved-map-exports-7BFBAu`) exactly matches the native-tested descriptor, and
+all ten saved scenes reopen. Tree 03 has separate opaque wood and open crown
+meshes; its crown must not be treated as a closed physical solid.
 
 Croisement02 ground plants 111–123 now have published draft asset-derived mask
 definitions. All 130 rotated/elevated exports construct native geometry, preserve

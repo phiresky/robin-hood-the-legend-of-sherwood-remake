@@ -51,6 +51,14 @@ for (const id of ids) {
     const simplifications = [];
     try {
       triangles = maskRecoveryMesh(model, part.node, (p) => sceneToGame(camera, gltfToScene(p)));
+      console.log(
+        JSON.stringify({
+          asset: id,
+          node: part.node,
+          phase: "topology",
+          triangles: triangles.length,
+        }),
+      );
       let components = closedMeshComponents(
         triangles,
         1e-5,
@@ -64,6 +72,16 @@ for (const id of ids) {
             component,
             simplifyError,
             retainCollinear ? (face) => reported.push(face) : undefined,
+          );
+          console.log(
+            JSON.stringify({
+              asset: id,
+              node: part.node,
+              component: index,
+              phase: "simplified",
+              triangles: candidate.triangles.length,
+              approximateError: candidate.error,
+            }),
           );
           simplifications.push({
             component: index,
@@ -150,4 +168,22 @@ await fs.writeFile(
     2,
   ),
 );
-console.log(JSON.stringify({ output, results }, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      output,
+      results: results.map((result) => ({
+        id: result.id,
+        parts: result.parts.map((part) => ({
+          node: part.node,
+          triangles: part.triangles,
+          cappedVolumes: part.cappedVolumes,
+          components: part.closedComponents?.length,
+          error: part.error,
+        })),
+      })),
+    },
+    null,
+    2,
+  ),
+);
