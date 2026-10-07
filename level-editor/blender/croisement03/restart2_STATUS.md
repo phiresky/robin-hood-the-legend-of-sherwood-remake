@@ -1,23 +1,37 @@
 ## Hub approval and texture preparation
 
-The user approved all32 cards/38 scopes in the grouped hub. C3's exact subset
-is archived in `approved-hub-v17-v23-plus-two-v1/`:14 member scopes,13 effective
-assets and372 rehashed files. Apply originalTree03 approval first, then the
-exactleaf2787 derivative. Wholebank remains HOLD. New appearance is not approved.
+The user approved all 32 cards / 38 scopes in the grouped hub. C3's exact subset
+is archived in `approved-hub-v17-v23-plus-two-v1/`: 14 member scopes, 13 effective
+assets and 372 rehashed files. Apply original Tree03 approval first, then the
+exact leaf2787 derivative. Wholebank remains HOLD. New appearance is not approved.
 
-The approved trio receiver is prepared at exact1408x960 with17,447 editable
-pixels and two approved observed floor references. Its four-vertex/two-triangle
-unlit planar geometry and content-addressed external index buffer were verified.
-Input/solid/mask/reference images were inspected. The repository OpenRouter
-request exited with `fetch failed`; the escalation retry was withdrawn after
-an inaccessible subagent approval prompt. No generation result or process
-remains. Prior API authorization persists; coordinator resolves the network gate.
+The manual trio-ground generation used the corrected full prompt and exact
+approved 1408×960 input, lighting and both observed floor references. Independent
+cache/response checks pass: 17,447 editable pixels use the raw response, all
+protected pixels are exact, and alpha is unchanged. Appearance remains HOLD:
+smooth olive vertical patches and sharp seams still reveal removed trunks.
+The private comparison is `approved-hub-textures-v1/trio-ground/appearance-review-v1/`.
 
-`restart2_prepare_hub_wood.py` is ready for a boundedTree11 preparation lane.
-It preserves world triangles/UV/materials, protected crowns and sourceRGBA.
-Use approvedTree05 barkv2 andTree06 barkv3. Trees02/08/09 need packed-material
-binding checks; Trees12/14 retain prior approved bark fill and new native static
-crowns. Queue/status files remain private; no canonical writes or API retry.
+The coordinator reviewed correction-v2: the primary input, mask, solid and
+approval are unchanged; an exact magnified local crop adds source context.
+Revised instructions demand nearby fine forest-floor grain across former trunk
+boundaries. A separate experiment preserves all earlier responses. Sandbox DNS
+still fails; no automatic API retry. The immutable manual-batch description is
+`approved-hub-textures-v1/manual-generation-batch-v2.json` and also includes Tree11.
+
+Tree11's private wood packet is ready. Mechanical normalization preserves world
+triangles, all UVs/materials, packed RGBA and the protected crown. Its native
+first-hit audit preserves 210 bark pixels (202 visible, eight behind leaf alpha)
+and 2,805 crown pixels with zero changes, misses or exhausted rays. All eight
+input views, aligned solid views, source comparison and both permitted Leicester
+bark crops were inspected. No generated Tree11 appearance exists yet.
+
+The next wood packets use approved Tree05 bark v2 and Tree06 bark v3. The helper
+requires Trees02/08/09's missing external mask pins to match actual approved
+packed image RGBA exactly before proceeding. Trees12/14 retain prior approved
+bark fill and new native static crowns. Prepared native guards for Trees06–11
+read the bound bark domain, avoiding stale recipe masks. All render jobs exited;
+request the next bounded lane before Blender. No canonical or compiler writes.
 
 ## Native-visibility CPU correction ready
 
