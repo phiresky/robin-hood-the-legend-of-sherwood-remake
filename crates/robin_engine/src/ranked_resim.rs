@@ -547,6 +547,7 @@ mod tests {
         let total_frames = u32::try_from(inputs.len()).expect("fixture frame count fits u32");
         let replay = ReplayFile {
             header: ReplayHeader {
+                mission_profiles: None,
                 mission_id: FIXTURE_MISSION_ID.into(),
                 mission_assets: fixture_mission_assets(),
                 rng_seed: 0,
@@ -1008,6 +1009,7 @@ mod tests {
         let corrected_checkpoint = corrected_checkpoint.expect("frame 25 checkpoint");
 
         let header = ReplayHeader {
+            mission_profiles: None,
             mission_id: FIXTURE_MISSION_ID.into(),
             mission_assets: fixture_mission_assets(),
             rng_seed: 0,

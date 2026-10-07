@@ -243,7 +243,7 @@ pub(super) fn init_recording(
                     .spellforge_runtime
                     .as_ref()
                     .map(|runtime| runtime.package().clone());
-                match ReplayRecorder::with_writer_and_spellforge_package(
+                match ReplayRecorder::with_writer_and_mission_catalog(
                     writer,
                     mission_id.to_string(),
                     mission_assets.clone(),
@@ -251,6 +251,7 @@ pub(super) fn init_recording(
                     engine_sim_config,
                     replay_campaign,
                     spellforge_package,
+                    Some(assets.profile_manager.missions.clone()),
                 ) {
                     Ok(rec) => {
                         #[cfg(not(target_arch = "wasm32"))]

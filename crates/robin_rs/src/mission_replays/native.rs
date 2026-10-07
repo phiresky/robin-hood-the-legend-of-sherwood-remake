@@ -709,6 +709,7 @@ mod tests {
     fn recording(campaign: &Campaign, nonces: &[u64]) -> ReplayData {
         ReplayData::try_from(ReplayFile {
             header: ReplayHeader {
+                mission_profiles: None,
                 mission_id: "H01".into(),
                 mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in("H01", "H01", "H01").unwrap(),
                 rng_seed: 1, sim_config: Default::default(), spellforge_package: None,

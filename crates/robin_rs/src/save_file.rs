@@ -672,29 +672,9 @@ impl SaveHeader {
         let Some(saved) = &self.mission_profiles else {
             return Ok(());
         };
-        if saved.len() < profiles.missions.len() {
-            // Ambient extra missions may remain, but the saved prefix must match.
-            if profiles.missions[..saved.len()] != saved[..] {
-                bail!("saved mission catalog differs from installed mission profiles");
-            }
-            return Ok(());
-        }
-        if saved[..profiles.missions.len()] != profiles.missions[..] {
-            bail!("saved mission catalog differs from installed mission profiles");
-        }
-        let mut prepared = profiles.clone();
-        for profile in &saved[profiles.missions.len()..] {
-            let index = prepared.add_forced_mission(
-                profile.proto_level_filename.clone(),
-                profile.mission_filename.clone(),
-                profile.mission_name.clone(),
-            ) as usize;
-            if &prepared.missions[index] != profile {
-                bail!("saved mission profile {index} is not a generated mission profile");
-            }
-        }
-        profiles.missions = prepared.missions;
-        Ok(())
+        profiles
+            .restore_mission_catalog(saved)
+            .map_err(anyhow::Error::msg)
     }
 
     pub fn validate(&self) -> Result<()> {

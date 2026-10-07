@@ -13,6 +13,7 @@ pub(crate) fn compact_replay_fixture(label: &str) -> Vec<u8> {
     use robin_engine::replay::{REPLAY_SCHEMA_VERSION, ReplayFile, ReplayHeader};
     let replay: robin_engine::replay::ReplayData = ReplayFile {
         header: ReplayHeader {
+            mission_profiles: None,
             mission_id: label.to_owned(),
             rng_seed: 1,
             sim_config: robin_engine::engine::SimConfig::default(),

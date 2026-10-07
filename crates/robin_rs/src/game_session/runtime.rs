@@ -3420,6 +3420,7 @@ mod tests {
         let actual_hash = robin_engine::replay::state_hash(&engine);
         let data: robin_engine::replay::ReplayData = robin_engine::replay::ReplayFile {
             header: robin_engine::replay::ReplayHeader {
+                mission_profiles: None,
                 mission_id: "timeline".into(),
                 mission_assets: test_mission_assets("timeline"),
                 rng_seed: 0,

@@ -1378,6 +1378,7 @@ mod tests {
     fn one_frame_replay_file(input: engine_api::SimulationFrameInput) -> ReplayFile {
         ReplayFile {
             header: ReplayHeader {
+                mission_profiles: None,
                 mission_id: "step-test".into(),
                 mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
                     "step-test",

@@ -1017,6 +1017,7 @@ mod tests {
 
         ReplayFile {
             header: ReplayHeader {
+                mission_profiles: None,
                 mission_id: "MissionA".into(),
                 mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
                     "MissionA", "MissionA", "MissionA",

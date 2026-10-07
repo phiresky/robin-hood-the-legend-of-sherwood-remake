@@ -109,8 +109,32 @@ impl ReplayRecorder {
         campaign: &crate::campaign::Campaign,
         spellforge_package: Option<crate::spellforge::SpellforgePackage>,
     ) -> std::io::Result<Self> {
+        Self::with_writer_and_mission_catalog(
+            writer,
+            mission_id,
+            mission_assets,
+            rng_seed,
+            sim_config,
+            campaign,
+            spellforge_package,
+            None,
+        )
+    }
+
+    /// Create a durable recording with the exact immutable mission catalog.
+    pub fn with_writer_and_mission_catalog(
+        writer: Box<dyn std::io::Write + Send>,
+        mission_id: String,
+        mission_assets: crate::mission_assets::MissionAssetDescriptor,
+        rng_seed: u64,
+        sim_config: crate::engine::SimConfig,
+        campaign: &crate::campaign::Campaign,
+        spellforge_package: Option<crate::spellforge::SpellforgePackage>,
+        mission_profiles: Option<Vec<crate::profiles::MissionProfile>>,
+    ) -> std::io::Result<Self> {
         let campaign = bitcode::encode(campaign);
         let header = ReplayHeader {
+            mission_profiles,
             mission_id,
             mission_assets,
             rng_seed,

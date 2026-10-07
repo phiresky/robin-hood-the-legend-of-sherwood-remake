@@ -132,6 +132,7 @@ fn compact_replay(mission_id: &str, sim_config: robin_engine::engine::SimConfig)
     };
     let replay: ReplayData = ReplayFile {
         header: ReplayHeader {
+            mission_profiles: None,
             mission_id: mission_id.into(),
             mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
                 mission_id, mission_id, mission_id,

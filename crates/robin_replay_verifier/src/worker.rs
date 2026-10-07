@@ -268,6 +268,16 @@ fn verify(
                 "official_profiles_unavailable",
             )
         })?;
+    if header
+        .mission_profiles
+        .as_ref()
+        .is_some_and(|catalog| *catalog != profiles.missions)
+    {
+        return Err(stage.reject(
+            VerificationRejectionCodeV1::StartingStateMismatch,
+            "replay_mission_catalog_mismatch",
+        ));
+    }
     robin_engine::ranked_rules::validate_fresh_mission_start(
         sim_config,
         &profiles,
@@ -657,6 +667,7 @@ mod tests {
 
         ReplayFile {
             header: ReplayHeader {
+                mission_profiles: None,
                 mission_id: "worker-resource-fixture".into(),
                 mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
                     "worker-resource-fixture",

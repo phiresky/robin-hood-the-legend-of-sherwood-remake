@@ -485,6 +485,7 @@ mod tests {
         );
         let replay = ReplayFile {
             header: ReplayHeader {
+                mission_profiles: None,
                 mission_id: "headless-history".into(),
                 mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
                     "headless-history",

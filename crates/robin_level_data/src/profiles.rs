@@ -1113,6 +1113,36 @@ impl ProfileManager {
         idx
     }
 
+    /// Restore an exact persisted catalog extension without accepting changes
+    /// to installed profiles or partially publishing malformed custom entries.
+    pub fn restore_mission_catalog(&mut self, saved: &[MissionProfile]) -> Result<(), String> {
+        if saved.len() < self.missions.len() {
+            // Ambient extra missions may remain, but the saved prefix must match.
+            if self.missions[..saved.len()] != saved[..] {
+                return Err("saved mission catalog differs from installed mission profiles".into());
+            }
+            return Ok(());
+        }
+        if saved[..self.missions.len()] != self.missions[..] {
+            return Err("saved mission catalog differs from installed mission profiles".into());
+        }
+        let mut prepared = self.clone();
+        for profile in &saved[self.missions.len()..] {
+            let index = prepared.add_forced_mission(
+                profile.proto_level_filename.clone(),
+                profile.mission_filename.clone(),
+                profile.mission_name.clone(),
+            ) as usize;
+            if &prepared.missions[index] != profile {
+                return Err(format!(
+                    "saved mission profile {index} is not a generated mission profile"
+                ));
+            }
+        }
+        self.missions = prepared.missions;
+        Ok(())
+    }
+
     pub fn get_civilian(&self, id: impl Into<CivilianProfileIdx>) -> Option<&CivilianProfile> {
         self.civilians.get(usize::from(id.into()))
     }

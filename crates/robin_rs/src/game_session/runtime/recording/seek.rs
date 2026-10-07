@@ -268,6 +268,7 @@ mod tests {
         let (initial, assets) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
         let replay: ReplayData = ReplayFile {
             header: ReplayHeader {
+                mission_profiles: None,
                 mission_id: "fixture".into(),
                 mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
                     "fixture", "fixture", "fixture",

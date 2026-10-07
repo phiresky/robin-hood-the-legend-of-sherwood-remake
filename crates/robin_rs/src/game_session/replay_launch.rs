@@ -27,8 +27,25 @@ pub(super) fn prepare_replay_mission(
     data: robin_engine::replay::ReplayData,
     paused: bool,
 ) -> Result<PreparedReplayLaunch, MissionError> {
+    let mut candidate = profiles.clone();
+    let prepared = prepare_replay_mission_inner(&mut candidate, args, data, paused)?;
+    *profiles = candidate;
+    Ok(prepared)
+}
+
+fn prepare_replay_mission_inner(
+    profiles: &mut engine_profiles::ProfileManager,
+    args: &crate::main_entry::MissionRequest,
+    data: robin_engine::replay::ReplayData,
+    paused: bool,
+) -> Result<PreparedReplayLaunch, MissionError> {
     crate::replay_format::validate_replay_data(&data)
         .map_err(|error| MissionError::replay(format!("invalid replay: {error}")))?;
+    if let Some(catalog) = &data.header().mission_profiles {
+        profiles.restore_mission_catalog(catalog).map_err(|error| {
+            MissionError::replay(format!("invalid replay mission catalog: {error}"))
+        })?;
+    }
     let campaign: Campaign = bitcode::decode(&data.header().campaign).map_err(|error| {
         MissionError::replay(format!("failed to restore replay campaign: {error}"))
     })?;
@@ -52,6 +69,13 @@ pub(super) fn prepare_replay_mission(
             "replay mission `{mission_id}` at index {mission_idx} has no profile"
         ))
     })? as usize;
+    if let Some(catalog) = &data.header().mission_profiles
+        && profile_idx >= catalog.len()
+    {
+        return Err(MissionError::replay(format!(
+            "replay mission `{mission_id}` references profile {profile_idx} outside its saved catalog"
+        )));
+    }
     if profile_idx == profiles.missions.len() {
         // Forced/custom missions append one synthetic profile immediately
         // before recording starts. That profile is intentionally absent from

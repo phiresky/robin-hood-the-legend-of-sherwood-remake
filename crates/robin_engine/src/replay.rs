@@ -51,6 +51,10 @@ pub const REPLAY_HEADER_JSON_BYTE_LIMIT: u64 = 96 * 1024 * 1024;
 )]
 #[serde(deny_unknown_fields)]
 pub struct ReplayHeader {
+    /// Exact profile allocation at construction, including earlier custom missions.
+    /// None is retained only for migrated recordings and catalog-free fixtures.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mission_profiles: Option<Vec<crate::profiles::MissionProfile>>,
     /// Mission identifier: the mission's base `.rhm` filename without
     /// extension (e.g. `"Dem_Lei_MP"`, `"Sherwood"`). Used by the
     /// replay loader to find the matching mission in the campaign so a
@@ -167,7 +171,8 @@ pub struct ReplayHeader {
 /// Version 61 retains precise physical landing boundaries in loaded motion data.
 /// Version 63 retains compiled world-space passage endpoints.
 /// Version 64 retains connected physical stair floor patches.
-pub const REPLAY_SCHEMA_VERSION: u32 = 64;
+/// Version 65 persists the mission profile catalog in the replay header.
+pub const REPLAY_SCHEMA_VERSION: u32 = 65;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///
@@ -896,6 +901,7 @@ mod tests {
     fn ranked_hash_coverage_accepts_extra_hashes_but_requires_periodic_checkpoints() {
         let file = ReplayFile {
             header: ReplayHeader {
+                mission_profiles: None,
                 mission_id: "coverage".to_owned(),
                 mission_assets: test_mission_assets("coverage"),
                 rng_seed: 17,
@@ -945,6 +951,7 @@ mod tests {
     fn raw_replay_validation_and_header_edits_are_transactional() {
         let file = ReplayFile {
             header: ReplayHeader {
+                mission_profiles: None,
                 mission_id: "validation".to_owned(),
                 mission_assets: test_mission_assets("validation"),
                 rng_seed: 17,
@@ -1766,6 +1773,7 @@ mod tests {
     #[test]
     fn current_schema_requires_explicit_rankability_evidence() {
         let mut header = serde_json::to_value(ReplayHeader {
+            mission_profiles: None,
             mission_id: "Dem_Lei_MP".into(),
             mission_assets: test_mission_assets("Dem_Lei_MP"),
             rng_seed: 7,
@@ -2265,6 +2273,7 @@ mod tests {
         );
         let replay: ReplayData = ReplayFile {
             header: ReplayHeader {
+                mission_profiles: None,
                 mission_id: "taint-fixture".into(),
                 mission_assets: test_mission_assets("taint-fixture"),
                 rng_seed: 1,
@@ -2323,6 +2332,7 @@ mod tests {
         );
         let data = ReplayData {
             header: ReplayHeader {
+                mission_profiles: None,
                 mission_id: "x".into(),
                 mission_assets: test_mission_assets("x"),
                 rng_seed: 0,

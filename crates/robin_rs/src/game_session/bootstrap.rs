@@ -2071,6 +2071,7 @@ mod tests {
         let descriptor = bootstrap.game.mission_assets().unwrap().clone();
         let replay: robin_engine::replay::ReplayData = robin_engine::replay::ReplayFile {
             header: robin_engine::replay::ReplayHeader {
+                mission_profiles: None,
                 mission_id: descriptor.mission_basename.clone(),
                 mission_assets: descriptor.clone(),
                 rng_seed: 0,

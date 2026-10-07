@@ -20,6 +20,7 @@ pub(crate) const MISSION_ID: &str = "Dem_Lei_MP";
 pub(crate) fn single_frame_replay(campaign_bytes: Vec<u8>) -> robin_engine::replay::ReplayData {
     let replay = robin_engine::replay::ReplayData::try_from(robin_engine::replay::ReplayFile {
         header: robin_engine::replay::ReplayHeader {
+            mission_profiles: None,
             mission_id: MISSION_ID.to_owned(),
             mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
                 MISSION_ID, MISSION_ID, MISSION_ID,

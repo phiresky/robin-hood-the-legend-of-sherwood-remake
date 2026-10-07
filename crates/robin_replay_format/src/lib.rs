@@ -629,6 +629,10 @@ fn validate_file_for_admission(
         .serialize(&mut budget)
         .map_err(FormatError::from)?;
     file.header
+        .mission_profiles
+        .serialize(&mut budget)
+        .map_err(FormatError::from)?;
+    file.header
         .spellforge_package
         .serialize(&mut budget)
         .map_err(FormatError::from)?;
@@ -1290,6 +1294,7 @@ mod tests {
     fn sample_file() -> ReplayFile {
         ReplayFile {
             header: ReplayHeader {
+                mission_profiles: None,
                 mission_id: "Dem_Lei_MP".to_owned(),
                 mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
                     "Dem_Lei_MP",
@@ -2000,6 +2005,26 @@ mod tests {
         assert_limit(
             decode_compact_bounded(&encode_file(&file), &total).unwrap_err(),
             ReplayLimitKind::TotalFrameEntries,
+        );
+    }
+
+    #[test]
+    fn mission_catalog_round_trips_and_consumes_admission_budget() {
+        let mut file = sample_file();
+        file.header.mission_profiles = Some(vec![robin_engine::profiles::MissionProfile {
+            mission_filename: "A".repeat(4096),
+            ..Default::default()
+        }]);
+        let bytes = encode_file(&file);
+        let (_, data) = decode_compact_bounded(&bytes, &Default::default()).unwrap();
+        assert_eq!(data.header().mission_profiles, file.header.mission_profiles);
+        let limits = ReplayAdmissionLimits {
+            max_typed_string_bytes: 4095,
+            ..Default::default()
+        };
+        assert_limit(
+            decode_compact_bounded(&bytes, &limits).unwrap_err(),
+            ReplayLimitKind::TypedStringBytes,
         );
     }
 

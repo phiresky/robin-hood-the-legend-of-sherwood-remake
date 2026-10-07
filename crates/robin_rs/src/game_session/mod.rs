@@ -1342,6 +1342,7 @@ mod required_state_tests {
         };
         let data = ReplayFile {
             header: ReplayHeader {
+                mission_profiles: None,
                 mission_id: "MissionA".into(),
                 mission_assets: robin_engine::mission_assets::MissionAssetDescriptor::built_in(
                     "MissionA", "ProtoA", "ProtoA",
@@ -1823,6 +1824,93 @@ mod required_state_tests {
 
         assert_eq!(descriptor.proto_level_filename, "ProtoA");
         assert_eq!(descriptor.map_filename, "DifferentMap");
+    }
+
+    #[test]
+    fn replay_preparation_restores_multiple_generated_profiles_after_codec_roundtrips() {
+        let (base, fixture) = replay_fixture(Some(0));
+        let mut generated = base.clone();
+        for name in ["FirstArena", "SecondArena", "ThirdArena"] {
+            generated.add_forced_mission("ProtoA".into(), name.into(), name.into());
+        }
+        let mut campaign: Campaign = bitcode::decode(&fixture.header().campaign).unwrap();
+        campaign.missions[0].profile_idx = Some(3);
+        let recording = tempfile::NamedTempFile::new().unwrap();
+        let mut recorder = robin_engine::replay::ReplayRecorder::with_writer_and_mission_catalog(
+            Box::new(recording.reopen().unwrap()),
+            "ThirdArena".into(),
+            robin_engine::mission_assets::MissionAssetDescriptor::built_in(
+                "ThirdArena",
+                "ProtoA",
+                "ProtoA",
+            )
+            .unwrap(),
+            fixture.header().rng_seed,
+            fixture.header().sim_config,
+            &campaign,
+            None,
+            Some(generated.missions.clone()),
+        )
+        .unwrap();
+        recorder.flush().unwrap();
+        let data = robin_engine::replay::ReplayData::from_reader(std::io::BufReader::new(
+            recording.reopen().unwrap(),
+        ))
+        .unwrap();
+        let compact =
+            crate::replay_format::encode_compact(&data, crate::replay_format::ENGINE_VERSION_HASH)
+                .unwrap();
+        let (_, decoded) = crate::replay_format::decode_compact(&compact).unwrap();
+        let mut profiles = base.clone();
+        prepare_replay_mission(
+            &mut profiles,
+            &crate::main_entry::MissionRequest::default(),
+            decoded,
+            false,
+        )
+        .unwrap();
+        assert_eq!(profiles.missions, generated.missions);
+
+        let mut missing = data.clone();
+        missing
+            .try_edit_header(|header| {
+                header.mission_profiles.as_mut().unwrap().truncate(3);
+            })
+            .unwrap();
+        let mut ambient = generated.clone();
+        assert!(
+            prepare_replay_mission(
+                &mut ambient,
+                &crate::main_entry::MissionRequest::default(),
+                missing,
+                false,
+            )
+            .is_err(),
+            "ambient profiles must not fill a hole in the recording's explicit catalog"
+        );
+        assert_eq!(ambient.missions, generated.missions);
+
+        for bad_index in [0, 3] {
+            let mut bad = data.clone();
+            bad.try_edit_header(|header| {
+                header.mission_profiles.as_mut().unwrap()[bad_index].min_ransom += 1
+            })
+            .unwrap();
+            let mut profiles = base.clone();
+            assert!(
+                prepare_replay_mission(
+                    &mut profiles,
+                    &crate::main_entry::MissionRequest::default(),
+                    bad,
+                    false
+                )
+                .is_err()
+            );
+            assert_eq!(
+                profiles.missions, base.missions,
+                "rejected catalogs must not partially extend the live profiles"
+            );
+        }
     }
 
     #[test]

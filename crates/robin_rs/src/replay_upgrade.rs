@@ -154,6 +154,7 @@ fn upgrade_header(header: &mut serde_json::Value) -> Result<u32> {
         .context("replay header has no valid schema")?;
     ensure!(
         version == REPLAY_SCHEMA_VERSION
+            || (version == 64 && REPLAY_SCHEMA_VERSION == 65)
             || ((43..=56).contains(&version) && (43..=56).contains(&REPLAY_SCHEMA_VERSION)),
         "replay schema {version} needs an input migration before upgrading to {REPLAY_SCHEMA_VERSION}"
     );
@@ -481,8 +482,23 @@ mod tests {
     }
 
     #[test]
+    fn schema_64_upgrade_preserves_inputs_and_does_not_invent_a_catalog() {
+        let source = b"{\"version\":64}\n{\"f\":0,\"i\":{\"unchanged\":true}}\n";
+        let (upgraded, source_version) = normalize_jsonl(source, false).unwrap();
+        assert_eq!(source_version, 64);
+        let text = String::from_utf8(upgraded).unwrap();
+        let header: serde_json::Value = serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        assert_eq!(header["version"], 65);
+        assert!(header.get("mission_profiles").is_none());
+        assert!(text.contains("{\"f\":0,\"i\":{\"unchanged\":true}}"));
+    }
+
+    #[test]
     fn obsolete_input_schemas_require_explicit_migration_before_relabeling() {
-        for version in (0..REPLAY_SCHEMA_VERSION).chain([REPLAY_SCHEMA_VERSION + 1]) {
+        for version in (0..REPLAY_SCHEMA_VERSION)
+            .chain([REPLAY_SCHEMA_VERSION + 1])
+            .filter(|version| !(*version == 64 && REPLAY_SCHEMA_VERSION == 65))
+        {
             let mut header = serde_json::json!({"version":version});
             let before = header.clone();
             let error = upgrade_header(&mut header).unwrap_err();
