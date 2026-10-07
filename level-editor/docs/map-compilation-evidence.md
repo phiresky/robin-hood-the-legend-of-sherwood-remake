@@ -10059,3 +10059,32 @@ The installed full-scene export `saved-map-exports-w0yeJQ` contains 18 masks.
 Native construction and all nine control apply/reset checks pass. Pipeline
 typechecking still reports the existing state-delivery test errors; focused lint
 and formatting pass.
+
+### Deduplicated foliage alpha planes
+
+Compact staging initially failed for shrub 57 (`fern-gameplay-A05eJC`) because
+separate texture objects repeated the same 1,152×2,112 alpha plane enough times
+to exceed the 64-million-texel decoded coverage limit. Identical alpha contents
+and dimensions now share one serialized plane, while triangle UVs, cutoff,
+wrapping and sidedness remain independent. Identical encoded images also share
+their decoded alpha during extraction. Eight focused recovery tests pass,
+including distinct dimensions with identical bytes and differing material rules.
+
+`fern-gameplay-vyNGFf` authors shrubs 57–60 with 4/4/4/3 unique alpha planes and
+6,064,531 / 4,641,548 / 4,442,239 / 6,205,455-byte mask definitions. All forty
+rotated/elevated exports pass native construction and reject an incorrect
+receiving height. `compact-shrubs-publish-vyNGFf` publishes these as warned drafts
+and updates saved Croisement02 pins. Rendered occlusion/projectile contact and
+CPU/GPU rasterization differences remain unresolved.
+
+The subsequent inventory `gameplay-coverage-ieNAcG` finds 67 of 1,279 definitions
+missing, including 39 placed assets. Definition presence is not proof of complete
+gameplay behavior; 26 missing assets have potential ownership candidates that
+still require local geometry/control review.
+
+Installed export `saved-map-exports-ZkIZxm` passes native construction and all nine
+control apply/reset checks. It has 21 masks: shrub 60 is omitted with an explicit
+warning because its placed origin has no authored receiving surface at its ground
+height. Its ten isolated terrain cases pass, but the saved scene requires further
+receiver/placement authoring. This omission is not hidden by the successful native
+construction result.

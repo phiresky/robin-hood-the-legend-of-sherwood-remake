@@ -1,5 +1,6 @@
 import type { Document, Node, Texture } from "@gltf-transform/core";
 import sharp from "sharp";
+import { createHash } from "node:crypto";
 import {
   maskAlphaCoverage,
   maskWrappedAlphaCoverage,
@@ -26,23 +27,32 @@ export function maskRecoveryTexturedMesh(
 /** Decode physical alpha only; opaque atlas alpha may instead encode provenance. */
 export async function maskRecoveryTextures(model: Document): Promise<Map<Texture, MaskAlphaImage>> {
   const textures = new Map<Texture, MaskAlphaImage>();
+  const decodedImages = new Map<string, MaskAlphaImage>();
   for (const material of model.getRoot().listMaterials()) {
     if (material.getAlphaMode() !== "MASK") continue;
     const texture = material.getBaseColorTexture();
     if (!texture || textures.has(texture)) continue;
     const image = texture.getImage();
     if (!image) throw new Error(`Missing mask alpha image: ${texture.getName()}`);
+    const digest = createHash("sha256").update(image).digest("hex");
+    const cached = decodedImages.get(digest);
+    if (cached) {
+      textures.set(texture, cached);
+      continue;
+    }
     const { data, info } = await sharp(Buffer.from(image))
       .toColourspace("srgb")
       .ensureAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
     if (info.channels !== 4) throw new Error("Mask alpha image needs RGBA channels");
-    textures.set(texture, {
+    const decoded = {
       width: info.width,
       height: info.height,
       alpha: Uint8Array.from({ length: info.width * info.height }, (_, i) => data[i * 4 + 3]!),
-    });
+    };
+    textures.set(texture, decoded);
+    decodedImages.set(digest, decoded);
   }
   return textures;
 }
@@ -86,6 +96,7 @@ export function maskRecoveryMesh(
   const triangles: MaskTriangle[] = [];
   const compact = options.compactCoverage;
   const textureIndices = new Map<Texture, number>();
+  const alphaIndices = new Map<string, number>();
   let sourceTriangles = 0;
   matches[0]!.traverse((node) => {
     if (node.getSkin()) throw new Error(`Mask recovery does not support skinned part ${part}`);
@@ -232,12 +243,17 @@ export function maskRecoveryMesh(
           if (texture && alphaImage) {
             textureIndex = textureIndices.get(texture);
             if (textureIndex === undefined) {
-              textureIndex = compact.textures.length;
-              compact.textures.push({
-                width: alphaImage.width,
-                height: alphaImage.height,
-                alphaBase64: Buffer.from(alphaImage.alpha).toString("base64"),
-              });
+              const digest = `${alphaImage.width}:${alphaImage.height}:${createHash("sha256").update(alphaImage.alpha).digest("hex")}`;
+              textureIndex = alphaIndices.get(digest);
+              if (textureIndex === undefined) {
+                textureIndex = compact.textures.length;
+                compact.textures.push({
+                  width: alphaImage.width,
+                  height: alphaImage.height,
+                  alphaBase64: Buffer.from(alphaImage.alpha).toString("base64"),
+                });
+                alphaIndices.set(digest, textureIndex);
+              }
               textureIndices.set(texture, textureIndex);
             }
           }
