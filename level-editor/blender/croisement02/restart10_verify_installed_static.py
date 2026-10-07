@@ -1,5 +1,6 @@
 """Bind the installed HTTP Editor check to unchanged published files and code."""
 import hashlib
+import argparse
 import json
 from pathlib import Path
 import subprocess
@@ -58,6 +59,12 @@ def snapshot():
 
 
 def main():
+    global FIXTURE, RUNNER
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--fixture', type=Path, default=FIXTURE)
+    parser.add_argument('--runner', type=Path, default=RUNNER)
+    args = parser.parse_args()
+    FIXTURE, RUNNER = args.fixture.resolve(), args.runner.resolve()
     acquire()
     try:
         output = FIXTURE / 'runtime'
