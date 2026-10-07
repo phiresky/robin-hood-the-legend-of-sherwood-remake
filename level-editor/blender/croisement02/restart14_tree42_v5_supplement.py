@@ -12,7 +12,7 @@ def main():
  import bpy
  from mathutils import Matrix
  from PIL import Image,ImageDraw
- guard();DEST.mkdir(exist_ok=True);out=DEST/'solid';out.mkdir(exist_ok=False);model=TRIAL/'prototype.blend';assert sha(model)=='b569c53628404fd640c582402306ba265fead93a032fd43d1c07d62e03c6eb9b'
+ guard();DEST.mkdir(exist_ok=True);out=DEST/('solid-lit' if '--lit' in sys.argv else 'solid');out.mkdir(exist_ok=False);model=TRIAL/'prototype.blend';assert sha(model)=='b569c53628404fd640c582402306ba265fead93a032fd43d1c07d62e03c6eb9b'
  bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;scene.frame_set(29)
  mat=bpy.data.materials.new('Private solid review override');mat.diffuse_color=(.55,.55,.55,1);mat.use_nodes=True;p=mat.node_tree.nodes.get('Principled BSDF');p.inputs['Base Color'].default_value=(.55,.55,.55,1);p.inputs['Roughness'].default_value=.8
  for o in scene.objects:
@@ -21,6 +21,9 @@ def main():
    if not o.hide_render:
     for i in range(len(o.data.materials)):o.data.materials[i]=mat
  scene.render.engine='CYCLES';scene.cycles.samples=16;scene.render.threads_mode='FIXED';scene.render.threads=2;scene.render.resolution_x=384;scene.render.resolution_y=384;scene.render.resolution_percentage=100;scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.view_settings.view_transform='Standard'
+ if '--lit' in sys.argv:
+  scene.world=bpy.data.worlds.new('Private solid review lighting');scene.world.use_nodes=True;bg=scene.world.node_tree.nodes.get('Background');bg.inputs['Color'].default_value=(.65,.65,.65,1);bg.inputs['Strength'].default_value=.8
+  light=bpy.data.lights.new('Private solid key','SUN');light.energy=2;light.angle=.35;lo=bpy.data.objects.new('Private solid key',light);scene.collection.objects.link(lo);lo.rotation_euler=(.5,-.4,-.6)
  data=bpy.data.cameras.new('Solid review camera');data.type='ORTHO';data.clip_end=20000;cam=bpy.data.objects.new('Solid review camera',data);scene.collection.objects.link(cam);scene.camera=cam
  cameras=json.loads((TRIAL/'review-v3/report.json').read_text())['fixed_cameras'];sheet=Image.new('RGB',(1536,808),'#ddd');d=ImageDraw.Draw(sheet);images=[]
  for i,c in enumerate(cameras):

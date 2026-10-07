@@ -17,11 +17,11 @@ def main():
  bounded='--bounded-v5' in sys.argv
  if bounded:
   from restart14_tree42_v5_supplement import guard
-  guard(65536);DEST=BASE/'tree42-motion-v5/review-supplement-v1/neighbors';DEST.parent.mkdir(exist_ok=True)
+  guard(65536);DEST=BASE/('tree42-motion-v5/review-supplement-v1/reverse-parent' if '--reverse-parent' in sys.argv else 'tree42-motion-v5/review-supplement-v1/reverse-neighbors' if '--reverse-only' in sys.argv else 'tree42-motion-v5/review-supplement-v1/neighbors');DEST.parent.mkdir(exist_ok=True)
  DEST.mkdir(exist_ok=False);map_path=LIB/'scenes/croisement02.rhlos-map.json';map_start_sha=sha(map_path);document=json.loads(map_path.read_text());idx={e['id']:e for e in json.loads((LIB/'3d-assets/index.json').read_text())['assets']};source=json.loads((BASE/'source-reconciliation-v1/report.json').read_text())['groups'][1];motion=json.loads((BASE/'tree42-correspondence-v1/report.json').read_text());bpy.ops.wm.read_factory_settings(use_empty=True);scene=bpy.context.scene;groups={};pins=[];materials=[]
  frozen={p['id']:p for p in json.loads((BASE/'tree42-alpha-neighbors-coherent-v1/report.json').read_text())['pins']} if bounded else {}
  if bounded:
-  model=BASE/'tree42-motion-v5/prototype.blend';assert sha(model)=='b569c53628404fd640c582402306ba265fead93a032fd43d1c07d62e03c6eb9b';bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;scene.render.threads_mode='FIXED';scene.render.threads=2;groups[IDS[0]]=[o for o in scene.objects if o.type=='MESH' and o.get('asset_group')==IDS[0]]
+  model=BASE/('tree42-motion-v4/prototype.blend' if '--reverse-parent' in sys.argv else 'tree42-motion-v5/prototype.blend');assert sha(model)==('ed90774d18790d35b23b2d20941c609b2420004ee4b4a1b293872ba934150376' if '--reverse-parent' in sys.argv else 'b569c53628404fd640c582402306ba265fead93a032fd43d1c07d62e03c6eb9b');bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;scene.render.threads_mode='FIXED';scene.render.threads=2;groups[IDS[0]]=[o for o in scene.objects if o.type=='MESH' and o.get('asset_group')==IDS[0]]
  for aid in IDS:
   if bounded and aid==IDS[0]:continue
   dp=LIB/'3d-assets'/idx[aid]['descriptor'];d=json.loads(dp.read_text());p=next(p for p in document['placements']if aid in p['assets']);t=p['transform'];assert t['rot_deg']==0;mp=dp.parent/d['model'];
@@ -52,6 +52,29 @@ def main():
    materials.append({'asset':aid,'name':material.name,'alpha_textured':textured,'backface_culling':material.use_backface_culling,'audit_conversion':'MASK image alpha threshold0.5, unit base and vertex alpha proved; private ray-only shader, not saved/rendered'})
   pins.append({'id':aid,'descriptor':str(dp),'descriptor_sha256':sha(dp),'model':str(mp),'model_sha256':sha(mp),'placement':p,'resources':[{'path':str(LIB/r['path']),'sha256':sha(LIB/r['path'])}for r in d.get('resources',[])]})
  crown=next(o for o in groups[IDS[0]]if o.get('projection_component')=='crown');initial=np.array([v.co[:]for v in crown.data.vertices]);world=np.array([crown.matrix_world@v.co for v in crown.data.vertices]);native=np.c_[world[:,0],-world[:,1]*SIN-world[:,2]*COS];assert 590<native[:,0].min()<640 and 920<native[:,0].max()<980,(native.min(0),native.max(0));inverse=crown.matrix_world.inverted().to_3x3();neighbor_trees={aid:_tree(objects)[:2]for aid,objects in groups.items()if aid!=IDS[0]};results=[]
+ if bounded and '--reverse-only' in sys.argv:
+  scene.frame_set(1);bpy.context.view_layer.update();base_tree=_tree(groups[IDS[0]])[0];targets=[];target_counts=Counter()
+  if '--reverse-parent' in sys.argv:
+   prior=json.loads((BASE/'tree42-motion-v5/review-supplement-v1/reverse-neighbors/baseline.json').read_text());targets=prior['targets'];target_counts=Counter(prior['counts'])
+  for sy in ([] if '--reverse-parent' in sys.argv else range(688,976)):
+   for sx in range(616,958):
+    origin=Vector((sx+.5,-(sy+.5)/SIN,0))+RAY*5000;best=None
+    for aid,(nt,no) in neighbor_trees.items():
+     hit=nt.ray_cast(origin,-RAY)
+     if hit[0] is not None and (best is None or hit[3]<best[0]):best=(hit[3],aid)
+    if best is None or not ('fence' in best[1] or 'shrub' in best[1]):continue
+    own=base_tree.ray_cast(origin,-RAY)
+    if own[0] is None or own[3]>=best[0]:targets.append((sx,sy,best[0],best[1]));target_counts[best[1]]+=1
+   if (sy-688)%48==0:print('REVERSE BASELINE ROW',sy,'targets',len(targets),flush=True)
+  guard(2**20);(DEST/'baseline.json').write_text(json.dumps({'scope':'Every native pixel center in crown rectangle, baseline visible nearest fence/shrub physical hit; not a claim every such pixel is observed artwork.','targets':targets,'counts':dict(target_counts),'pins':pins},indent=2)+'\n')
+  reverse=[]
+  for phase in range(14):
+   scene.frame_set(1+4*phase);bpy.context.view_layer.update();current=_tree(groups[IDS[0]])[0];blocked=[]
+   for sx,sy,depth,aid in targets:
+    origin=Vector((sx+.5,-(sy+.5)/SIN,0))+RAY*5000;hit=current.ray_cast(origin,-RAY)
+    if hit[0] is not None and hit[3]<depth-.001:blocked.append({'pixel':[sx,sy],'neighbor':aid,'depth_lead':depth-hit[3]})
+   row={'phase':phase,'baseline_visible_neighbor_targets':len(targets),'new_crown_in_front':blocked};reverse.append(row);guard(2**20);(DEST/f'phase-{phase:02}.json').write_text(json.dumps(row,indent=2)+'\n');print('REVERSE PHASE',phase,'new front',len(blocked),flush=True)
+  guard(2**20);(DEST/'report.json').write_text(json.dumps({'status':'MEASURED_NOT_ACCEPTANCE','model_sha256':sha(model),'pins':pins,'baseline_counts':dict(target_counts),'phases':reverse,'scope':'Reverse interference against phase0 physical first hits across entire native crown rectangle; no neighboring geometry or source assignments changed.'},indent=2)+'\n');return
  cluster_summary=None
  if '--cluster'in sys.argv:
   from scipy.sparse import coo_matrix
