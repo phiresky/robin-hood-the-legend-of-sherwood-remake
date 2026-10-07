@@ -14,7 +14,10 @@ def main(relative):
   i=v['view'];stored=np.array(Image.open(worker/'stored'/f'view-{i}-textured.png').convert('RGBA'));guide=np.array(Image.open(worker/'modified/views'/f'view-{i}-textured.png').convert('RGBA'));known=np.array(Image.open(worker/'modified/views'/f'view-{i}-known.png').convert('RGBA'))[:,:,0]>=128
   assert np.array_equal(stored[known],guide[known]);assert np.array_equal(stored[:,:,3],guide[:,:,3]);assert np.all(guide[~known,:3]==77);assert int((~known).sum())==v['editable_pixels']
   results.append({'view':i,'protected_pixels':int(known.sum()),'editable_pixels':v['editable_pixels'],'protected_rgba_exact':True,'full_alpha_exact':True})
- assert results[0]['editable_pixels']==0,'Native source-facing view must be untouched'
+ if 'ownership_authority' in d:
+  ownership=Path(d['ownership_authority']);assert sha(ownership)==d['ownership_sha256'];assert json.loads(ownership.read_text())['status']=='PASS_EXACT_SAVED_NATIVE_ASSIGNMENT'
+ else:
+  assert results[0]['editable_pixels']==0,'Native source-facing hole view must be untouched'
  target=worker/'source-reference-review';target.mkdir(exist_ok=False)
  refs=[]
  for tag,path in [('hole-initial',OUT/'hole-texture-inputs-v1/initial/derivation.json'),('hole-applied',OUT/'hole-texture-inputs-v1/applied/derivation.json'),('mound-initial',BASE/'restart9-hiding-scatter/mound-flat-v2/validation.json')]:
