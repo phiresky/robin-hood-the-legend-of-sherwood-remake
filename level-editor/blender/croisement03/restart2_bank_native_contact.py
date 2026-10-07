@@ -9,7 +9,7 @@ R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).parent),s
 from restart2_tree02_shared_ridge_joint_v5 import hit,world
 from render_slots import acquire,release
 from evidence_io import sha,write_json
-B=R/'level-editor/work/croisement03-refinement';O=B/'restart2/bank-full-prototype-v2';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S))
+B=R/'level-editor/work/croisement03-refinement';O=Path(sys.argv[sys.argv.index('--')+1]).resolve() if '--' in sys.argv else B/'restart2/bank-full-prototype-v2';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S))
 
 def row(o):
  m=o.data;m.calc_loop_triangles();vs=[o.matrix_world@v.co for v in m.vertices];ts=list(m.loop_triangles)

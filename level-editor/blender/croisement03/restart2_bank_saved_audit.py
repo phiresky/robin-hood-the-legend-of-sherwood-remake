@@ -6,7 +6,7 @@ R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).parent),s
 from restart2_bank_full_v1 import world
 from render_slots import acquire,release
 from evidence_io import sha,write_json
-B=R/'level-editor/work/croisement03-refinement';O=B/'restart2/bank-full-prototype-v2'
+B=R/'level-editor/work/croisement03-refinement';O=Path(sys.argv[sys.argv.index('--')+1]).resolve() if '--' in sys.argv else B/'restart2/bank-full-prototype-v2'
 def fingerprint(o):
  m=o.data
  return dict(vertices=[list(v.co) for v in m.vertices],faces=[list(f.vertices) for f in m.polygons],uvs=[list(v.uv) for v in m.uv_layers.active.data],world=[list(r) for r in world(o)])
@@ -18,7 +18,7 @@ def main():
    if o.type!='MESH':continue
    if o.name.startswith('Candidate bank'):
     assert json.loads(o['gameplay_metadata_json'])==level['sight_obstacles'][o['native_obstacle']]
-    bm=bmesh.new();bm.from_mesh(o.data);topology[o.name]=dict(vertices=len(bm.verts),faces=len(bm.faces),nonmanifold_edges=sum(not e.is_manifold for e in bm.edges),boundary_edges=sum(e.is_boundary for e in bm.edges),zero_area_faces=sum(f.calc_area()<1e-8 for f in bm.faces));bm.free()
+    bm=bmesh.new();bm.from_mesh(o.data);topology[o.name]=dict(vertices=len(bm.verts),faces=len(bm.faces),materials=[m.name if m else None for m in o.data.materials],material_indices=sorted(set(f.material_index for f in o.data.polygons)),nonmanifold_edges=sum(not e.is_manifold for e in bm.edges),boundary_edges=sum(e.is_boundary for e in bm.edges),zero_area_faces=sum(f.calc_area()<1e-8 for f in bm.faces));bm.free()
    else:context[o.get('source_node',o.name)]=fingerprint(o)
   base=B/'baseline/croisement03-baseline.blend'
   with bpy.data.libraries.load(str(base),link=False) as (a,b):b.objects=[f'building-{i:03}.001' for i in (94,95,96,97)]

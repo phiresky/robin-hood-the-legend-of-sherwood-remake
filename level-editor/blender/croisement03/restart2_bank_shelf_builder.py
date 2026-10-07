@@ -9,7 +9,7 @@ from pathlib import Path
 R=Path(__file__).resolve().parents[3]
 B=R/'level-editor/work/croisement03-refinement'
 RECIPE=B/'restart2/bank-morphology-trace-v1/recipe.json'
-OUT=B/'restart2/bank-shelf-prototype-v3'
+OUT=B/'restart2/bank-shelf-prototype-v5'
 S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 
 
@@ -84,6 +84,8 @@ def run():
             modifier=obj.modifiers.new('Closed shelf union '+label,'BOOLEAN');modifier.operation='UNION';modifier.solver='EXACT';modifier.object=slab
             bpy.ops.object.modifier_apply(modifier=modifier.name);bpy.data.objects.remove(slab,do_unlink=True)
             assert check(obj)>=core_volume-.001,'Union lost core bulk'
+        obj.data.materials.clear()
+        for face in obj.data.polygons:face.material_index=0
         obj['morphology']='Three short source-traced shelf faces backed by a closed inferred solid core; full-bank morphology remains unfinished.'
         return obj
     base.mesh_object=build

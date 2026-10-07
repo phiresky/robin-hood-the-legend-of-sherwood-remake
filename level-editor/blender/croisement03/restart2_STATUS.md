@@ -1,3 +1,23 @@
+## Western shelf revision v5 — private morphology HOLD
+
+`bank-shelf-prototype-v5/worker.blend`, hash7bb763ed9366c82f, is888,905bytes.
+Three short traced shelves are unioned with a solid core; the connected body
+has168vertices/110faces and passes closed manifold/degeneracy checks. The
+Boolean empty material slot found in v3/v4 was removed before the final review.
+The three retained attempts total about10.4MiB, below the32MiB round cap.
+
+Saved actual8, solid8, exact native and west-contact views were inspected.
+All3,446 proposed source pixels and tested Tree02–07 source rays are preserved;
+path context and gameplay metadata checks pass. Tree01 coarse-mask conflicts
+are680rays over source foreground rock/shadow, including148new and43removed
+versus v2; they remain a mixed ownership classification, not bark authority.
+
+The visual result stays HOLD: discrete caps still sit against broad planar
+backing. Next, recess and shape that backing while retaining bulk, then blend
+lateral shelf shoulders into contiguous strata. Main-bank shoulder/front
+creases remain unfinished. No approval/gallery/live files changed. All jobs
+exited and the model/render lane is released.
+
 ## Western shelf CPU morphology trace prepared
 
 `bank-morphology-trace-v1/recipe.json` records three paired visible western
