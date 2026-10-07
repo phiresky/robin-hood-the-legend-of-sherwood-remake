@@ -149,11 +149,11 @@ pub(super) fn install_mission_sprites(
             files.clone(),
         );
         match asset_cache.sprite_bank.as_ref() {
-            Some(bank) => host
+            Ok(bank) => host
                 .frontend
                 .resources
                 .install_frame_holder_before_publication(bank.clone()),
-            None => tracing::warn!("Sprite bank unavailable in application asset cache"),
+            Err(error) => return Err(MissionError::asset(error.clone())),
         }
         tick_progress(loading_screen, event_pump.as_deref_mut(), 1.0);
     }

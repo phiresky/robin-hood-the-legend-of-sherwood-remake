@@ -490,30 +490,21 @@ impl EngineInner {
         }
     }
 
-    /// Advance selection-outline fades on controllable allied soldiers.
-    ///
-    /// PCs use `PcData::already_selected` to detect the selection edge.
-    /// Allied selection seeds the fade directly in `select_tactical_units`,
-    /// so this pass only has to advance an animation already in flight.
-    pub(super) fn refresh_tactical_selection_hulks(&mut self) {
-        let soldier_ids: Vec<_> = self.world.entities.npc_ids().collect();
-        for id in soldier_ids {
-            if !self.is_tactically_controllable(id) {
-                continue;
-            }
+    /// Advance NPC attack warnings, indoor fades, and allied selection glows.
+    /// PCs maintain their selection-edge animation in a separate pass.
+    pub(super) fn refresh_npc_hulks(&mut self) {
+        let npc_ids: Vec<_> = self.world.entities.npc_ids().collect();
+        for id in npc_ids {
             let entity = self
                 .get_entity_mut(id)
-                .unwrap_or_else(|| panic!("controllable allied soldier {id:?} disappeared"));
+                .unwrap_or_else(|| panic!("NPC outline owner {id:?} disappeared"));
             let human = entity
                 .human_data_mut()
-                .expect("controllable allied soldier has no human data");
+                .expect("NPC outline owner has no human data");
             if human.running_hulk == 0 {
                 continue;
             }
-            assert!(
-                human.time_hulk > 0,
-                "running allied selection hulk has zero duration"
-            );
+            assert!(human.time_hulk > 0, "running NPC hulk has zero duration");
             human.running_hulk -= 1;
             if human.running_hulk > 0 {
                 let ratio = human.running_hulk as f32 / human.time_hulk as f32;
@@ -1347,6 +1338,28 @@ impl EngineInner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hostile_attack_warning_advances_without_tactical_control() {
+        let mut engine = EngineInner::new();
+        let owner = engine.add_test_entity(
+            crate::engine::test_support::actors::make_test_ai_soldier(Camp::Lacklandists),
+        );
+        assert!(!engine.is_tactically_controllable(owner));
+        engine
+            .ent_mut(owner)
+            .human_data_mut()
+            .unwrap()
+            .start_hulk(true, 1.0);
+        engine.refresh_npc_hulks();
+        let human = engine.ent(owner).human_data().unwrap();
+        assert_eq!(human.running_hulk, 19);
+        assert_eq!(human.hulk_level, 97);
+        for _ in 0..19 {
+            engine.refresh_npc_hulks();
+        }
+        assert_eq!(engine.ent(owner).human_data().unwrap().running_hulk, 0);
+    }
 
     #[test]
     fn march_column_is_two_soldiers_wide() {

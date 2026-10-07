@@ -218,7 +218,7 @@ impl EngineInner {
             self.is_seat_selection_swordfighting(crate::player_command::PlayerId(seat as u8))
         });
         self.refresh_pc_selection_hulk();
-        self.refresh_tactical_selection_hulks();
+        self.refresh_npc_hulks();
         self.tick_pc_teleport_fades();
         was_swordfighting
     }

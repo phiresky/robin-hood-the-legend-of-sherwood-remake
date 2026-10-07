@@ -108,9 +108,11 @@ impl EngineInner {
         owner: EntityId,
         target: EntityId,
     ) -> bool {
+        // The Robin-only initiation rule belongs to VIP soldiers. Heroes can
+        // use an enemy decision brain without becoming boss duelists.
         let vip = self
-            .enemy_ai(owner, "sleeping enemy attack authorization")
-            .is_vip;
+            .expect_entity(owner, "sleeping enemy attack owner")
+            .is_vip();
         let target = self.expect_entity(target, "sleeping enemy authorization target");
         (!vip || matches!(target, Entity::Pc(pc) if pc.pc.robin))
             && (matches!(target, Entity::Pc(_)) || !target.is_vip())
@@ -186,6 +188,38 @@ mod tests {
             level: 0,
         };
         (engine, assets, owner, targets)
+    }
+
+    #[test]
+    fn enemy_controlled_hero_can_select_soldiers_despite_character_vip_flag() {
+        let mut engine = EngineInner::new();
+        let mut hero = make_test_pc(Posture::Upright);
+        let Entity::Pc(pc) = &mut hero else {
+            unreachable!()
+        };
+        let mut ai = crate::ai_enemy::EnemyAi::default();
+        ai.is_vip = true;
+        ai.is_archer_unit = true;
+        pc.pc.ai = Some(Box::new(crate::element::AiActorData {
+            ai_brain: crate::element::AiBrain::Enemy(Box::new(ai)),
+            ..Default::default()
+        }));
+        let owner = engine.add_test_entity(hero);
+        let soldier = engine.add_test_entity(make_test_ai_soldier(Camp::Lacklandists));
+        engine.enemy_mut(owner).list_them = vec![soldier.index()];
+        assert!(engine.sleeping_enemy_attack_allowed(owner, soldier));
+        assert_eq!(engine.select_nearest_battle_target(owner), Some(soldier));
+
+        // Soldier bosses still only initiate duels with Robin; ordinary
+        // soldiers still cannot initiate fights with those bosses.
+        engine.enemy_mut(soldier).is_vip = true;
+        assert!(!engine.sleeping_enemy_attack_allowed(owner, soldier));
+        assert!(!engine.sleeping_enemy_attack_allowed(soldier, owner));
+        let Entity::Pc(pc) = engine.ent_mut(owner) else {
+            unreachable!()
+        };
+        pc.pc.robin = true;
+        assert!(engine.sleeping_enemy_attack_allowed(soldier, owner));
     }
 
     #[test]

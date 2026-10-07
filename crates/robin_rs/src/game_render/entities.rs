@@ -1,6 +1,16 @@
 //! entities presentation pass.
 use super::*;
 
+fn npc_in_building(engine: &PresentationView<'_>, entity: &Entity) -> bool {
+    entity.is_npc()
+        && entity.element_data().sector().is_some_and(|sector| {
+            engine
+                .fast_grid()
+                .sector_type_for_handle(sector)
+                .is_building()
+        })
+}
+
 pub(super) fn render_character_masks_clipped(
     engine: &PresentationView<'_>,
     renderer: &mut Renderer,
@@ -136,6 +146,9 @@ pub(crate) fn render_entities_gpu(
             None => continue,
         };
         if !entity.is_active() || entity.element_data().hidden_in_building {
+            continue;
+        }
+        if npc_in_building(engine, entity) {
             continue;
         }
         if !engine.fog_entity_visible(entity_id) && !uses_pixel_fog_visibility(entity) {
@@ -856,7 +869,9 @@ pub(crate) fn render_selection_outlines_gpu(
             .contains(&entity_id);
         let hulk_running = entity.human_data().is_some_and(|h| h.running_hulk > 0);
 
-        if !is_focused && !is_action_marked && !hulk_running {
+        let indoor_outline =
+            npc_in_building(engine, entity) && entity.element_data().posture() != Posture::Carried;
+        if !is_focused && !is_action_marked && !hulk_running && !indoor_outline {
             continue;
         }
 
@@ -879,7 +894,7 @@ pub(crate) fn render_selection_outlines_gpu(
         // in-flight fade); otherwise use `hulk_level` (40..=100) from
         // the fade state machine. The percentage (0-100) is converted
         // to the renderer's 0-255 alpha range.
-        let alpha_pct = if is_focused || is_action_marked {
+        let alpha_pct = if is_focused || is_action_marked || indoor_outline {
             100u16
         } else {
             entity.human_data().map(|h| h.hulk_level).unwrap_or(100)

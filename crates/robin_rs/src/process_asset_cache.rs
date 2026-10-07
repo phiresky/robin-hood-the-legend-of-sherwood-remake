@@ -90,7 +90,7 @@ impl CacheKey {
 /// sprites, so stable here means installation + mission generation.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct StableAssetCache {
-    pub sprite_bank: Option<FrameHolder>,
+    pub sprite_bank: Result<FrameHolder, String>,
     pub fx_bank: Option<Vec<FxBankElement>>,
 }
 
@@ -423,10 +423,11 @@ fn build(
                 shipping,
                 &files,
             ) {
-                Ok(()) => Some(holder),
+                Ok(()) => Ok(holder),
                 Err(e) => {
-                    tracing::warn!("Failed to load sprite bank: {e}");
-                    None
+                    let error = format!("Failed to load sprite bank: {e:#}");
+                    tracing::warn!("{error}");
+                    Err(error)
                 }
             }
         };

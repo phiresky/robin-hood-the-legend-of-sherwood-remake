@@ -153,7 +153,7 @@ fn build_test(key: CacheKey, stable: Option<Arc<StableAssetCache>>) -> Arc<Proce
         key,
         stable: stable.unwrap_or_else(|| {
             Arc::new(StableAssetCache {
-                sprite_bank: None,
+                sprite_bank: Err("test fixture has no sprite bank".into()),
                 fx_bank: None,
             })
         }),

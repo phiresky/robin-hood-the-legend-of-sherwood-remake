@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-07",
+  "scope": "25 newly synchronized reports after the previous 213-report audit; database total 238.",
+  "interpretation": "Statuses describe local source investigation, not deployed fixes.",
+  "issues": [
+    {
+      "issue": "profile",
+      "status": "open_reproduced",
+      "finding": "Fresh save/replay bootstrap has 63 profiles but the session generated profile 65. The supplied archer replay also fails here before simulation; current reconstruction handles only one appended profile.",
+      "report_ids": [
+        "18357d99ae6a",
+        "1a0a43475196",
+        "4cc49693722c",
+        "835e454f4fa8",
+        "d9d5fa6a1605"
+      ]
+    },
+    {
+      "issue": "resize",
+      "status": "previous_fix_present",
+      "finding": "Browser reports identify the old engine build. Existing resize filtering is present; engine commit alone does not identify the frontend shell revision.",
+      "report_ids": [
+        "1d50cac11915",
+        "27444a12ae49",
+        "6acf70c17365",
+        "6ddfc49d13f6",
+        "7a996b9b769f",
+        "87da55da6948",
+        "89ba7bb8bc66",
+        "9edd772469d9",
+        "d711aa089336",
+        "e93ec542b64d",
+        "f6e0b942c2cb"
+      ]
+    },
+    {
+      "issue": "transition",
+      "status": "open",
+      "finding": "Authoritative campaign-exit snapshot changes bytes during decode/adoption/re-encode. Shared snapshot preparation rebuilds serialized sequence indices; exact cause still needs reproduction.",
+      "report_ids": [
+        "4be551a09ffb",
+        "80bd45c89ddb",
+        "bbee9921ae4d"
+      ]
+    },
+    {
+      "issue": "old_save",
+      "status": "unsupported_older_schema",
+      "finding": "These saves use version 75 while the current reader requires 97. No lossless migration implemented.",
+      "report_ids": [
+        "690457401839",
+        "72c794340f72"
+      ]
+    },
+    {
+      "issue": "sound",
+      "status": "open",
+      "finding": "Authoritative sound result references a request no longer pending. Requires reconstruction of the recorded sound/input boundary.",
+      "report_ids": [
+        "79e1ba08b6ac"
+      ]
+    },
+    {
+      "issue": "bank",
+      "status": "diagnostic_fix_content_failure_unresolved",
+      "finding": "The cache suppressed a sprite-bank read failure and continued with signature zero. Preserve the full error chain and fail mission preparation. The underlying reporter-specific file-open failure cannot be identified from the previous truncated error.",
+      "report_ids": [
+        "a0c8583ab0db",
+        "eee29a891393"
+      ]
+    },
+    {
+      "issue": "archer",
+      "status": "fixed_in_source",
+      "finding": "Reproduced by launching MultiTeamTwentyRobins with scripting disabled. Enemy-controlled heroes inherited character VIP flags, and the boss-only target restriction prevented selection of soldier targets. Restrict that rule to VIP soldiers; retain target boss protection.",
+      "report_ids": [
+        "f3aee4645e7d"
+      ]
+    }
+  ],
+  "additional_user_reports": [
+    {
+      "issue": "Yellow enemy attack outline missing",
+      "status": "fixed_in_source",
+      "finding": "Only tactically controllable NPCs advanced glow timers; hostile soldiers retained alpha zero. Advance all NPC glows."
+    },
+    {
+      "issue": "Full NPC sprite shown inside buildings",
+      "status": "fixed_in_source",
+      "finding": "Render active indoor NPCs as outlines, with constant opacity when not carried."
+    },
+    {
+      "issue": "Single-character mission startup and starting scrolls missing for clients",
+      "status": "open",
+      "finding": "Existing modal announcement regression passes but does not reproduce the full startup path."
+    },
+    {
+      "issue": "Non-host gesture combat only recognizes spin",
+      "status": "open",
+      "finding": "Existing recognition and dispatch regressions pass; interactive reproduction still needed."
+    },
+    {
+      "issue": "Tying an already tied enemy unties it",
+      "status": "configured_behavior",
+      "finding": "The enable_unbinding rule intentionally lets the Tie ability untie bound NPCs."
+    },
+    {
+      "issue": "Difficulty indicator in gameplay rules",
+      "status": "open"
+    },
+    {
+      "issue": "Mission requires four/five selected characters",
+      "status": "open",
+      "finding": "Need distinguish mission-specific required abilities from unnecessarily strict roster size."
+    },
+    {
+      "issue": "S02_Lei_MP leaderboard unavailable",
+      "status": "deployment_reported_by_user",
+      "finding": "User reports leaderboard deployment complete; matching gameplay-policy availability not verified."
+    },
+    {
+      "issue": "Mirrored replay timeline gap",
+      "status": "open",
+      "finding": "Screenshot shows frame 12641 starts at timeline 12434 after previous frame ended at 12381. Do not weaken replay continuity validation."
+    }
+  ],
+  "validation": [
+    "cargo test -p robin_engine: passed",
+    "cargo test -p robin_rs --features audio,multiplayer: passed",
+    "cargo build -p robin_rs --bin robin: passed",
+    "cargo fmt and git diff --check: passed",
+    "MultiTeamTwentyRobins headless with full GOG data and scripting disabled: reproduced archer panic before change; after change continued for 45-second smoke run without that panic, until timeout. Hero AI still logs unsupported voice/looking-animation warnings.",
+    "Indoor render branch checked against expected sector behavior; visual gameplay verification remains pending."
+  ]
+}
