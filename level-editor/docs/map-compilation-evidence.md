@@ -4,6 +4,29 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Missing-definition ownership dependencies (2026-10-08)
+
+Fresh inventory `gameplay-coverage-0U9BM2` validates all 1,279 indexed descriptor
+hashes and finds 28 missing gameplay definitions, none referenced by any of the
+ten saved scenes including spline sources and corner assets. Twenty-six have
+matching part-name owners, but 24 also contain parts listed in those owners'
+initial/applied sight-state sets. The inventory now reports each candidate
+owner's transition IDs and the initial/applied membership separately. Its unit
+check covers initial-only, applied-only, shared and unrelated parts.
+
+For example, the standalone York canvas screen contains `building-965` from the
+market assembly's initial state and `building-977` from its applied state.
+Assigning static collision to both would lose state selection. Native patch
+application toggles the two sets separately, consistent with the established
+behavior. This is evidence for dependency-aware authoring, not authorization to
+copy an entire assembly or a claim that matching node names share local frames.
+No gameplay definitions or assets were published by this audit.
+
+The four entries without recorded sight-state membership are two background-art
+assets, `derby-great-keep` and `nottingham-castle-watchtower`. They still need
+review of their geometry, local frames and non-sight dependencies; an empty
+membership list does not certify an independently usable asset.
+
 ## Closed spline mask contours (2026-10-08)
 
 Follow-up regression catches vertices that boolean clipping removes as collinear

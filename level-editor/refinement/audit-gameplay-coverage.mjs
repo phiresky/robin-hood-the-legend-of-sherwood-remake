@@ -3,6 +3,7 @@
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { gameplayOwnerDependencies } from "./gameplay-owner-dependencies.mjs";
 
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const indexBytes = await fs.readFile("library/3d-assets/index.json");
@@ -52,18 +53,27 @@ for (const file of (await fs.readdir("library/scenes")).sort((a, b) => a.localeC
 const missing = [...descriptors.values()]
   .filter(({ descriptor }) => !descriptor.gameplay)
   .map(({ entry, descriptor }) => {
-    const parts = descriptor.parts.map((part) => ({
-      node: part.node,
-      candidateOwners: [
+    const parts = descriptor.parts.map((part) => {
+      const candidateOwners = [
         ...(owners.get(JSON.stringify([descriptor.source_map, part.node])) ?? []),
-      ].sort((a, b) => a.localeCompare(b)),
-    }));
+      ].sort((a, b) => a.localeCompare(b));
+      return {
+        node: part.node,
+        candidateOwners,
+        candidateDependencies: candidateOwners.map((id) =>
+          gameplayOwnerDependencies(descriptors.get(id).descriptor, part.node),
+        ),
+      };
+    });
     return {
       asset: entry.id,
       descriptorSha256: entry.descriptor_sha256,
       placedIn: placements.get(entry.id) ?? [],
       allPartsHaveCandidateOwners:
         parts.length > 0 && parts.every((part) => part.candidateOwners.length > 0),
+      hasStateOwnedParts: parts.some((part) =>
+        part.candidateDependencies.some((owner) => owner.movementTransitions.length > 0),
+      ),
       parts,
     };
   });
@@ -72,6 +82,7 @@ const summary = {
   missingDefinitions: missing.length,
   missingPlacedDefinitions: missing.filter((asset) => asset.placedIn.length).length,
   allPartsHaveCandidateOwners: missing.filter((asset) => asset.allPartsHaveCandidateOwners).length,
+  missingAssetsWithStateOwnedParts: missing.filter((asset) => asset.hasStateOwnedParts).length,
 };
 assert.equal(hash(await fs.readFile("library/3d-assets/index.json")), hash(indexBytes));
 const output = await fs.mkdtemp("work/map-compile/gameplay-coverage-");
@@ -81,7 +92,7 @@ await fs.writeFile(
     {
       scope:
         "Current library definition presence, not gameplay completeness or scene pin validation",
-      note: "Matching part names identify authoring candidates, not equivalent geometry, local frames or complete control dependencies.",
+      note: "Matching part names identify authoring candidates, not equivalent geometry or local frames. Reported initial/applied sight membership exposes known state dependencies; an empty list does not certify complete dependency independence.",
       indexSha256: hash(indexBytes),
       ...summary,
       scenes,
