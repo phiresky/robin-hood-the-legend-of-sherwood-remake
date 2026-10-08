@@ -44,7 +44,10 @@ a shorter inset jump span. Across copied, rotated and elevated placements it
 passes 160 upright walk–jump–walk routes, 160 isolated sprite jumps and all 64
 endpoint-zone checks. The doorway correction passed 48 complete-sprite round
 trips. Eight lower-terrain negative cases omit unsupported lower entrances and
-jumps. Its straight combat return flight still intersects the platform, and
+jumps. A complete 480-case flight audit finds 80 uphill sword-fighting flights
+intersecting the platform; 160 upright, 160 assisted trajectories and 80 downhill
+sword flights clear solids. Assisted trajectory checks do not exercise complete
+sprite dispatch. In addition,
 3.431 square units of the floor footprint lie outside the sampled top mesh.
 Combat/assisted sprite dispatch, click authorization and rendered contact remain
 unverified. The library retains these explicit best-effort draft warnings;

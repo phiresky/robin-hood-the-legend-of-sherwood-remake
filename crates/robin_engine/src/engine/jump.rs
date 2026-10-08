@@ -1604,7 +1604,13 @@ mod tests {
             include_bytes!("../../tests/fixtures/asset-jump-changing-approach.level.json")
                 .as_slice(),
         ] {
-            check_compiled_jump_flights(bytes, (2000., 2000.));
+            let cases = check_compiled_jump_flights(bytes, (2000., 2000.));
+            assert!(
+                cases
+                    .iter()
+                    .all(|case| case["collisions"].as_array().unwrap().is_empty()),
+                "{cases:#?}"
+            );
         }
     }
 
@@ -1617,27 +1623,58 @@ mod tests {
             serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
                 .unwrap();
         assert_eq!(manifest["complete"], true);
-        let mut checked = 0;
+        let mut results = Vec::new();
         for result in manifest["results"].as_array().unwrap() {
             let file = result["file"].as_str().unwrap();
             let bytes = std::fs::read(directory.join(file)).unwrap();
             let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             let dims = &descriptor["walkable_polygon"][2];
             eprintln!("checking airborne jump paths: {file}");
-            let count = check_compiled_jump_flights(
+            let cases = check_compiled_jump_flights(
                 &bytes,
                 (
                     dims[0].as_f64().unwrap() as f32 + 1.,
                     dims[1].as_f64().unwrap() as f32 + 1.,
                 ),
             );
-            checked += count;
-            eprintln!("{file}: {count} airborne paths clear solid geometry");
+            let failed = cases
+                .iter()
+                .filter(|case| !case["collisions"].as_array().unwrap().is_empty())
+                .count();
+            eprintln!(
+                "{file}: {failed}/{} airborne paths intersect solid geometry",
+                cases.len()
+            );
+            results.extend(cases.into_iter().map(|mut case| {
+                case["file"] = file.into();
+                case
+            }));
         }
-        assert!(checked > 0);
+        assert!(!results.is_empty());
+        let failed = results
+            .iter()
+            .filter(|case| !case["collisions"].as_array().unwrap().is_empty())
+            .count();
+        let report = serde_json::json!({
+            "scope": "planned-and-integrated-flight-clearance-not-complete-sprite-dispatch",
+            "audit_finished": true,
+            "complete": failed == 0,
+            "checked": results.len(),
+            "failed": failed,
+            "results": results,
+        });
+        std::fs::write(
+            directory.join("actor-jump-flight-report.json"),
+            serde_json::to_vec(&report).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            failed, 0,
+            "see actor-jump-flight-report.json for all failing flight cases"
+        );
     }
 
-    fn check_compiled_jump_flights(bytes: &[u8], dimensions: (f32, f32)) -> usize {
+    fn check_compiled_jump_flights(bytes: &[u8], dimensions: (f32, f32)) -> Vec<serde_json::Value> {
         let loaded = crate::level_data::LoadedLevel::hackable_from_json(bytes).unwrap();
         let pairs = loaded.proto.jump_line_pairs.clone();
         let mut assets = LevelAssets::new();
@@ -1668,8 +1705,12 @@ mod tests {
         })
         .unwrap();
         assert!(!pairs.is_empty());
-        for pair in &pairs {
-            for (a, b) in [(&pair.line1, &pair.line2), (&pair.line2, &pair.line1)] {
+        let mut results = Vec::new();
+        for (pair_index, pair) in pairs.iter().enumerate() {
+            for (side, (a, b)) in [(&pair.line1, &pair.line2), (&pair.line2, &pair.line1)]
+                .into_iter()
+                .enumerate()
+            {
                 let mut source = JumpLine::new(
                     MapPoint::new(f32::from(a.point_a.0), f32::from(a.point_a.1)),
                     MapPoint::new(f32::from(a.point_b.0), f32::from(a.point_b.1)),
@@ -1764,6 +1805,7 @@ mod tests {
                     }
                     integrated.push([landing.x, landing.y, landing.z]);
                     let paths = [path, integrated];
+                    let mut collisions = Vec::new();
                     for (obstacle_index, obstacle) in assets
                         .environment
                         .static_sight_obstacles
@@ -1777,17 +1819,36 @@ mod tests {
                                     .is_active(*index)
                         })
                     {
-                        for segment in paths.iter().flat_map(|path| path.windows(2)) {
-                            assert!(
-                                !obstacle.is_blocking_ray_3d(segment[0], segment[1]),
-                                "compiled flight intersects solid obstacle {obstacle_index} at t={t}, start={start:?}, target={target:?}, segment={segment:?}"
-                            );
+                        for (path_index, path) in paths.iter().enumerate() {
+                            // Retain the first intersection per obstacle/path; one long
+                            // intersecting flight can otherwise flood the diagnostic.
+                            if let Some((segment_index, segment)) =
+                                path.windows(2).enumerate().find(|(_, segment)| {
+                                    obstacle.is_blocking_ray_3d(segment[0], segment[1])
+                                })
+                            {
+                                collisions.push(serde_json::json!({
+                                    "obstacle": obstacle_index,
+                                    "path": if path_index == 0 { "planned" } else { "integrated" },
+                                    "segment_index": segment_index,
+                                    "segment": segment,
+                                }));
+                            }
                         }
                     }
+                    results.push(serde_json::json!({
+                        "pair": pair_index,
+                        "side": side,
+                        "t": t,
+                        "style": if sword { "sword" } else if posture == Posture::OnShoulders { "shoulders" } else { "upright" },
+                        "start": [start.x, start.y, source_z],
+                        "target": [target.x, target.y, target_z],
+                        "collisions": collisions,
+                    }));
                 }
             }
         }
-        pairs.len() * 30
+        results
     }
 
     #[test]

@@ -6,6 +6,24 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Exported jump diagnostics (2026-10-08)
 
+The external native flight audit now records every case in
+`actor-jump-flight-report.json` before failing for intersections. Each result
+identifies file, pair, direction, edge position and movement style, with the first
+blocking segment for each obstacle in both planned and frame-integrated paths.
+It retains strict failure: completing the audit does not mean clearance passed.
+This change is confined to tests; gameplay behavior is unchanged.
+
+The published watermill batch `watermill-platform-placements-0kbdpB` reports
+80 failures out of 480 cases. All failures are uphill sword-fighting flights,
+and all intersect in both planned and frame-integrated paths. All 160 upright
+and 160 assisted trajectories plus 80 downhill sword flights clear active solids.
+Assisted trajectories are not complete assisted-sprite dispatch. The earlier
+boundary-only batch `watermill-platform-placements-6bZOzc` passes all 480 cases
+as a positive clearance control, but retains its previously measured walking
+failures. Nine checked-in geometric-jump fixtures also pass the expanded audit.
+The straight sword flight is the intended movement model, so this evidence does
+not justify changing engine flight behavior to conceal the asset intersection.
+
 The watermill is now published as a best-effort draft using
 `refinement/catalogs/leicester-watermill-walking-gameplay.json`; backup and
 reviewed before/after files are in `watermill-publication-MPjCH9`. The descriptor
