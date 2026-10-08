@@ -17,6 +17,21 @@ or reset; choosing an outcome does not infer which character triggered the trap.
 Choose **06 · Pillaging** for **Signposts and ambient animation**. This preview
 plays the five signposts with the surrounding animated artwork. Its 64-tick
 slider follows the sign loop while nearby animations keep their own timing.
+**Play** and **Pause** control the whole preview; seeking or resetting the sign
+loop leaves nearby animation phases independent. Switching **View** preserves
+playback and the current phases.
+
+In that preview, choose a **Character** and enable **Show character in artwork**
+to include it at its current edited position and facing. **Show hidden outline**
+adds its outline where the artwork obscures it. The character choice stays the
+same when you edit its position.
+
+For a character positioned over **North Woodland Bank**, select that placement
+under **Shadow surface**, then choose **3D scene**. The selected character's
+shadow follows the bank's actual surface. Other surfaces are not yet offered.
+Choose **None** to clear this binding. This control applies to the selected
+character only; it does not reconstruct the character's body or make the mission
+run. The full scene can naturally obscure the character behind foliage.
 
 - **Original artwork** shows the selected transition from the game camera.
   Use **Play**, **Pause**, **Reset**, or the frame slider to inspect it.
@@ -44,10 +59,10 @@ edited or mismatched placement is preserved and the preview reports an error.
 Leaving the preview restores the object's existing visibility, including any
 independent patch visibility.
 
-Entries declared as native loops offer artwork playback without initial/final
-3D choices. Their frame slider follows the selected loop; nearby animations keep
-their independent timing. These entries remain presentation previews, not mission
-script execution.
+Entries declared as native loops offer artwork playback and a return to the
+editable 3D scene, rather than initial/final endpoint choices. Their frame slider
+follows the selected loop; nearby animations keep their independent timing.
+These entries remain presentation previews, not mission script execution.
 
 Contracts can also declare transient foreground or ground artwork with separate
 initial, transition, and final phases. A declared final loop continues until
