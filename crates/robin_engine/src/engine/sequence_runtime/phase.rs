@@ -104,7 +104,7 @@ impl EngineInner {
         // handling. In particular this must
         // precede seek-refresh/cross-sector lowering: that lowering can consume
         // the wrapper without ever reaching ordinary path dispatch.
-        if !self.extract_move_instruction_owner(tcx.assets, owner) {
+        if !self.extract_move_instruction_owner(owner) {
             self.element_impossible(
                 tcx,
                 active_scripts,

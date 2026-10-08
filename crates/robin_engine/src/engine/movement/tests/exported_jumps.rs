@@ -205,25 +205,12 @@ fn dispatch_jump(
             );
         }
     }
-    let support = engine.current_physical_walking_floor(&assets, owner).map(|index| {
-        let floor = &assets.navigation.physical_walking[index as usize];
-        let mut geometry = floor.snapshot(&engine.world.pathfinder);
-        geometry.support.extend(floor.neighbour_support(&assets.navigation.physical_walking, &engine.world.pathfinder));
-        let pi = engine.ent(owner).position_iface();
-        let p = pi.get_position();
-        let point = [p.x, p.y, p.z];
-        let half = pi.get_half_diagonal();
-        serde_json::json!({
-            "floor": index, "supported": geometry.route(point, point, half),
-            "recovery": geometry.recover_source(point, half, f64::from(half.x.hypot(half.y)) + 0.5),
-        })
-    });
     let selected = engine
         .entities()
         .current_element_for_actor(owner)
         .and_then(|(id, index)| engine.seq().get_element(id, index));
     Err(format!(
-        "jump stalled: flew={flew}, position={:?}, posture={:?}, goal={goal:?}, support={support:?}, selected={selected:?}",
+        "jump stalled: flew={flew}, position={:?}, posture={:?}, goal={goal:?}, selected={selected:?}",
         engine.ent(owner).element_data().position(),
         engine.ent(owner).element_data().posture()
     ))

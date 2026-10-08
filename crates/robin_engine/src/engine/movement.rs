@@ -17,8 +17,6 @@ pub(crate) use door_traversal::GateRouteRequest;
 mod elevation;
 mod formation;
 mod path_scheduling;
-mod physical_stair;
-mod physical_walking;
 mod rider_charge;
 mod routing;
 // Phase methods of `tick_one_movement_actor`. The file lives next to
@@ -2384,9 +2382,6 @@ struct FinalTol {
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct SelectedMovementOrder {
     goal: MapPoint,
-    physical_stair: Option<u16>,
-    physical_walking: Option<u32>,
-    physical_goal: crate::coordinates::WorldPoint3D,
     action_state: crate::element::ActionState,
     order_id: Option<std::num::NonZeroU32>,
     door_pass_anim: Option<OrderType>,
@@ -4339,50 +4334,6 @@ impl EngineInner {
         }
     }
 
-    /// Emit movement splashes using animation distance and the committed world position.
-    fn emit_movement_water(
-        entity: &mut crate::element::Entity,
-        speed: f32,
-        titbits: &mut crate::titbit::TitbitManager,
-    ) {
-        // Water splash titbit emission.  Every walk tick
-        // where `speed > 2` and the actor's cached material
-        // is water, the sprite's splatter counter ticks up;
-        // on `>= 2` a water particle is added at the actor's
-        // 3D position and the counter resets.  Cosmetic but
-        // observable — actors crossing a stream kick up
-        // splash titbits.
-        {
-            let elem = entity.element_data_mut();
-            if speed > 2.0 && elem.material() == crate::element::GameMaterial::Water {
-                if elem.sprite.splitch_count >= 2 {
-                    elem.sprite.splitch_count = 0;
-                    let pos = elem.position();
-                    let layer = elem.layer();
-                    titbits.add_titbit(
-                        crate::coordinates::WorldPoint3D {
-                            x: pos.x,
-                            y: pos.y,
-                            z: pos.z,
-                        },
-                        layer,
-                        crate::titbit::TitbitKind::Water,
-                        crate::titbit::ElementHandle::INVALID,
-                        0,
-                        crate::titbit::ElementHandle::INVALID,
-                        false,
-                        crate::titbit::INVALID_ID,
-                        true,
-                        None,
-                        None,
-                    );
-                } else {
-                    elem.sprite.splitch_count = elem.sprite.splitch_count.saturating_add(1);
-                }
-            }
-        }
-    }
-
     /// Commit collision-adjusted geometry and its forecast.
     /// Returns whether movement aborted; arrival and START remain caller-owned.
     // Disjoint world/AI borrows remain explicit rather than introducing another
@@ -4492,7 +4443,42 @@ impl EngineInner {
         // reached.  A blocked step aborts before reaching it.
         refresh_motion_forecast(entity.sprite_mut(), speed);
 
-        Self::emit_movement_water(entity, speed, titbits);
+        // Water splash titbit emission.  Every walk tick
+        // where `speed > 2` and the actor's cached material
+        // is water, the sprite's splatter counter ticks up;
+        // on `>= 2` a water particle is added at the actor's
+        // 3D position and the counter resets.  Cosmetic but
+        // observable — actors crossing a stream kick up
+        // splash titbits.
+        {
+            let elem = entity.element_data_mut();
+            if speed > 2.0 && elem.material() == crate::element::GameMaterial::Water {
+                if elem.sprite.splitch_count >= 2 {
+                    elem.sprite.splitch_count = 0;
+                    let pos = elem.position();
+                    let layer = elem.layer();
+                    titbits.add_titbit(
+                        crate::coordinates::WorldPoint3D {
+                            x: pos.x,
+                            y: pos.y,
+                            z: pos.z,
+                        },
+                        layer,
+                        crate::titbit::TitbitKind::Water,
+                        crate::titbit::ElementHandle::INVALID,
+                        0,
+                        crate::titbit::ElementHandle::INVALID,
+                        false,
+                        crate::titbit::INVALID_ID,
+                        true,
+                        None,
+                        None,
+                    );
+                } else {
+                    elem.sprite.splitch_count = elem.sprite.splitch_count.saturating_add(1);
+                }
+            }
+        }
 
         // When the blocked counter trips, the motion aborts
         // and the backing sequence element is marked
@@ -4553,19 +4539,12 @@ impl EngineInner {
             order_tolerance,
             entity.position_iface().is_deviated(),
         ) {
-            if selected_order.physical_stair.is_some() || selected_order.physical_walking.is_some()
-            {
-                entity
-                    .position_iface_mut()
-                    .set_position(selected_order.physical_goal);
-            } else {
-                entity
-                    .element_data_mut()
-                    .set_position_map(crate::coordinates::MapPoint {
-                        x: goal.x,
-                        y: goal.y,
-                    });
-            }
+            entity
+                .element_data_mut()
+                .set_position_map(crate::coordinates::MapPoint {
+                    x: goal.x,
+                    y: goal.y,
+                });
             entity.sprite_mut().compute_display_depth();
         }
         let eid = entity_id;
@@ -4812,13 +4791,6 @@ impl EngineInner {
             return None;
         };
         let goal = MapPoint::new(order.target_x, order.target_y);
-        let physical_stair = order.physical_stair;
-        let physical_walking = order.physical_walking;
-        let physical_goal = crate::coordinates::WorldPoint3D::new(
-            order.destination_3d[0],
-            order.destination_3d[1],
-            order.destination_3d[2],
-        );
         let order_id = Some(order.order_id);
         let order_action = order.order_type;
         let order_tolerance = order.tolerance;
@@ -4864,9 +4836,6 @@ impl EngineInner {
             .map(|_| order_action);
         Some(SelectedMovementOrder {
             goal,
-            physical_stair,
-            physical_walking,
-            physical_goal,
             action_state: actor.action_state,
             order_id,
             door_pass_anim,
@@ -5255,141 +5224,6 @@ impl EngineInner {
             return MovePathOutcome::Refused;
         }
 
-        let mut physical_goal = tcx
-            .assets
-            .navigation
-            .physical_stairs
-            .contains_key(&entity_sector)
-            .then(|| {
-                self.orders
-                    .sequence_manager
-                    .get_element(seq_id, elem_idx)
-                    .and_then(|element| match &element.data {
-                        crate::sequence::SequenceElementData::Movement { gate_id, .. } => *gate_id,
-                        _ => None,
-                    })
-                    .and_then(|gate| {
-                        self.physical_stair_door(tcx.assets, gate)
-                            .filter(|(sector, _, _)| *sector == entity_sector)
-                            .map(|(sector, _, door)| (sector, door.inside))
-                            .or_else(|| {
-                                let door =
-                                    &self.script_domains.interactables.doors[usize::from(gate)];
-                                let points = door.world_endpoints.as_ref()?;
-                                Some((
-                                    entity_sector,
-                                    if u16::from(door.sector_in) == entity_sector {
-                                        points.inside
-                                    } else {
-                                        points.outside
-                                    },
-                                ))
-                            })
-                            .or_else(|| {
-                                tcx.assets.navigation.physical_stairs[&entity_sector]
-                                    .world_point_from_screen(dest)
-                                    .map(|point| (entity_sector, point))
-                            })
-                    })
-            })
-            .flatten();
-
-        let mut physical_point = false;
-        if physical_goal.is_none()
-            && let Some(stair) = tcx.assets.navigation.physical_stairs.get(&entity_sector)
-            && self.orders.sequence_manager.get_element(seq_id, elem_idx)
-                .is_some_and(|element| matches!(&element.data,
-                    crate::sequence::SequenceElementData::Movement {
-                        layer, sector, element: None, flags, ..
-                    } if *layer == entity_layer
-                        && sector.is_none_or(|sector| sector.get() == entity_sector)
-                        && !flags.intersects(crate::sequence::MoveFlags::SEEK | crate::sequence::MoveFlags::LINE)
-                ))
-        {
-            let Some(goal) = stair.world_point_from_screen(dest) else {
-                tracing::warn!(?owner, ?dest, "physical stair point requires an unambiguous world endpoint");
-                return MovePathOutcome::Refused;
-            };
-            let ground = [goal[0], goal[1]];
-            if stair.route(&self.world.pathfinder, ground, ground, half_diagonal)
-                .expect("invalid physical stair destination geometry").is_none()
-            {
-                tracing::warn!(?owner, ?dest, "unsupported physical stair point destination");
-                return MovePathOutcome::Refused;
-            }
-            physical_goal = Some((entity_sector, goal));
-            physical_point = true;
-        }
-
-        let walking_goal = if physical_goal.is_none() {
-            self.current_physical_walking_floor(tcx.assets, owner)
-                .and_then(|index| {
-                    let floor = &tcx.assets.navigation.physical_walking[index as usize];
-                    let element = self.orders.sequence_manager.get_element(seq_id, elem_idx)?;
-                    let crate::sequence::SequenceElementData::Movement {
-                        gate_id,
-                        element: None,
-                        flags,
-                        layer: requested_layer,
-                        sector: requested_sector,
-                        ..
-                    } = &element.data
-                    else {
-                        return None;
-                    };
-                    if flags.intersects(
-                        crate::sequence::MoveFlags::SEEK | crate::sequence::MoveFlags::LINE,
-                    ) {
-                        return None;
-                    }
-                    let explicit = gate_id.and_then(|gate| {
-                        let door = &self.script_domains.interactables.doors[usize::from(gate)];
-                        let points = self
-                            .physical_stair_door(tcx.assets, gate)
-                            .map(|(_, _, points)| points)
-                            .or_else(|| door.world_endpoints.clone())?;
-                        if u16::from(door.sector_out) == floor.sector {
-                            Some(points.outside)
-                        } else if u16::from(door.sector_in) == floor.sector {
-                            Some(points.inside)
-                        } else {
-                            None
-                        }
-                    });
-                    let goal = explicit.or_else(|| {
-                        // A projected point over a raised neighbour can also
-                        // invert onto the floor below it. Only retain a single
-                        // physical floor when the destination actually belongs
-                        // to one of its receivers; crossing moves must keep
-                        // their receiver transitions.
-                        let sector = self.world.entities.get(owner)?.element_data().sector()?;
-                        // Only a specified destination sector gives the layer
-                        // field authority. Gate approaches above already carry
-                        // their explicit world endpoint on the current floor.
-                        if requested_sector.is_some_and(|target| {
-                            *requested_layer != floor.layer
-                                || target.get() != sector.get()
-                                || target
-                                    .arena_index()
-                                    .zip(sector.arena_index())
-                                    .is_some_and(|(target, current)| target != current)
-                        }) {
-                            return None;
-                        }
-                        let receiver =
-                            self.get_projection_area_index(tcx.assets, sector, entity_layer, dest)?;
-                        floor
-                            .receivers
-                            .contains(&receiver.get())
-                            .then(|| floor.world_point_from_screen(dest))
-                            .flatten()
-                    })?;
-                    floor.contains_world_position(goal).then_some((index, goal))
-                })
-        } else {
-            None
-        };
-
         // Before queuing a path request, if the move is flagged
         // MAP / STRAIGHT, or the source→dest segment is
         // thick-reachable, skip the pathfinder entirely and emit a
@@ -5432,24 +5266,20 @@ impl EngineInner {
                 source,
                 entity_layer,
             );
-        let current_layer_reachable = physical_goal.is_none()
-            && walking_goal.is_none()
-            && self
-                .world
+        let current_layer_reachable =
+            self.world
                 .fast_grid
                 .is_reachable_thick(source, dest, entity_layer, half_diagonal);
         // A normal explicit cross-layer goal must be routed. At the exact
         // terminal-door seam the stored goal layer can lag behind the actor,
         // so defer to the same current-layer thick-reachability result that
         // Original performs instead of forcing either outcome.
-        let straight_ok = physical_goal.is_some()
-            || walking_goal.is_some()
-            || movement_path_dispatch_is_direct(
-                move_flags,
-                movement_goal_crosses_layer,
-                post_door_route_handoff,
-                current_layer_reachable,
-            );
+        let straight_ok = movement_path_dispatch_is_direct(
+            move_flags,
+            movement_goal_crosses_layer,
+            post_door_route_handoff,
+            current_layer_reachable,
+        );
 
         // Before submitting a path request, check whether the actor's
         // move box is in an authorized position. Direct MAP / STRAIGHT /
@@ -5619,66 +5449,6 @@ impl EngineInner {
         }
 
         self.finish_move_path(tcx.sim, request, vec![source, dest]);
-        if let Some((index, goal)) = walking_goal {
-            let floor = &tcx.assets.navigation.physical_walking[index as usize];
-            let element = self
-                .orders
-                .sequence_manager
-                .get_element_mut(seq_id, elem_idx)
-                .expect("physical walking element disappeared during emission");
-            for order in element
-                .orders
-                .iter_mut()
-                .filter(|order| order_turns_before_motion(order.order_type))
-            {
-                let point = MapPoint::new(order.target_x, order.target_y);
-                let world = if point == dest {
-                    goal
-                } else {
-                    floor
-                        .world_point_from_screen(point)
-                        .expect("physical walking order lost its floor")
-                };
-                order.physical_walking = Some(index);
-                order.destination_3d = world;
-                order.target_x = world[0];
-                order.target_y = world[1] - world[2];
-            }
-        }
-        if let Some((sector, goal)) = physical_goal {
-            let element = self
-                .orders
-                .sequence_manager
-                .get_element_mut(seq_id, elem_idx)
-                .expect("physical route element disappeared during emission");
-            if physical_point {
-                let stair = &tcx.assets.navigation.physical_stairs[&sector];
-                for order in element
-                    .orders
-                    .iter_mut()
-                    .filter(|order| order_turns_before_motion(order.order_type))
-                {
-                    let world = stair
-                        .world_point_from_screen(MapPoint::new(order.target_x, order.target_y))
-                        .expect("physical point order lost its invertible floor");
-                    order.physical_stair = Some(sector);
-                    order.destination_3d = world;
-                    order.target_x = world[0];
-                    order.target_y = world[1] - world[2];
-                }
-                return MovePathOutcome::Success;
-            }
-            let order = element
-                .orders
-                .iter_mut()
-                .rev()
-                .find(|order| order.order_type == move_action)
-                .expect("physical route lost its movement order");
-            order.physical_stair = Some(sector);
-            order.destination_3d = goal;
-            order.target_x = goal[0];
-            order.target_y = goal[1] - goal[2];
-        }
         MovePathOutcome::Success
     }
 

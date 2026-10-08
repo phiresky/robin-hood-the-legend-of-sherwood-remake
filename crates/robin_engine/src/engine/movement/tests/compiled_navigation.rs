@@ -272,29 +272,27 @@ fn tick_compiled_route(
         action,
     );
     assert!(
-        matches!(outcome, MovePathOutcome::Pending | MovePathOutcome::Success),
+        matches!(outcome, MovePathOutcome::Pending),
         "dispatch {outcome:?}; actor position {:?}, box {:?}",
         engine.ent(owner).element_data().position_map(),
         engine.ent(owner).position_iface().get_move_box_map()
     );
-    // Projected routes use the queued pathfinder; physical routes retain one
-    // world goal and re-query the corridor before each committed actor step.
+    // Exercise the real queued request, path handoff and order postprocessing.
     for _ in 0..2 {
         engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
     }
     assert!(engine.orders.pending_path_requests.waiting.is_empty());
     assert!(engine.orders.pending_path_requests.in_flight.is_none());
-    let orders = &engine
-        .orders
-        .sequence_manager
-        .get_element(sequence, 0)
-        .unwrap()
-        .orders;
-    if matches!(outcome, MovePathOutcome::Pending) {
-        assert!(orders.len() > 1);
-    } else {
-        assert!(orders.iter().any(|order| order.physical_walking.is_some()));
-    }
+    assert!(
+        engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap()
+            .orders
+            .len()
+            > 1
+    );
     engine.select_sequence_element(owner, Some((sequence, 0)));
     let mut previous = source;
     let mut samples = vec![];
@@ -509,35 +507,6 @@ fn actor_receiver_result(
     layer: u16,
     position: MapPoint,
 ) -> Result<(), String> {
-    if let Some(stair) = assets.navigation.physical_stairs.get(&sector.get()) {
-        let pi = engine.ent(owner).position_iface();
-        let world = pi.get_position();
-        let ground = [world.x, world.y];
-        let expected = stair.world_position(ground)?;
-        let supported = stair
-            .route(
-                &engine.world.pathfinder,
-                ground,
-                ground,
-                pi.get_half_diagonal(),
-            )?
-            .is_some();
-        if (expected[2] - f64::from(world.z)).abs() >= 0.001
-            || world.to_map() != position
-            || !supported
-        {
-            let orders = engine
-                .entities()
-                .current_element_for_actor(owner)
-                .and_then(|(id, index)| engine.seq().get_element(id, index))
-                .map(|element| &element.orders);
-            return Err(format!(
-                "actor physical stair support mismatch at {world:?}, sector {sector:?}, expected_height={}, supported={supported}, order={:?}",
-                expected[2], orders
-            ));
-        }
-        return Ok(());
-    }
     let queried = engine.get_projection_area_index(assets, sector, layer, position);
     let current = engine.ent(owner).position_iface().get_obstacle();
     // Crossing direction can select either side at an exact shared boundary.
@@ -570,24 +539,8 @@ fn actor_receiver_result(
     }
     let expected_height = current
         .map(|receiver| {
-            let receiver = &assets.environment.static_sight_obstacles[usize::from(receiver)];
-            if engine
-                .current_physical_walking_floor(assets, owner)
-                .is_some()
-            {
-                // Validate the physical pose forward. Inverting a compressed
-                // screen projection amplifies coordinate rounding into a false
-                // height error even when the actor is on its receiving plane.
-                let world = engine.ent(owner).position_iface().get_position();
-                let plane = crate::position_interface::PlaneZCoeffs::from_plane_points(
-                    &receiver.top_plane_points,
-                );
-                (f64::from(plane.az) * f64::from(world.x)
-                    + f64::from(plane.bz) * f64::from(world.y)
-                    + f64::from(plane.dz)) as f32
-            } else {
-                receiver.compute_top_z_from_projection(position.x, position.y)
-            }
+            assets.environment.static_sight_obstacles[usize::from(receiver)]
+                .compute_top_z_from_projection(position.x, position.y)
         })
         .unwrap_or(0.);
     let actual_height = engine.ent(owner).element_data().position().z;

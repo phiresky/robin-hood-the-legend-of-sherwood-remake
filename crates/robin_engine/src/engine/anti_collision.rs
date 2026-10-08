@@ -346,58 +346,6 @@ pub(super) fn gather_disturbing(
     box_future: &MapBBox,
     increment: MapVec,
 ) -> (Vec<RepulsivePoint>, Vec<crate::repulsive::RepulsiveLine>) {
-    gather_disturbing_in_space(mover, world, box_future, increment, false, false, &|_| {
-        false
-    })
-}
-
-/// Physical stair routing uses the same owner/target/posture filters, but
-/// coincident screen positions must not hide distinct physical neighbours.
-pub(super) fn gather_physical_stair_neighbours(
-    mover: &CollisionMover,
-    world: CollisionWorld<'_>,
-    boundary: &MapBBox,
-    landing_neighbour: &dyn Fn(&Entity) -> bool,
-) -> Vec<RepulsivePoint> {
-    gather_disturbing_in_space(
-        mover,
-        world,
-        boundary,
-        MapVec::ZERO,
-        true,
-        false,
-        landing_neighbour,
-    )
-    .0
-}
-
-pub(super) fn gather_physical_walking_neighbours(
-    mover: &CollisionMover,
-    world: CollisionWorld<'_>,
-    boundary: &MapBBox,
-    compatible_floor: &dyn Fn(&Entity) -> bool,
-) -> Vec<RepulsivePoint> {
-    gather_disturbing_in_space(
-        mover,
-        world,
-        boundary,
-        MapVec::ZERO,
-        true,
-        true,
-        compatible_floor,
-    )
-    .0
-}
-
-fn gather_disturbing_in_space(
-    mover: &CollisionMover,
-    world: CollisionWorld<'_>,
-    box_future: &MapBBox,
-    increment: MapVec,
-    physical: bool,
-    require_floor_match: bool,
-    landing_neighbour: &dyn Fn(&Entity) -> bool,
-) -> (Vec<RepulsivePoint>, Vec<crate::repulsive::RepulsiveLine>) {
     let mut points = Vec::new();
     let lines = Vec::new();
     for (other_id, other) in world.neighbours.occupied() {
@@ -408,11 +356,13 @@ fn gather_disturbing_in_space(
         if !elem.active {
             continue;
         }
-        // Ordinary movement requires exact layer/sector ownership. Physical
-        // stairs additionally admit neighbours on explicitly bound landings.
-        let same_area = elem.optional_layer().map(|layer| layer.get()) == Some(mover.layer)
-            && elem.sector() == mover.sector;
-        if (!same_area || require_floor_match) && !(physical && landing_neighbour(other)) {
+        if elem.optional_layer().map(|layer| layer.get()) != Some(mover.layer) {
+            continue;
+        }
+        // Strict sector equality — sector handles compare directly,
+        // so a sectorless mover rejects sectored neighbours and vice
+        // versa.
+        if elem.sector() != mover.sector {
             continue;
         }
         // Target-element filter: mover never treats its own target
@@ -436,15 +386,11 @@ fn gather_disturbing_in_space(
             continue;
         }
         let is_object = other.is_object();
-        let position = if physical {
-            let world = elem.position();
-            MapPoint::new(world.x, world.y)
-        } else {
-            elem.position_map()
-        };
         if !is_object {
             // Actor-specific filters.
-            if position.x == mover.position_map.x && position.y == mover.position_map.y {
+            if elem.position_map().x == mover.position_map.x
+                && elem.position_map().y == mover.position_map.y
+            {
                 continue;
             }
             if other.is_human() && elem.posture() == Posture::Carried {
@@ -465,10 +411,10 @@ fn gather_disturbing_in_space(
                 continue;
             }
         }
-        if !physical && !box_future.contains_point(position) {
+        if !box_future.contains_point(elem.position_map()) {
             continue;
         }
-        if !is_object && !physical {
+        if !is_object {
             let rel = MapVec::new(
                 elem.position_map().x - mover.position_map.x,
                 elem.position_map().y - mover.position_map.y,
@@ -478,36 +424,10 @@ fn gather_disturbing_in_space(
                 continue;
             }
         }
-        let start = points.len();
         if let Some(pt) = entity_repulsive_point(other, world.profiles) {
             points.push(pt);
         }
         points.extend(entity_extra_repulsive_points(other));
-        if physical {
-            for point in &mut points[start..] {
-                point.position.y += elem.position().z;
-            }
-            // A landing actor's center may be outside the stair while its
-            // collision radius overlaps the supported movement footprint.
-            let mut index = start;
-            while index < points.len() {
-                let point = &points[index];
-                let mut bounds = MapBBox::new();
-                bounds.expand_point(MapPoint::new(
-                    point.position.x - point.radius,
-                    point.position.y - point.radius,
-                ));
-                bounds.expand_point(MapPoint::new(
-                    point.position.x + point.radius,
-                    point.position.y + point.radius,
-                ));
-                if bounds.intersects_bbox(box_future) {
-                    index += 1;
-                } else {
-                    points.remove(index);
-                }
-            }
-        }
     }
     (points, lines)
 }
@@ -1088,35 +1008,6 @@ mod tests {
             configure(&mut mover, &mut other);
             let mut entities = Entities::from_legacy_slots(vec![Some(mover), Some(other)]);
             assert_eq!(step(&mut entities, 1.0, true), (1.0, 0.0), "{name}");
-        }
-    }
-
-    #[test]
-    fn physical_walking_neighbours_require_compatible_heights_even_in_one_sector() {
-        let profiles = ProfileManager::new();
-        let mut entities = Entities::from_legacy_slots(vec![
-            Some(pc(0., Posture::Upright)),
-            Some(pc(8., Posture::Upright)),
-        ]);
-        let bounds = MapBBox::from_coords(-20., -20., 20., 20.);
-        for (height, expected) in [(0., true), (100., false), (0., true)] {
-            entities
-                .get_mut(PcId(1))
-                .unwrap()
-                .position_iface_mut()
-                .set_position(crate::coordinates::WorldPoint3D::new(8., 0., height));
-            let (entity, neighbours) = entities.split_owner(PcId(0)).unwrap();
-            let mover = CollisionMover::new(PcId(0).into(), entity);
-            let points = gather_physical_walking_neighbours(
-                &mover,
-                CollisionWorld {
-                    neighbours,
-                    profiles: &profiles,
-                },
-                &bounds,
-                &|other| other.element_data().position().z == 0.,
-            );
-            assert_eq!(!points.is_empty(), expected);
         }
     }
 

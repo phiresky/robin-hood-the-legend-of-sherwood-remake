@@ -1,41 +1,20 @@
 use super::*;
 
-#[test]
-fn physical_stair_fractional_seams_preserve_actor_world_position() {
-    let (engine, assets) = compiled_walkway(include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/physical-stair-fractional-seam.level.json"
-    )));
-    for (entrance, exit) in [(0, 1), (1, 0)] {
-        assert_eq!(
-            walk_exported_stairs(engine.clone(), assets.clone(), entrance, exit),
-            Ok(true),
-            "fractional physical seam {entrance}->{exit}"
-        );
-    }
-}
-
-#[test]
-#[ignore = "requires ROBIN_CLIMB_RHS"]
-fn physical_ladder_exit_animation_preserves_fractional_receiver() {
-    let sprite = complete_climb_sprite();
-    let (engine, assets) = compiled_walkway(include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/physical-ladder-fractional-seam.level.json"
-    )));
-    for (entrance, exit) in [(0, 1), (1, 0)] {
-        assert_eq!(
-            walk_exported_lift(
-                engine.clone(),
-                assets.clone(),
-                entrance,
-                exit,
-                Some(&sprite)
-            ),
-            Ok(true),
-            "fractional ladder transition {entrance}->{exit}"
-        );
-    }
+pub(super) fn walk_exported_building_round_trip(
+    engine: EngineInner,
+    assets: LevelAssets,
+    door: usize,
+    sprite: &crate::sprite::Sprite,
+) -> Result<bool, String> {
+    let entrance = &engine.script_domains.interactables.doors[door];
+    assert_eq!(entrance.door_type, crate::gate::DoorType::Building);
+    let inside = entrance.sector_in_index.expect("building interior sector");
+    assert!(
+        engine.world.fast_grid.level.sectors[usize::from(inside)]
+            .sector_type
+            .is_building()
+    );
+    walk_exported_lift_with_tick(engine, assets, door, door, Some(sprite), |_, _, _| {})
 }
 
 #[test]
@@ -243,50 +222,6 @@ fn stair_passages_bridge_gaps_overlaps_and_ground_edges_after_placement() {
 }
 
 #[test]
-fn ordinary_passage_walk_retains_the_physical_world_destination() {
-    let (mut engine, assets) = compiled_walkway(
-        &serde_json::to_vec(&super::compiled_lifts::physical_stair_fixture()).unwrap(),
-    );
-    let sim = crate::sim_rng::test_context();
-    engine.apply_patch(
-        TickCtx::new(&sim, &assets),
-        crate::patch::PatchIndex::new(0).unwrap(),
-    );
-    let mut endpoints = assets.navigation.physical_stairs[&3].definition.doors[0].clone();
-    endpoints.inside = [392.1234, 350.1234, 10.617065];
-    let mut door = engine.script_domains.interactables.doors[0].clone();
-    door.owning_lift_sector = None;
-    door.door_type = crate::gate::DoorType::Default;
-    door.point_in = MapPoint::new(
-        endpoints.inside[0],
-        endpoints.inside[1] - endpoints.inside[2],
-    );
-    door.world_endpoints = Some(endpoints.clone());
-    let entrance = engine.script_domains.interactables.doors.len();
-    engine.script_domains.interactables.doors.push(door);
-    let mut reached_exact = false;
-    let result =
-        walk_exported_lift_with_tick(engine, assets, entrance, 1, None, |engine, _, owner| {
-            let world = engine.ent(owner).position_iface().get_position();
-            reached_exact |= [world.x, world.y, world.z] == endpoints.inside;
-        });
-    assert_eq!(result, Ok(true));
-    assert!(
-        reached_exact,
-        "passage never reached its authored world endpoint"
-    );
-}
-
-pub(super) fn walk_exported_stairs(
-    engine: EngineInner,
-    assets: LevelAssets,
-    entrance: usize,
-    exit: usize,
-) -> Result<bool, String> {
-    walk_exported_lift(engine, assets, entrance, exit, None)
-}
-
-#[test]
 fn arbitrarily_rotated_stairs_support_complete_actor_routes() {
     let bytes = include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -305,6 +240,15 @@ fn arbitrarily_rotated_stairs_support_complete_actor_routes() {
     }
 }
 
+fn walk_exported_stairs(
+    engine: EngineInner,
+    assets: LevelAssets,
+    entrance: usize,
+    exit: usize,
+) -> Result<bool, String> {
+    walk_exported_lift(engine, assets, entrance, exit, None)
+}
+
 fn walk_exported_lift(
     engine: EngineInner,
     assets: LevelAssets,
@@ -313,23 +257,6 @@ fn walk_exported_lift(
     sprite: Option<&crate::sprite::Sprite>,
 ) -> Result<bool, String> {
     walk_exported_lift_with_tick(engine, assets, entrance, exit, sprite, |_, _, _| {})
-}
-
-pub(super) fn walk_exported_building_round_trip(
-    engine: EngineInner,
-    assets: LevelAssets,
-    door: usize,
-    sprite: &crate::sprite::Sprite,
-) -> Result<bool, String> {
-    let entrance = &engine.script_domains.interactables.doors[door];
-    assert_eq!(entrance.door_type, crate::gate::DoorType::Building);
-    let inside = entrance.sector_in_index.expect("building interior sector");
-    assert!(
-        engine.world.fast_grid.level.sectors[usize::from(inside)]
-            .sector_type
-            .is_building()
-    );
-    walk_exported_lift_with_tick(engine, assets, door, door, Some(sprite), |_, _, _| {})
 }
 
 fn walk_exported_lift_with_tick(
@@ -426,12 +353,6 @@ fn walk_exported_lift_with_tick(
     let mut stationary = 0;
     let mut previous_receiver = receiver;
     let trace = std::env::var_os("ROBIN_LIFT_TRACE").is_some();
-    if trace {
-        eprintln!(
-            "physical stair bindings: {:?}",
-            assets.navigation.physical_stairs
-        );
-    }
     for _ in 0..(distance.ceil() as usize * 4 + 1000) {
         engine.control.frame_counter += 1;
         engine.t_hourglass_phase_sequences(&assets);
@@ -462,25 +383,12 @@ fn walk_exported_lift_with_tick(
         // changes altitude; ordinary receiving lookup applies after landing.
         // Virtual rooms have no receiving plane; check it again after exit.
         if !passing && !((climbing || virtual_room) && sector.arena_index() == Some(lift_sector)) {
-            actor_receiver_result(&engine, &assets, owner, sector, element.layer(), position)
-                .map_err(|error| {
-                    let selected = engine
-                        .entities()
-                        .current_element_for_actor(owner)
-                        .and_then(|(id, index)| engine.seq().get_element(id, index));
-                    format!(
-                        "{error}; crossed={crossed}, world={:?}, selected={:?}, orders={:?}",
-                        engine.ent(owner).position_iface().get_position(),
-                        selected.map(|element| element.command),
-                        selected.map(|element| &element.orders),
-                    )
-                })?;
+            actor_receiver_result(&engine, &assets, owner, sector, element.layer(), position)?;
         }
         if crossed
             && (position - leave.point_out).length() < 0.01
             && element.layer() == leave.layer_out
             && sector == destination_sector
-            && (!virtual_room || !passing)
         {
             actor_receiver_result(&engine, &assets, owner, sector, element.layer(), position)?;
             return Ok(true);
@@ -514,112 +422,8 @@ fn walk_exported_lift_with_tick(
                 .current_element_for_actor(owner)
                 .and_then(|(id, index)| engine.seq().get_element(id, index))
                 .map(|element| element.command);
-            let selected_orders = engine
-                .entities()
-                .current_element_for_actor(owner)
-                .and_then(|(id, index)| engine.seq().get_element(id, index))
-                .map(|element| &element.orders);
-            let world_position = engine.ent(owner).position_iface().get_position();
-            let walking_support = assets
-                .navigation
-                .physical_walking
-                .iter()
-                .enumerate()
-                .filter(|(_, floor)| {
-                    floor.layer == element.layer()
-                        && floor.sector == sector.get()
-                        && receiver.is_some_and(|receiver| floor.receivers.contains(&receiver.get()))
-                })
-                .map(|(index, floor)| {
-                    let mut geometry = floor.snapshot(&engine.world.pathfinder);
-                    geometry.support.extend(floor.neighbour_support(
-                        &assets.navigation.physical_walking,
-                        &engine.world.pathfinder,
-                    ));
-                    let point = [world_position.x, world_position.y, world_position.z];
-                    let half = engine.ent(owner).position_iface().get_half_diagonal();
-                    serde_json::json!({
-                        "index": index,
-                        "contains_source": floor.contains_world_position(point),
-                        "source_on_plane": floor.world_point_from_screen(position),
-                        "supported": geometry.route(point, point, half),
-                        "recovery": geometry.recover_source(point, half, f64::from(half.x.hypot(half.y)) + 0.5),
-                        "geometry": geometry
-                    })
-                })
-                .collect::<Vec<_>>();
-            let sprite = engine.ent(owner).sprite();
-            let animation = (
-                sprite.current_row,
-                sprite.current_frame,
-                sprite.current_frame_distance(),
-                sprite.last_motion_state,
-                sprite.position_iface.get_direction(),
-                sprite.position_iface.get_direction_goal(),
-                sprite.position_iface.get_forecasted_movement(),
-            );
-            let animation_rows = (0..16)
-                .map(|direction| {
-                    let row = sprite.current_row
-                        - u16::from(sprite.position_iface.get_direction().as_u8())
-                        + direction;
-                    let frames = sprite.num_frames_for_row(row);
-                    let distances = (0..frames)
-                        .map(|frame| sprite.distance(row, frame))
-                        .collect::<Vec<_>>();
-                    (direction, distances)
-                })
-                .collect::<Vec<_>>();
-            let physical_support = assets
-                .navigation
-                .physical_stairs
-                .get(&sector.get())
-                .zip(engine.physical_stair_door(
-                    &assets,
-                    crate::gate::DoorIndex::new(exit as u32).unwrap(),
-                ))
-                .map(|(stair, (_, _, endpoint))| {
-                    let from = [world_position.x, world_position.y];
-                    let to = [endpoint.inside[0], endpoint.inside[1]];
-                    let half = engine.ent(owner).position_iface().get_half_diagonal();
-                    // Endpoint probes distinguish missing support from a corridor
-                    // that is too narrow. The tiny-footprint probe is diagnostic
-                    // only: it never replaces the actor's real movement query.
-                    let mut probes = vec![
-                        ("source", from, from, half),
-                        ("destination", to, to, half),
-                        ("route", from, to, half),
-                        (
-                            "near-point route",
-                            from,
-                            to,
-                            crate::coordinates::MoveBoxHalfDiagonal { x: 1.001, y: 1.001 },
-                        ),
-                    ];
-                    if let Some(order) = selected_orders.and_then(|orders| orders.front())
-                        && order.physical_stair.is_some()
-                    {
-                        probes.push((
-                            "active order route",
-                            from,
-                            [order.destination_3d[0], order.destination_3d[1]],
-                            half,
-                        ));
-                    }
-                    probes
-                        .into_iter()
-                        .map(|(name, from, to, half)| {
-                            (
-                                name,
-                                stair
-                                    .route(&engine.world.pathfinder, from, to, half)
-                                    .map(|route| route.map(|points| points.len())),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                });
             return Err(format!(
-                "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}, world={world_position:?}, orders={selected_orders:?}, physical_support={physical_support:?}, walking_support={walking_support:?}, animation={animation:?}, animation_rows={animation_rows:?}",
+                "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}",
                 element.layer(),
                 leave.point_out,
             ));
@@ -695,62 +499,6 @@ fn placed_climbs_support_complete_actor_routes() {
                     Ok(true),
                     "lift={lift_type}, high={high_type}, degrees={degrees}, entrance={entrance}"
                 );
-            }
-        }
-    }
-}
-
-#[test]
-#[ignore = "requires ROBIN_CLIMB_RHS"]
-fn joined_climbs_follow_both_floors_and_live_barriers() {
-    let sprite = complete_climb_sprite();
-    for kind in [2, 3] {
-        let mut document = super::compiled_lifts::joined_physical_stair_fixture();
-        document["asset_geometry"]["lifts"][0]["lift_type"] = kind.into();
-        let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
-        let sim = crate::sim_rng::test_context();
-        for (step, open) in [false, true, false, true].into_iter().enumerate() {
-            if step > 0 {
-                engine.apply_patch(
-                    TickCtx::new(&sim, &assets),
-                    crate::patch::PatchIndex::new(0).unwrap(),
-                );
-            }
-            for (entrance, exit) in [(0, 1), (1, 0)] {
-                let mut visited = [false; 2];
-                let result =
-                    walk_exported_lift_with_tick(
-                        engine.clone(),
-                        assets.clone(),
-                        entrance,
-                        exit,
-                        Some(&sprite),
-                        |engine, assets, owner| {
-                            let position = engine.ent(owner).position_iface().get_position();
-                            let sector = engine.ent(owner).element_data().sector().unwrap().get();
-                            if let Some(floor) = assets.navigation.physical_stairs.get(&sector) {
-                                assert!(floor.contains_runtime_position([
-                                    position.x, position.y, position.z
-                                ]));
-                                visited[usize::from(position.x >= 400.)] = true;
-                            }
-                        },
-                    );
-                if open {
-                    assert_eq!(result, Ok(true), "kind={kind}, {entrance}->{exit}");
-                    assert_eq!(
-                        visited,
-                        [true, true],
-                        "both authored planes must be traversed"
-                    );
-                } else {
-                    assert!(
-                        result
-                            .as_ref()
-                            .is_err_and(|error| error.starts_with("lift route stalled")),
-                        "closed joined climb kind={kind}: {result:?}"
-                    );
-                }
             }
         }
     }
@@ -885,7 +633,6 @@ fn changing_climb_barriers_reopen_before_or_after_path_failure() {
     let mut checked = 0;
     for hold_ticks in [0, 8, 120] {
         for (index, fixture) in fixtures.iter().enumerate() {
-            let physical = !fixture["asset_geometry"]["lifts"][0]["physical_navigation"].is_null();
             let (engine, assets) = compiled_walkway(&serde_json::to_vec(fixture).unwrap());
             for (entrance, exit) in [(0, 1), (1, 0)] {
                 let mut applied = false;
@@ -963,28 +710,25 @@ fn changing_climb_barriers_reopen_before_or_after_path_failure() {
                             0
                         };
                         previous = Some(position);
-                        let aborted = engine
-                            .seq()
-                            .get_sequence(route.unwrap())
-                            .unwrap()
-                            .elements
-                            .iter()
-                            .any(|element| {
-                                element.state == crate::sequence::SequenceState::Impossible
-                            });
-                        // Climb profiles contain different numbers of zero-distance
-                        // frames. The late-reopen case waits for actual route
-                        // failure, within the audit's bounded simulation budget.
-                        if stationary >= hold_ticks && (hold_ticks != 120 || aborted) {
+                        if stationary == hold_ticks {
                             assert_eq!(
                                 engine
                                     .orders
                                     .failed_path_requests
                                     .iter()
                                     .any(|request| request.owner == owner),
-                                !physical && hold_ticks == 8,
+                                hold_ticks == 8,
                                 "failed request before reopening, fixture={index}, entrance={entrance}, hold={hold_ticks}"
                             );
+                            let aborted = engine
+                                .seq()
+                                .get_sequence(route.unwrap())
+                                .unwrap()
+                                .elements
+                                .iter()
+                                .any(|element| {
+                                    element.state == crate::sequence::SequenceState::Impossible
+                                });
                             assert_eq!(
                                 aborted,
                                 hold_ticks == 120,
@@ -1009,11 +753,11 @@ fn changing_climb_barriers_reopen_before_or_after_path_failure() {
                     applied && reopened,
                     "actor must wait before reopening, fixture={index}, entrance={entrance}: {result:?}"
                 );
-                if hold_ticks == 0 || (physical && hold_ticks == 8) {
+                if hold_ticks == 0 {
                     assert_eq!(
                         result,
                         Ok(true),
-                        "reopened before route abortion, fixture={index}, entrance={entrance}"
+                        "reopened before path failure, fixture={index}, entrance={entrance}"
                     );
                 } else {
                     assert!(
@@ -1029,7 +773,7 @@ fn changing_climb_barriers_reopen_before_or_after_path_failure() {
     }
     assert_eq!(checked, 72);
     eprintln!(
-        "{checked} mid-climb reopening checks passed: physical routes resume before abortion; failed projected requests retain their timeout"
+        "{checked} mid-climb reopening checks passed: early reopening completes; failed requests retain their timeout"
     );
 }
 
@@ -1045,12 +789,6 @@ fn changing_climb_barrier_near_entrance_blocks_actor_approach() {
     for lift_type in [2, 3] {
         let mut fixture = fixtures[0].clone();
         fixture["asset_geometry"]["lifts"][0]["lift_type"] = lift_type.into();
-        // This fixture edits projected collision only. Physical barriers are
-        // covered by the compiler-generated ladder fixtures above.
-        fixture["asset_geometry"]["lifts"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("physical_navigation");
         fixture["asset_geometry"]["motion_data"]["layers"][2][0]["obstacles"][0]["polygon"]["points"] =
             serde_json::json!([[1293, 1165], [1295, 1155], [1295, 1255], [1293, 1265]]);
         let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(&fixture).unwrap());
@@ -1174,34 +912,17 @@ fn audit_exported_lifts(
     sprite: Option<&crate::sprite::Sprite>,
     report_name: &str,
 ) {
-    if std::env::var_os("ROBIN_LIFT_TRACE").is_some() {
-        let _ = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::WARN)
-            .with_test_writer()
-            .try_init();
-    }
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
             .unwrap();
     assert_eq!(manifest["complete"], true);
-    let sector_filter = std::env::var("ROBIN_LIFT_AUDIT_SECTORS").ok().map(|value| {
-        value
-            .split(',')
-            .map(|part| {
-                part.trim()
-                    .parse::<u16>()
-                    .expect("ROBIN_LIFT_AUDIT_SECTORS must contain comma-separated sector numbers")
-            })
-            .collect::<Vec<_>>()
-    });
     let report_path = directory.join(report_name);
     let mut report = serde_json::json!({
         "scope": "initial-state-directed-lift-walks-between-every-entrance-pair",
         "lift_types": types, "complete_sprite": sprite.is_some(),
         "input_snapshot_notes": manifest.get("snapshot_notes"),
         "map_filter": std::env::var("ROBIN_LIFT_AUDIT_MAP").ok(),
-        "sector_filter": sector_filter,
         "complete": false, "audit_finished": false, "results": []
     });
     let mut total_checked = 0;
@@ -1225,15 +946,9 @@ fn audit_exported_lifts(
         let mut checked = 0;
         let mut skipped = 0;
         let mut failures = vec![];
-        let mut failed_physical_navigation = std::collections::BTreeMap::new();
         let doors = &engine.script_domains.interactables.doors;
         for (sector_index, sector) in engine.world.fast_grid.level.sectors.iter().enumerate() {
             if !sector.lift_type.is_some_and(|kind| types.contains(&kind)) {
-                continue;
-            }
-            if sector_filter.as_ref().is_some_and(|selected| {
-                !selected.contains(&u16::try_from(sector.sector_number.get()).unwrap())
-            }) {
                 continue;
             }
             let entrances: Vec<_> = doors
@@ -1255,22 +970,8 @@ fn audit_exported_lifts(
                         Ok(false) => skipped += 1,
                         Err(message) => {
                             checked += 1;
-                            let number = u16::try_from(sector.sector_number.get()).unwrap();
-                            if let Some(bound) = assets.navigation.physical_stairs.get(&number) {
-                                failed_physical_navigation.insert(number, bound);
-                            }
-                            let walking_approaches = engine.physical_stair_door(&assets, (entrance as u32).into()).map(|(_, _, physical)| {
-                                assets.navigation.physical_walking.iter().enumerate()
-                                    .filter(|(_, floor)| floor.layer == doors[entrance].layer_out && floor.sector == u16::from(doors[entrance].sector_out))
-                                    .map(|(index, floor)| {
-                                        let geometry = floor.snapshot(&engine.world.pathfinder);
-                                        let recovery = geometry.recover_source(physical.outside, crate::coordinates::MoveBoxHalfDiagonal::new(6.,3.), 3.);
-                                        serde_json::json!({"floor": index, "source": physical.outside, "geometry": geometry, "source_recovery_within_three_units": recovery})
-                                    }).collect::<Vec<_>>()
-                            });
                             failures.push(serde_json::json!({
-                                "sector": sector.sector_number, "entrance": entrance, "exit": exit, "error": message,
-                                "ordinary_walking_approaches": walking_approaches
+                                "sector": sector.sector_number, "entrance": entrance, "exit": exit, "error": message
                             }));
                         }
                     }
@@ -1284,9 +985,7 @@ fn audit_exported_lifts(
             failures.len()
         );
         report["results"].as_array_mut().unwrap().push(serde_json::json!({
-            "file": file, "checked": checked, "skipped_permissions": skipped, "failures": failures,
-            "failed_physical_navigation_initial_state": failed_physical_navigation,
-            "initial_motion_states": engine.world.pathfinder.states
+            "file": file, "checked": checked, "skipped_permissions": skipped, "failures": failures
         }));
         std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     }

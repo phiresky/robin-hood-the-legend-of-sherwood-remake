@@ -14,14 +14,49 @@ are not attributed to map compilation merely because they touched the same files
 Commit references below identify introduction and subsequent changes, rather than
 implying that every line in each commit changes production behavior.
 
-The table records the implementation at the audit baseline. The relocations
-described below **have not been implemented**. Following the audit, the graph-less
-visibility fallback and its dispatch branch were deleted outright at the user's
-request. No compatibility replacement was added. Export still needs to generate
-the graph: its current empty `graph_bytes` no longer supports fallback detours.
-The separate physical per-tick solver is still outstanding.
-Performance findings other than the supplied freeze
-are based on call sites and algorithms, not new timing measurements.
+The tables below are a **historical inventory at the audit baseline**, not a list
+of code still present. Following the audit, the graph-less visibility fallback
+and its dispatch branch were deleted outright. The separate physical navigation
+solver has now also been deleted: walking and stair route reconstruction,
+landing/floor binding, physical collision neighbours, movement dispatch,
+per-step execution, order fields and runtime door endpoints. Ordinary prepared
+graph routing and movement remain. No compatibility replacement was added.
+
+The proposed caching/relocation remedies in the historical tables are superseded
+by that deletion. A small compiled-data extension may be justified by a concrete
+export requirement; a second runtime solver is not the intended architecture.
+Static descriptor validation remains in the level-data crate.
+
+Export still needs to generate the graph: its current empty `graph_bytes` no
+longer supports fallback detours. Earlier physical traversal results do not
+certify the resulting exports.
+
+Removal validation: `cargo build -p robin_rs --bin robin -j 1` passes.
+`cargo test -p robin_engine --lib -j 1 -- --quiet` reports **4,323 passed,
+11 failed, 33 ignored**. All failures are in compiled-map route/stair/state-change
+coverage: wall-end detours, curved/rising walkways, changing and copied stair
+barriers, overlapping stair layers, movement/sight transitions, jump approaches,
+and the collision-route fixture. These remain failing tests, not ignored tests
+or evidence of parity. Exported navigation must be repaired through compiled
+data rather than reintroducing a runtime solver.
+
+The optimized `parity` profile passes
+`game_session::multiplayer::story_regression::stock_three_player_navigation_tick_cost`
+using full GOG data, active mission scripts, three PCs and 180 frames per mission.
+All 540 frames complete. Times measure `advance_frame_without_hash`; startup,
+rendering and logging are outside the timed region, and frame 0 is excluded from
+the distribution.
+
+| Mission | Prepared nodes | Frame 5 | Median tick | p95 | Maximum |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| H07_Not_MK | 891 | 3.107 ms | 2.750 ms | 3.426 ms | 4.772 ms |
+| H01_Lin_VL | 633 | 0.847 ms | 0.927 ms | 1.363 ms | 5.989 ms |
+| S01_Not_VL | 891 | 1.770 ms | 2.834 ms | 3.367 ms | 4.707 ms |
+
+The pre-removal reproduction stalled at Silver Arrow frame 5 until a 60-second
+external timeout. That reproduction used the unoptimized test profile, so these
+measurements establish completion, not a directly comparable speedup ratio.
+They do not establish a universal 1 ms tick budget or measure exported-map routing.
 
 ## Required division of work
 
@@ -47,7 +82,7 @@ must use local queries; a real replan belongs in the path-request system.
 
 Paths in this table are relative to `crates/robin_engine/src/` unless prefixed.
 
-| Added or extended behavior | Current execution and scope | Required disposition | Implementation / commits |
+| Added or extended behavior | Execution at audit baseline | Original audit recommendation (superseded for the deleted solver) | Implementation / commits |
 | --- | --- | --- | --- |
 | Ordinary physical-floor routing | Every moving actor step with `physical_walking`; rebuilds a collision snapshot, support, clearance region and route to the same goal. Ordinary receiver bindings are built for stock missions too. This is the reported freeze path. | Remove static reconstruction and whole-route search from ticks. Export/load prepared routing, retain route progress, invalidate on relevant changes. | `engine/movement/physical_walking.rs::commit_physical_floor_step`; `engine/movement_step.rs`; `9920d51a5` |
 | Ordinary floor discovery | Command extraction/dispatch searches all bound floors. `contains_world_position` constructs and validates boundary/hole polygons during queries. | Prepare polygon objects and a receiver/layer/sector-to-floor index at export/load. Keep position/height checks local. | `engine/movement/physical_walking.rs::current_physical_walking_floor`; `stair_navigation/walking_binding.rs`; `f006c2dce`, `9920d51a5` |
@@ -148,10 +183,10 @@ routing solver implicated in the frame-5 freeze.
    in a versioned compiled map product. Prefer using the existing graph machinery
    where it represents the required geometry. Any necessary physical extension
    needs a demonstrated geometry requirement and the same preparation lifecycle.
-3. **Remove static work from both physical movement paths.** This includes
-   support/solid Boolean operations, buffering, erosion, polygon validation,
-   local grid/graph construction and visibility discovery. Do not move the same
-   work to an unbounded first path request or merely add a one-entry query cache.
+3. **Keep the physical movement solver removed.** Its support/solid Boolean
+   operations, buffering, erosion, polygon validation, local grid/graph
+   construction and visibility discovery must not return in movement or an
+   unbounded first path request. Compile static navigation into the map.
 4. **Retain efficient live behavior.** Local actor/object avoidance, current
    state-mask checks, bounded route requests, receiver updates and animation
    stepping remain live. Prepared links need obstacle/state dependencies so that

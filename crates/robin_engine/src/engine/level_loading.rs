@@ -2378,228 +2378,7 @@ impl EngineInner {
         self.initialize_motion_sector_conversion(assets);
         self.initialize_motion_obstacle_states(assets);
         self.register_motion_sectors(assets, staging, motion_data, lifts);
-        self.bind_physical_stairs(assets, motion_data, lifts);
-        self.bind_physical_walking(assets, motion_data);
         self.initialize_motion_jump_zones(staging);
-    }
-
-    fn bind_physical_walking(
-        &self,
-        assets: &mut LevelAssets,
-        motion_data: &crate::level_data::RawMotionData,
-    ) {
-        use geo::BooleanOps;
-        use std::collections::BTreeMap;
-        let started = web_time::Instant::now();
-        let mut areas = BTreeMap::new();
-        let mut sector = 0u16;
-        for (layer, definitions) in motion_data.layers.iter().enumerate() {
-            for (area, definition) in definitions.iter().enumerate() {
-                if !definition.is_lift {
-                    let number = crate::sector::SectorNumber::new(sector as i16);
-                    let index = self.world.fast_grid.level.sector_number_map[&number] as u32;
-                    areas.insert(index, (layer as u16, area, sector, definition));
-                }
-                sector = sector
-                    .checked_add(
-                        u16::try_from(1 + definition.obstacles.len())
-                            .expect("too many walking motion obstacles"),
-                    )
-                    .expect("too many walking motion sectors");
-            }
-        }
-        // Display activation is not floor ownership. Receivers retain their
-        // walking geometry when artwork is hidden by a visibility switch.
-        let mut groups: BTreeMap<(u32, [u64; 3]), (Vec<u32>, geo::MultiPolygon<f32>)> =
-            BTreeMap::new();
-        for (id, receiver) in self.sight_obstacles(assets).iter_indexed() {
-            let Some(projection) = receiver.projection_area else {
-                continue;
-            };
-            let Some(&(layer, _, _, _)) = areas.get(&projection.sector.get()) else {
-                continue;
-            };
-            if projection.layer.get() != layer {
-                continue;
-            }
-            let plane = crate::stair_navigation::walking_binding::receiver_plane(
-                &receiver.top_plane_points,
-            );
-            let plane = match plane {
-                Ok(plane) => plane,
-                Err(error) => {
-                    tracing::warn!(id, %error, "physical walking receiver has invalid anchors");
-                    continue;
-                }
-            };
-            let key = (projection.sector.get(), plane.map(f64::to_bits));
-            let (ids, coverage) = groups
-                .entry(key)
-                .or_insert_with(|| (vec![], geo::MultiPolygon::new(vec![])));
-            ids.push(id);
-            *coverage = coverage.union(receiver.polygon.as_geo());
-        }
-        tracing::debug!(
-            groups = groups.len(),
-            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-            "engine walking: receiving groups"
-        );
-        let started = web_time::Instant::now();
-        let mut floors = Vec::new();
-        for ((index, coefficients), (receivers, coverage)) in groups {
-            let &(layer, area, sector, motion) = &areas[&index];
-            let plane = coefficients.map(f64::from_bits);
-            match crate::stair_navigation::walking_binding::BoundPhysicalWalkingSurface::bind(
-                motion, layer, area, sector, plane, receivers, &coverage,
-            ) {
-                Ok(bound) => floors.extend(bound),
-                Err(error) => {
-                    tracing::warn!(layer, sector, %error, "physical walking receiver could not be bound")
-                }
-            }
-        }
-        tracing::debug!(
-            floors = floors.len(),
-            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-            "engine walking: bind floors"
-        );
-        let started = web_time::Instant::now();
-        crate::stair_navigation::walking_binding::BoundPhysicalWalkingSurface::bind_neighbours(
-            &mut floors,
-        );
-        tracing::debug!(
-            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
-            "engine walking: connect neighbours"
-        );
-        assets.navigation.physical_walking = std::sync::Arc::new(floors);
-    }
-
-    fn bind_physical_stairs(
-        &self,
-        assets: &mut LevelAssets,
-        motion_data: &crate::level_data::RawMotionData,
-        lifts: &[crate::level_data::RawLift],
-    ) {
-        let mut sector = 0u16;
-        let mut areas = std::collections::BTreeMap::new();
-        for (layer, motion_areas) in motion_data.layers.iter().enumerate() {
-            for (area, definition) in motion_areas.iter().enumerate() {
-                areas.insert(sector, (layer, area, definition));
-                sector = sector
-                    .checked_add(
-                        u16::try_from(1 + definition.obstacles.len())
-                            .expect("too many motion obstacles"),
-                    )
-                    .expect("too many motion sectors");
-            }
-        }
-        let mut physical = std::collections::BTreeMap::new();
-        for lift in lifts
-            .iter()
-            .filter(|lift| lift.physical_navigation.is_some())
-        {
-            let &(layer, area, definition) = areas
-                .get(&lift.motion_area_index)
-                .expect("physical stair has no registered motion area");
-            let mut bound =
-                crate::stair_navigation::BoundPhysicalStair::bind(lift, definition, layer, area)
-                    .unwrap_or_else(|error| {
-                        panic!("invalid physical stair {}: {error}", lift.motion_area_index)
-                    });
-            for (door_index, door) in lift.doors.iter().enumerate() {
-                let &(landing_layer, landing_area, landing_motion) = areas
-                    .get(&door.sector_out)
-                    .expect("physical landing has no motion area");
-                assert_eq!(landing_layer, usize::from(door.layer_out));
-                let number = crate::sector::SectorNumber::new(door.sector_out as i16);
-                let index = self.world.fast_grid.level.sector_number_map[&number];
-                let index = crate::fast_find_grid::SectorIndex::new(index as u32)
-                    .expect("physical landing sector uses the null identity");
-                let handle = crate::position_interface::SectorHandle::from_number(number)
-                    .with_arena_index(index);
-                // Physical approaches retain subpixel positions. Their rounded
-                // compatibility coordinates can lie outside a narrow receiver.
-                let outside = bound.definition.doors[door_index].outside;
-                let receiver = self
-                    .find_projection_area_at(
-                        assets,
-                        door.layer_out,
-                        handle,
-                        MapPoint::new(outside[0], outside[1] - outside[2]),
-                    )
-                    .map(|index| {
-                        self.sight_obstacles(assets)
-                            .get(usize::from(index))
-                            .expect("physical landing receiver disappeared")
-                    });
-                let plane = receiver.map_or(Ok([0.0; 3]), |receiver| {
-                    crate::stair_navigation::walking_binding::receiver_plane(
-                        &receiver.top_plane_points,
-                    )
-                });
-                let plane = match plane {
-                    Ok(plane) => plane,
-                    Err(error) => {
-                        tracing::warn!(sector=lift.motion_area_index, door=door_index, %error,
-                            "physical stair landing has invalid receiver anchors");
-                        continue;
-                    }
-                };
-                let receiver_geometry = receiver.and_then(|_| {
-                    use geo::{BooleanOps, Intersects};
-                    let obstacles = self.sight_obstacles(assets);
-                    let mut coverage = geo::MultiPolygon::new(Vec::new());
-                    for (id, candidate) in obstacles.iter_indexed() {
-                        if !obstacles.is_active(id as usize)
-                            || !candidate.projection_area.is_some_and(|area| {
-                                area.sector == index && area.layer.get() == door.layer_out
-                            })
-                        {
-                            continue;
-                        }
-                        let Ok(candidate_plane) =
-                            crate::stair_navigation::walking_binding::receiver_plane(
-                                &candidate.top_plane_points,
-                            )
-                        else {
-                            continue;
-                        };
-                        if candidate_plane
-                            .iter()
-                            .zip(plane)
-                            .any(|(value, expected)| (*value - expected).abs() > 1e-6)
-                        {
-                            continue;
-                        }
-                        coverage = coverage.union(candidate.polygon.as_geo());
-                    }
-                    let outside = bound.definition.doors[door_index].outside;
-                    coverage
-                        .0
-                        .into_iter()
-                        .find(|patch| patch.intersects(&geo::Point::new(outside[0], outside[1])))
-                });
-                if let Err(error) = bound.bind_landing(
-                    door_index,
-                    landing_motion,
-                    landing_layer,
-                    landing_area,
-                    door.sector_out,
-                    plane,
-                    receiver_geometry
-                        .as_ref()
-                        .or_else(|| receiver.map(|receiver| receiver.polygon.as_geo())),
-                ) {
-                    tracing::warn!(sector=lift.motion_area_index, door=door_index, %error,
-                        "physical stair landing support could not be bound");
-                }
-            }
-            assert!(
-                physical.insert(lift.motion_area_index, bound).is_none(),
-                "duplicate physical stair sector"
-            );
-        }
-        assets.navigation.physical_stairs = std::sync::Arc::new(physical);
     }
 
     fn register_motion_sight_obstacles(&mut self, assets: &mut LevelAssets) {
@@ -4373,28 +4152,9 @@ impl EngineInner {
                         special_authorisation_pc: false,
                         authorised_pc_direct: 0,
                         authorised_pc_indirect: 0,
-                        world_endpoints: raw.world_endpoints.clone(),
-                        point_out: raw.world_endpoints.as_ref().map_or(
-                            MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
-                            |points| {
-                                MapPoint::new(
-                                    points.outside[0],
-                                    points.outside[1] - points.outside[2],
-                                )
-                            },
-                        ),
-                        point_in: raw.world_endpoints.as_ref().map_or(
-                            MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
-                            |points| {
-                                MapPoint::new(points.inside[0], points.inside[1] - points.inside[2])
-                            },
-                        ),
-                        point_mid: raw.world_endpoints.as_ref().map_or(
-                            MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
-                            |points| {
-                                MapPoint::new(points.middle[0], points.middle[1] - points.middle[2])
-                            },
-                        ),
+                        point_out: MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
+                        point_in: MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
+                        point_mid: MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
                         layer_out: raw.layer_out,
                         layer_in: raw.layer_in,
                         sector_out,
@@ -4449,12 +4209,7 @@ impl EngineInner {
             // up from the grid later.
             let lift_wall =
                 crate::sector::LiftType::from_u8(lift.lift_type) == crate::sector::LiftType::Wall;
-            for (local, raw) in lift.doors.iter().enumerate() {
-                let world_endpoints = raw.world_endpoints.as_ref().or_else(|| {
-                    lift.physical_navigation
-                        .as_ref()
-                        .map(|navigation| &navigation.doors[local])
-                });
+            for raw in &lift.doors {
                 let (sector_out, sector_out_index) =
                     Self::resolve_sparse_position_sector(assets, raw.sector_out);
                 let (sector_in, sector_in_index) =
@@ -4483,27 +4238,9 @@ impl EngineInner {
                         locked_npc_villain_after_patch: raw.locked_npc_villain_after_patch,
                         locked_npc_civilian_after_patch: raw.locked_npc_civilian_after_patch,
                         unlockable_after_patch: raw.unlockable_after_patch,
-                        point_out: world_endpoints.map_or(
-                            MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
-                            |points| {
-                                MapPoint::new(
-                                    points.outside[0],
-                                    points.outside[1] - points.outside[2],
-                                )
-                            },
-                        ),
-                        point_in: world_endpoints.map_or(
-                            MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
-                            |points| {
-                                MapPoint::new(points.inside[0], points.inside[1] - points.inside[2])
-                            },
-                        ),
-                        point_mid: world_endpoints.map_or(
-                            MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
-                            |points| {
-                                MapPoint::new(points.middle[0], points.middle[1] - points.middle[2])
-                            },
-                        ),
+                        point_out: MapPoint::new(raw.point_out.0 as f32, raw.point_out.1 as f32),
+                        point_in: MapPoint::new(raw.point_in.0 as f32, raw.point_in.1 as f32),
+                        point_mid: MapPoint::new(raw.point_mid.0 as f32, raw.point_mid.1 as f32),
                         layer_out: raw.layer_out,
                         layer_in: raw.layer_in,
                         sector_out,
@@ -4519,7 +4256,6 @@ impl EngineInner {
                         owning_lift_sector: Some(crate::sector::SectorNumber::new(
                             lift.motion_area_index as i16,
                         )),
-                        world_endpoints: raw.world_endpoints.clone(),
                         click_polygon: raw
                             .door_sector
                             .points
@@ -4538,12 +4274,7 @@ impl EngineInner {
                     // LiftHighCrenel doors on wall lifts get their
                     // `point_in` nudged toward `point_mid`; other lift
                     // types leave `point_in` alone.
-                    // Explicit physical approaches already lie on the authored
-                    // floor. A screen-space offset would disagree with the
-                    // world endpoint used by movement and gate assertions.
-                    if lift.physical_navigation.is_none() {
-                        door.adapt_points(lift_wall);
-                    }
+                    door.adapt_points(lift_wall);
                     door.compute_door_penalty();
                     door.rebuild_click_bbox();
                 }

@@ -174,7 +174,8 @@ pub struct ReplayHeader {
 /// Version 65 persists the mission profile catalog in the replay header.
 /// Version 66 distinguishes exact network state adoption from saved-game loads.
 /// Version 67 retains ordinary physical floor identities on movement orders.
-pub const REPLAY_SCHEMA_VERSION: u32 = 67;
+/// Version 68 removes physical solver orders and runtime door endpoints.
+pub const REPLAY_SCHEMA_VERSION: u32 = 68;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

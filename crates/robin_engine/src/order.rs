@@ -579,13 +579,6 @@ pub struct Order {
     pub transition: bool,
     #[serde(default)]
     pub destination_3d: [f32; 3],
-    /// Physical stair owning this distance order. Its world destination remains
-    /// distinct even when several destinations share one projected point.
-    #[serde(default)]
-    pub physical_stair: Option<u16>,
-    /// Ordinary physical receiver binding owning this world-space walk.
-    #[serde(default)]
-    pub physical_walking: Option<u32>,
     #[serde(default)]
     pub flight_vector: [f32; 2],
     /// Play the animation in reverse.
@@ -634,8 +627,6 @@ impl Order {
             can_fly: false,
             transition: false,
             destination_3d: [0.0; 3],
-            physical_stair: None,
-            physical_walking: None,
             flight_vector: [0.0; 2],
             reverse: false,
             done: false,

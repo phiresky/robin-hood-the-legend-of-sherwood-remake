@@ -1,195 +1,5 @@
 use super::*;
 
-#[test]
-fn physical_walking_shortcut_respects_the_requested_destination_layer() {
-    let cases: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/asset-sloped-terrain-sockets.json"
-    )))
-    .unwrap();
-    let mut descriptor = cases[0]["descriptor"].clone();
-    let geometry = &mut descriptor["asset_geometry"];
-    let mut area = geometry["motion_data"]["layers"][0][0].clone();
-    area["polygon"]["points"] = serde_json::json!([[0, 0], [100, 0], [100, 100], [0, 100]]);
-    area["precise_polygon"] = serde_json::json!([]);
-    geometry["motion_data"]["layers"] = serde_json::json!([[area.clone()], [area], []]);
-    let mut template = geometry["sight_obstacles"][0].clone();
-    // These cases replace the plane's vertices, so derive anchors from those vertices.
-    template.as_object_mut().unwrap().remove("projection_plane");
-    geometry["sight_obstacles"] = serde_json::Value::Array(
-        [0, 1]
-            .into_iter()
-            .map(|layer| {
-                let mut receiver = template.clone();
-                let z = layer * 30;
-                receiver["projection_area"] = serde_json::json!([layer, layer]);
-                receiver["points"] = serde_json::json!(
-                    [(0, 0), (100, 0), (100, 100), (0, 100)].map(|(x, y)| serde_json::json!({
-                        "x": x, "y": y+z, "z_bottom": z, "z_top": z
-                    }))
-                );
-                receiver
-            })
-            .collect(),
-    );
-    let bytes = serde_json::to_vec(&descriptor).unwrap();
-    for (target_layer, explicit_sector) in [(0, true), (1, true), (1, false)] {
-        let (mut engine, mut assets) = compiled_walkway(&bytes);
-        let handle = |index: usize| {
-            crate::position_interface::SectorHandle::from_number(
-                engine.world.fast_grid.level.sectors[index].sector_number,
-            )
-            .with_arena_index(crate::fast_find_grid::SectorIndex::new(index as u32).unwrap())
-        };
-        let source_sector = handle(0);
-        let target_sector = handle(usize::from(target_layer));
-        let source = MapPoint::new(30., 50.);
-        let goal = MapPoint::new(70., 50.);
-        let owner = walking_pc(&mut engine, &mut assets, source, 0, source_sector);
-        let receiver = engine
-            .get_projection_area_index(&assets, source_sector, 0, source)
-            .unwrap();
-        engine.set_obstacle_and_material(&assets, owner, Some(receiver));
-        assert!(
-            engine
-                .current_physical_walking_floor(&assets, owner)
-                .is_some()
-        );
-        assert!(
-            engine
-                .get_projection_area_index(&assets, target_sector, target_layer, goal)
-                .is_some()
-        );
-        let mut movement =
-            SequenceElement::new_movement(1, Command::Move, Some(owner), OrderType::WalkingUpright);
-        let crate::sequence::SequenceElementData::Movement {
-            destination,
-            layer,
-            sector,
-            ..
-        } = &mut movement.data
-        else {
-            unreachable!()
-        };
-        *destination = goal;
-        *layer = target_layer;
-        *sector = explicit_sector.then_some(target_sector);
-        let sequence = engine.t_launch_in_progress(&assets, movement);
-        let sim = crate::sim_rng::test_context();
-        let result = engine.try_dispatch_move_path(
-            TickCtx::new(&sim, &assets),
-            owner,
-            crate::sequence::SequenceElementRef::new(sequence, 0),
-            goal,
-            OrderType::WalkingUpright,
-        );
-        let physical = engine
-            .orders
-            .sequence_manager
-            .get_element(sequence, 0)
-            .unwrap()
-            .orders
-            .iter()
-            .any(|order| order.physical_walking.is_some());
-        assert_eq!(
-            physical,
-            target_layer == 0 || !explicit_sector,
-            "destination layer {target_layer}, explicit sector {explicit_sector}: {result:?}"
-        );
-        if target_layer == 1 && explicit_sector {
-            assert!(
-                matches!(result, MovePathOutcome::Pending),
-                "cross-layer goal must retain normal route dispatch: {result:?}"
-            );
-        }
-    }
-}
-
-#[test]
-fn dispatched_walk_changes_receivers_between_overlapping_height_planes() {
-    let descriptor = overlapping_receiving_floors();
-    let (engine, assets) = compiled_walkway(&serde_json::to_vec(&descriptor).unwrap());
-    let ground = MapPoint::new(50., 30.);
-    let ramp = MapPoint::new(50., 45.);
-    for (source, goal) in [(ground, ramp), (ramp, ground)] {
-        assert_eq!(
-            dispatch_building_approach(engine.clone(), assets.clone(), 0, 0, source, goal, None),
-            Ok(())
-        );
-    }
-}
-
-#[test]
-fn compiled_building_exit_binds_the_floor_at_its_midpoint() {
-    let mut descriptor = overlapping_receiving_floors();
-    let layers = descriptor["asset_geometry"]["motion_data"]["layers"]
-        .as_array()
-        .unwrap()
-        .len();
-    descriptor["asset_geometry"]["buildings"] = serde_json::json!([{"Building": {"doors": [{
-        "door_type": 1, "active": true,
-        "locked_pc": false, "unlockable": false,
-        "locked_npc_villain": false, "locked_npc_civilian": false,
-        "locked_pc_after_patch": false, "unlockable_after_patch": false,
-        "locked_npc_villain_after_patch": false, "locked_npc_civilian_after_patch": false,
-        "door_sector": {"points": [[40, 10], [60, 10], [60, 30], [40, 30]]},
-        "point_out": [50, 45], "point_mid": [50, 30], "point_in": [50, 20],
-        "sector_out": 0, "layer_out": 0, "sector_in": 4, "layer_in": layers - 1
-    }]}}]);
-    for physical in [false, true] {
-        let (mut engine, mut assets) = compiled_walkway(&serde_json::to_vec(&descriptor).unwrap());
-        if !physical {
-            Arc::make_mut(&mut assets.navigation.physical_walking).clear();
-        }
-        let door = engine.script_domains.interactables.doors[0].clone();
-        let sector = crate::position_interface::SectorHandle::from_number(door.sector_out)
-            .with_arena_index(door.sector_out_index.unwrap());
-        assert_ne!(
-            engine.get_projection_area_index(&assets, sector, door.layer_out, door.point_mid),
-            engine.get_projection_area_index(&assets, sector, door.layer_out, door.point_out),
-            "the passage must cross between distinct receivers"
-        );
-        let owner = walking_pc(
-            &mut engine,
-            &mut assets,
-            door.point_out,
-            door.layer_out,
-            sector,
-        );
-        let sim = crate::sim_rng::test_context();
-        let index = crate::gate::DoorIndex::new(0).unwrap();
-        engine.execute_pass_door(TickCtx::new(&sim, &assets), owner, index, true);
-        engine
-            .ent_mut(owner)
-            .element_data_mut()
-            .set_position_map(door.point_mid);
-        engine.execute_pass_door(TickCtx::new(&sim, &assets), owner, index, false);
-        let expected_point = if physical {
-            door.point_mid
-        } else {
-            door.point_out
-        };
-        let receiver =
-            engine.get_projection_area_index(&assets, sector, door.layer_out, expected_point);
-        assert_eq!(
-            engine.ent(owner).position_iface().get_obstacle(),
-            receiver,
-            "physical={physical}"
-        );
-        if physical {
-            actor_receiver_result(
-                &engine,
-                &assets,
-                owner,
-                sector,
-                door.layer_out,
-                door.point_mid,
-            )
-            .unwrap();
-        }
-    }
-}
-
 fn overlapping_receiving_floors() -> serde_json::Value {
     let cases: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -224,6 +34,20 @@ fn overlapping_receiving_floors() -> serde_json::Value {
     .collect::<Vec<_>>();
     geometry["sight_obstacles"] = serde_json::json!(receivers);
     descriptor
+}
+
+#[test]
+fn dispatched_walk_changes_receivers_between_overlapping_height_planes() {
+    let descriptor = overlapping_receiving_floors();
+    let (engine, assets) = compiled_walkway(&serde_json::to_vec(&descriptor).unwrap());
+    let ground = MapPoint::new(50., 30.);
+    let ramp = MapPoint::new(50., 45.);
+    for (source, goal) in [(ground, ramp), (ramp, ground)] {
+        assert_eq!(
+            dispatch_building_approach(engine.clone(), assets.clone(), 0, 0, source, goal, None),
+            Ok(())
+        );
+    }
 }
 
 #[test]

@@ -584,7 +584,6 @@ impl EngineInner {
             .position_iface_mut()
             .set_door(door_index, direct);
         let built = self.build_door_pass(
-            tcx.assets,
             elem_ref,
             entity_id,
             door_index,
@@ -667,7 +666,6 @@ impl EngineInner {
     /// and lift type.
     fn build_door_pass(
         &mut self,
-        assets: &LevelAssets,
         elem_ref: SequenceElementRef,
         entity_id: EntityId,
         door_index: crate::gate::DoorIndex,
@@ -852,45 +850,9 @@ impl EngineInner {
             dist(OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel).abs();
         let tol_wall_low_direct = dist(OrderType::TransitionWaitingUprightClimbingWallUp);
 
-        let physical_door = self.physical_stair_door(assets, door_index);
-        let ordinary_physical_source = physical_door.is_none().then(|| {
-            let sector = u16::from(if direct { door_sector_out } else { sector_in });
-            let stair = assets.navigation.physical_stairs.get(&sector)?;
-            let endpoints = self.script_domains.interactables.doors[usize::from(door_index)]
-                .world_endpoints.as_ref()?;
-            if !stair.contains_runtime_position(endpoints.middle) {
-                tracing::warn!(%door_index, "ordinary passage world midpoint is not on its physical floor; authoring correction required");
-                return None;
-            }
-            Some((sector, endpoints.middle))
-        }).flatten();
-        let ordinary_physical_destination = physical_door
-            .is_none()
-            .then(|| {
-                let sector = u16::from(if direct { sector_in } else { door_sector_out });
-                let stair = assets.navigation.physical_stairs.get(&sector)?;
-                let endpoints = self.script_domains.interactables.doors[usize::from(door_index)]
-                    .world_endpoints
-                    .as_ref()?;
-                let destination = if direct {
-                    endpoints.inside
-                } else {
-                    endpoints.outside
-                };
-                assert!(
-                    stair.contains_runtime_position(destination),
-                    "ordinary passage destination is not on its physical floor"
-                );
-                Some((sector, destination))
-            })
-            .flatten();
         let ctx = DoorPassContext {
             door_type,
-            // Transition animations also target the exact seam. Returning to
-            // its integer waypoint after the handoff can leave the receiver.
-            point_mid: physical_door.as_ref().map_or(pt_mid, |(_, _, door)| {
-                MapPoint::new(door.middle[0], door.middle[1] - door.middle[2])
-            }),
+            point_mid: pt_mid,
             point_in: pt_in,
             point_out: pt_out,
             direct,
@@ -930,7 +892,6 @@ impl EngineInner {
             .sequence_manager
             .get_element_at_mut(elem_ref)
             .expect("door translation element disappeared");
-        let first_order = element.orders.len();
         let mut orders = DoorOrders {
             element,
             next_id: &mut self.orders.next_order_id,
@@ -938,68 +899,10 @@ impl EngineInner {
         match door_type {
             DoorType::Building | DoorType::BuildingTrap => translate_building(&ctx, &mut orders),
             DoorType::LiftHigh | DoorType::LiftHighCrenel | DoorType::LiftLow => match lift_type {
-                Some(LiftType::Ladder | LiftType::Wall) => {
-                    if lift_type == Some(LiftType::Wall) {
-                        translate_wall(&ctx, &mut orders);
-                    } else {
-                        translate_ladder(&ctx, &mut orders);
-                    }
-                    if let Some((sector, _, physical)) = physical_door {
-                        // The entry callback seats the actor on the physical
-                        // floor. Keep the following climb's exact world goal.
-                        // Exit transitions retain their own positional and
-                        // membership effects, so only climbing orders use this
-                        // floor, not the animation that leaves it.
-                        let mut inside = !direct;
-                        for order in orders.element.orders.iter_mut().skip(first_order) {
-                            if order.order_type == OrderType::PassingDoor {
-                                inside = direct;
-                                if !direct {
-                                    break;
-                                }
-                                continue;
-                            }
-                            let target = if direct { ctx.point_in } else { ctx.point_mid };
-                            if inside
-                                && matches!(
-                                    order.order_type,
-                                    OrderType::ClimbingLadderUp
-                                        | OrderType::ClimbingLadderDown
-                                        | OrderType::ClimbingWallUp
-                                        | OrderType::ClimbingWallDown
-                                )
-                                && MapPoint::new(order.target_x, order.target_y) == target
-                            {
-                                let destination = if direct {
-                                    physical.inside
-                                } else {
-                                    physical.middle
-                                };
-                                order.physical_stair = Some(sector);
-                                order.destination_3d = destination;
-                                order.target_x = destination[0];
-                                order.target_y = destination[1] - destination[2];
-                            }
-                        }
-                    }
-                }
+                Some(LiftType::Ladder) => translate_ladder(&ctx, &mut orders),
+                Some(LiftType::Wall) => translate_wall(&ctx, &mut orders),
                 Some(LiftType::Stairs) | Some(LiftType::Normal) => {
-                    translate_stairs(&ctx, &mut orders);
-                    if let Some((sector, _, physical)) = physical_door {
-                        // Each stair pass has two walks separated by callbacks.
-                        // Only the walk inside the stair uses its physical floor.
-                        let index = first_order + if direct { 2 } else { 0 };
-                        let order = &mut orders.element.orders[index];
-                        let destination = if direct {
-                            physical.inside
-                        } else {
-                            physical.middle
-                        };
-                        order.physical_stair = Some(sector);
-                        order.destination_3d = destination;
-                        order.target_x = destination[0];
-                        order.target_y = destination[1] - destination[2];
-                    }
+                    translate_stairs(&ctx, &mut orders)
                 }
                 None => panic!(
                     "PassDoor owner {entity_id:?} door {door_index} is a lift door but sector {sector_in} has no lift type"
@@ -1007,37 +910,6 @@ impl EngineInner {
             },
             _ => translate_default(&ctx, &mut orders),
         };
-
-        // The callback installs the destination floor. Preserve its world
-        // endpoint for the following walk and arrival snap as well; projecting
-        // it back through a near-edge-on plane loses both height and position.
-        if ordinary_physical_source.is_some() || ordinary_physical_destination.is_some() {
-            let mut entered = false;
-            for order in orders.element.orders.iter_mut().skip(first_order) {
-                if order.order_type == OrderType::PassingDoor {
-                    entered = true;
-                    continue;
-                }
-                let target = if entered {
-                    if direct { ctx.point_in } else { ctx.point_out }
-                } else {
-                    ctx.point_mid
-                };
-                let physical = if entered {
-                    ordinary_physical_destination
-                } else {
-                    ordinary_physical_source
-                };
-                if let Some((sector, destination)) = physical
-                    && MapPoint::new(order.target_x, order.target_y) == target
-                {
-                    order.physical_stair = Some(sector);
-                    order.destination_3d = destination;
-                    order.target_x = destination[0];
-                    order.target_y = destination[1] - destination[2];
-                }
-            }
-        }
 
         // When the PC exits a ladder/wall pass (non-direct) into a
         // forced-crouch sector, rewrite the PassDoor movement
@@ -1095,7 +967,6 @@ impl EngineInner {
         door_index: crate::gate::DoorIndex,
         direct: bool,
     ) {
-        let physical_door = self.physical_stair_door(tcx.assets, door_index);
         // Snapshot door data before mutable borrows.
         let (
             target_layer,
@@ -1431,189 +1302,16 @@ impl EngineInner {
         // membership change. Close entrances can skip approach waypoints, and
         // climb animations teleport, so polygon crossings alone cannot ensure
         // this transfer for arbitrary placed geometry.
-        let ordinary_stair_exit = physical_door.is_none()
-            && tcx
-                .assets
-                .navigation
-                .physical_stairs
-                .contains_key(&current_sector.get());
-        if (left_building && !direct)
-            || compiled_climb_point.is_some()
-            || (physical_door.is_some() && !direct)
-            || ordinary_stair_exit
-        {
+        if (left_building && !direct) || compiled_climb_point.is_some() {
             let target_sector =
                 target_sector.expect("validated PassDoor target sector lost its public handle");
-            // Physical stairs leave the actor at the shared seam. The outside
-            // waypoint can belong to a different terrain receiver, even on a
-            // coplanar landing, so bind the receiver at the actual handoff.
-            let receiving_point = physical_door
-                .as_ref()
-                .filter(|_| !direct)
-                .map(|(_, _, physical)| {
-                    crate::coordinates::WorldPoint3D::new(
-                        physical.middle[0],
-                        physical.middle[1],
-                        physical.middle[2],
-                    )
-                    .to_map()
-                })
-                .or_else(|| {
-                    ordinary_stair_exit.then(|| {
-                        self.get_entity(entity_id)
-                            .expect("door owner disappeared")
-                            .element_data()
-                            .position_map()
-                    })
-                })
-                .or_else(|| {
-                    // Compiled receiving floors have elevation edges between
-                    // the door midpoint and its outside waypoint. Bind the
-                    // floor at the actual handoff so crossing those edges
-                    // does not toggle a prematurely installed destination
-                    // receiver back to the ground underneath it.
-                    (left_building
-                        && !direct
-                        && tcx.assets.navigation.physical_walking.iter().any(|floor| {
-                            floor.layer == target_layer && floor.sector == target_sector.get()
-                        }))
-                    .then(|| {
-                        self.get_entity(entity_id)
-                            .expect("door owner disappeared")
-                            .element_data()
-                            .position_map()
-                    })
-                });
-            let new_obstacle = self
-                .find_projection_area_at(
-                    tcx.assets,
-                    target_layer,
-                    target_sector.with_arena_index(target_sector_index),
-                    receiving_point
-                        .or(compiled_climb_point)
-                        .unwrap_or(door_point_out),
-                )
-                .or_else(|| {
-                    // Roundoff can put a shared seam just outside its receiver.
-                    // Keep probes on the approach direction: advancing each axis
-                    // by one ULP instead can point across the wrong side of a
-                    // sloped edge. Bound displacement by four local f32 steps.
-                    let origin = receiving_point?;
-                    let dx = f64::from(door_point_out.x) - f64::from(origin.x);
-                    let dy = f64::from(door_point_out.y) - f64::from(origin.y);
-                    let length = dx.abs().max(dy.abs());
-                    if length == 0.0 {
-                        return None;
-                    }
-                    let quantum = [origin.x, origin.y]
-                        .into_iter()
-                        .map(|value| {
-                            f64::from(
-                                (value.next_up() - value)
-                                    .abs()
-                                    .max((value - value.next_down()).abs()),
-                            )
-                        })
-                        .fold(0.0_f64, f64::max);
-                    for step in 1..=4 {
-                        let fraction = (quantum * f64::from(step) / length).min(1.0);
-                        let point = MapPoint::new(
-                            (f64::from(origin.x) + dx * fraction) as f32,
-                            (f64::from(origin.y) + dy * fraction) as f32,
-                        );
-                        if let Some(receiver) = self.find_projection_area_at(
-                            tcx.assets,
-                            target_layer,
-                            target_sector.with_arena_index(target_sector_index),
-                            point,
-                        ) {
-                            return Some(receiver);
-                        }
-                    }
-                    None
-                });
+            let new_obstacle = self.find_projection_area_at(
+                tcx.assets,
+                target_layer,
+                target_sector.with_arena_index(target_sector_index),
+                compiled_climb_point.unwrap_or(door_point_out),
+            );
             self.set_obstacle_and_material(tcx.assets, entity_id, new_obstacle);
-        }
-
-        if let Some((_, plane, physical)) = physical_door {
-            let entity = self
-                .get_entity_mut(entity_id)
-                .expect("physical door owner disappeared");
-            let pi = entity.position_iface_mut();
-            if direct {
-                let [az, bz, dz] = plane.map(|value| value as f32);
-                pi.set_obstacle_at_ground_position(
-                    None,
-                    Some(crate::position_interface::PlaneZCoeffs { az, bz, dz }),
-                    crate::coordinates::GroundPoint::new(physical.middle[0], physical.middle[1]),
-                )
-                .expect("invalid physical stair door receiver");
-                // Installing the receiver evaluates its f32 plane. Keep the
-                // authored world seam authoritative instead of inheriting that
-                // evaluation's cancellation error at a rotated boundary.
-                pi.set_position(crate::coordinates::WorldPoint3D::new(
-                    physical.middle[0],
-                    physical.middle[1],
-                    physical.middle[2],
-                ));
-                pi.reset_increment_computed();
-            } else {
-                // Receiver selection above establishes the outside floor. Retain
-                // the shared world-space seam instead of inverting its projection.
-                pi.set_position(crate::coordinates::WorldPoint3D::new(
-                    physical.middle[0],
-                    physical.middle[1],
-                    physical.middle[2],
-                ));
-                pi.reset_increment_computed();
-            }
-        }
-
-        // Ordinary passages can also enter a physical stair. Prefer the
-        // authored world seam, including when its screen projection is edge-on.
-        // Older exports can only recover a position on invertible floors.
-        if self.physical_stair_door(tcx.assets, door_index).is_none()
-            && let Some(stair) = tcx
-                .assets
-                .navigation
-                .physical_stairs
-                .get(&u16::from(target_sector_num))
-        {
-            let world_middle = self.script_domains.interactables.doors[usize::from(door_index)]
-                .world_endpoints.as_ref().map(|points| points.middle)
-                .filter(|point| {
-                    let valid = stair.contains_runtime_position(*point);
-                    if !valid {
-                        tracing::warn!(%door_index, "ordinary passage world midpoint is not on its physical floor; authoring correction required");
-                    }
-                    valid
-                });
-            let pi = self
-                .get_entity_mut(entity_id)
-                .expect("door owner disappeared")
-                .position_iface_mut();
-            let point = pi.get_position().to_map();
-            if let Some([x, y, z]) = world_middle.or_else(|| stair.world_point_from_screen(point)) {
-                let [a, b, c] = stair
-                    .plane_at([x, y])
-                    .expect("ordinary door lost its physical floor");
-                pi.set_obstacle_at_ground_position(
-                    None,
-                    Some(crate::position_interface::PlaneZCoeffs {
-                        az: a as f32,
-                        bz: b as f32,
-                        dz: c as f32,
-                    }),
-                    crate::coordinates::GroundPoint::new(x, y),
-                )
-                .expect("invalid ordinary passage stair receiver");
-                pi.set_position(crate::coordinates::WorldPoint3D::new(x, y, z));
-                pi.reset_increment_computed();
-            } else {
-                // TODO: ordinary doors on edge-on stairs need authored world
-                // endpoints, just like lift-owned doors.
-                tracing::warn!(%door_index, "ordinary door cannot resolve an edge-on physical stair handoff");
-            }
         }
 
         // ── Enter callbacks ──
@@ -1756,46 +1454,22 @@ impl EngineInner {
         self.get_projection_area_index(assets, sector, layer, point)
     }
 
-    /// Resolve a placed lift-local endpoint without using projected coordinates.
-    pub(super) fn physical_stair_door(
-        &self,
-        assets: &LevelAssets,
-        index: crate::gate::DoorIndex,
-    ) -> Option<(
-        u16,
-        [f64; 3],
-        robin_level_data::physical_stair::PhysicalStairDoor,
-    )> {
-        let doors = &self.script_domains.interactables.doors;
-        let owner = doors[usize::from(index)].owning_lift_sector?;
-        let sector = u16::from(owner);
-        let stair = assets.navigation.physical_stairs.get(&sector)?;
-        // Lift loading preserves each descriptor's local door order. Match that
-        // identity, since distinct endpoints can have identical screen points.
-        let local = doors[..usize::from(index)]
-            .iter()
-            .filter(|door| door.owning_lift_sector == Some(owner))
-            .count();
-        let door = stair
-            .definition
-            .doors
-            .get(local)
-            .expect("physical stair door binding is incomplete")
-            .clone();
-        let plane = stair
-            .plane_at([door.middle[0], door.middle[1]])
-            .expect("physical stair door lost its floor");
-        Some((sector, plane, door))
-    }
-
     /// Apply a projection-area obstacle + its footstep material to an
     /// actor.
     ///
     /// With `Some(obstacle_idx)`: the actor's sprite takes the
-    /// obstacle's material and its top-plane coefficients. With
-    /// `None`: clears the obstacle and resolves sound-sector material on
-    /// the actor's current layer, falling back to the map's default material.
-    /// Updates both the element and its position interface.
+    /// obstacle's material and its top-plane coefficients.  With
+    /// `None`: clears the obstacle and falls back to the sound-sector
+    /// material at the actor's current position — iterate the sound
+    /// sectors the fast-find grid holds **for the actor's own layer**
+    /// and pick the material of the first one that contains the point,
+    /// or the map's default material when none match
+    /// from the position query. This implementation uses
+    /// [`crate::material_sectors::MaterialSectors::material_at_layer`]
+    /// which encapsulates both steps.
+    ///
+    /// Updates both `ElementData` (obstacle_index, material) and the
+    /// actor's `PositionInterface` (obstacle, plane, material).
     pub(super) fn set_obstacle_and_material(
         &mut self,
         assets: &LevelAssets,

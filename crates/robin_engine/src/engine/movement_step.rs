@@ -247,8 +247,7 @@ impl EngineInner {
             .entities
             .get_mut(entity_id)
             .expect("movement owner disappeared during execution");
-        let mut tolerance_arrival = selected_order.physical_stair.is_none()
-            && perform_seek_calls_per_execute(order_action) > 0
+        let mut tolerance_arrival = perform_seek_calls_per_execute(order_action) > 0
             && seek_tolerance_reached(
                 ft,
                 seek_operands.live_seek_target,
@@ -986,32 +985,16 @@ impl EngineInner {
                 let diagnostic_pre =
                     sprite_row_diagnostic.then(|| sprite.sprite_row_diagnostic_pre());
                 let played_direction = u16::from(sprite.position_iface.get_direction().as_u8());
-                let result = if selected_order.physical_stair.is_some()
-                    || selected_order.physical_walking.is_some()
-                {
-                    sprite
-                        .perform_physical_motion(
-                            tcx.sim,
-                            motion_order.expect("physical movement requires an order identity"),
-                            selected_order.physical_goal,
-                            sprite_motion_order_for_nonanimation(anim),
-                            played_direction,
-                            FrameProgression::Default,
-                            motion_method,
-                        )
-                        .expect("invalid physical movement order")
-                } else {
-                    sprite.perform_motion(
-                        tcx.sim,
-                        motion_order,
-                        sprite_motion_order_for_nonanimation(anim),
-                        played_direction,
-                        FrameProgression::Default,
-                        false,
-                        motion_method,
-                        dest_already_at_pos,
-                    )
-                };
+                let result = sprite.perform_motion(
+                    tcx.sim,
+                    motion_order,
+                    sprite_motion_order_for_nonanimation(anim),
+                    played_direction,
+                    FrameProgression::Default,
+                    false,
+                    motion_method,
+                    dest_already_at_pos,
+                );
                 if let Some(pre) = diagnostic_pre {
                     sprite.emit_sprite_row_diagnostic(
                         "perform_motion",
@@ -1217,45 +1200,7 @@ impl EngineInner {
             }
             let call_motion = if is_transition_anim && !tolerance_arrival {
                 'transition: {
-                    let goal_reached = if selected_order.physical_stair.is_some()
-                        || selected_order.physical_walking.is_some()
-                    {
-                        let was_at_goal = self
-                            .world
-                            .entities
-                            .get(entity_id)
-                            .unwrap()
-                            .position_iface()
-                            .get_position()
-                            == selected_order.physical_goal;
-                        let motion = self.commit_physical_floor_step(
-                            tcx,
-                            entity_id,
-                            selected_order,
-                            ft,
-                            speed,
-                            fallback_motion,
-                            true,
-                        );
-                        if matches!(motion, MotionState::Aborted) {
-                            break 'transition motion;
-                        }
-                        let reached = self
-                            .world
-                            .entities
-                            .get(entity_id)
-                            .unwrap()
-                            .position_iface()
-                            .get_position()
-                            == selected_order.physical_goal;
-                        if reached
-                            && !was_at_goal
-                            && selected_order.next_destination_same_action.is_some()
-                        {
-                            raw_motion_state = MotionState::Terminated;
-                        }
-                        reached
-                    } else {
+                    let goal_reached = {
                         let SelectedMovementOrder {
                             goal,
                             order_action,
@@ -1509,18 +1454,6 @@ impl EngineInner {
                     }
                     movement_execute_visible_motion(raw_motion_state, false, entity_target_seek)
                 }
-            } else if selected_order.physical_stair.is_some()
-                || selected_order.physical_walking.is_some()
-            {
-                self.commit_physical_floor_step(
-                    tcx,
-                    entity_id,
-                    selected_order,
-                    ft,
-                    speed,
-                    fallback_motion,
-                    false,
-                )
             } else if !stationary_motion_waits(speed, tolerance_arrival, dist) {
                 ('ordinary: {
         let Some(mut point_seek_post_arrival) = ('arrival_preparation: {
@@ -1823,13 +1756,12 @@ impl EngineInner {
                     .entities
                     .get(entity_id)
                     .expect("seeking owner disappeared");
-                tolerance_arrival = selected_order.physical_stair.is_none()
-                    && seek_tolerance_reached(
-                        ft,
-                        seek_operands.live_seek_target,
-                        entity.element_data().position_map(),
-                        entity.element_data().sector(),
-                    );
+                tolerance_arrival = seek_tolerance_reached(
+                    ft,
+                    seek_operands.live_seek_target,
+                    entity.element_data().position_map(),
+                    entity.element_data().sector(),
+                );
             }
         };
         let mut motion_state = motion_state;

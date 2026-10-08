@@ -844,3 +844,127 @@ fn one_robin_startup_scroll_reaches_both_players_in_authored_missions() {
         assert_eq!(client.timeline.frame_number(), modal_frame);
     }
 }
+
+#[test]
+#[ignore = "requires full game data via ROBINHOOD_DATA_DIR"]
+fn stock_three_player_navigation_tick_cost() {
+    use robin_engine::engine::{
+        Engine, EngineArgs, LevelLoadArgs, SimConfig, SimulationFrameInput,
+    };
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let data = robin_test_support::original_data::data_directory("");
+    let (base_campaign, profiles, context) =
+        crate::main_entry::rust_init_with_roots(Some(&data), Some(root)).unwrap();
+    let files = context.preparation_files().unwrap().clone();
+    let mut bank_host = Host::scratch(640.0, 480.0);
+    bank_host
+        .frontend
+        .resources
+        .frame_holder_before_publication_mut()
+        .initialize_sprite_bank_with_files(".", &files)
+        .unwrap();
+    for mission_name in ["H07_Not_MK", "H01_Lin_VL", "S01_Not_VL"] {
+        let mut campaign = base_campaign.clone();
+        let mission = campaign
+            .missions
+            .iter()
+            .position(|m| m.profile(&profiles).mission_filename == mission_name)
+            .unwrap();
+        campaign.force_next_mission(mission);
+        let config = SimConfig {
+            script_enabled: true,
+            coop: robin_engine::coop::CoopRules {
+                players: 3,
+                team: [b'R', b'J', b'W', 0, 0],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let (campaign, selected, seed, config) =
+            Engine::select_next_mission(campaign, &profiles, 0, config);
+        assert_eq!(selected, mission);
+        let mut assets = LevelAssets::new();
+        assets.profile_manager = profiles.clone();
+        assets.sprite_scriptor = Arc::new(
+            robin_engine::sprite_script::SpriteScriptor::with_resources(Arc::new(
+                robin_engine::sprite_script::MissionResourceEnvironment::from_files(&files),
+            )),
+        );
+        assets.bank_signature = bank_host.frontend.resources.frame_holder().signature();
+        let path = files
+            .resolve_data_path(&format!("Data/Levels/{mission_name}.scb"))
+            .unwrap();
+        let program = robin_engine::script_manager::ScriptProgram::from_scb(
+            robin_assets::scb::parse_file(&path).unwrap(),
+        )
+        .unwrap();
+        assets.scripts.mission_programs = Arc::new(std::collections::BTreeMap::from([(
+            mission_name.to_owned(),
+            Arc::new(program),
+        )]));
+        let mut text = robin_assets::resource_manager::ResourceManager::with_files(files.clone());
+        text.attach_resource_file("Data/Text/Level.res").unwrap();
+        (assets.peasant_firstnames, assets.peasant_surnames) =
+            crate::game_session::load_peasant_name_pool(&mut text).unwrap();
+        assets.fixed_vip_names = crate::game_session::load_fixed_vip_name_map(&mut text).unwrap();
+        let loaded = robin_engine::engine::level_loading::load_mission_for_campaign_with_files(
+            &campaign,
+            &profiles,
+            "Data/Levels",
+            &mut |_| {},
+            &files,
+        )
+        .unwrap();
+        let mut engine = Engine::new(EngineArgs {
+            campaign,
+            level: LevelLoadArgs {
+                assets: &mut assets,
+                level_directory: "Data/Levels",
+                progress: &mut |_| {},
+                loaded,
+                bg_pixel_dims: (4096.0, 4096.0),
+            },
+            ground_mark_sprite: None,
+            titbit_row_frame_counts: Vec::new(),
+            rng_seed: seed,
+            original_rng_replay: None,
+            sim_config: config,
+        })
+        .unwrap();
+        eprintln!(
+            "{mission_name}: prepared nodes={}",
+            assets.navigation.pathfinder_graph.nodes.len()
+        );
+        assert!(
+            !assets.navigation.pathfinder_graph.nodes.is_empty(),
+            "stock mission must retain its prepared navigation"
+        );
+        let mut timings = Vec::new();
+        for frame in 0..180 {
+            eprintln!("{mission_name}: starting frame {frame}");
+            let started = std::time::Instant::now();
+            engine
+                .advance_frame_without_hash(
+                    &assets,
+                    SimulationFrameInput::default().with_post_initialize(frame == 0),
+                )
+                .unwrap();
+            let elapsed = started.elapsed().as_secs_f64() * 1000.;
+            eprintln!("{mission_name}: frame {frame}: {elapsed:.3} ms");
+            if frame > 0 {
+                timings.push(elapsed);
+            }
+        }
+        timings.sort_by(f64::total_cmp);
+        eprintln!(
+            "{mission_name}: tick median={:.3} ms p95={:.3} ms max={:.3} ms",
+            timings[timings.len() / 2],
+            timings[timings.len() * 95 / 100],
+            timings.last().unwrap()
+        );
+    }
+}

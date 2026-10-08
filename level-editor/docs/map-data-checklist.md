@@ -10,10 +10,13 @@ Connections and runtime indices are rebuilt after placement, rotation and copyin
 visibility fallback has been removed, with no compatibility replacement. Export
 currently emits empty `graph_bytes`; it must generate prepared navigation before
 indirect exported-map routing is restored. Earlier route results below predate
-this removal. The separate per-tick physical-floor solver also remains a blocking
-performance regression for stock Silver Arrow. See the
+this removal. The separate physical-floor solver, load-time bindings, movement
+dispatch and per-step routing have also been removed. An optimized three-player
+stock-mission regression completes all 540 frames, including Silver Arrow frame 5;
+median ticks range from 0.93 to 2.83 ms. Removing the solver does not repair
+exported navigation: 11 compiled-map route/stair/state tests still fail. See the
 [runtime inventory](map-runtime-inventory.md) for the full scope and correction
-requirements. Neither issue is resolved by the earlier parity evidence.
+requirements. Earlier physical traversal evidence does not certify this architecture.
 
 **Full parity is not yet verified.** “Tested” below describes specific evidence,
 not certification of every library asset or gameplay case. Best-effort exports

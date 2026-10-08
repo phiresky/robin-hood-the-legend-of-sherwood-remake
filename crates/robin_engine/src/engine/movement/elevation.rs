@@ -223,48 +223,7 @@ impl EngineInner {
     /// cross-sector route.  Keeping it at the later path-dispatch boundary
     /// skips the correction whenever Seek is consumed while building its
     /// replacement sequence.
-    pub(in crate::engine) fn extract_move_instruction_owner(
-        &mut self,
-        assets: &LevelAssets,
-        owner: EntityId,
-    ) -> bool {
-        let entity = self
-            .world
-            .entities
-            .expect_entity(owner, format_args!("movement source"));
-        if let Some(stair) = entity
-            .element_data()
-            .sector()
-            .and_then(|sector| assets.navigation.physical_stairs.get(&sector.get()))
-        {
-            let pi = entity.position_iface();
-            let position = pi.get_position();
-            let source = [position.x, position.y];
-            let on_floor = stair.contains_runtime_position([position.x, position.y, position.z]);
-            let supported = on_floor
-                && stair
-                    .route(
-                        &self.world.pathfinder,
-                        source,
-                        source,
-                        pi.get_half_diagonal(),
-                    )
-                    .expect("invalid physical stair source geometry")
-                    .is_some();
-            if !supported {
-                // TODO: Recover unsupported sources in physical coordinates.
-                // Projected extraction can move an actor onto a different height.
-                tracing::warn!(
-                    ?owner,
-                    ?position,
-                    "unsupported physical stair movement source"
-                );
-            }
-            return supported;
-        }
-        if let Some(floor) = self.current_physical_walking_floor(assets, owner) {
-            return self.extract_physical_walking_source(assets, owner, floor);
-        }
+    pub(in crate::engine) fn extract_move_instruction_owner(&mut self, owner: EntityId) -> bool {
         let (entity_layer, pf_idx, move_box_map) = {
             let entity = self
                 .world
@@ -731,17 +690,6 @@ impl EngineInner {
     ) {
         #[cfg(test)]
         observe_post_execute_crossing(self, entity_id);
-        let physical_floor = self.actor_installed_order(entity_id).is_some_and(|order| {
-            order.physical_stair.is_some() || order.physical_walking.is_some()
-        }) || self
-            .get_entity(entity_id)
-            .and_then(|entity| entity.element_data().sector())
-            .is_some_and(|sector| {
-                tcx.assets
-                    .navigation
-                    .physical_stairs
-                    .contains_key(&sector.get())
-            });
         let (old_pos, new_pos, layer, posture, is_carried, is_human) = {
             let entity = self
                 .world
@@ -795,20 +743,15 @@ impl EngineInner {
             })
             .collect::<Vec<_>>();
 
-        // Physical traversal owns its floor until the door handoff. Projected
-        // overlaps must not reattach it to an unrelated receiving plane. The
-        // entry callback changes sector before the first physical walking
-        // order is installed, so membership also authorizes the physical floor.
-        let crossed_elevation = !physical_floor
-            && self.check_for_elevation_line_crossing_indices(
-                tcx.assets,
-                entity_id,
-                old_pos,
-                new_pos,
-                layer,
-                elevation_indices,
-            );
-        if !physical_floor && (crossed_elevation || crossing_count > 1) {
+        let crossed_elevation = self.check_for_elevation_line_crossing_indices(
+            tcx.assets,
+            entity_id,
+            old_pos,
+            new_pos,
+            layer,
+            elevation_indices,
+        );
+        if crossed_elevation || crossing_count > 1 {
             if is_human {
                 self.update_roll_after_crossing(tcx.assets, entity_id);
             }

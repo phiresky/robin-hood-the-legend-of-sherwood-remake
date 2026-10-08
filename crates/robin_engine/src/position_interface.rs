@@ -1245,78 +1245,6 @@ impl PositionInterface {
         self.goal_map = pt;
         self.computed_increment = IncrementComputed::NONE;
     }
-
-    /// Initialize physical traversal without inverting a receiving screen plane.
-    /// A nonzero physical increment may legitimately project to zero on screen.
-    pub(crate) fn set_physical_movement_goal(
-        &mut self,
-        goal: WorldPoint3D,
-        compute_direction: bool,
-    ) -> Result<(), &'static str> {
-        let position = self.position;
-        let delta = [
-            goal.x - position.x,
-            goal.y - position.y,
-            goal.z - position.z,
-        ];
-        let distance = delta[0].hypot(delta[1]).hypot(delta[2]);
-        let projected = goal.to_map();
-        if [
-            position.x,
-            position.y,
-            position.z,
-            goal.x,
-            goal.y,
-            goal.z,
-            projected.x,
-            projected.y,
-            distance,
-        ]
-        .iter()
-        .any(|value| !value.is_finite())
-        {
-            return Err("physical movement requires finite positions and displacement");
-        }
-        self.goal = goal;
-        self.goal_map = projected;
-        self.increment = if distance == 0.0 {
-            WorldVec3D::ZERO
-        } else {
-            WorldVec3D {
-                x: delta[0] / distance,
-                y: delta[1] / distance,
-                z: delta[2] / distance,
-            }
-        };
-        self.computed_increment = IncrementComputed::INCREMENT;
-        self.compute_increment_all(compute_direction && distance != 0.0);
-        Ok(())
-    }
-
-    pub(crate) fn physical_movement_goal(&self) -> WorldPoint3D {
-        self.goal
-    }
-
-    /// Publish the direction of a committed physical step without changing the
-    /// order's destination. A detour's forecast must follow its actual motion.
-    pub(crate) fn set_physical_step_increment(
-        &mut self,
-        step: WorldVec3D,
-        compute_direction: bool,
-    ) {
-        let distance = step.x.hypot(step.y).hypot(step.z);
-        assert!(
-            distance.is_finite() && distance > 0.0,
-            "physical step requires finite nonzero displacement"
-        );
-        self.increment = WorldVec3D {
-            x: step.x / distance,
-            y: step.y / distance,
-            z: step.z / distance,
-        };
-        self.computed_increment = IncrementComputed::INCREMENT;
-        self.compute_increment_all(compute_direction);
-    }
     #[inline]
     pub fn set_next_map_goal(&mut self, pt: MapPoint) {
         self.goal_next_map = pt;
@@ -1686,37 +1614,6 @@ impl PositionInterface {
         // and move-box depend on map only, so no further resync needed.
         self.position_3d_from_map();
         self.set_increment_3d_computed(false);
-    }
-
-    /// Enter a physical navigation surface using its ground coordinate. This
-    /// remains defined when the receiving plane is edge-on in screen space.
-    /// A subsequent movement order must initialize its increment in that frame.
-    pub fn set_obstacle_at_ground_position(
-        &mut self,
-        obs: Option<ObstacleHandle>,
-        plane: Option<PlaneZCoeffs>,
-        ground: crate::coordinates::GroundPoint,
-    ) -> Result<(), &'static str> {
-        if obs.is_some() && plane.is_none() {
-            return Err("physical receiver requires its height plane");
-        }
-        if plane.is_some_and(|p| [p.az, p.bz, p.dz].iter().any(|value| !value.is_finite())) {
-            return Err("physical receiver plane must be finite");
-        }
-        let z = plane.map_or(0.0, |p| p.compute_world_z(ground.x, ground.y));
-        let position = WorldPoint3D::new(ground.x, ground.y, z);
-        let map = position.to_map();
-        if [position.x, position.y, position.z, map.x, map.y]
-            .iter()
-            .any(|value| !value.is_finite())
-        {
-            return Err("physical receiver position must be finite");
-        }
-        self.obstacle = obs;
-        self.plane = plane;
-        self.set_position(position);
-        self.reset_increment_computed();
-        Ok(())
     }
 
     // ====================================================================
