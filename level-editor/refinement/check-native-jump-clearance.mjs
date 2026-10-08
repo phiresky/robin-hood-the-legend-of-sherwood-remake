@@ -38,7 +38,10 @@ for (const result of report.results) {
       projection_area: null,
       material_indices: [],
     };
-    const blocked = createJumpClearance([obstacle])(edges, pair.jump_long);
+    const receivingPlanes = descriptor.asset_geometry.sight_obstacles
+      .filter((shape) => shape.projection_area)
+      .map((shape) => ({ ...shape, solid: false }));
+    const blocked = createJumpClearance([...receivingPlanes, obstacle])(edges, pair.jump_long);
     assert.ok(
       blocked.some(([a, b]) => parameter >= a - 0.00001 && parameter <= b + 0.00001),
       `${result.file} line ${result.line} t=${result.t}: uncovered ${JSON.stringify(frame)}`,

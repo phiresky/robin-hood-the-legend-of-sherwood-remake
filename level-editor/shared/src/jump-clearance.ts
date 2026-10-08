@@ -1,7 +1,12 @@
 import earcut from "earcut";
-import type { SightObstacle } from "./level.ts";
+import type { Point, SightObstacle } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
-import { heightPlane, planeHeight } from "./gameplay-plane.ts";
+import { heightPlane, planeHeight, type HeightPlane } from "./gameplay-plane.ts";
+import {
+  ribbonParameterRange,
+  verticalFlightRibbons,
+  type VerticalFlightRibbon,
+} from "./vertical-jump-clearance.ts";
 
 export type JumpEdge = { zone: string; a: Vec3; b: Vec3 };
 type Vertex = [number, number, number, number];
@@ -97,16 +102,16 @@ export function mergeIntervals(intervals: Interval[]): Interval[] {
 
 /** Precompute solid prisms once, then intersect the full flight ribbon, not sampled rays. */
 export function createJumpClearance(obstacles: SightObstacle[]) {
-  const slopedReceivers = obstacles
+  const receivers = obstacles
     .filter((shape) => shape.projection_area)
     .flatMap((shape) => {
       const anchors =
         shape.projection_plane ?? shape.points.slice(0, 3).map((p): Vec3 => [p.x, p.y, p.z_top]);
       const plane = heightPlane(anchors.map(([x, y, z]) => [x, y - z, z]));
-      if (Math.abs(plane[0]) + Math.abs(plane[1]) < EPSILON) return [];
       return [
         {
           plane,
+          polygon: shape.points.map((p): Point => [p.x, p.y - p.z_top]),
           minX: Math.min(...shape.points.map((p) => p.x)),
           maxX: Math.max(...shape.points.map((p) => p.x)),
           minY: Math.min(...shape.points.map((p) => p.y - p.z_top)),
@@ -114,6 +119,56 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
         },
       ];
     });
+  const receiverPlane = (edge: JumpEdge): HeightPlane => {
+    const planes = [edge.a, edge.b, edge.a.map((n, i) => (n + edge.b[i]!) / 2) as Vec3].map(
+      (point) => {
+        const x = point[0],
+          y = point[1] - point[2];
+        const candidates = receivers.filter((r) => {
+          if (
+            x < r.minX ||
+            x > r.maxX ||
+            y < r.minY ||
+            y > r.maxY ||
+            Math.abs(planeHeight(r.plane, [x, y]) - point[2]) > 1 + EPSILON
+          )
+            return false;
+          let inside = false;
+          for (let i = 0; i < r.polygon.length; i++) {
+            const a = r.polygon[i]!,
+              b = r.polygon[(i + 1) % r.polygon.length]!;
+            const cross = (x - a[0]) * (b[1] - a[1]) - (y - a[1]) * (b[0] - a[0]);
+            if (
+              Math.abs(cross) < EPSILON &&
+              x >= Math.min(a[0], b[0]) &&
+              x <= Math.max(a[0], b[0]) &&
+              y >= Math.min(a[1], b[1]) &&
+              y <= Math.max(a[1], b[1])
+            )
+              return true;
+            if (a[1] > y !== b[1] > y && x < a[0] + ((y - a[1]) * (b[0] - a[0])) / (b[1] - a[1]))
+              inside = !inside;
+          }
+          return inside;
+        });
+        const first: HeightPlane = candidates[0]?.plane ?? [0, 0, point[2]];
+        if (
+          candidates.some((r) =>
+            r.plane.some((value, axis) => Math.abs(value - first[axis]!) > EPSILON),
+          )
+        )
+          throw new Error("Climbing ledge has ambiguous receiving planes");
+        return first;
+      },
+    );
+    if (
+      planes.some((plane) =>
+        plane.some((value, axis) => Math.abs(value - planes[0]![axis]!) > EPSILON),
+      )
+    )
+      throw new Error("Climbing ledge crosses different receiving planes; split the surface");
+    return planes[0]!;
+  };
   const prisms = obstacles
     .filter((shape) => shape.solid && shape.initial_active !== false)
     .flatMap((shape) => {
@@ -172,23 +227,13 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
       throw new Error(
         "Sloped jump edges need an authored connection; automatic flight clearance requires level ledges",
       );
-    if (!long && Math.abs(edges[0].a[2] - edges[1].a[2]) >= 60) {
-      for (const edge of edges) {
-        const x = (edge.a[0] + edge.b[0]) / 2;
-        const y = (edge.a[1] + edge.b[1] - edge.a[2] - edge.b[2]) / 2;
-        if (
-          slopedReceivers.some(
-            (r) =>
-              x >= r.minX &&
-              x <= r.maxX &&
-              y >= r.minY &&
-              y <= r.maxY &&
-              Math.abs(planeHeight(r.plane, [x, y]) - edge.a[2]) <= 1 + EPSILON,
-          )
-        )
-          throw new Error("Automatic climbing clearance needs horizontal receiving planes");
-      }
-    }
+    const planes =
+      !long && Math.abs(edges[0].a[2] - edges[1].a[2]) >= 60 ? edges.map(receiverPlane) : undefined;
+    const sloped = planes?.some((plane) => Math.abs(plane[0]) + Math.abs(plane[1]) >= EPSILON);
+    if (sloped && Math.abs(edges[0].a[2] - edges[1].a[2]) < 100)
+      throw new Error(
+        "Sloped climbs below the assisted vertical threshold need authored connections",
+      );
     const blocked: Interval[] = [];
     for (const [source, destination, reverse] of [
       [edges[0], edges[1], false],
@@ -211,6 +256,14 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
         source.a[2],
       ];
       const rise = destination.b[2] - source.a[2];
+      const slopedRibbons = sloped
+        ? verticalFlightRibbons(
+            source,
+            destination,
+            planes![reverse ? 1 : 0]!,
+            planes![reverse ? 0 : 1]!,
+          )
+        : [];
       const flights: [Vec3, Vec3, number][] = [];
       const addPath = (path: Vec3[], extraHeight = 0) => {
         for (let i = 1; i < path.length; i++) flights.push([path[i - 1]!, path[i]!, extraHeight]);
@@ -229,7 +282,7 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
           addPath(path);
         flights.push([start, destination.b, 0]);
       }
-      if (!long && Math.abs(rise) >= 60) {
+      if (!sloped && !long && Math.abs(rise) >= 60) {
         if (rise > 0) {
           const target: Vec3 = [
             destination.b[0] + (15 * dy) / length,
@@ -254,17 +307,23 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
           addPath([source.a, ...integratedJumpTrajectory(departure, [destination.b], "down")]);
         }
       }
-      for (const [a, b, extraHeight] of flights) {
-        const ribbon: Vertex[] = [
-          [...a, 0],
-          [...b, 0],
-          [b[0] + dx, b[1] + dy, b[2], 1],
-          [a[0] + dx, a[1] + dy, a[2], 1],
-        ];
-        const minX = Math.min(...ribbon.map((p) => p[0])) - body.radius;
-        const maxX = Math.max(...ribbon.map((p) => p[0])) + body.radius;
-        const minY = Math.min(...ribbon.map((p) => p[1])) - body.radius;
-        const maxY = Math.max(...ribbon.map((p) => p[1])) + body.radius;
+      const ribbons: VerticalFlightRibbon[] = [
+        ...slopedRibbons,
+        ...flights.map(([a, b, extraHeight]): VerticalFlightRibbon => ({
+          points: [a, b, [b[0] + dx, b[1] + dy, b[2]], [a[0] + dx, a[1] + dy, a[2]]],
+          extraHeight,
+        })),
+      ];
+      for (const { points, extraHeight, shift } of ribbons) {
+        const ribbon: Vertex[] = points.map((point, i) => [...point, i < 2 ? 0 : 1]);
+        const minX =
+          Math.min(...ribbon.map((p) => p[0])) - body.radius + Math.min(0, shift?.[0] ?? 0);
+        const maxX =
+          Math.max(...ribbon.map((p) => p[0])) + body.radius + Math.max(0, shift?.[0] ?? 0);
+        const minY =
+          Math.min(...ribbon.map((p) => p[1])) - body.radius + Math.min(0, shift?.[1] ?? 0);
+        const maxY =
+          Math.max(...ribbon.map((p) => p[1])) + body.radius + Math.max(0, shift?.[1] ?? 0);
         for (const prism of prisms) {
           if (
             maxX < prism.bounds[0] ||
@@ -273,11 +332,40 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
             minY > prism.bounds[3]
           )
             continue;
+          if (sloped) {
+            const envelope = { ...body, height: body.height + extraHeight };
+            const range = ribbonParameterRange(
+              points,
+              prism.planes.map((plane) => (point) => {
+                const value = plane([...point, 0], envelope);
+                return shift
+                  ? Math.max(
+                      value,
+                      plane(
+                        [point[0] + shift[0], point[1] + shift[1], point[2] + shift[2], 0],
+                        envelope,
+                      ),
+                    )
+                  : value;
+              }),
+            );
+            if (range) blocked.push(reverse ? [1 - range[1], 1 - range[0]] : range);
+            continue;
+          }
           let intersection = ribbon;
           for (const plane of prism.planes) {
-            intersection = clip(intersection, (point) =>
-              plane(point, { ...body, height: body.height + extraHeight }),
-            );
+            const envelope = { ...body, height: body.height + extraHeight };
+            intersection = clip(intersection, (point) => {
+              const value = plane(point, envelope);
+              if (!shift) return value;
+              const translated: Vertex = [
+                point[0] + shift[0],
+                point[1] + shift[1],
+                point[2] + shift[2],
+                point[3],
+              ];
+              return Math.max(value, plane(translated, envelope));
+            });
             if (!intersection.length) break;
           }
           if (intersection.length) {

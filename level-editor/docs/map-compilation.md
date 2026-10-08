@@ -123,7 +123,11 @@ export carries this into the generated landing zones. Both fields are optional:
 existing rules default to forced long flight without a helper requirement.
 Climbing edges use the same overlap, footprint, body-clearance and current-neighbour
 checks. An unmatched climbing edge emits a warning. Automatic climbing clearance
-currently requires horizontal receiving planes. All ledges, landing bands and
+supports sloped receiving planes for height differences of at least 100 units,
+including receiver binding and the landing lift. Sloped climbs in the mixed
+60–100-unit posture-dependent range still warn and omit the connection. Ambiguous
+receivers or ledges crossing different receiving planes also warn; split those
+surfaces into separate ledges. All ledges, landing bands and
 pair indices are generated after placement; no authored jump zones or pairs are
 needed. These fields can be installed through `pipeline/src/configure-surface-jumps.ts`.
 

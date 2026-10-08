@@ -15,6 +15,9 @@ const results = [];
 const automatic = process.argv.includes("--automatic");
 const reposition = process.argv.includes("--reposition");
 const surfaces = process.argv.includes("--surfaces");
+const slopeArgument = process.argv.find((argument) => argument.startsWith("--slope="));
+const slope = slopeArgument ? Number(slopeArgument.slice("--slope=".length)) : 0;
+assert.ok(Number.isFinite(slope), "Slope must be finite");
 assert.ok(!reposition || automatic, "Repositioning requires geometric attachment rules");
 assert.ok(
   !surfaces || (automatic && reposition),
@@ -45,6 +48,16 @@ for (const height of [0, 40]) {
         delete segment.join;
         segment.attachment = { maxGap: 80, maxRise: 110, maxDrop: 110, minOverlap: 10 };
       }
+    }
+  }
+  if (slope) {
+    const edgeX = upper.gameplay.jumpSegments[0].edge.a[0];
+    const heightAt = (x) => 100 + (x - edgeX) * slope;
+    for (const surface of upper.gameplay.surfaces)
+      surface.height = surface.polygon.map(([x]) => heightAt(x));
+    for (const zone of upper.gameplay.jumpZones) {
+      zone.anchor[2] = heightAt(zone.anchor[0]);
+      for (const point of zone.polygon) point[2] = heightAt(point[0]);
     }
   }
   const compiledAssets = structuredClone(assets);
@@ -139,6 +152,7 @@ for (const height of [0, 40]) {
       automatic,
       reposition,
       surfaces,
+      slope,
       rejected_placements: rejectedPlacements,
       editor_roundtrip: true,
       approach_depth: 4,

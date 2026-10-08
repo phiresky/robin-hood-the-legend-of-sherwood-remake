@@ -107,7 +107,7 @@ test("geometric vertical connections trim blockers and retain independent usable
     assert.deepEqual(createJumpClearance([blocker])(pair.edges as [JumpEdge, JumpEdge], false), []);
 });
 
-test("automatic vertical clearance reports sloped receiving planes instead of assuming a flat landing", () => {
+test("automatic vertical clearance follows the receiving plane during the landing lift", () => {
   const climbing: [JumpEdge, JumpEdge] = [
     edges[0],
     {
@@ -124,11 +124,38 @@ test("automatic vertical clearance reports sloped receiving planes instead of as
     [46, 101, 101],
     [36, 200, 100],
   ];
-  assert.throws(
-    () => createJumpClearance([receiver])(climbing, false),
-    /horizontal receiving planes/,
-  );
+  assert.deepEqual(createJumpClearance([receiver])(climbing, false), []);
+  const obstruction = wall(20.98, 208.48, 0.04, 0.04, 158.48, 158.52);
+  const blocked = createJumpClearance([receiver, obstruction])(climbing, false);
+  assert.ok(blocked.some(([a, b]) => a <= 0.5 && b >= 0.5));
   assert.doesNotThrow(() => createJumpClearance([receiver])(climbing, true));
+  const competing = structuredClone(receiver);
+  competing.projection_plane![1]![1] += 1;
+  competing.projection_plane![1]![2] += 1;
+  assert.throws(
+    () => createJumpClearance([receiver, competing])(climbing, false),
+    /ambiguous receiving planes/,
+  );
+
+  const shallow = structuredClone(climbing);
+  for (const point of [shallow[1].a, shallow[1].b]) {
+    point[1] -= 20;
+    point[2] -= 20;
+  }
+  const lowerReceiver = structuredClone(receiver);
+  for (const point of lowerReceiver.points) {
+    point.y -= 20;
+    point.z_top -= 20;
+    point.z_bottom -= 20;
+  }
+  for (const point of lowerReceiver.projection_plane!) {
+    point[1] -= 20;
+    point[2] -= 20;
+  }
+  assert.throws(
+    () => createJumpClearance([lowerReceiver])(shallow, false),
+    /assisted vertical threshold/,
+  );
 });
 
 test("flight clearance intersects the whole span, including thin off-centre obstacles", () => {

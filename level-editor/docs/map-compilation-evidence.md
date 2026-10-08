@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Sloped climbing clearance (2026-10-08)
+
+Automatic climbing clearance now accounts for the receiving plane during airborne
+arrival, receiver binding, the landing lift and subsequent plane-bound movement.
+All geometry preparation runs during export; no production engine changes are
+needed. Four-point movement envelopes can be non-planar, so clearance intersects
+their full convex hull. A regression covers a small obstacle enclosed inside that
+hull, which boundary-only intersection would miss. Continuous span bounds also
+cover fixed-step flight overshoot without sampling takeoff positions.
+
+`check-vertical-jump-placements.mjs --automatic --reposition --slope=0.1`
+and `--slope=-0.1` produced batches `prepared-vertical-jumps-tMKDRt` and
+`prepared-vertical-jumps-NNPmWw`. Adding `--surfaces --slope=0.1` produced
+`prepared-vertical-jumps-JcovHu`, deriving connections from surface rules alone.
+Each batch covers two independent copies at four rotations and two elevations,
+eight editor reopen/recompile checks and 32 disconnected-copy controls.
+
+Together these pass **480 isolated traversals and 480 player-click routes**,
+including helper-required ascent, upright descent, receiver ownership and helper
+recovery. `check-native-jump-clearance.mjs` checks all **23,540 recorded native
+positions** against tiny obstacle probes while retaining the exported receiving
+planes. All probes block their corresponding takeoff parameter. The **249 selected
+compiler/export tests**, app typecheck and scoped lint pass.
+
+This supports sloped vertical climbs at height differences of at least 100 units.
+The mixed 60–100-unit posture-dependent branch still warns for sloped receivers;
+ambiguous or changing receiving planes also require separate ledges. Broader
+library authoring, rendering, combat interaction and multi-PC formations remain
+open. These fixture results do not establish full gameplay parity.
+
 ## Surface-derived climbing connections (2026-10-08)
 
 Asset-local walkable surfaces can now declare `jump.long: false` and
