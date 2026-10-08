@@ -44,6 +44,16 @@ remain failing tests. Earlier physical traversal results do not certify this
 architecture. Authorized direct-route probes now enable the native direct check;
 forcing graph-only search for an already clear segment is not the request contract.
 
+Stair diagnosis: `compiled_approaches::derive` skips lifts carrying
+`physical_navigation`, although movement no longer consumes that metadata. Merely
+removing the skip violates its separate projected-endpoint identity validation.
+A temporary diagnostic that removed this metadata before loading let the existing
+startup approach preparation run: ordinary stair barrier traversal and copied
+stair barrier independence both passed. The diagnostic was removed, and these
+tests remain failures with the actual exports. Compile actor-clearance approach
+points into the descriptor and retire the obsolete endpoint dependency; do not
+restore movement-time repair. Overlapping stair receivers remain to be checked.
+
 The saved Derby scene compiles a **613,728-byte graph**, with no graph omission
 warning, in roughly 4.6 seconds of export-time graph preparation. Its descriptor
 constructs 60 areas, 848 sight obstacles, 70 doors and 2 jump pairs. Native sampling
