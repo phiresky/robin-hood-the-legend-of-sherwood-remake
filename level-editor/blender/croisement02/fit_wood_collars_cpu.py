@@ -22,7 +22,7 @@ def sample(values,t,query):
     closed=np.vstack([values,values[0]]);abscissa=np.r_[t,1.]
     return np.column_stack([np.interp(np.mod(query,1),abscissa,closed[:,i]) for i in range(values.shape[1])])
 
-def fit(lower,upper,*,include_geometry=False,tangent_mode="up-projection",forced_phase=None,tangent_smoothing=0.,validate_float32=False):
+def fit(lower,upper,*,include_geometry=False,tangent_mode="up-projection",forced_phase=None,tangent_smoothing=0.,validate_float32=False,fixed_tangent_scale=None):
     lo,ln,lt=loop_data(lower['positions'],lower['normals']);hi,hn,ht=loop_data(upper['positions'],upper['normals'])
     queries=np.arange(128)/128;high=sample(hi,ht,queries);high-=high.mean(axis=0);high/=np.sqrt(np.mean(high[:,:2]**2))
     costs=[]
@@ -62,7 +62,7 @@ def fit(lower,upper,*,include_geometry=False,tangent_mode="up-projection",forced
         if np.any(length<1e-6):raise ValueError('Horizontal cap normal cannot define upward collar tangent')
         tangents.append(tangent/length[:,None]*height)
     attempts=[]
-    for tangent_scale in [1.,.5,.25,.125,.0625,.03125]:
+    for tangent_scale in ([fixed_tangent_scale] if fixed_tangent_scale is not None else [1.,.5,.25,.125,.0625,.03125]):
         endpoint_samples=np.array([0,1e-5,1e-4,.0005,.001,.002,.005,.01])
         parameters=np.unique(np.r_[endpoint_samples,np.linspace(0,1,49),1-endpoint_samples])
         rows=collar(lower_points,upper_points,*(v*tangent_scale for v in tangents),parameters=parameters);quality=collar_quality(rows)
@@ -74,13 +74,16 @@ def fit(lower,upper,*,include_geometry=False,tangent_mode="up-projection",forced
                 a=r[:-1];b=np.roll(r[:-1],-1,axis=1);c=np.roll(r[1:],-1,axis=1);d=r[1:]
                 return np.stack([np.cross(b-a,c-a),np.cross(c-a,d-a)])
             actual=triangles_normal(stored);reference=triangles_normal(source_rows)
+            column_edges=np.linalg.norm(np.roll(stored,-1,axis=1)-stored,axis=-1)
+            quality['float32_minimum_column_edge']=float(column_edges.min())
+            quality['float32_short_columns']=int((column_edges<.00025).sum())
             quality['float32_degenerate_triangles']=int((np.linalg.norm(actual,axis=-1)/2<1e-9).sum())
             quality['float32_reversed_triangles']=int((np.sum(actual*reference,axis=-1)<0).sum())
         attempts.append(dict(tangent_scale=tangent_scale,**quality))
-        if quality['collapsed_quads']==quality['reversed_quads']==quality['undefined_reference_normals']==quality.get('float32_degenerate_triangles',0)==quality.get('float32_reversed_triangles',0)==0:break
+        if quality['collapsed_quads']==quality['reversed_quads']==quality['undefined_reference_normals']==quality.get('float32_degenerate_triangles',0)==quality.get('float32_reversed_triangles',0)==quality.get('float32_short_columns',0)==0:break
     original_errors=[float(cKDTree(points).query(original)[0].max()) for points,original in [(lower_points,lo),(upper_points,hi)]]
     if max(original_errors)>1e-7:raise ValueError('Existing boundary vertex lost during edge subdivision')
-    result=dict(lower_height=float(lo[0,2]),upper_height=float(hi[0,2]),lower_vertices=len(lo),upper_vertices=len(hi),common_subdivision_vertices=len(t),tangent_mode=tangent_mode,normal_regularization=normal_regularization,lower_phase=phase,normalized_shape_cost=float(min(costs)),original_boundary_vertex_error=original_errors,quality=quality,tangent_scale=tangent_scale,tangent_scale_attempts=attempts,eligible_for_bounded_integration=quality['collapsed_quads']==quality['reversed_quads']==quality['undefined_reference_normals']==quality.get('float32_degenerate_triangles',0)==quality.get('float32_reversed_triangles',0)==0,limits=['CPU correspondence only; no saved mesh or source rasterization approval.','Existing boundary edges would be subdivided without moving original points.','Actual collar source coverage, physical contact and solid/actual appearance remain required.'])
+    result=dict(lower_height=float(lo[0,2]),upper_height=float(hi[0,2]),lower_vertices=len(lo),upper_vertices=len(hi),common_subdivision_vertices=len(t),tangent_mode=tangent_mode,normal_regularization=normal_regularization,lower_phase=phase,normalized_shape_cost=float(min(costs)),original_boundary_vertex_error=original_errors,quality=quality,tangent_scale=tangent_scale,tangent_scale_attempts=attempts,eligible_for_bounded_integration=quality['collapsed_quads']==quality['reversed_quads']==quality['undefined_reference_normals']==quality.get('float32_degenerate_triangles',0)==quality.get('float32_reversed_triangles',0)==quality.get('float32_short_columns',0)==0,limits=['CPU correspondence only; no saved mesh or source rasterization approval.','Existing boundary edges would be subdivided without moving original points.','Actual collar source coverage, physical contact and solid/actual appearance remain required.'])
     if include_geometry:
         result['geometry']={'rows':rows.tolist(),'parameters':parameters.tolist(),'lower_original':lo.tolist(),'upper_original':hi.tolist(),'lower_correspondence':np.mod(t+phase,1.).tolist(),'upper_correspondence':t.tolist()}
     return result

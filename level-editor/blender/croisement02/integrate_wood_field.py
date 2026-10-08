@@ -74,6 +74,7 @@ def main():
     parser.add_argument('--packet', type=Path, required=True)
     parser.add_argument('--tree', type=int, choices=[32, 38], required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--compress', action='store_true', help='Losslessly compress fresh blend output')
     args = parser.parse_args(sys.argv[sys.argv.index('--')+1:])
     if args.output.exists():
         raise FileExistsError(args.output)
@@ -134,6 +135,16 @@ def main():
         bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
         report = mesh_report(bm)
         if report['nonmanifold_edges'] or report['degenerate_faces']:
+            # Capture only the failed local construction for CPU diagnosis;
+            # never save an invalid model or silently drop its source surface.
+            bad = [f for f in bm.faces if f.calc_area() < 1e-9]
+            args.output.mkdir(parents=True, exist_ok=True)
+            failure = dict(status='Rejected before save', topology=report,
+                           packet_sha256=sha(args.packet),
+                           degenerate_faces=[dict(material_index=f.material_index,
+                                                  coordinates=[list(v.co) for v in f.verts])
+                                             for f in bad[:32]])
+            (args.output/'failure-geometry.json').write_text(json.dumps(failure, indent=2)+'\n')
             raise ValueError(report)
         # Keep a continuous diagnostic owner until native-owner splitting and
         # source projection can be performed and audited together. This model
@@ -156,7 +167,7 @@ def main():
             raise ValueError('Protected crown or other asset changed')
         args.output.mkdir(parents=True)
         destination = args.output/'model.blend'
-        bpy.ops.wm.save_as_mainfile(filepath=str(destination))
+        bpy.ops.wm.save_as_mainfile(filepath=str(destination), compress=args.compress)
         if sha(model) != record['input_model_sha256']:
             raise ValueError('Input changed')
         evidence = dict(status='PRIVATE HOLD: neutral local geometry prototype only', model_sha256=sha(destination), input_model=str(model), input_model_sha256=record['input_model_sha256'], packet=str(args.packet.resolve()), packet_sha256=sha(args.packet), recipe_sha256=sha(Path(__file__)), mesh=report, retained_vertex_max_drift=drift, protected=protected, source_mask_unchanged=True,
