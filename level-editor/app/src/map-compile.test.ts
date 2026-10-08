@@ -1289,18 +1289,20 @@ test("climb entrance barriers are exported with current approaches and graphs", 
     ),
   );
   let index = 0;
-  for (const [type, high] of [
-    [2, 4],
-    [3, 4],
-    [3, 6],
-  ] as const) {
-    for (const rotation of [0, 90, 180, 270]) {
-      const { document, assets } = entranceBarrierClimbCompilerFixture(type, high);
-      document.groups[0]!.transform = { dx: 900, dy: 900, dz: 20, rot_deg: rotation };
-      assert.deepEqual(
-        compileMap(document, [0, 0, 2000, 2000], assets).descriptor,
-        fixtures[index++],
-      );
+  for (const end of ["low", "high"] as const) {
+    for (const [type, high] of [
+      [2, 4],
+      [3, 4],
+      [3, 6],
+    ] as const) {
+      for (const rotation of [0, 90, 180, 270]) {
+        const { document, assets } = entranceBarrierClimbCompilerFixture(type, high, end);
+        document.groups[0]!.transform = { dx: 900, dy: 900, dz: 20, rot_deg: rotation };
+        assert.deepEqual(
+          compileMap(document, [0, 0, 2000, 2000], assets).descriptor,
+          fixtures[index++],
+        );
+      }
     }
   }
 });

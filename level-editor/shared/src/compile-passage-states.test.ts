@@ -51,16 +51,16 @@ test("fresh climb exports detect the entry blocker in every rotated placement", 
       "utf8",
     ),
   );
-  assert.equal(fixtures.length, 12);
+  assert.equal(fixtures.length, 24);
   for (const [index, { asset_geometry: geometry }] of fixtures.entries()) {
     const before = JSON.stringify(geometry);
     const conditions = compileLiftPassageStates(geometry);
     assert.deepEqual(
-      conditions[0]![0],
+      conditions[0]![index < 12 ? 0 : 1],
       [{ layer: 2, area: 0, allowed_states: [1] }],
       `placement ${index}`,
     );
-    assert.deepEqual(conditions[0]![1], [], `opposite entrance ${index}`);
+    assert.deepEqual(conditions[0]![index < 12 ? 1 : 0], [], `opposite entrance ${index}`);
     assert.equal(
       JSON.stringify(geometry),
       before,

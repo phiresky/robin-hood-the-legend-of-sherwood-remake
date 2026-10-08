@@ -91,16 +91,17 @@ Broader gameplay, other large scenes and full sprite/rendered validation remain 
 Fresh complete-character-animation checks also pass for climb barriers through
 initial/apply/reset states, independent copies, closure during a climb and 72
 mid-climb reopening cases. Initial entrance-animation blocking is now fixed.
-`changing_climb_barrier_near_entrance_blocks_actor_approach` now consumes twelve
-fresh editor exports (ladder and both wall-top variants, four rotations), rather
+`changing_climb_barrier_near_entrance_blocks_actor_approach` now consumes twenty-four
+fresh editor exports (ladder and both wall-top variants, four rotations, barriers
+at either end), rather
 than mutating serialized stair geometry. The authored barrier lies between the
-entrance midpoint and inner route point. All twelve placements reject traversal
+entrance midpoint and inner route point. All twenty-four cases reject traversal
 while the blocker is active and complete both directions before applying and
 after resetting it. The editor/native fixture equality test passes, proving
 these conditions are actual export output.
 
 Export-time preparation now computes per-area passage clearance masks, sharing
-the walking graph's swept-footprint checks. All twelve entrance fixtures detect
+the walking graph's swept-footprint checks. All twenty-four entrance fixtures detect
 the active barrier, leave the opposite entrance unrestricted and preserve their
 geometry. Tests cover independent state pairs, alternate-state obstacles,
 permanent blockers and the high state bit. Conditions are serialized on lift
@@ -110,9 +111,9 @@ before special permissions. Invalid area/state references fail loading, and a
 state reset cannot reactivate a script-disabled door. An already-running passage
 checks that same cached flag before advancing its order. Closing pauses its
 position and animation cursor; reopening resumes the retained order. No geometry
-work occurs in this runtime check. Thirty-six complete-sprite low-entry cases
-cover all twelve placements, permanent closure and reopening after 20/120 ticks.
-Closure at other animation phases and high entrances needs broader coverage.
+work occurs in this runtime check. Seventy-two complete-sprite entry cases
+cover lower and upper entrances, sustained closure and reopening after 20/120 ticks.
+Later animation phases, actor overlap/crushing and rendered traversal need broader coverage.
 
 The pipeline-wide TypeScript check currently fails in `state-delivery.test.ts`
 (presentation-frame fields and assertion/narrowing types), outside these changes.

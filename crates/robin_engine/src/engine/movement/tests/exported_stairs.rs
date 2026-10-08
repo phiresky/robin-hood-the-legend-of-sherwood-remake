@@ -842,7 +842,7 @@ fn changing_climb_barrier_near_entrance_blocks_actor_approach() {
         "/tests/fixtures/asset-climb-entrance-barriers.levels.json"
     )))
     .unwrap();
-    assert_eq!(fixtures.len(), 12);
+    assert_eq!(fixtures.len(), 24);
     for (placement, fixture) in fixtures.iter().enumerate() {
         let lift_type = &fixture["asset_geometry"]["lifts"][0]["lift_type"];
         let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(&fixture).unwrap());
@@ -897,6 +897,7 @@ fn changing_climb_entry_barrier_closes_during_animation() {
     .unwrap();
     for (placement, fixture) in fixtures.iter().enumerate() {
         let (engine, assets) = compiled_walkway(&serde_json::to_vec(fixture).unwrap());
+        let entrance = usize::from(placement >= 12);
         for reopen_after in [None, Some(20), Some(120)] {
             let sim = crate::sim_rng::test_context();
             let mut applied = false;
@@ -906,8 +907,8 @@ fn changing_climb_entry_barrier_closes_during_animation() {
             let result = walk_exported_lift_with_tick(
                 engine.clone(),
                 assets.clone(),
-                0,
-                1,
+                entrance,
+                1 - entrance,
                 Some(&sprite),
                 |engine, assets, owner| {
                     let element = engine.ent(owner).element_data();
@@ -940,6 +941,9 @@ fn changing_climb_entry_barrier_closes_during_animation() {
                         element.sprite.last_action,
                         OrderType::TransitionWaitingUprightClimbingLadderUp
                             | OrderType::TransitionWaitingUprightClimbingWallUp
+                            | OrderType::TransitionWaitingCrouchedClimbingLadderDown
+                            | OrderType::TransitionWaitingCrouchedClimbingWallDown
+                            | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
                     ) {
                         return;
                     }

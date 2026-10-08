@@ -43,5 +43,6 @@ they do not inspect geometry. Script activation and locks remain independent.
 Replay schema 69 includes the cached flag. An executing passage checks that flag
 before advancing its retained animation/order cursor. If blocked it pauses until
 the prepared conditions permit passage again. This is a boolean lookup, not a
-geometry query or route reconstruction. Thirty-six low-entry animation cases
-verify closure and reopening; other phases still need broader validation.
+geometry query or route reconstruction. Seventy-two lower/upper entry animation
+cases verify closure and reopening; later phases and actor overlap/crushing
+still need broader validation.
