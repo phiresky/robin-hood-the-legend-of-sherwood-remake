@@ -763,6 +763,7 @@ impl EngineInner {
                 .pathfinder
                 .initialize_from_graph(assets.navigation.pathfinder_graph.as_ref(), grid);
         }
+        self.refresh_passage_states(assets);
 
         tracing::debug!(
             elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,

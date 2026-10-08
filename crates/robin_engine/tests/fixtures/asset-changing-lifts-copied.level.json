@@ -724,6 +724,7 @@
         ],
         "doors": [
           {
+            "passage_states": [{"layer":4,"area":0,"allowed_states":[1]}],
             "door_type": 5,
             "active": true,
             "locked_pc": false,
@@ -755,6 +756,7 @@
             "layer_in": 4
           },
           {
+            "passage_states": [{"layer":4,"area":0,"allowed_states":[1]}],
             "door_type": 4,
             "active": true,
             "locked_pc": false,

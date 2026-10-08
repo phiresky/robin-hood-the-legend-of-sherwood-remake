@@ -40,8 +40,9 @@ format extension does not change search or movement algorithms. Boundary checks 
 operations, and outward/collinear floor corners no longer produce detour nodes.
 
 Current validation: the game builds; 218 selected editor compiler/export tests
-pass; native map integration reports **69 passed, 5 ignored**. The engine suite
-reports **4,339 passed, 0 failed, 34 ignored**. Stair receivers,
+pass; native map integration reports **69 passed, 5 ignored**, and level-data
+tests report **88 passed, 8 ignored**. The engine suite
+reports **4,341 passed, 0 failed, 34 ignored**. Stair receivers,
 overlapping/copied traversal and changing stair barriers now pass with prepared
 native endpoints. Earlier physical traversal results do not certify this
 architecture. Authorized direct-route probes now enable the native direct check;
@@ -89,22 +90,26 @@ Broader gameplay, other large scenes and full sprite/rendered validation remain 
 
 Fresh complete-character-animation checks also pass for climb barriers through
 initial/apply/reset states, independent copies, closure during a climb and 72
-mid-climb reopening cases. Entrance-animation blocking remains a confirmed gap.
+mid-climb reopening cases. Initial entrance-animation blocking is now fixed.
 `changing_climb_barrier_near_entrance_blocks_actor_approach` now consumes twelve
 fresh editor exports (ladder and both wall-top variants, four rotations), rather
 than mutating serialized stair geometry. The authored barrier lies between the
-entrance midpoint and inner route point. Its active state is crossed at placement
-0/type 2/entrance 0. The existing externally enabled regression remains failing.
-The editor/native fixture equality test passes, proving this is actual export
-output. Prepare connection-state constraints for these animation passages; do
-not restore runtime physical geometry solving.
+entrance midpoint and inner route point. All twelve placements reject traversal
+while the blocker is active and complete both directions before applying and
+after resetting it. The editor/native fixture equality test passes, proving
+these conditions are actual export output.
 
 Export-time preparation now computes per-area passage clearance masks, sharing
 the walking graph's swept-footprint checks. All twelve entrance fixtures detect
 the active barrier, leave the opposite entrance unrestricted and preserve their
 geometry. Tests cover independent state pairs, alternate-state obstacles,
-permanent blockers and the high state bit. This helper is not yet serialized or
-bound to gate authorization: the native entrance regression remains unresolved.
+permanent blockers and the high state bit. Conditions are serialized on lift
+doors and retained with immutable navigation assets. Startup and obstacle-state
+changes update one blocked flag per constrained door; authorization reads it
+before special permissions. Invalid area/state references fail loading, and a
+state reset cannot reactivate a script-disabled door. No geometry work occurs
+in this runtime check. Closing a barrier during the entry animation, rather than
+before entry or during the interior climb, remains unverified.
 
 The pipeline-wide TypeScript check currently fails in `state-delivery.test.ts`
 (presentation-frame fields and assertion/narrowing types), outside these changes.
@@ -119,13 +124,13 @@ the distribution.
 
 | Mission | Prepared nodes | Frame 5 | Median tick | p95 | Maximum |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| H07_Not_MK | 891 | 0.819 ms | 0.949 ms | 1.117 ms | 1.487 ms |
-| H01_Lin_VL | 633 | 0.226 ms | 0.183 ms | 0.284 ms | 0.526 ms |
-| S01_Not_VL | 891 | 0.602 ms | 0.670 ms | 0.810 ms | 0.891 ms |
+| H07_Not_MK | 891 | 1.458 ms | 1.046 ms | 1.690 ms | 3.163 ms |
+| H01_Lin_VL | 633 | 0.210 ms | 0.193 ms | 0.274 ms | 0.489 ms |
+| S01_Not_VL | 891 | 0.641 ms | 0.691 ms | 0.794 ms | 0.959 ms |
 
-Latest evidence: `work/map-compile/navigation-performance-20261008.json` under
+Latest evidence: `work/map-compile/passage-performance-20261008.json` under
 the editor directory. These are working-tree measurements, including concurrent
-engine fixes; the improvement is not attributed solely to shortcut verification.
+engine fixes and timing variation; they do not isolate the cost of this change.
 
 The pre-removal reproduction stalled at Silver Arrow frame 5 until a 60-second
 external timeout. That reproduction used the unoptimized test profile, so these

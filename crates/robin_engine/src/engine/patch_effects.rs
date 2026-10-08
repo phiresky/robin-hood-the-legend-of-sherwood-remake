@@ -343,11 +343,28 @@ impl EngineInner {
 
             appeared_by_area.push((change, appeared));
         }
+        self.refresh_passage_states(tcx.assets);
         // Replanning must see the complete transition, not a mix of old and new areas.
         if !forced_reset {
             for (change, appeared) in appeared_by_area {
                 self.invalidate_paths_and_kill_crushed(tcx, change.layer, change.sector, &appeared);
             }
+        }
+    }
+
+    /// Evaluate only prepared masks, once at startup or after a state change.
+    /// Script activation and special permissions cannot override solid geometry.
+    pub(super) fn refresh_passage_states(&mut self, assets: &super::LevelAssets) {
+        for (door, requirements) in &assets.navigation.passage_states {
+            self.script_domains.interactables.doors[*door].passage_blocked =
+                !requirements.iter().all(|requirement| {
+                    let state = self.world.pathfinder.states[usize::from(requirement.layer)]
+                        [usize::from(requirement.area)];
+                    requirement
+                        .allowed_states
+                        .iter()
+                        .any(|mask| state & mask == *mask)
+                });
         }
     }
 

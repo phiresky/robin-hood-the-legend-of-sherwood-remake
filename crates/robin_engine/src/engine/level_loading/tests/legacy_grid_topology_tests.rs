@@ -6,6 +6,7 @@ use crate::level_data::{
 
 fn door(has_click_sector: bool) -> RawDoor {
     RawDoor {
+        passage_states: Vec::new(),
         world_endpoints: None,
         door_type: 0,
         active: true,

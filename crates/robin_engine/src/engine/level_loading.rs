@@ -2132,6 +2132,19 @@ impl EngineInner {
         resolve_hiking_waypoint_sector_identities(assets, &self.world.fast_grid.level.sectors);
         let level_plan = level_builder.preflight(self, assets, &loaded)?;
         self.build_mission_level_stages(assets, &loaded, &level_plan)?;
+        assets.navigation.passage_states = loaded
+            .proto
+            .buildings
+            .iter()
+            .flat_map(|entry| match entry {
+                crate::level_data::RawBuildingEntry::Building { doors }
+                | crate::level_data::RawBuildingEntry::StandaloneDoors { doors } => doors,
+            })
+            .chain(loaded.proto.lifts.iter().flat_map(|lift| &lift.doors))
+            .enumerate()
+            .filter(|(_, door)| !door.passage_states.is_empty())
+            .map(|(index, door)| (index, door.passage_states.clone()))
+            .collect();
         self.install_reinforcement_doors_stage(assets, &loaded);
         self.attach_jump_gates(staging)?;
         self.attach_mission_level_stage(&level_plan)?;
@@ -4140,6 +4153,7 @@ impl EngineInner {
                     .push(crate::gate::Door {
                         gate_type: crate::gate::GateType::Door,
                         active: raw.active,
+                        passage_blocked: false,
                         door_type,
                         locked_pc: raw.locked_pc,
                         locked_npc_villain: raw.locked_npc_villain,

@@ -1788,6 +1788,9 @@ pub struct RawJumpLinePair {
     bitcode::Decode,
 )]
 pub struct RawDoor {
+    /// Export-prepared obstacle-state requirements for the animated passage.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub passage_states: Vec<PassageStateRequirement>,
     /// Precise placed endpoints for compiled passages. Integer waypoints remain
     /// the spatial-index identity, not a source for recovering world positions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1810,6 +1813,23 @@ pub struct RawDoor {
     pub point_in: (i16, i16),
     pub sector_in: u16,
     pub layer_in: u16,
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Serialize,
+    Deserialize,
+    robin_state_hash_derive::StateHash,
+    bitcode::Encode,
+    bitcode::Decode,
+)]
+#[serde(deny_unknown_fields)]
+pub struct PassageStateRequirement {
+    pub layer: u16,
+    pub area: u16,
+    /// At least one mask must match; no masks means permanently blocked.
+    pub allowed_states: Vec<u32>,
 }
 
 /// Place an inside approach at the animation's fixed offset from its midpoint.
@@ -3021,6 +3041,26 @@ impl LoadedLevel {
                     | RawBuildingEntry::StandaloneDoors { doors } => doors,
                 }))
             {
+                for requirement in &door.passage_states {
+                    let area = geometry
+                        .motion_data
+                        .layers
+                        .get(usize::from(requirement.layer))
+                        .and_then(|areas| areas.get(usize::from(requirement.area)))
+                        .ok_or("passage state requirement references a missing motion area")?;
+                    let used = area
+                        .obstacles
+                        .iter()
+                        .fold(0, |bits, obstacle| bits | obstacle.state_id);
+                    let paired = ((used & 0x5555_5555) << 1) | ((used & 0xaaaa_aaaa) >> 1);
+                    for &mask in &requirement.allowed_states {
+                        if mask & !(used | paired) != 0 || mask & (mask >> 1) & 0x5555_5555 != 0 {
+                            return Err(
+                                "passage requirement has invalid obstacle-state bits".into()
+                            );
+                        }
+                    }
+                }
                 if let Some(points) = &door.world_endpoints {
                     for (world, screen) in [
                         (points.inside, door.point_in),
@@ -5564,6 +5604,7 @@ fn read_one_door(reader: &mut ChunkReader, format: LevelFormat) -> Result<RawDoo
     let layer_in = reader.read_u16()?;
 
     Ok(RawDoor {
+        passage_states: Vec::new(),
         world_endpoints: None,
         door_type,
         active,

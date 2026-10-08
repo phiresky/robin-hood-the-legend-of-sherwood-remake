@@ -24,3 +24,21 @@ The compiler currently prepares the stock 6×3 actor half-diagonal. It computes
 clearance and conditional-state requirements before writing links. The format
 extension neither adds geometry solving during movement nor certifies the
 correctness of a map's contours or routes.
+
+## Animated passage conditions
+
+Compiled lift doors may carry `passage_states`, an array of
+`{ layer, area, allowed_states }`. Layer and area address the prepared motion
+table. Each `allowed_states` entry is a required-state `u32` mask; a requirement
+matches when any mask satisfies `(current_state & mask) == mask`. Every listed
+requirement must match. An empty mask list blocks the entrance permanently;
+omitting the requirements leaves normal gate permissions in control.
+
+The compiler checks swept entrance segments against the placed obstacles and
+retains area-local state identities. It warns about permanently blocked
+entrances. The loader validates addresses and state bits, stores requirements
+with immutable navigation assets and caches a blocked flag on the door at
+startup and after obstacle-state changes. Permission queries read that flag;
+they do not inspect geometry. Script activation and locks remain independent.
+Replay schema 69 includes the cached flag. Mid-animation closure still requires
+separate validation; initial-state rejection is not evidence for that case.

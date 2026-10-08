@@ -248,6 +248,11 @@ pub struct Door {
     pub gate_type: GateType,
     pub active: bool,
 
+    /// Cached result of export-prepared passage conditions. Independent of
+    /// script activation and lock permissions; refreshed only on state changes.
+    #[serde(default)]
+    pub passage_blocked: bool,
+
     // -- Door type --
     pub door_type: DoorType,
 
@@ -389,6 +394,7 @@ impl Default for Door {
         Self {
             gate_type: GateType::Door,
             active: true,
+            passage_blocked: false,
             door_type: DoorType::Default,
             locked_pc: false,
             locked_npc_villain: false,
@@ -813,6 +819,9 @@ impl Door {
         building_has_capacity: bool,
         allow_leave_map: bool,
     ) -> bool {
+        if self.passage_blocked {
+            return false;
+        }
         // Jump gates have their own authorization path.  This implements the
         // strictest variant (test posture, do not pass-through on missing
         // posture) — A* pathfinding and authorization pre-checks must never
@@ -1893,6 +1902,25 @@ pub fn lift_endpoint_door_indices(doors: &[Door], lift_sector: SectorNumber) -> 
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prepared_passage_blocking_precedes_special_permissions() {
+        let mut door = super::Door {
+            door_type: super::DoorType::LiftLow,
+            passage_blocked: true,
+            locked_pc: true,
+            special_authorisation_pc: true,
+            authorised_pc_direct: u16::MAX,
+            authorised_pc_indirect: u16::MAX,
+            ..Default::default()
+        };
+        let actor = pc_actor(false);
+        assert!(!door.is_actor_authorized(true, &actor, true, false));
+        assert!(!door.is_actor_authorized(false, &actor, true, false));
+        door.passage_blocked = false;
+        assert!(door.is_actor_authorized(true, &actor, true, false));
+        assert!(door.is_actor_authorized(false, &actor, true, false));
+    }
+
     use super::*;
 
     fn no_lift(_: SectorNumber) -> Option<LiftType> {

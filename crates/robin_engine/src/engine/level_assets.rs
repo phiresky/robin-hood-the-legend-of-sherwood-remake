@@ -70,6 +70,10 @@ pub struct LevelAssets {
 /// Immutable navigation geometry and exact authored topology. Runtime active bits remain in the engine.
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct LevelNavigationAssets {
+    /// Export-prepared passage conditions indexed by native door identity.
+    /// Only constrained doors are stored; refreshed on obstacle-state changes.
+    #[serde(default)]
+    pub passage_states: Vec<(usize, Vec<crate::level_data::PassageStateRequirement>)>,
     /// Static fast-find grid geometry built at level load. Runtime
     /// active/overlay bits live on `EngineInner::fast_grid`; snapshots
     /// reattach this Arc after decode.

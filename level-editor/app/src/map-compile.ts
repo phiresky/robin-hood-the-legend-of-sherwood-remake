@@ -9,6 +9,7 @@ import type { ProjectionAssetDescriptor } from "@rle/shared";
 import { packageAppearanceRegions, type BakedAppearanceRegion } from "./map-appearance.ts";
 import { compileMission } from "./compile-mission.ts";
 import { compileLiftApproaches } from "../../shared/src/compile-lift-approaches.ts";
+import { compileLiftPassageStates } from "../../shared/src/compile-passage-states.ts";
 import type { SceneryResources } from "./scenery-resources.ts";
 
 export type BakeBounds = [number, number, number, number];
@@ -110,7 +111,20 @@ export function compileMap(
           },
         })
       : undefined;
-  if (assetGeometry) compileLiftApproaches(assetGeometry);
+  if (assetGeometry) {
+    compileLiftApproaches(assetGeometry);
+    const passageStates = compileLiftPassageStates(assetGeometry);
+    assetGeometry.lifts?.forEach((lift, index) => {
+      lift.doors.forEach((door, doorIndex) => {
+        const requirements = passageStates[index]![doorIndex]!;
+        if (requirements.length) door.passage_states = requirements;
+        if (requirements.some((requirement) => requirement.allowed_states.length === 0))
+          (assetGeometry.warnings ??= []).push(
+            `Lift ${index} door ${doorIndex}: the animated passage intersects a permanent movement obstacle; this entrance is unavailable.`,
+          );
+      });
+    });
+  }
   const volumes = assetGeometry ? [] : compileVolumes(document, bounds);
   const mission = compileMission(document, bounds, assetGeometry, options.bestEffort, volumes);
   const warnings = assetGeometry

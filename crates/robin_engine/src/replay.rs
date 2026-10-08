@@ -175,7 +175,8 @@ pub struct ReplayHeader {
 /// Version 66 distinguishes exact network state adoption from saved-game loads.
 /// Version 67 retains ordinary physical floor identities on movement orders.
 /// Version 68 removes physical solver orders and runtime door endpoints.
-pub const REPLAY_SCHEMA_VERSION: u32 = 68;
+/// Version 69 stores the prepared passage availability bit on doors.
+pub const REPLAY_SCHEMA_VERSION: u32 = 69;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

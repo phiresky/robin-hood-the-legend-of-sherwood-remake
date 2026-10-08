@@ -6,6 +6,10 @@
   describing those experimental runtime paths are superseded. Larger exports use
   a versioned graph stream with 32-bit link counts and indices, loaded into the
   existing pathfinder without changing its search or movement algorithm.
+  Animated lift entrances also carry export-prepared obstacle-state masks.
+  Gate availability is cached at startup and state changes, independently of
+  scripted activation and lock permissions. Permanently obstructed entrances
+  remain in best-effort exports with an explicit warning.
 
 - **Multiplayer desync recovery.** A client hash mismatch requests diagnostics,
   suspends gameplay and reconnects for a fresh host snapshot. Input resumes only

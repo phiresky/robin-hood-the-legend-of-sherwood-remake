@@ -1,5 +1,41 @@
 use super::*;
 
+#[test]
+fn prepared_passage_state_preserves_script_activation_and_validates_bindings() {
+    let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-climb-entrance-barriers.levels.json"
+    )))
+    .unwrap();
+    let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(&fixtures[0]).unwrap());
+    assert_eq!(assets.navigation.passage_states.len(), 1);
+    let sim = crate::sim_rng::test_context();
+    let patch = crate::patch::PatchIndex::new(0).unwrap();
+    assert!(!engine.script_domains.interactables.doors[0].passage_blocked);
+    engine.script_domains.interactables.doors[0].active = false;
+    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+    assert!(engine.script_domains.interactables.doors[0].passage_blocked);
+    assert!(!engine.script_domains.interactables.doors[1].passage_blocked);
+    engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+    assert!(!engine.script_domains.interactables.doors[0].passage_blocked);
+    assert!(!engine.script_domains.interactables.doors[0].active);
+    for (field, value) in [
+        ("layer", serde_json::json!(99)),
+        ("area", serde_json::json!(99)),
+        ("allowed_states", serde_json::json!([3])),
+        ("allowed_states", serde_json::json!([4])),
+    ] {
+        let mut invalid = fixtures[0].clone();
+        invalid["asset_geometry"]["lifts"][0]["doors"][0]["passage_states"][0][field] = value;
+        let error = crate::level_data::LoadedLevel::hackable_from_json(
+            &serde_json::to_vec(&invalid).unwrap(),
+        )
+        .err()
+        .expect("invalid prepared passage must fail to load");
+        assert!(error.to_string().contains("passage"), "{error}");
+    }
+}
+
 pub(super) fn walk_exported_building_round_trip(
     engine: EngineInner,
     assets: LevelAssets,
@@ -39,12 +75,22 @@ fn compiled_stair_barriers_stop_actor_traversal_and_reset() {
             for (entrance, exit) in [(0, 1), (1, 0)] {
                 let result = walk_exported_stairs(engine.clone(), assets.clone(), entrance, exit);
                 if applied {
-                    assert!(
-                        result
-                            .as_ref()
-                            .is_err_and(|error| error.starts_with("lift route stalled")),
-                        "closed stair, rotation {rotation}, entrance {entrance}: {result:?}"
-                    );
+                    if engine.script_domains.interactables.doors[entrance].passage_blocked
+                        || engine.script_domains.interactables.doors[exit].passage_blocked
+                    {
+                        assert_eq!(
+                            result,
+                            Ok(false),
+                            "blocked prepared passage at rotation {rotation}"
+                        );
+                    } else {
+                        assert!(
+                            result
+                                .as_ref()
+                                .is_err_and(|error| error.starts_with("lift route stalled")),
+                            "closed stair, rotation {rotation}, entrance {entrance}: {result:?}"
+                        );
+                    }
                 } else {
                     assert_eq!(
                         result,
@@ -108,12 +154,22 @@ fn audit_copied_lift_controls(bytes: &[u8], sprite: Option<&crate::sprite::Sprit
                 let result =
                     walk_exported_lift(engine.clone(), assets.clone(), entrance, exit, sprite);
                 if blocked {
-                    assert!(
-                        result
-                            .as_ref()
-                            .is_err_and(|error| error.starts_with("lift route stalled")),
-                        "copied stair {index}, changed {changed}, applied {applied}: {result:?}"
-                    );
+                    if engine.script_domains.interactables.doors[entrance].passage_blocked
+                        || engine.script_domains.interactables.doors[exit].passage_blocked
+                    {
+                        assert_eq!(
+                            result,
+                            Ok(false),
+                            "blocked prepared passage of copy {index}"
+                        );
+                    } else {
+                        assert!(
+                            result
+                                .as_ref()
+                                .is_err_and(|error| error.starts_with("lift route stalled")),
+                            "copied stair {index}, changed {changed}, applied {applied}: {result:?}"
+                        );
+                    }
                 } else {
                     assert_eq!(
                         result,
@@ -811,11 +867,12 @@ fn changing_climb_barrier_near_entrance_blocks_actor_approach() {
                     Some(&sprite),
                 );
                 if applied {
-                    assert!(
-                        result
-                            .as_ref()
-                            .is_err_and(|error| error.starts_with("lift route stalled")),
-                        "closed entrance placement={placement}, type={lift_type}, entrance={entrance}: {result:?}"
+                    // Prepared connection conditions reject the route before
+                    // an animation can carry the actor through the barrier.
+                    assert_eq!(
+                        result,
+                        Ok(false),
+                        "closed entrance placement={placement}, type={lift_type}, entrance={entrance}"
                     );
                 } else {
                     assert_eq!(

@@ -403,6 +403,7 @@
           ],
           "doors": [
             {
+              "passage_states": [{"layer":2,"area":0,"allowed_states":[1]}],
               "door_type": 5,
               "active": true,
               "locked_pc": false,
@@ -434,6 +435,7 @@
               "layer_in": 2
             },
             {
+              "passage_states": [{"layer":2,"area":0,"allowed_states":[1]}],
               "door_type": 4,
               "active": true,
               "locked_pc": false,
@@ -1361,6 +1363,7 @@
           ],
           "doors": [
             {
+              "passage_states": [{"layer":2,"area":0,"allowed_states":[1]}],
               "door_type": 5,
               "active": true,
               "locked_pc": false,
@@ -1392,6 +1395,7 @@
               "layer_in": 2
             },
             {
+              "passage_states": [{"layer":2,"area":0,"allowed_states":[1]}],
               "door_type": 4,
               "active": true,
               "locked_pc": false,

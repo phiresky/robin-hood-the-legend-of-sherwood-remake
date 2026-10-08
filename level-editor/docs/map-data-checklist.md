@@ -14,9 +14,9 @@ this prepared stream through the existing graph parser. The separate physical-fl
 solver, load-time bindings, movement
 dispatch and per-step routing have also been removed. An optimized three-player
 stock-mission regression completes all 540 frames, including Silver Arrow frame 5;
-median ticks range from 0.18 to 0.95 ms in the latest run. Current graph validation: 218 selected
+median ticks range from 0.19 to 1.05 ms in the latest run. Current graph validation: 218 selected
 compiler/export tests pass; native map integration is 69 passed, 5 ignored; the
-engine suite is **4,339 passed, 0 failed, 34 ignored**. Passage approaches are now
+engine suite is **4,341 passed, 0 failed, 34 ignored**. Passage approaches are now
 prepared at export, and the loader's approach search has been deleted. Exports
 omit obsolete physical navigation metadata. The four stair receiver/barrier
 failures now pass using the native endpoints. Derby's saved-scene export
@@ -1433,7 +1433,7 @@ this does not repair Wychford's already-elevated approach automatically.
 | Projection/elevation receivers | Derive height planes and crossing boundaries from placed receiving surfaces. | Fractional seams, slopes, copies and sampled actor crossings tested. Generated contours are checked at native float precision; pinched contours are triangulated and zero-area pieces warned/omitted. The refreshed editor terrain export passes native polygon, hill/ford/crop and route-sampling checks; complete placement coverage remains open. |
 | Doors, gates and locks | Transform endpoints; resolve current neighbours and local initial/alternate permissions. | Compiler/runtime fixtures pass; incomplete assets still warn. |
 | Building interiors | Connect entrances in each asset-local room automatically; use editor links or passage sockets between assets. | Separate, joined, moved, rotated and copied assemblies and editable ZIP round trips tested. |
-| Stairs, ladders and climbable walls | Assemble local traversal surfaces/sockets and endpoints; prepare actor-sized native approaches at export. | Current native stair rotation/copy checks pass. Complete-character-animation tests pass for changing climb barriers, independent copied controls, closure during climbing and 72 reopening cases. Entrance-animation blocking remains a confirmed gap: twelve fresh editor fixtures cover ladder/both wall-top variants and four rotations, and the native test crosses an active entry barrier in the first case. It needs prepared connection-state constraints. Historical physical-navigation route counts do not certify the current architecture. Broader placements and rendered traversal remain open. |
+| Stairs, ladders and climbable walls | Assemble local traversal surfaces/sockets and endpoints; prepare actor-sized native approaches and passage-state conditions at export. | Native stair rotation/copy checks and complete-character-animation tests cover changing climb barriers, independent copied controls, closure during climbing and 72 reopening cases. Twelve fresh ladder/wall entrance fixtures now reject an already-active entry barrier and traverse both ways before applying and after resetting it. Runtime checks a cached availability flag, updated only at startup/state changes. Closure during the entrance animation itself remains unverified. Historical physical-navigation route counts do not certify the current architecture. Broader placements and rendered traversal remain open. |
 | Jump zones and paired edges | Derive from marked surfaces or transform authored edges; find current destinations and trim blocked approaches/flights. | Moved/cross-asset destinations, skills and nearby state changes tested; broader authoring/traversal coverage remains open. |
 | Surface materials | Transform local material regions and rebuild ground/obstacle/receiver links. | Compiler/native lookup fixtures and published definitions exist; complete geometry coverage remains open. |
 | Lighting and shadow regions | Transform local contours and bind to current receiving planes/layers. | Published definitions and focused native queries tested; complete placement/query coverage remains open. |
