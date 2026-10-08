@@ -1,0 +1,12 @@
+"""Diagnose saved jamb overlap and propose a hidden-depth-only clearance correction."""
+import hashlib,json,math
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[3];D=ROOT/'level-editor/work/york-refinement/restart2/gate-saved-contact-audit-v1';p=D/'report.json';j=json.loads(p.read_text());v=j['geometry_world']['jamb_vertices'];g=j['geometry_world']['gate_vertices'];assert len(v)==26
+base=v[0];raw=[v[13][k]-base[k]for k in range(3)];norm=math.sqrt(sum(x*x for x in raw));n=[x/norm for x in raw];assert abs(n[2])<1e-10
+def depth(q):return sum((q[k]-base[k])*n[k]for k in range(3))
+gmin=min(map(depth,g));gmax=max(map(depth,g));front=min(depth(q)for q in v[13:]);new_back=gmax+.05;assert 0<new_back<front
+new_vertices=[]
+for q in v[:13]:
+ d=new_back-depth(q);new_vertices.append([q[k]+n[k]*d for k in range(3)])
+new_vertices+=v[13:];assert new_vertices[13:]==v[13:]
+report={'status':'CPU_HIDDEN_DEPTH_CORRECTION_PROPOSAL_NO_MODEL_CHANGED','actual_mesh_report_sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'diagnosis':'Gate and solid jamb share the same depth origin; gate extends about1.05units into the jamb extrusion. Saved jamb has no guide recess cutout, so a guide explanation is unsupported.','gate_signed_depth':[gmin,gmax],'jamb_signed_depth':[min(map(depth,v)),max(map(depth,v))],'proposal':{'operation':'Move only the13 inferred back-plane jamb vertices to gate maximum normal depth plus0.05; preserve all13 front-plane vertices, arch outline, gate geometry and pose curve.','new_back_plane_depth':new_back,'unchanged_front_plane_depth':front,'minimum_jamb_thickness':front-new_back,'minimum_gate_clearance_all_poses':.05,'normal_world':n,'proposed_jamb_vertices_world':new_vertices},'proof':'Vertical translation has zero component along the horizontal jamb normal; positive separating plane gap therefore holds for every proposed pose and every in-between vertical translation, independent of profile/triangle tessellation.','limits':['This is a geometry correction proposal requiring saved-model source/contact review and scoped approval before replacing the approved jamb.','Shortened side/back faces change inferred depth; front material coordinates and source-facing front vertices can be preserved.','No motion, model, UV, texture, runtime or library file changed.']};(D/'hidden-clearance-proposal.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps({'gate_depth':[gmin,gmax],'new_back':new_back,'remaining_jamb_thickness':front-new_back,'all_pose_gap':.05}))
