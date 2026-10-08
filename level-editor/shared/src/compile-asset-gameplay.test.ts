@@ -2361,6 +2361,24 @@ test("parallel authored jump spans stay aligned after fractional placement and r
   }
 });
 
+test("authored jump heights round upward without shifting projected contacts", () => {
+  for (const height of [0.001, 0.4, -0.4]) {
+    const { hut, document, assets } = jumpAssetCompilerFixture();
+    const before = compileAssetGameplay(document, assets, bounds).jump_line_pairs![0]!;
+    for (const edge of hut.gameplay!.jumpPairs![0]!.edges)
+      for (const point of [edge.a, edge.b]) {
+        point[1] += height;
+        point[2] += height;
+      }
+    const after = compileAssetGameplay(document, assets, bounds).jump_line_pairs![0]!;
+    for (const key of ["line1", "line2"] as const)
+      for (const endpoint of ["point_a", "point_b"] as const) {
+        assert.deepEqual(after[key][endpoint].slice(0, 2), before[key][endpoint].slice(0, 2));
+        assert.equal(after[key][endpoint][2], Math.ceil(before[key][endpoint][2] + height) + 0);
+      }
+  }
+});
+
 test("jump metadata rejects orphan zones, missing links and collapsed edges", () => {
   const { hut, document, assets } = jumpAssetCompilerFixture();
   const pair = hut.gameplay!.jumpPairs![0]!;

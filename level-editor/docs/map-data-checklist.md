@@ -51,8 +51,9 @@ The compiler now audits final integer jump pairs, including authored connections
 and warns about mismatched opposing edges, solid flight/takeoff intersections,
 or unsupported clearance checks. Best-effort exports retain those connections;
 warnings identify review work and do not certify playable jumps.
-Parallel authored spans now share one integer vector after placement, preserving
-their authored heights. Fractional translation and rotation no longer introduce
+Parallel authored spans now share one integer vector after placement. Fractional
+flight heights round upward using the same rule as generated ledges; integer
+heights and projected contacts are preserved. Fractional translation and rotation no longer introduce
 unequal opposing vectors solely through independent endpoint rounding; genuinely
 nonparallel authored edges retain their diagnostic.
 A further unpublished boundary-ledged watermill candidate passes 480 native
@@ -71,6 +72,12 @@ pass. Some approach endpoints still lack receivers and walking clearance remains
 unresolved. Click authorization,
 sword/assisted sprite dispatch and rendered contact remain unverified; the
 candidate is still unpublished.
+The newer authored walking-span candidate now passes all 160 upright
+walk–jump–walk routes, all 160 isolated sprite jumps and all 64 endpoint-zone
+checks across the eight placements. It shortens the ledge near the platform
+corners and uses a deeper standing inset without enlarging the floor. Its straight
+combat return flight still intersects the platform, so this candidate retains
+explicit clearance warnings and remains unpublished pending combat/render review.
 
 Receiving-material unions now batch equivalent patches. A 1,024-island component
 benchmark improves from about 4 seconds to 0.1 seconds; full-map timing remains

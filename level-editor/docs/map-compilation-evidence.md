@@ -6,9 +6,32 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Exported jump diagnostics (2026-10-08)
 
+Authored pairs now use the same upward integer height rounding as generated
+ledges (including their 0.0001 near-integer tolerance and positive zero).
+This prevents ordinary nearest rounding from putting a flight endpoint below
+its fractional supporting surface. Projected contact coordinates do not move,
+and integer-authored heights remain unchanged. Fractional positive/negative
+height tests and all 160 focused compiler/clearance tests pass.
+
+Review recipe `refinement/stage-watermill-walking-jump.mjs` derives an authored
+pair from the boundary-ledged candidate. It adds a five-unit standing inset,
+shortens the span at both corners and gives the wider corner five further units
+of clearance for inward continuation. It preserves the floor and solid volume.
+Stage `watermill-walking-jump-MPjCH9`, batch `watermill-platform-placements-jF0VUC`,
+passes all 160 upright walk–jump–walk routes and all 160 isolated sprite jumps.
+All 64 endpoints lie in their home zones; eight low-terrain negative cases still
+omit unsupported lower entrances and jumps. Compilation reads only the staged
+asset definitions and assembled editor document.
+
+The full airborne audit still fails the straight combat return path against
+solid platform obstacle 0, starting at map point (812, 889). Compiler warnings
+retain this limitation. This is an unpublished best-effort authoring candidate,
+not proof of combat-animation or rendered-contact parity. The earlier boundary
+candidate's 480 clear airborne paths must not be attributed to this revision.
+
 Parallel authored jump spans now round as a pair. The second edge's A endpoint
 is derived from its rounded B endpoint and the first edge's rounded vector;
-authored heights are unchanged. Only spans already parallel and opposite before
+the separate height-rounding rule above still applies. Only spans already parallel and opposite before
 quantization take this path. Nonparallel authored pairs still report their
 alignment problem. Fractional placement checks at 0, 37, 83 and 143 degrees
 verify vector equality and unchanged endpoint heights.

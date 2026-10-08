@@ -2462,8 +2462,10 @@ function compileAssetGameplayAttempt(
     const lines = pair.edges.map((edge, i) => {
       // Edge heights are authored independently of the receiving surface's plane.
       // In particular, integer edge heights need not equal fractional projection heights.
-      const a: Vec3 = [...project(edge.a), quantize(edge.a[2])];
-      const b: Vec3 = [...project(edge.b), quantize(edge.b[2])];
+      // Match generated ledges: integer flight endpoints must not round down
+      // into the supporting surface. Keep the projected contact coordinates.
+      const a: Vec3 = [...project(edge.a), quantize(Math.ceil(edge.a[2] - 1e-4) + 0)];
+      const b: Vec3 = [...project(edge.b), quantize(Math.ceil(edge.b[2] - 1e-4) + 0)];
       if (a[0] === b[0] && a[1] === b[1])
         throw new Error(`${pair.id}: jump edge collapses on the movement grid`);
       return { point_a: a, point_b: b, jump_zone_index: indices[1 - i]! };
