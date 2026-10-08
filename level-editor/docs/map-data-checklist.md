@@ -15,6 +15,11 @@ Export reports gameplay phases from its worker while keeping compilation pending
 and cancellable. The saved-map audit records per-phase durations, including
 best-effort retries. Eleven focused wall/worker checks pass; phase reporting does
 not itself certify gameplay or browser interaction.
+Receiving construction also reports landing setup, each region's boundary and
+obstacles, and material batches of 64 pieces. Nine wall export checks retain the
+same native fixtures; typecheck, lint, formatting and the production build pass.
+This instrumentation narrows the remaining slow Wychford export; it is not
+evidence of a full-map speed improvement.
 
 Receiving-material unions now batch equivalent patches. A 1,024-island component
 benchmark improves from about 4 seconds to 0.1 seconds; full-map timing remains

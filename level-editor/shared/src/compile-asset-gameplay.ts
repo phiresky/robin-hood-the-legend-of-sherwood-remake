@@ -1790,6 +1790,7 @@ function compileAssetGameplayAttempt(
         }),
       });
     }
+  options.onProgress?.("Connecting receiving landings");
   const receiverLandings = projectionReceivers.flatMap((receiver) => {
     if (receiver.receiverSegment) return [];
     const regions = navigationRegions.filter(
@@ -1884,7 +1885,12 @@ function compileAssetGameplayAttempt(
   // Receiving planes can share a navigation region; their provisional layers are not runtime layers.
   layers.length = 0;
   while (layers.length <= liftLayer) layers.push([]);
+  let receivingRegion = 0;
   for (const region of navigationRegions) {
+    receivingRegion += 1;
+    options.onProgress?.(
+      `Constructing receiving boundaries (${receivingRegion}/${navigationRegions.length})`,
+    );
     const { layer, lift, polygon: boundary, blockers, pieces } = region;
     const plane = pieces[0]!.plane;
     const physical = lift ? physicalStairs.get(lift) : undefined;
@@ -1967,6 +1973,9 @@ function compileAssetGameplayAttempt(
       recoveredBoundary && fixedPolygonBoolean("xor", [recoveredBoundary], [[boundary]]).length > 0
         ? recoveredBoundary
         : undefined;
+    options.onProgress?.(
+      `Constructing receiving obstacles (${receivingRegion}/${navigationRegions.length})`,
+    );
     layers[layer]!.push(
       physical?.area ?? {
         is_lift: !!lift,
@@ -1997,7 +2006,13 @@ function compileAssetGameplayAttempt(
       },
     );
     // Projection surfaces provide layer-aware elevation and picking.
+    let receivingPiece = 0;
     for (const piece of pieces) {
+      if (receivingPiece % 64 === 0)
+        options.onProgress?.(
+          `Constructing receiving materials (${receivingRegion}/${navigationRegions.length}, ${receivingPiece + 1}/${pieces.length})`,
+        );
+      receivingPiece += 1;
       areas.push({
         ...piece,
         sector,
@@ -2112,6 +2127,7 @@ function compileAssetGameplayAttempt(
     sector +=
       1 + (physical ? physical.area.obstacles.length : blockers.length + changing.obstacles.length);
   }
+  options.onProgress?.("Binding receiving surfaces");
   for (const support of projectionSupports)
     if (
       support.obstacleIndex !== undefined &&
