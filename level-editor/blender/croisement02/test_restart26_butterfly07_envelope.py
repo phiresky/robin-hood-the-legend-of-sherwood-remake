@@ -8,8 +8,17 @@ from restart26_butterfly07_piece_envelope import translation_interval,merge_band
 from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation,Slerp
 from restart21_butterfly07_geometry_v2 import geometry,fixed_geometry
+from restart26_butterfly07_global_corridor import choose_bands
 
 class ContinuousEnvelopeTests(unittest.TestCase):
+    def test_global_bands_reject_nearby_but_unreachable_branch(self):
+        bands=[[[5.+8*(i%2),6.+8*(i%2)],[30.,35.]]for i in range(8)]
+        baseline=np.array([5.+8*(i%2)for i in range(8)])
+        result=choose_bands(bands,baseline,.125,seconds=10)
+        self.assertTrue(result['success'])
+        self.assertEqual(result['path'],[1]*8)
+        self.assertTrue(solve_bands(bands,result['path'],baseline,.125)['success'])
+
     def test_body_box_sweep_contains_actual_interpolated_body(self):
         radii=np.array(fixed_geometry()['body_radii'])
         start=np.array([30.,-70.,110.]);end=np.array([-55.,20.,-140.])
