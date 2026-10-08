@@ -53,11 +53,23 @@ def extract(obj,height):
         return {'height':height,'boundary_edges':len(edges),'boundary_vertices':len(ids),'ordered_loops':loops,'invalid_boundary_degrees':invalid,'vertices':vertices,'status':'closed loops extracted; correspondence/tangent continuity not yet approved' if loops and not invalid else 'unsuitable cut: empty or non-simple boundary','normal_scope':'Geometric retained-face normals after opening the cut; not material shading/custom split normals. No cap was added.'}
     finally:bm.free()
 
+def extract_band(obj,lower,upper):
+    """Read exact world triangles intersecting a requested transition band."""
+    obj.data.calc_loop_triangles()
+    points=[obj.matrix_world@v.co for v in obj.data.vertices]
+    triangles=[t for t in obj.data.loop_triangles if min(points[i].z for i in t.vertices)<=upper and max(points[i].z for i in t.vertices)>=lower]
+    if len(triangles)>30000:raise ValueError('Local band exceeds triangle extraction bound')
+    ids=sorted({i for t in triangles for i in t.vertices});mapping={old:new for new,old in enumerate(ids)}
+    return dict(lower=lower,upper=upper,vertices=[list(points[i]) for i in ids],original_vertex_ids=ids,triangles=[[mapping[i] for i in t.vertices] for t in triangles],original_polygon_ids=[t.polygon_index for t in triangles],scope='Exact unmodified world geometry; triangles intersecting the band, not clipped or remeshed')
+
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,required=True);parser.add_argument('--tree',type=int,choices=(32,38));parser.add_argument('--cuts',type=float,nargs='+');parser.add_argument('--band',type=float,nargs=2);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
+    if (args.cuts or args.band) and args.tree is None:raise ValueError('Custom extraction requires one explicit tree')
+    if args.cuts and (len(args.cuts)>6 or not all(0<z<500 for z in args.cuts)):raise ValueError('Cuts outside bounded scope')
+    if args.band and not 0<args.band[0]<args.band[1]<500:raise ValueError('Invalid local band')
     destination=args.output.resolve()
     if destination.exists():raise FileExistsError(destination)
-    expected={n:(OUT/relative/'model.blend',digest,node,cuts) for n,(relative,digest,node,cuts) in INPUTS.items()}
+    expected={n:(OUT/relative/'model.blend',digest,node,args.cuts or cuts) for n,(relative,digest,node,cuts) in INPUTS.items() if args.tree is None or n==args.tree}
     for path,digest,_,_ in expected.values():
         if sha(path)!=digest:raise ValueError('Pinned input changed: '+str(path))
     records=[];acquire()
@@ -67,6 +79,7 @@ def main():
             matches=[o for o in bpy.data.collections['Croisement02 Working'].all_objects if o.type=='MESH' and o.get('asset_group')==f'croisement02-tree-{index}' and o.get('source_node')==node and o.get('projection_component')!='crown']
             if len(matches)!=1:raise ValueError('Expected one exact retained wood owner')
             obj=matches[0];records.append({'tree':index,'worker':str(path.parent),'model_sha256':digest,'source_node':node,'object':obj.name,'cuts':[extract(obj,z) for z in cuts]})
+            if args.band:records[-1]['band']=extract_band(obj,*args.band)
         for path,digest,_,_ in expected.values():
             if sha(path)!=digest:raise ValueError('Input changed during read-only extraction')
         report={'status':'read-only retained boundary extraction; no mesh/model save or readiness claim','recipe_sha256':sha(Path(__file__)),'max_output_bytes':MAX_OUTPUT_BYTES,'records':records}
