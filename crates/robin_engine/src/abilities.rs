@@ -1163,11 +1163,21 @@ fn begin_throw(
         actor.action_state = ActionState::Waiting;
     }
 
-    let mut order = Order::new(order_type, target_pos.x, target_pos.y, order_id);
+    let mut order = if order_type == OrderType::ThrowingPurse {
+        // The live sequence owns the 3D target; translation neither projects
+        // it into the order nor changes the actor's facing.
+        Order::new(order_type, 0.0, 0.0, order_id)
+    } else {
+        Order::new(order_type, target_pos.x, target_pos.y, order_id)
+    };
     order.antagonist = antagonist;
     order.compute_direction = false;
 
     sequence_manager.push_order_at(elem_ref, order);
+
+    if order_type == OrderType::ThrowingPurse {
+        return BeginResult::Started;
+    }
 
     // Face the target position.
     let actor_pos = actor_entity.element_data().position_map();
@@ -1248,9 +1258,6 @@ pub fn begin_throw_wasp_nest(
 ///
 /// Called when `Command::ThrowPurse` is dispatched.
 ///
-/// ## Known gaps
-///
-/// Same as [`begin_throw_net`] — TODO: implement gradual turning.
 pub fn begin_throw_purse(
     entities: &mut Entities,
     sequence_manager: &mut SequenceManager,

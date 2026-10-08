@@ -1205,6 +1205,11 @@ fn throw_purse_keeps_bored_until_exit_transition_completes() {
         &mut engine.orders.next_order_id,
     );
     assert_eq!(result, crate::abilities::BeginResult::Started);
+    assert_eq!(
+        engine.get_entity(owner).unwrap().element_data().direction(),
+        0,
+        "purse translation must preserve facing until the throwing order executes"
+    );
     engine.element_in_progress(
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),

@@ -1226,6 +1226,40 @@ impl EngineInner {
         SpriteMotionState::Done
     }
 
+    fn initialize_ability_purse_init(
+        &mut self,
+        assets: &LevelAssets,
+        actor_id: EntityId,
+        ability: &SelectedAbility,
+    ) -> bool {
+        let element = self
+            .orders
+            .sequence_manager
+            .get_element(ability.sequence_id, ability.element_index)
+            .expect("purse initialization requires its live sequence");
+        if !self.check_sequence_element_validity(assets, actor_id, element, false) {
+            return false;
+        }
+        let target = super::sequence_validity::read_target_point_3d(
+            element,
+            crate::sequence::Field::PurseTarget,
+        )
+        .expect("validated purse sequence requires a 3D target");
+        let actor = self
+            .get_entity_mut(actor_id)
+            .expect("purse owner disappeared");
+        let origin = actor.ground_position();
+        // Use world XY on both sides, including elevation. Projecting the
+        // target to map XY changes the facing for throws onto higher terrain.
+        // Execute owns the goal; Turn advances progressively afterward.
+        let facing = crate::position_interface::vector_to_sector_0_to_15_iso(
+            target.x - origin.x,
+            target.y - origin.y,
+        );
+        actor.element_data_mut().set_direction_goal(facing);
+        true
+    }
+
     pub(super) fn initialize_ability_pay_init(
         &mut self,
         assets: &LevelAssets,
@@ -1579,6 +1613,9 @@ impl EngineInner {
             .execute_order_initialising;
         let initialized = !initialising
             || match ability.kind {
+                AbilityKind::ThrowPurse => {
+                    self.initialize_ability_purse_init(tcx.assets, requested_actor, &ability)
+                }
                 AbilityKind::Pay => {
                     self.initialize_ability_pay_init(tcx.assets, requested_actor, &ability)
                 }

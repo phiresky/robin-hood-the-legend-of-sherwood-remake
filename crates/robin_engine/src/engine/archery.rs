@@ -552,11 +552,16 @@ impl EngineInner {
             self.release_bow_arrow(tcx, shooter_id, target_id, shoot_mode);
             let shooter = self.expect_entity_mut(shooter_id, "bow owner after release");
             shooter.actor_data_mut().unwrap().action_state = ActionState::AimingWithBow;
-            if order_type == OrderType::ShootingWithBowLeaningOut {
-                self.publish_entity_order_posture(shooter_id, Posture::LeaningOut);
-            } else if shooter.element_data().posture() != Posture::AnonymousArcher {
-                self.publish_entity_order_posture(shooter_id, Posture::Upright);
-            }
+            let posture = if order_type == OrderType::ShootingWithBowLeaningOut {
+                Posture::LeaningOut
+            } else if shooter.element_data().posture() == Posture::AnonymousArcher {
+                Posture::AnonymousArcher
+            } else {
+                Posture::Upright
+            };
+            // Shot completion calls SetStates even when posture is unchanged;
+            // this also advances the retained previous sprite posture.
+            self.set_entity_posture(shooter_id, posture);
             return Some(motion);
         }
         Some(motion)
