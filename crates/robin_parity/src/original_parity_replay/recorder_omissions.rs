@@ -353,7 +353,14 @@ pub(super) fn original_reset_blocked_box_this_frame(
     // it before the snapshot. Its retained processed ID plus displacement
     // still proves motion ran even though the current sequence is animation.
     // The caller also requires that the processed ID changed this frame.
-    if moved_this_frame && prior_pending_motion_order_id == Some(last_processed_order_id) {
+    // An order can initialize motion, satisfy its tolerance without a position
+    // commit, and be replaced immediately. A changed processed ID matching the
+    // previously observed motion order proves that initialization even then.
+    let completed_pending_motion = current_order_id.is_some_and(|id| id != last_processed_order_id)
+        && prior_last_processed_order_id.is_some_and(|id| id != last_processed_order_id);
+    if (moved_this_frame || completed_pending_motion)
+        && prior_pending_motion_order_id == Some(last_processed_order_id)
+    {
         return true;
     }
 

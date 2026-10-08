@@ -548,6 +548,36 @@ fn legacy_blocked_box_reset_recognizes_hidden_stop_movement_rewrite() {
 }
 
 #[test]
+fn legacy_blocked_box_reset_recognizes_motion_completed_within_tolerance() {
+    let soldier = EntityId::new(182, robin_engine::element::EntityIdKind::Soldier);
+    let fighting = trace_actor_order(
+        robin_engine::order::OrderType::WaitingUpright,
+        false,
+        robin_engine::sprite::MotionState::InProgress,
+        30,
+    );
+    for (pending, prior_processed, expected) in [
+        (Some(20), Some(25), true),
+        (Some(20), Some(20), false),
+        (Some(19), Some(25), false),
+        (None, Some(25), false),
+    ] {
+        assert_eq!(
+            original_reset_blocked_box_this_frame(
+                &fighting,
+                soldier,
+                20,
+                false,
+                pending,
+                None,
+                prior_processed,
+            ),
+            expected,
+        );
+    }
+}
+
+#[test]
 fn legacy_blocked_box_shadow_tracks_resets_and_revalidation() {
     let tuple = LegacyBlockedBoxTuple {
         min_x: 1,
