@@ -125,5 +125,6 @@ def main():
  fig.suptitle('Private mass proposal only — retained limb joins and saved source/ground guards unfinished');fig.tight_layout();fig.savefig(a.output/'solid-preview.png',dpi=130);plt.close(fig)
  theoretical=np.max(radii[None,:]-np.linalg.norm(native[:,None,:]-centers[None,:,:],axis=2),axis=1)
  report=dict(status='CPU volume proposal only; no Blender model or canonical changes',tree=a.tree,source_mask=str(sourcepath),source_sha256=hashlib.sha256(sourcepath.read_bytes()).hexdigest(),coverage=coverage,medial_discs=len(radii),theoretical_body_centers_covered=int((theoretical>=-1e-6).sum()),body_centers=len(native),voxel=a.voxel,vertices=len(vertices),faces=len(faces),sections=sections,source_ground=projection_coverage(vertices,faces,body,box[:2]),precision=precision,permitted_references=['leicester-southeast-cottage-tree','leicester-moat-bank-tree'],limitations=['The preview mesh uses a small grid relaxation; theoretical disc coverage is not saved mesh source coverage.','Retained upper limbs are not attached in this preview.','Private inferred front depth changed; native rays and source ownership remain the eventual constraints.'])
+ report['permitted_reference_evidence']=reference_bindings()
  (a.output/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
 if __name__=='__main__':main()
