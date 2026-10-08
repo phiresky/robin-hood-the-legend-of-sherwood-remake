@@ -1,5 +1,9 @@
 # Post-port Features
 
+- **Fresh-mission parity capture.** A reproducible capture controller inventories
+  playable missions, starts ten independent 60-second random-input runs for each,
+  and admits only complete fresh-start traces. See `docs/TESTING.md`.
+
 - **Script inspection sidecars.** Hackable datadir conversion writes decompiled
   pseudo-TypeScript in `*.scb.ts` beside each `*.scb.json`. These files are for
   inspection only; the game continues to load script bytecode from JSON.

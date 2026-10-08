@@ -791,3 +791,28 @@ ignored), including the stair rotation sweep. Re-running the historical ten-map
 `published-controls-audit-20261004` snapshot passes all 60 control apply/reset
 checks in 7.47 seconds. That snapshot predates the latest Derby/Leicester/Wychford
 asset updates and must not be described as a fresh library export.
+
+## Fresh-mission random-input corpus
+
+`scripts/capture_fresh_mission_replays.py` inventories playable mission files
+against an exported profile JSON and plans ten independent 1,500-frame runs per
+mission (60 simulation seconds at 25 Hz). It varies gameplay/input seeds and
+cycles the supported difficulties. Every run starts a separate process in a
+private directory with `-PARITYMISSION`; no saved world is loaded. The default
+fresh campaign is an initialization probe, not a claim that later missions are
+reachable from that campaign history. The Marian rescue uses its required team.
+
+Pass `--profile`, `--data`, `--binary`, `--converter` and `--output` explicitly.
+Use `--plan-only` to inspect the manifest; `--limit` or `--mission` selects an
+initial batch without changing the full plan. The manifest binds profile and
+binary hashes. Resume validates completed artifact checksums and frame extents.
+A changed manifest requires a new corpus directory. Incomplete attempts remain
+outside `traces/`; short sessions never count as full 60-second captures.
+
+Publication requires a fresh-start header, matching seeds/difficulty, no saved
+world payload, lossless conversion, and exactly 1,500 complete frames with the
+matching terminal frame. Completion markers preserve the pre-initialization
+campaign snapshot. Run `python3 scripts/test_capture_fresh_mission_replays.py`
+for inventory/admission regressions. Register completed captures with
+`replay_state_db.py register-corpus`; capture completion alone is not evidence
+of a successful differential replay.
