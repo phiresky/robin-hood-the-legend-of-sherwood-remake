@@ -48,7 +48,9 @@ try {
   const catalog = await listProjectionAssets(library);
   const results: string[] = [];
   for (const id of fragments
-    ? ["croisement01-group-083", "croisement01-group-084"]
+    ? onlyAsset
+      ? [onlyAsset]
+      : ["croisement01-group-083", "croisement01-group-084"]
     : [
         "leicester-east-moat-drawbridge",
         "leicester-east-village-drawbridge",

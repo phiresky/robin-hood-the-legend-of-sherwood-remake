@@ -6,6 +6,28 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Independent activated solid fragments (2026-10-08)
 
+Croisement03 fragments 103/104/105 now have independent drafts authored by
+`refinement/stage-croisement03-activated-fragments.mjs` and pinned in
+`refinement/catalogs/croisement03-activated-fragments-gameplay.json`. Each has
+its own footprint exclusion, applied sight volume and descriptor `show` binding.
+No shared assembly exclusion or remote trigger is inherited. Fragment 102 is
+excluded because it also owns persistent collision in the reviewed assembly.
+Stage `croisement03-activated-fragments-kZ4YpX` passes eight native constructions,
+48 apply/reset checks and 144 thin-route probes at rotations 0/37/90/180 and
+elevations 0/40 with independent copies. Each map has six controls, seven sight
+volumes and 1,344 grid blocks. These are navigation probes, not complete actor walks.
+
+Publication backup `croisement03-fragments-publication-kZ4YpX` changes only the
+three descriptors and regenerated index; no saved scene pins or meshes change.
+Browser fixture archives `croisement03-fragment-103.zip`, `104.zip` and `105.zip`
+(each with the full `croisement03-fragment-` prefix) pass copied/rotated overlap
+preview, save/reopen, color/depth bake, ZIP packaging, native construction without
+a base datadir, and OpenGL appearance/depth probes. Each has two controls in one
+region with four visual states. GPU flags are assigned directly; actor activation,
+physical mesh contact and full gameplay parity remain unverified. Current audit
+`gameplay-coverage-Qd1DCH` finds 23 missing definitions, 19 with known state-owned
+parts, and zero missing definitions referenced by the ten saved scenes.
+
 `refinement/stage-croisement-activated-fragments.mjs` authors standalone gameplay
 for `croisement01-group-083` and `croisement01-group-084`. The reviewed assembly
 has no initial sight or movement geometry and activates both parts together.

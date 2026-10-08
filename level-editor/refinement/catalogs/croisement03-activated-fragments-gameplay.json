@@ -1,0 +1,227 @@
+[
+    {
+        "asset": "croisement03-group-103",
+        "descriptorSha256": "d1a40e068f8b33ca4dc7d531bf7920356577e38b83f0aec9feade97313be5c9b",
+        "modelSha256": "4005309e60214e404d5f873ba2d8e24227d700c185d7bd0483f28060203bed97",
+        "gameplay": {
+            "version": 1,
+            "collision": "parts",
+            "surfaces": [],
+            "doors": [],
+            "movementBlockers": [],
+            "movementTransitions": [
+                {
+                    "id": "activate-fragment",
+                    "appearances": [
+                        "activate-fragment"
+                    ],
+                    "node": "building-103",
+                    "active": true,
+                    "definitive": true,
+                    "waypoint": [
+                        -0.10090749999999815,
+                        -0.12632951303305617,
+                        0
+                    ],
+                    "applyPolygon": [],
+                    "noApplyPolygon": [],
+                    "initial": [],
+                    "applied": [
+                        {
+                            "id": "activated-footprint",
+                            "node": "building-103",
+                            "polygon": [
+                                [
+                                    -1.9973899999999958,
+                                    -16.438219513033005
+                                ],
+                                [
+                                    17.435969999999998,
+                                    12.761000486966964
+                                ],
+                                [
+                                    1.795580000000001,
+                                    16.185550486966918
+                                ],
+                                [
+                                    -17.637789999999995,
+                                    -13.013649513033101
+                                ]
+                            ],
+                            "height": 0,
+                            "preserveMovementPrecision": true
+                        }
+                    ],
+                    "initialSight": [],
+                    "appliedSight": [
+                        "building-103"
+                    ]
+                }
+            ],
+            "draft": {
+                "issues": [
+                    "Independent activated-fragment draft; full gameplay parity is not certified.",
+                    "Ground blocking is derived from this fragment's solid footprint; shared assembly exclusion and remote trigger placement are deliberately not inherited.",
+                    "The control starts unapplied. Activate it explicitly to enable this fragment; rendered state appearance and mesh contact still require review."
+                ]
+            }
+        },
+        "partAppearances": {
+            "building-103": {
+                "show": [
+                    "activate-fragment"
+                ]
+            }
+        }
+    },
+    {
+        "asset": "croisement03-group-104",
+        "descriptorSha256": "f2fb722296a2128754c5d34be0d080565d49acb1e5369f1a7e2deb6718361921",
+        "modelSha256": "809a2c823133f78a0383914485e8b6f2470e79a69eb7f71dcf6c005ce35a7a28",
+        "gameplay": {
+            "version": 1,
+            "collision": "parts",
+            "surfaces": [],
+            "doors": [],
+            "movementBlockers": [],
+            "movementTransitions": [
+                {
+                    "id": "activate-fragment",
+                    "appearances": [
+                        "activate-fragment"
+                    ],
+                    "node": "building-104",
+                    "active": true,
+                    "definitive": true,
+                    "waypoint": [
+                        -0.1553300000000064,
+                        -0.07117514952264514,
+                        0
+                    ],
+                    "applyPolygon": [],
+                    "noApplyPolygon": [],
+                    "initial": [],
+                    "applied": [
+                        {
+                            "id": "activated-footprint",
+                            "node": "building-104",
+                            "polygon": [
+                                [
+                                    -4.175400000000025,
+                                    -15.918085149522653
+                                ],
+                                [
+                                    15.257929999999988,
+                                    13.281114850477366
+                                ],
+                                [
+                                    3.864750000000015,
+                                    15.77575485047737
+                                ],
+                                [
+                                    -15.568600000000004,
+                                    -13.423485149522662
+                                ]
+                            ],
+                            "height": 0,
+                            "preserveMovementPrecision": true
+                        }
+                    ],
+                    "initialSight": [],
+                    "appliedSight": [
+                        "building-104"
+                    ]
+                }
+            ],
+            "draft": {
+                "issues": [
+                    "Independent activated-fragment draft; full gameplay parity is not certified.",
+                    "Ground blocking is derived from this fragment's solid footprint; shared assembly exclusion and remote trigger placement are deliberately not inherited.",
+                    "The control starts unapplied. Activate it explicitly to enable this fragment; rendered state appearance and mesh contact still require review."
+                ]
+            }
+        },
+        "partAppearances": {
+            "building-104": {
+                "show": [
+                    "activate-fragment"
+                ]
+            }
+        }
+    },
+    {
+        "asset": "croisement03-group-105",
+        "descriptorSha256": "583daf05cd879b76dc63f8d6ece687f2a7f7e97f74659a8ed12144920079f4ac",
+        "modelSha256": "dddb7cf19c5d4f48713a7f7683da350003fc1d29411f14420c1060e866134144",
+        "gameplay": {
+            "version": 1,
+            "collision": "parts",
+            "surfaces": [],
+            "doors": [],
+            "movementBlockers": [],
+            "movementTransitions": [
+                {
+                    "id": "activate-fragment",
+                    "appearances": [
+                        "activate-fragment"
+                    ],
+                    "node": "building-105",
+                    "active": true,
+                    "definitive": true,
+                    "waypoint": [
+                        0.06883250000000629,
+                        -0.1674626205628158,
+                        0
+                    ],
+                    "applyPolygon": [],
+                    "noApplyPolygon": [],
+                    "initial": [],
+                    "applied": [
+                        {
+                            "id": "activated-footprint",
+                            "node": "building-105",
+                            "polygon": [
+                                [
+                                    2.473140000000001,
+                                    -10.787927620562755
+                                ],
+                                [
+                                    14.889070000000004,
+                                    6.346932379437135
+                                ],
+                                [
+                                    -2.33547999999999,
+                                    10.453012379437155
+                                ],
+                                [
+                                    -14.75139999999999,
+                                    -6.681867620562798
+                                ]
+                            ],
+                            "height": 0,
+                            "preserveMovementPrecision": true
+                        }
+                    ],
+                    "initialSight": [],
+                    "appliedSight": [
+                        "building-105"
+                    ]
+                }
+            ],
+            "draft": {
+                "issues": [
+                    "Independent activated-fragment draft; full gameplay parity is not certified.",
+                    "Ground blocking is derived from this fragment's solid footprint; shared assembly exclusion and remote trigger placement are deliberately not inherited.",
+                    "The control starts unapplied. Activate it explicitly to enable this fragment; rendered state appearance and mesh contact still require review."
+                ]
+            }
+        },
+        "partAppearances": {
+            "building-105": {
+                "show": [
+                    "activate-fragment"
+                ]
+            }
+        }
+    }
+]
