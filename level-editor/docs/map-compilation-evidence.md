@@ -6,6 +6,25 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Exported jump diagnostics (2026-10-08)
 
+Contact review recipe `refinement/stage-watermill-jump-contact.mjs` varies the
+published jump's standing inset and ground separation without changing its
+floor, solids, jump zones, span length or terrain heights. Fifteen candidates
+cover insets of 1, 2, 3, 4 and 6 units and extra ground offsets of 0, 20 and 40
+units. Each is compiled at four rotations and two elevations with two copies,
+then checked for 480 flight paths, 160 walk–jump–walk routes and 64 zone endpoints.
+The eight disconnected-terrain negative cases also run for every candidate.
+Results are in `work/map-compile/watermill-contact-review-results.json`.
+
+No candidate passes all three positive checks. At zero extra ground offset,
+the five insets respectively produce 0/12/24/76/80 flight failures and
+88/76/68/16/0 walking failures. A 20-unit ground offset clears flights for the
+2- and 3-unit insets but leaves their walking failures. A 40-unit offset clears
+flights at the 4-unit inset but still fails 16 walking routes and puts 32
+endpoints outside their jump zones. Keeping the published 6-unit inset retains
+all walking routes, but the 40-unit offset still fails 20 flights and the same
+32 zone endpoints. These candidates are unpublished; none replaces the current
+asset. This bounds the tested adjustment space, not every possible asset design.
+
 The external native flight audit now records every case in
 `actor-jump-flight-report.json` before failing for intersections. Each result
 identifies file, pair, direction, edge position and movement style, with the first

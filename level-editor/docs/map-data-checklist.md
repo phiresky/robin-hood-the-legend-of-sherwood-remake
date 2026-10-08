@@ -52,6 +52,8 @@ sprite dispatch. In addition,
 Combat/assisted sprite dispatch, click authorization and rendered contact remain
 unverified. The library retains these explicit best-effort draft warnings;
 full parity is not claimed. All ten saved scenes reopen with refreshed pins.
+Fifteen inset/separation review candidates fail to improve combat clearance
+while preserving walking and jump-zone membership; none is published.
 Full Leicester and Wychford construction passes, as do all fifteen control
 apply/reset checks. Wychford now retains the platform and upper entrance;
 its two lower entrances and jump remain omitted where the placed mill floats
