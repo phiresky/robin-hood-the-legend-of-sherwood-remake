@@ -42,6 +42,25 @@ checks. All 64 endpoints remain in their home zones. These asset-only changes
 preserve the receiving plane and native jump behavior. Walking approaches,
 sword/assisted complete sprite dispatch and rendered contact remain unverified.
 
+The additional ignored audit `exported_jumps_walk_to_launch_and_continue_after_landing`
+constructs the normal line-goal approach, jump command and following walking
+command, using the complete upright sprite. It starts eight map units inside
+each launch edge and requests eight units of movement past the paired edge.
+Five edge positions in both directions across the watermill batch above yield
+12/160 passing routes. Eight source probes and eight destination probes lack
+receivers; 132 routes terminate before reaching the final goal. The actor's
+selected wait command and physical support/recovery results are included in
+`actor-jump-approach-report.json`. A representative approach source is supported,
+but a representative return landing has neither full footprint support nor a
+local supported recovery. No runtime behavior has been changed for this audit.
+
+Control batch `jump-approach-control-8rxss1r_` runs the same sequence on existing
+fixtures. The complete-roof fixture passes 9/10 routes; its remaining endpoint
+does not finish the final walk. The smaller geometric fixture has no receiver at
+the chosen eight-unit approach probes and is not a positive walking control.
+These results establish a walking-clearance gap beyond successful isolated
+sprite jumps; they do not certify all approach probes or click authorization.
+
 All compiled jump pairs now receive a diagnostic pass after integer conversion,
 including authored pairs and exact socket joins. Opposing map-space vectors must
 match for distance-along-source translation to cover the paired landing edge.
