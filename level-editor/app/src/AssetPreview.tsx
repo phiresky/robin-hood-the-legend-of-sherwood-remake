@@ -66,12 +66,12 @@ export default function AssetPreview(props: {
   let visible = false;
   let draw: ((angle: number) => void) | undefined;
 
-  function release() {
+  function release(clearPlayback = true) {
     generation++;
     draw = undefined;
     unsubscribePlayback?.();
     unsubscribePlayback = undefined;
-    setPlayback(undefined);
+    if (clearPlayback) setPlayback(undefined);
     releaseLease?.();
     releaseLease = undefined;
   }
@@ -182,7 +182,8 @@ export default function AssetPreview(props: {
   onCleanup(() => {
     visible = false;
     observer?.disconnect();
-    release();
+    // Disposed controls need resource cleanup, not a reactive state update.
+    release(false);
   });
   return (
     <div

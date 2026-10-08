@@ -1,4 +1,5 @@
 import { render } from "@solidjs/web";
+import { createSignal, Show } from "solid-js";
 import AssetPreview, { AssetPreviewRenderer } from "../src/AssetPreview.tsx";
 import { sceneryThumbnailFixture } from "./scenery-thumbnail-fixture.ts";
 
@@ -16,6 +17,8 @@ function directory(files: Map<string, Uint8Array>, prefix = ""): FileSystemDirec
 }
 const cleanups: (() => void)[] = [];
 const renderer = new AssetPreviewRenderer();
+const [visible, setVisible] = createSignal(true);
+const [revision, setRevision] = createSignal(0);
 try {
   const host = document.querySelector("#host")!;
   const cards: HTMLDivElement[] = [];
@@ -34,7 +37,7 @@ try {
     };
     cleanups.push(
       render(
-        () => <AssetPreview entry={entry} root={directory(files)} renderer={renderer} />,
+        () => <><Show when={visible()}><AssetPreview entry={entry} root={directory(files)} renderer={renderer} /></Show><span data-revision>{revision()}</span></>,
         card,
       ),
     );
@@ -54,8 +57,16 @@ try {
     const expected = index === 0 ? "0,0,0,0" : "0,248,0,255";
     if (left.join() !== expected) throw new Error(`Wrong sprite color-key handling: ${left}`);
   }
+  // Filtering cards disposes components within a reactive owner. A cleanup
+  // write would halt updates, including unrelated controls that survive it.
+  setVisible(false);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  setRevision(1);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  if (cards.some(card => card.querySelector("canvas") || card.querySelector("[data-revision]")?.textContent !== "1"))
+    throw new Error("Filtering previews halted surviving reactive controls");
   document.querySelector("#result")!.textContent =
-    "PASS scenery palette: pinned frames, legacy transparency, RGBA color, no model fallback";
+    "PASS scenery palette: pinned frames, legacy transparency, RGBA color, no model fallback, filtering cleanup preserves reactive controls";
 } catch (error) {
   document.querySelector("#result")!.textContent = `FAIL ${String(error)}`;
 } finally {
