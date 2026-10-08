@@ -4,8 +4,19 @@ from scipy.interpolate import CubicSpline
 from restart26_butterfly07_clearance_envelope import forbidden_height,MARGIN_Z
 from restart26_butterfly07_envelope_path import free_bands,band_paths,solve_bands
 from restart14_butterfly_canopy22_audit import SIN
+from restart26_butterfly07_piece_envelope import translation_interval,merge_bands
 
 class ContinuousEnvelopeTests(unittest.TestCase):
+    def test_minkowski_depth_band_matches_cube_receiver_contact(self):
+        cube=np.array([[x,y,z]for x in [-1.,1.]for y in [-1.,1.]for z in [-1.,1.]])
+        receiver=np.array([[-3.,-3.,5.],[3.,-3.,5.],[0.,3.,5.]])
+        band=translation_interval(receiver,cube,1e-6)
+        np.testing.assert_allclose(band,[4*SIN-MARGIN_Z,6*SIN+MARGIN_Z],atol=1e-5)
+        self.assertIsNone(translation_interval(receiver+np.array([20,0,0]),cube,1e-6))
+
+    def test_interval_union_preserves_real_depth_gaps(self):
+        self.assertEqual(merge_bands([[1,2],[1.5,3],[4,5]]),[[1.,3.],[4.,5.]])
+
     def test_height_band_contains_every_possible_depth_intersection(self):
         lo,hi=forbidden_height((10,20),(-3,5))
         for receiver in np.linspace(10,20,11):
