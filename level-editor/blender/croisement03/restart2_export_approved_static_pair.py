@@ -3,7 +3,7 @@ import hashlib,io,json,shutil,struct,sys
 from pathlib import Path
 import bpy,numpy as np
 from PIL import Image
-R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/refinement/blender')]
+R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).resolve().parent),str(R/'level-editor/refinement'),str(R/'level-editor/refinement/blender')]
 from evidence_io import sha,write_json
 from render_slots import acquire,release
 from export_editor import export_editor
