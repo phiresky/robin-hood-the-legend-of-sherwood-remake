@@ -760,6 +760,19 @@ fn recovered_projection_partitions_preserve_sampled_runtime_queries() {
 #[test]
 #[ignore = "requires static diagnostic exports via ROBIN_ASSET_MAP_DIAGNOSTICS"]
 fn recovered_static_exports_construct_native_geometry() {
+    if std::env::var_os("ROBIN_ASSET_MAP_PROFILE").is_some() {
+        use tracing_subscriber::prelude::*;
+        let _ = tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_test_writer()
+                    .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
+                        metadata.target() == "robin_engine::engine::level_loading"
+                            && *metadata.level() == tracing::Level::DEBUG
+                    })),
+            )
+            .try_init();
+    }
     let directory = std::path::PathBuf::from(
         std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").expect("diagnostic directory"),
     );
@@ -779,7 +792,42 @@ fn recovered_static_exports_construct_native_geometry() {
         let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let geometry = &descriptor["asset_geometry"];
         let dims = &descriptor["walkable_polygon"][2];
+        let profile = std::env::var_os("ROBIN_ASSET_MAP_PROFILE").is_some();
+        if profile {
+            let motion: robin_engine::level_data::RawMotionData =
+                serde_json::from_value(geometry["motion_data"].clone()).unwrap();
+            let started = std::time::Instant::now();
+            for area in motion.layers.iter().flatten() {
+                for obstacle in &area.obstacles {
+                    obstacle.validate_precise_polygon().unwrap();
+                }
+            }
+            eprintln!(
+                "{file}: one obstacle validation pass {:?}",
+                started.elapsed()
+            );
+            use geo::Validation;
+            let started = std::time::Instant::now();
+            for area in motion.layers.iter().flatten() {
+                let polygon = geo::Polygon::new(
+                    geo::LineString::from(
+                        area.polygon
+                            .points
+                            .iter()
+                            .map(|&(x, y)| (f64::from(x), f64::from(y)))
+                            .collect::<Vec<_>>(),
+                    ),
+                    vec![],
+                );
+                assert!(polygon.is_valid());
+            }
+            eprintln!("{file}: motion boundary validation {:?}", started.elapsed());
+        }
+        let load_start = std::time::Instant::now();
         let mut level = LoadedLevel::hackable_from_json(&bytes).unwrap();
+        if profile {
+            eprintln!("{file}: descriptor decoding {:?}", load_start.elapsed());
+        }
         if let Some(ambience) = result["ambience"].as_u64() {
             level.mission.header.ambiance = u32::try_from(ambience).unwrap();
         }
@@ -790,6 +838,7 @@ fn recovered_static_exports_construct_native_geometry() {
         let expected_sounds = level.proto.sound_sources.clone();
         let expected_ambience = level.mission.header.ambiance;
         let mut assets = LevelAssets::new();
+        let construction_start = std::time::Instant::now();
         let engine = construct_with_dimensions(
             level,
             &mut assets,
@@ -798,6 +847,12 @@ fn recovered_static_exports_construct_native_geometry() {
                 dims[1].as_f64().unwrap() as f32 + 1.,
             ),
         );
+        if profile {
+            eprintln!(
+                "{file}: engine construction {:?}",
+                construction_start.elapsed()
+            );
+        }
         assert_eq!(
             assets.environment.static_sight_obstacles.len(),
             geometry["sight_obstacles"].as_array().unwrap().len(),

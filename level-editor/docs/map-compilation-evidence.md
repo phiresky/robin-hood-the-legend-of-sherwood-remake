@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Native receiving-floor loading cost (2026-10-08)
+
+The completed Wychford export `saved-map-exports-e13P3h` passes native construction
+and all three control apply/reset checks. Construction retains 153 areas,
+16,185 sight obstacles, 30 runtime doors, no jump pairs, 59,850 grid blocks and
+36,782 elevation boundaries. The two debug audits took 774.52 and 773.68 seconds.
+These successful but slow checks do not resolve the export's gameplay omissions.
+
+Reduced copies in `native-receiving-profile-rzuwurkb` retain the first motion area
+and prefixes of its actual receivers. All four construct successfully. Descriptor
+decoding takes 11–283 ms; engine construction takes 1.51, 5.90, 23.94 and 48.10
+seconds for 32, 128, 512 and 1,024 receivers. Optional
+`ROBIN_ASSET_MAP_PROFILE=1` timing isolates ordinary floor binding: 32 floors
+take about 1.31 seconds, while grouping takes 0.37 ms and neighbours 3.23 ms.
+One validation of the 530-vertex motion boundary takes about 37 ms; that work
+repeats after unprojecting the boundary for each plane.
+
+Large single-ring physical polygons now sort edge bounds and skip spatially
+disjoint pairs before the same exact intersection and shared-endpoint checks.
+Geometry, tolerances, plane coefficients and routes are unchanged. Rings with
+holes and small rings retain the existing validator. Dense f32/f64 valid,
+crossed, repeated, reversed, degenerate and nonfinite cases match its results.
+
+The four reduced construction times fall to approximately 0.112, 0.437, 1.768
+and 5.107 seconds; the complete reduced audit falls from 79.96 to 8.12 seconds.
+All 44 stair-navigation, 55 enabled compiled-navigation and 67 enabled native
+map-compilation tests pass. Eighteen compiled-navigation and five map-compilation
+audits require external fixtures and remain ignored in those suites. Three
+movement tests now clear obsolete plane anchors when replacing fixture vertices,
+and clear obsolete precise boundaries when replacing the motion area; their
+behavioral assertions are unchanged. Full-map timing after optimization is
+still being measured, separately from the reduced benchmark.
+
 ## Watermill physical platform candidate (2026-10-08)
 
 The remaining Wychford receiver omission is asset-local: the watermill has a

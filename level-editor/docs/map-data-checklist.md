@@ -29,7 +29,13 @@ pass for the captured failure. Wychford descriptor export now completes in
 126.2 seconds including one best-effort retry (`saved-map-exports-e13P3h`). It
 retains 1,862 warnings, including the floating church approach and watermill
 receiver omission. The evidence document records the small union-rounding
-differences; browser bake and native checks of this full export remain separate.
+differences. Native construction and all three controls pass, but each audit
+takes about 13 minutes; browser baking remains a separate check.
+Native floor binding repeats a costly boundary-validity test for each receiving
+plane. Pruning disjoint edge pairs before the unchanged intersection predicate
+reduces a four-case loading benchmark from 79.96 to 8.12 seconds. All 44
+stair-navigation, 55 enabled compiled-navigation and 67 enabled map-compilation
+tests pass. Full Wychford timing after this optimization is still being measured.
 An unpublished watermill candidate now supplies an asset-local raised platform
 floor while retaining its two material regions. Its Leicester export passes
 native construction with 23 jump pairs and no watermill door/jump omission.

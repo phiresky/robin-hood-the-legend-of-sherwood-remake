@@ -15,6 +15,7 @@ use crate::pathfinder::{MotionArea, MotionObstacle, PathFinder, PathGraph};
 mod clearance;
 mod landing_binding;
 mod landing_support;
+mod ring_validation;
 pub mod walking_binding;
 pub mod walking_surface;
 
@@ -270,7 +271,7 @@ fn polygon<T: geo::GeoFloat>(points: &[[T; 2]]) -> Result<Polygon<T>, String> {
         LineString::from(points.iter().map(|p| (p[0], p[1])).collect::<Vec<_>>()),
         Vec::new(),
     );
-    if !polygon.is_valid() || polygon.unsigned_area() <= T::zero() {
+    if !ring_validation::is_valid(&polygon) || polygon.unsigned_area() <= T::zero() {
         return Err("physical stair polygon is degenerate or self-intersecting".into());
     }
     Ok(polygon)

@@ -2390,6 +2390,7 @@ impl EngineInner {
     ) {
         use geo::BooleanOps;
         use std::collections::BTreeMap;
+        let started = web_time::Instant::now();
         let mut areas = BTreeMap::new();
         let mut sector = 0u16;
         for (layer, definitions) in motion_data.layers.iter().enumerate() {
@@ -2438,6 +2439,12 @@ impl EngineInner {
             ids.push(id);
             *coverage = coverage.union(receiver.polygon.as_geo());
         }
+        tracing::debug!(
+            groups = groups.len(),
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            "engine walking: receiving groups"
+        );
+        let started = web_time::Instant::now();
         let mut floors = Vec::new();
         for ((index, coefficients), (receivers, coverage)) in groups {
             let &(layer, area, sector, motion) = &areas[&index];
@@ -2451,8 +2458,18 @@ impl EngineInner {
                 }
             }
         }
+        tracing::debug!(
+            floors = floors.len(),
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            "engine walking: bind floors"
+        );
+        let started = web_time::Instant::now();
         crate::stair_navigation::walking_binding::BoundPhysicalWalkingSurface::bind_neighbours(
             &mut floors,
+        );
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_secs_f64() * 1000.0,
+            "engine walking: connect neighbours"
         );
         assets.navigation.physical_walking = std::sync::Arc::new(floors);
     }
