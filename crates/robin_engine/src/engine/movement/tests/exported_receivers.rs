@@ -11,8 +11,11 @@ fn physical_walking_shortcut_respects_the_requested_destination_layer() {
     let geometry = &mut descriptor["asset_geometry"];
     let mut area = geometry["motion_data"]["layers"][0][0].clone();
     area["polygon"]["points"] = serde_json::json!([[0, 0], [100, 0], [100, 100], [0, 100]]);
+    area["precise_polygon"] = serde_json::json!([]);
     geometry["motion_data"]["layers"] = serde_json::json!([[area.clone()], [area], []]);
-    let template = geometry["sight_obstacles"][0].clone();
+    let mut template = geometry["sight_obstacles"][0].clone();
+    // These cases replace the plane's vertices, so derive anchors from those vertices.
+    template.as_object_mut().unwrap().remove("projection_plane");
     geometry["sight_obstacles"] = serde_json::Value::Array(
         [0, 1]
             .into_iter()
@@ -198,7 +201,8 @@ fn overlapping_receiving_floors() -> serde_json::Value {
     geometry["motion_data"]["layers"][0][0]["polygon"]["points"] =
         serde_json::json!([[0, 0], [100, 0], [100, 100], [0, 100]]);
     geometry["motion_data"]["layers"][0][0]["precise_polygon"] = serde_json::json!([]);
-    let template = geometry["sight_obstacles"][0].clone();
+    let mut template = geometry["sight_obstacles"][0].clone();
+    template.as_object_mut().unwrap().remove("projection_plane");
     let receivers = [
         (vec![(0., 0.), (100., 0.), (100., 100.), (0., 100.)], false),
         (vec![(40., 40.), (60., 40.), (60., 60.), (40., 60.)], true),
