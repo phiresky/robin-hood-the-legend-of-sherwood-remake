@@ -17,7 +17,7 @@ stock-mission regression completes all 540 frames, including Silver Arrow frame 
 median ticks range from 0.18 to 0.87 ms in the latest run (before the sound-fragment
 extension). Current validation: 248 selected compiler/export/sound tests pass;
 native map integration is 71 passed, 5 ignored; the
-engine suite is **4,345 passed, 0 failed, 36 ignored**. Passage approaches are now
+engine suite is **4,346 passed, 0 failed, 37 ignored**. Passage approaches are now
 prepared at export, and the loader's approach search has been deleted. Exports
 omit obsolete physical navigation metadata. The four stair receiver/barrier
 failures now pass using the native endpoints. Derby's saved-scene export
@@ -38,8 +38,11 @@ The audit verifies each step's distance and animation/command completion rather
 than accepting an arbitrary near-goal offset. No runtime change was needed.
 Another 120 isolated sword jumps pass exact landing and receiver checks, exercise
 the sword-flight animation and preserve combat state and opponent relationships.
-Full combat interaction, assisted jumps, click authorization and rendering remain
-open.
+Another 120 interior-click cases select the expected connection and complete
+normal player movement with exact arrival. The checked-in fixture also verifies
+that removing jump skill rejects both directions of both copied connections.
+Full combat interaction, assisted jumps, multi-PC click formations and rendering
+remain open.
 The 101 focused editor/compiler tests
 pass; see [reproduction and scope](map-compilation-evidence.md#prepared-roof-jumps-and-continuous-receivers-2026-10-08).
 
@@ -1452,7 +1455,7 @@ this does not repair Wychford's already-elevated approach automatically.
 | Doors, gates and locks | Transform endpoints; resolve current neighbours and local initial/alternate permissions. | Compiler/runtime fixtures pass; incomplete assets still warn. |
 | Building interiors | Connect entrances in each asset-local room automatically; use editor links or passage sockets between assets. | Separate, joined, moved, rotated and copied assemblies and editable ZIP round trips tested. |
 | Stairs, ladders and climbable walls | Assemble local traversal surfaces/sockets and endpoints; prepare actor-sized native approaches and passage-state conditions at export. | Native stair rotation/copy checks and complete-character-animation tests cover changing climb barriers, independent copied controls, closure during climbing and 72 interior reopening cases. Twenty-four fresh ladder/wall entrance fixtures reject an already-active barrier at either end and traverse both ways before applying and after resetting it. Runtime checks a cached availability flag, updated only at startup/state changes. Seventy-two lower/upper entry animation cases verify closure preserves position/animation and reopening after 20/120 ticks completes traversal. Later phases and actor overlap/crushing need broader coverage. Historical physical-navigation route counts do not certify the current architecture. Broader placements and rendered traversal remain open. |
-| Jump zones and paired edges | Derive from marked surfaces or transform authored edges; find current destinations and trim blocked approaches/flights. | Moved/cross-asset destinations, skills and nearby state changes tested. Rotated/copied roof fixtures pass 120 isolated upright jumps, 120 upright walk–jump–walk sequences and 120 isolated sword jumps with exact landings and preserved combat state. One tested rotation omits unusable receiving spans. Assisted jumps, full combat interactions, click authorization, rendering and broader authoring/traversal coverage remain open. |
+| Jump zones and paired edges | Derive from marked surfaces or transform authored edges; find current destinations and trim blocked approaches/flights. | Moved/cross-asset destinations, skills and nearby state changes tested. Rotated/copied roof fixtures pass 120 isolated upright jumps, 120 upright walk–jump–walk sequences and 120 isolated sword jumps with exact landings and preserved combat state. Another 120 interior-click routes pass normal player dispatch with exact arrival; the checked-in fixture verifies overlay selection and missing-skill rejection. One tested rotation omits unusable receiving spans. Assisted jumps, full combat interactions, multi-PC formations, rendering and broader authoring/traversal coverage remain open. |
 | Surface materials | Transform local material regions and rebuild ground/obstacle/receiver links. | Compiler/native lookup fixtures and published definitions exist; complete geometry coverage remains open. |
 | Lighting and shadow regions | Transform local contours and bind to current receiving planes/layers. | Published definitions and focused native queries tested; complete placement/query coverage remains open. |
 | Environmental sounds | Transform local emitters; preserve timing, falloff, acoustic altitude and ambience filters. Cropped fragments share one clock using the [sound shape extension](sound-source-format.md). | Native construction tested across exported maps. Disconnected fragment export, moved/curved/rising placement, local recovery, native distance/noise queries and invalid-index rejection pass; audible playback and ownership review remain open. |

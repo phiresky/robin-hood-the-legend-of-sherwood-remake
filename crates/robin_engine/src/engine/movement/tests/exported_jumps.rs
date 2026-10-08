@@ -1,5 +1,12 @@
 use super::*;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JumpDispatch {
+    Isolated,
+    Approach,
+    Click,
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct JumpArrival {
     final_distance: f32,
@@ -135,22 +142,102 @@ fn short_startup_finishes_its_animation_with_only_the_turning_distance_loss() {
 #[test]
 #[ignore = "requires exported jump pairs and ROBIN_CLIMB_RHS"]
 fn exported_jumps_complete_sprite_dispatch_and_land_on_receivers() {
-    audit_jump_dispatch(false, false);
+    audit_jump_dispatch(JumpDispatch::Isolated, false);
+}
+
+#[test]
+fn exported_roof_jump_overlays_select_the_current_connection_and_require_jump_skill() {
+    let (mut engine, mut assets) = compiled_walkway(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-jump-rotated-roofs.level.json"
+    )));
+    assert_eq!(engine.world.fast_grid.level.jump_lines.len(), 4);
+    for index in 0..4 {
+        let source = engine.world.fast_grid.level.jump_lines[index].clone();
+        let destination = engine.world.fast_grid.level.jump_lines
+            [source.associated_line_index.unwrap() as usize]
+            .clone();
+        let handle = |line: &crate::jump_line::JumpLine| {
+            let index = line.sector_index.unwrap();
+            crate::position_interface::SectorHandle::from_number(
+                engine.world.fast_grid.level.sectors[usize::from(index)].sector_number,
+            )
+            .with_arena_index(index)
+        };
+        let source_sector = handle(&source);
+        let destination_sector = handle(&destination);
+        let vector = source.vector();
+        let inset = crate::coordinates::MapVec::new(
+            -vector.y * 2. / vector.length(),
+            vector.x * 2. / vector.length(),
+        );
+        let start = source.get_middle_point() - inset;
+        let goal = destination.get_middle_point() + inset;
+        let owner = walking_pc(&mut engine, &mut assets, start, source.layer, source_sector);
+        engine.ent_mut(owner).pc_data_mut().unwrap().has_jump = true;
+        resolve_jump_click(&engine, owner, start, goal, index, destination_sector).unwrap();
+        engine.ent_mut(owner).pc_data_mut().unwrap().has_jump = false;
+        assert!(!engine.is_jumpable(index as u32, owner, true));
+        assert!(
+            resolve_jump_click(&engine, owner, start, goal, index, destination_sector).is_err()
+        );
+    }
+}
+
+fn resolve_jump_click(
+    engine: &EngineInner,
+    owner: EntityId,
+    start: MapPoint,
+    goal: MapPoint,
+    index: usize,
+    destination_sector: crate::position_interface::SectorHandle,
+) -> Result<(), String> {
+    let hit = engine.world.fast_grid.get_sector_screen(goal, start);
+    let hit_index = hit
+        .sector_idx
+        .ok_or_else(|| format!("click misses all sectors: {goal:?}"))?;
+    let selected = &engine.world.fast_grid.level.sectors[usize::from(hit_index)];
+    if !selected.sector_type.is_jump() {
+        return Err(format!(
+            "click does not select jump overlay: {goal:?}, sector={:?}",
+            selected.sector_number
+        ));
+    }
+    let chosen = engine.get_nearest_jumpable_jump_line(
+        owner,
+        u32::from(hit_index),
+        start,
+        goal,
+        true,
+        Some(u16::from(destination_sector)),
+    );
+    if chosen != Some(index as u32) {
+        return Err(format!(
+            "click selects wrong jump: expected={index}, chosen={chosen:?}"
+        ));
+    }
+    Ok(())
 }
 
 #[test]
 #[ignore = "requires exported jump pairs and ROBIN_CLIMB_RHS"]
 fn exported_jumps_walk_to_launch_and_continue_after_landing() {
-    audit_jump_dispatch(true, false);
+    audit_jump_dispatch(JumpDispatch::Approach, false);
 }
 
 #[test]
 #[ignore = "requires exported long-jump pairs and ROBIN_CLIMB_RHS"]
 fn exported_jumps_complete_sword_dispatch_and_preserve_combat() {
-    audit_jump_dispatch(false, true);
+    audit_jump_dispatch(JumpDispatch::Isolated, true);
 }
 
-fn audit_jump_dispatch(approach: bool, combat: bool) {
+#[test]
+#[ignore = "requires exported jump pairs and ROBIN_CLIMB_RHS"]
+fn exported_jumps_resolve_player_clicks_and_complete_the_route() {
+    audit_jump_dispatch(JumpDispatch::Click, false);
+}
+
+fn audit_jump_dispatch(mode: JumpDispatch, combat: bool) {
     let sprite = super::exported_stairs::complete_climb_sprite();
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
@@ -162,6 +249,13 @@ fn audit_jump_dispatch(approach: bool, combat: bool) {
         let file = result["file"].as_str().unwrap();
         let approach_depth = result["approach_depth"].as_f64().unwrap_or(8.) as f32;
         assert!(approach_depth.is_finite() && approach_depth > 0.);
+        // Click inside the exported landing band. Its outer edge rounds to the
+        // native integer grid; the full-depth movement goal can lie outside it.
+        let approach_depth = if mode == JumpDispatch::Click {
+            approach_depth / 2.
+        } else {
+            approach_depth
+        };
         let bytes = std::fs::read(directory.join(file)).unwrap();
         let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let dims = &descriptor["walkable_polygon"][2];
@@ -173,14 +267,18 @@ fn audit_jump_dispatch(approach: bool, combat: bool) {
             ),
         );
         for index in 0..engine.world.fast_grid.level.jump_lines.len() {
-            for t in [0., 0.25, 0.5, 0.75, 1.] {
+            for t in if mode == JumpDispatch::Click {
+                [0.05, 0.25, 0.5, 0.75, 0.95]
+            } else {
+                [0., 0.25, 0.5, 0.75, 1.]
+            } {
                 let outcome = dispatch_jump(
                     engine.clone(),
                     assets.clone(),
                     &sprite,
                     index,
                     t,
-                    approach,
+                    mode,
                     approach_depth,
                     combat,
                 );
@@ -199,12 +297,18 @@ fn audit_jump_dispatch(approach: bool, combat: bool) {
         .count();
     let report = serde_json::json!({
         "stance": if combat { "sword" } else { "upright" },
-        "scope": if approach { "walk-jump-walk-sequence-not-click-authorization-or-rendering" } else { "sprite-dispatch-and-landing-not-click-approach-or-rendering" },
+        "scope": match mode {
+            JumpDispatch::Click => "player-click-resolution-and-walk-jump-walk-not-rendering",
+            JumpDispatch::Approach => "walk-jump-walk-sequence-not-click-authorization-or-rendering",
+            JumpDispatch::Isolated => "sprite-dispatch-and-landing-not-click-approach-or-rendering",
+        },
         "complete": !results.is_empty() && failed == 0, "results": results,
     });
     let path = directory.join(if combat {
         "actor-jump-sword-report.json"
-    } else if approach {
+    } else if mode == JumpDispatch::Click {
+        "actor-jump-click-report.json"
+    } else if mode == JumpDispatch::Approach {
         "actor-jump-approach-report.json"
     } else {
         "actor-jump-landing-report.json"
@@ -226,10 +330,11 @@ fn dispatch_jump(
     sprite: &crate::sprite::Sprite,
     index: usize,
     t: f32,
-    approach: bool,
+    mode: JumpDispatch,
     approach_depth: f32,
     combat: bool,
 ) -> Result<JumpArrival, String> {
+    let approach = mode != JumpDispatch::Isolated;
     let source = engine.world.fast_grid.level.jump_lines[index].clone();
     let destination_index = source.associated_line_index.unwrap();
     let destination = engine.world.fast_grid.level.jump_lines[destination_index as usize].clone();
@@ -285,6 +390,7 @@ fn dispatch_jump(
         .get_projection_area_index(&assets, source_sector, source.layer, start)
         .ok_or_else(|| format!("launch point has no receiver: {start:?}"))?;
     let owner = walking_pc(&mut engine, &mut assets, start, source.layer, source_sector);
+    engine.ent_mut(owner).pc_data_mut().unwrap().has_jump = true;
     let opponent = combat.then(|| {
         let opponent = walking_pc(
             &mut engine,
@@ -314,42 +420,59 @@ fn dispatch_jump(
         crate::sequence::FieldValue::Integer(destination_index),
     );
     let sim = crate::sim_rng::test_context();
-    let sequence = if approach {
+    let sequence = if mode == JumpDispatch::Click {
+        resolve_jump_click(&engine, owner, start, goal, index, destination_sector)?;
+        engine.perform_group_move(
+            TickCtx::new(&sim, &assets),
+            &[owner],
+            goal,
+            false,
+            false,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+        );
+        None
+    } else if approach {
         let source_id = crate::jump_line::JumpLineIndex::new(index as u32).unwrap();
         let destination_id = crate::jump_line::JumpLineIndex::new(destination_index).unwrap();
-        engine
-            .launch_gate_movement_sequence(
-                TickCtx::new(&sim, &assets),
-                &mut vec![],
-                crate::engine::movement::GateRouteRequest {
-                    entity_id: owner,
-                    source_sector: None,
-                    gate_path: vec![],
-                    goal: crate::engine::movement::GoalShape::Line {
-                        line_index: source_id,
-                        midpoint: source.get_middle_point(),
-                        tolerance: 0.,
+        Some(
+            engine
+                .launch_gate_movement_sequence(
+                    TickCtx::new(&sim, &assets),
+                    &mut vec![],
+                    crate::engine::movement::GateRouteRequest {
+                        entity_id: owner,
+                        source_sector: None,
+                        gate_path: vec![],
+                        goal: crate::engine::movement::GoalShape::Line {
+                            line_index: source_id,
+                            midpoint: source.get_middle_point(),
+                            tolerance: 0.,
+                        },
+                        goal_layer: source.layer,
+                        base_action: OrderType::WalkingUpright,
+                        move_after_last_door: true,
+                        speed_factor: 1.,
+                        initial_flags: crate::sequence::MoveFlags::empty(),
+                        prefix_elements: vec![],
+                        tail_elements: crate::engine::movement::build_line_jump_click_tail(
+                            owner,
+                            OrderType::WalkingUpright,
+                            source_id,
+                            destination_id,
+                            goal,
+                            destination.layer,
+                            1.,
+                        ),
+                        append_arrival_speech: false,
+                        append_recovery: false,
                     },
-                    goal_layer: source.layer,
-                    base_action: OrderType::WalkingUpright,
-                    move_after_last_door: true,
-                    speed_factor: 1.,
-                    initial_flags: crate::sequence::MoveFlags::empty(),
-                    prefix_elements: vec![],
-                    tail_elements: crate::engine::movement::build_line_jump_click_tail(
-                        owner,
-                        OrderType::WalkingUpright,
-                        source_id,
-                        destination_id,
-                        goal,
-                        destination.layer,
-                        1.,
-                    ),
-                    append_arrival_speech: false,
-                    append_recovery: false,
-                },
-            )
-            .ok_or("walk-jump-walk route construction failed")?
+                )
+                .ok_or("walk-jump-walk route construction failed")?,
+        )
     } else {
         let sequence = engine.t_launch_in_progress(&assets, jump);
         if !engine.start_jump(
@@ -360,7 +483,7 @@ fn dispatch_jump(
             return Err("jump dispatch rejected the connection".into());
         }
         engine.select_sequence_element(owner, Some((sequence, 0)));
-        sequence
+        Some(sequence)
     };
     let mut flew = false;
     let mut sword_flew = false;
@@ -379,11 +502,13 @@ fn dispatch_jump(
         }
         flew |= element.posture() == Posture::Flying;
         sword_flew |= element.sprite.last_action == OrderType::JumpingLongSword;
-        let finished = engine
-            .orders
-            .sequence_manager
-            .get_element(sequence, 0)
-            .is_none_or(|element| element.orders.is_empty());
+        let finished = sequence.is_some_and(|sequence| {
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence, 0)
+                .is_none_or(|element| element.orders.is_empty())
+        });
         let finished_selection = engine
             .entities()
             .current_element_for_actor(owner)
