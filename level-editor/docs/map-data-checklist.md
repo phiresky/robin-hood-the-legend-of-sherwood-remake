@@ -1418,6 +1418,15 @@ of two edges plus a duplicate, while preserving separate landing-zone identities
 and different clearance policies. The focused compiler/jump suite passes 163
 tests; this addresses duplicate connections, not the remaining actor-flight gaps.
 
+Spline clearances can now preserve distinct physical and navigation planes using
+per-vertex navigation heights. Tests cover rising curved spans, holes, frame
+translation, malformed heights and nonplanar rejection. Tilted source frames that
+separate the two footprints still warn/omit the clearance. The 183 focused compiler,
+spline, placement and translation tests pass; native traversal for this newly
+supported clearance case remains pending. Pipeline typechecking remains blocked
+by existing errors in `state-delivery.test.ts`; touched files pass scoped lint and
+app typechecking/build.
+
 Mission content remains separate from reusable map definitions:
 
 | Mission information | Current construction / status |

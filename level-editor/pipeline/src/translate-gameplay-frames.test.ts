@@ -33,6 +33,28 @@ function equivalent(actual: unknown, expected: unknown, path = "") {
   } else assert.deepEqual(actual, expected, path);
 }
 
+test("translated clearance frames retain per-vertex navigation heights", () => {
+  const { assets } = clearanceAssetCompilerFixture();
+  const asset = [...assets.values()].find((asset) => asset.gameplay?.movementClearances?.length)!;
+  const gameplay = structuredClone(asset.gameplay!);
+  const clearance = gameplay.movementClearances![0]!;
+  clearance.navigationHeight = clearance.polygon.map(([x, y]) => x * 0.1 + y * 0.2);
+  const original = structuredClone(gameplay);
+  const shifted = translateGameplayFrames(
+    gameplay,
+    new Map([[clearance.node, [10, 20, 30] as Vec3]]),
+  );
+  assert.deepEqual(
+    shifted.movementClearances![0]!.navigationHeight,
+    clearance.navigationHeight.map((z) => z + 30),
+  );
+  equivalent(
+    translateGameplayFrames(shifted, new Map([[clearance.node, [-10, -20, -30] as Vec3]])),
+    original,
+  );
+  assert.deepEqual(gameplay, original);
+});
+
 for (const fixture of [
   assetCompilerFixture,
   maskAssetCompilerFixture,

@@ -216,7 +216,7 @@ test("spline volume headroom survives repeated deformation", () => {
   assert.ok(volumes.some((v) => v.movementHeadroom === undefined));
 });
 
-test("spline clearances never silently lose their separate navigation plane", () => {
+test("spline clearances preserve separate physical and navigation planes", () => {
   const { document, asset, assets } = wallSplineFixture();
   asset.gameplay!.movementClearances = [
     {
@@ -230,18 +230,66 @@ test("spline clearances never silently lose their separate navigation plane", ()
       ],
       height: 30,
       navigationHeight: 0,
+      holes: [
+        [
+          [2, 2],
+          [4, 2],
+          [4, 4],
+          [2, 4],
+        ],
+      ],
     },
   ];
-  assert.throws(
-    () => wallSplineGameplay(document, assets, false),
-    /navigation heights are unsupported/,
+  for (const invalid of [[], [0, 0, 0], [0, 0, NaN, 0]]) {
+    asset.gameplay!.movementClearances[0]!.navigationHeight = invalid;
+    assert.throws(
+      () => validateAssetGameplay(asset.gameplay, asset),
+      /invalid collision navigation height/,
+    );
+  }
+  asset.gameplay!.movementClearances[0]!.navigationHeight = 0;
+  const result = wallSplineGameplay(document, assets, false);
+  const clearances = result.descriptors.flatMap(
+    (descriptor) => descriptor.gameplay!.movementClearances!,
   );
-  const result = wallSplineGameplay(document, assets, true);
-  assert.ok(
-    result.warnings.some((warning) => warning.includes("clearance omitted, collision retained")),
-  );
-  assert.equal(result.descriptors[0]!.gameplay!.movementClearances!.length, 0);
+  assert.ok(clearances.length > 0);
+  for (const clearance of clearances) {
+    assert.ok(Array.isArray(clearance.height));
+    const navigationHeight = clearance.navigationHeight;
+    assert.ok(Array.isArray(navigationHeight));
+    clearance.height.forEach((height, i) =>
+      assert.ok(Math.abs(height - navigationHeight[i]! - 30) < 1e-4),
+    );
+  }
   assert.ok(result.descriptors[0]!.gameplay!.movementSolids!.length > 0);
+  document.splines![0]!.points = [
+    [100, 200, 40],
+    [250, 250, 60],
+    [400, 200, 80],
+  ];
+  document.splines![0]!.curved = true;
+  const bent = wallSplineGameplay(document, assets, false);
+  const heights = new Set<number>();
+  for (const descriptor of bent.descriptors) {
+    validateAssetGameplay(descriptor.gameplay, descriptor);
+    for (const clearance of descriptor.gameplay!.movementClearances!) {
+      const navigation = clearance.navigationHeight;
+      assert.ok(Array.isArray(navigation) && Array.isArray(clearance.height));
+      clearance.height.forEach((height, i) => {
+        assert.ok(Math.abs(height - navigation[i]! - 30) < 1e-4);
+        heights.add(navigation[i]!);
+      });
+    }
+  }
+  assert.ok(heights.size > 3, "Rising curved spans retain their changing navigation heights");
+  asset.gameplay!.spline!.frames.body![8] = 1;
+  asset.gameplay!.volumes = [];
+  assert.throws(() => wallSplineGameplay(document, assets, false), /tilted source/);
+  assert.ok(
+    wallSplineGameplay(document, assets, true).warnings.some((warning) =>
+      warning.includes("tilted source"),
+    ),
+  );
 });
 
 test("spline materials retain vertical faces and receiver ownership after moving and repeating", () => {

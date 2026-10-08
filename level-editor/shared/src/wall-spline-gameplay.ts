@@ -705,18 +705,37 @@ export function wallSplineGameplay(
       }
       const surfaceSet = `span-${out.surfaces.length}`;
       const appendSurface = (surface: AssetWalkableSurface, target: AssetWalkableSurface[]) => {
-        if (surface.navigationHeight !== undefined) {
-          report(
-            `Wall spline ${path.id}, clearance ${surface.id}: separate physical and navigation heights are unsupported; clearance omitted, collision retained.`,
-          );
-          return;
-        }
         const local = surface.polygon.map(([x, y], i): Vec3 => [
           x,
           y,
           typeof surface.height === "number" ? surface.height : surface.height[i]!,
         ]);
         const plane = heightPlane(local);
+        const navigationHeight = surface.navigationHeight;
+        const navigationSource =
+          navigationHeight === undefined
+            ? undefined
+            : local.map(([x, y], i) =>
+                source(surface.node, [
+                  x,
+                  y,
+                  typeof navigationHeight === "number" ? navigationHeight : navigationHeight[i]!,
+                ]),
+              );
+        if (
+          navigationSource &&
+          local.some((point, i) => {
+            const physical = source(surface.node, point),
+              navigation = navigationSource[i]!;
+            return Math.hypot(physical[0] - navigation[0], physical[1] - navigation[1]) > 1e-6;
+          })
+        ) {
+          report(
+            `Wall spline ${path.id}, clearance ${surface.id}: tilted source separates physical and navigation footprints; clearance omitted, collision retained.`,
+          );
+          return;
+        }
+        const navigationPlane = navigationSource ? heightPlane(navigationSource) : undefined;
         const rings = [
           local,
           ...(surface.holes ?? []).map((h) =>
@@ -741,6 +760,17 @@ export function wallSplineGameplay(
                 node: "$root",
                 polygon: world.map((p) => [p[0], p[1]]),
                 height: world.map((p) => p[2]),
+                ...(navigationPlane
+                  ? {
+                      navigationHeight: vertices.map(
+                        (v) =>
+                          warp(
+                            [v[0]!, v[1]!, planeHeight(navigationPlane, [v[0]!, v[1]!])],
+                            repeat,
+                          )[2],
+                      ),
+                    }
+                  : {}),
                 preserveMovementPrecision: true,
                 ...(target === out.surfaces && navigationRegion !== undefined
                   ? {

@@ -20,14 +20,23 @@ export function placeGameplaySurface(
   const points = place(local);
   const holes = localHoles.map(place);
   const navigationHeight = surface.navigationHeight;
-  const navigationPoints =
+  const navigationLocal =
     navigationHeight === undefined
-      ? points
-      : place(local.map(([x, y]): Vec3 => [x, y, navigationHeight]));
+      ? local
+      : local.map(([x, y], i): Vec3 => [
+          x,
+          y,
+          typeof navigationHeight === "number" ? navigationHeight : navigationHeight[i]!,
+        ]);
+  const navigationPlane =
+    navigationHeight === undefined ? localPlane : heightPlane(navigationLocal);
+  const navigationPoints = navigationHeight === undefined ? points : place(navigationLocal);
   const navigationHoles =
     navigationHeight === undefined
       ? holes
-      : localHoles.map((hole) => place(hole.map(([x, y]): Vec3 => [x, y, navigationHeight])));
+      : localHoles.map((hole) =>
+          place(hole.map(([x, y]): Vec3 => [x, y, planeHeight(navigationPlane, [x, y])])),
+        );
   return {
     localPlane,
     points,

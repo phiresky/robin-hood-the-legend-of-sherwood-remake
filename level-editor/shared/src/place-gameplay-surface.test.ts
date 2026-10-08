@@ -95,4 +95,14 @@ test("raised clearance contours retain distinct physical and navigation heights,
       [480, 510],
     ],
   );
+  surface.navigationHeight = [0, 10, 10, 0];
+  const sloped = placeGameplaySurface(surface, (_, point) => point);
+  assert.deepEqual(sloped.worldPlane, [0.1, 0, 0]);
+  assert.deepEqual(
+    sloped.navigationHoles[0]!.map((point) => point[2]),
+    [1, 2, 2, 1],
+  );
+  assert.ok(sloped.points.every((point) => point[2] === 80));
+  surface.navigationHeight = [0, 10, 20, 0];
+  assert.throws(() => placeGameplaySurface(surface, (_, point) => point), /must be planar/);
 });

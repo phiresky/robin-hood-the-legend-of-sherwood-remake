@@ -36,7 +36,11 @@ export function translateGameplayFrames(
     const dz = offset(s.node)[2];
     s.polygon = s.polygon.map((p) => xy(s.node, p));
     s.height = typeof s.height === "number" ? s.height + dz : s.height.map((z) => z + dz);
-    if (s.navigationHeight !== undefined) s.navigationHeight += dz;
+    if (s.navigationHeight !== undefined)
+      s.navigationHeight =
+        typeof s.navigationHeight === "number"
+          ? s.navigationHeight + dz
+          : s.navigationHeight.map((height) => height + dz);
     if (s.holes) s.holes = s.holes.map((hole) => hole.map((p) => xy(s.node, p)));
     if (s.navigationJoins)
       s.navigationJoins = s.navigationJoins.map((edge) => segment(s.node, edge));

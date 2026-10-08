@@ -2794,3 +2794,10 @@ with local `show` and `hide` control IDs. Editor and pipeline loaders combine th
 with model metadata, reject conflicting rules, and retain independent controls
 when assets are copied or reopened. This uses the existing appearance export and
 runtime format without rewriting mesh files.
+
+Asset collision clearances and blockers can author a planar navigation height per
+polygon vertex independently of their physical height. Spline deformation retains
+both planes on rising and curved spans, including trimmed pieces and holes, and
+asset-frame translation preserves both. Tilted source frames that require distinct
+physical/navigation footprints still warn and omit that clearance in best-effort
+exports; ordinary collision remains.
