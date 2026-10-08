@@ -3695,6 +3695,57 @@ fn native_test_soldier() -> Entity {
 }
 
 #[test]
+fn forbid_remark_keeps_full_width_arguments_and_rejects_invalid_ids() {
+    let mut host = NativeTestHost::new();
+    host.entities.push(Some(native_test_soldier()));
+    let actor = ScriptHandleCodec::actor_handle_from_index(0);
+    let call = |host: &mut NativeTestHost, remark, forbid| {
+        let mut stack = NativeStack::default();
+        stack.push_i32(actor);
+        stack.push_i32(remark);
+        stack.push_i32(forbid);
+        assert_eq!(
+            call_host_native(host, NativeFn::ForbidNPCRemark, &mut stack),
+            0
+        );
+    };
+    for forbid in [1, 256, -256] {
+        call(&mut host, 119, forbid);
+        let ai = host.entities
+            [crate::element::EntityId::new(0, crate::element::EntityIdKind::Soldier)]
+        .as_ref()
+        .unwrap()
+        .ai_controller()
+        .unwrap();
+        assert_eq!(ai.forbidden_remark_ids, vec![119]);
+        call(&mut host, 119, 0);
+        assert!(
+            host.entities[crate::element::EntityId::new(0, crate::element::EntityIdKind::Soldier)]
+                .as_ref()
+                .unwrap()
+                .ai_controller()
+                .unwrap()
+                .forbidden_remark_ids
+                .is_empty()
+        );
+    }
+    call(&mut host, 0, 1);
+    for invalid in [-256, -1, 120, 128, 250, 256, i32::MAX] {
+        call(&mut host, invalid, 1);
+        call(&mut host, invalid, 0);
+        assert_eq!(
+            host.entities[crate::element::EntityId::new(0, crate::element::EntityIdKind::Soldier)]
+                .as_ref()
+                .unwrap()
+                .ai_controller()
+                .unwrap()
+                .forbidden_remark_ids,
+            vec![0]
+        );
+    }
+}
+
+#[test]
 fn set_always_attentive_promotes_green_view_when_music_is_already_yellow() {
     let mut soldier = crate::engine::test_support::actors::make_test_ai_soldier(
         crate::element::Camp::Lacklandists,

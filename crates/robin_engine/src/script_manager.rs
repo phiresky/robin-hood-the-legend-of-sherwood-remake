@@ -538,12 +538,19 @@ mod preparation_tests {
     }
 
     #[test]
-    fn original_workaround_opcodes_remain_explicit_noops() {
-        let program = ScriptProgram::from_scb(program(&[0, 58, 107, 208, 229])).unwrap();
-        assert_eq!(program.programs[0], vec![Instruction::Empty; 5]);
+    fn formerly_rewritten_opcodes_are_rejected_without_mutating_input() {
+        for opcode in [58, 107, 208, 229] {
+            let scb = program(&[0, opcode]);
+            assert!(matches!(
+                ScriptProgram::from_scb(scb.clone()),
+                Err(ScriptError::InvalidInstruction { address: 1, opcode: actual, .. })
+                    if actual == opcode
+            ));
+            assert_eq!(scb.classes[0].quads[1].operation, opcode);
+        }
         assert_eq!(
-            program.scb().classes[0].quads.len(),
-            program.programs[0].len()
+            ScriptProgram::from_scb(program(&[0])).unwrap().programs[0],
+            vec![Instruction::Empty]
         );
     }
 }

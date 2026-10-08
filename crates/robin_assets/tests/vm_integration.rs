@@ -31,15 +31,9 @@ fn decodes_every_quad_in_demo_script() {
         }
     }
     assert!(decoded > 0, "should have decoded quads");
-    // The VM runtime force-rewrites opcodes 58, 107, 208, 229 to
-    // Q_EMPTY at runtime as a known workaround — allow those specific
-    // bytes through. Anything else is a real problem.
-    let allowed: std::collections::BTreeSet<u8> = [58, 107, 208, 229].into_iter().collect();
-    let unexpected: Vec<_> = unknown.difference(&allowed).copied().collect();
     assert!(
-        unexpected.is_empty(),
-        "demo script uses unexpected opcodes: {unexpected:?} \
-         (decoded {decoded}, known-workaround bytes {unknown:?})"
+        unknown.is_empty(),
+        "demo script has invalid opcodes: {unknown:?} (decoded {decoded})"
     );
 }
 
@@ -52,7 +46,6 @@ fn decodes_every_quad_in_demo_script() {
 fn decodes_every_quad_in_all_fullgame_scripts() {
     let levels_dir = data_directory("Data/Levels");
 
-    let allowed: std::collections::BTreeSet<u8> = [58, 107, 208, 229].into_iter().collect();
     let mut total_decoded = 0usize;
     let mut total_unknown = std::collections::BTreeMap::<u8, usize>::new();
     let mut scripts = 0;
@@ -77,15 +70,8 @@ fn decodes_every_quad_in_all_fullgame_scripts() {
     }
 
     assert!(scripts > 0, "should have found .scb files");
-    let unexpected: Vec<_> = total_unknown
-        .keys()
-        .filter(|k| !allowed.contains(k))
-        .copied()
-        .collect();
     assert!(
-        unexpected.is_empty(),
-        "fullgame uses unexpected opcodes: {unexpected:?} \
-         (decoded {total_decoded} across {scripts} scripts, \
-         known-workaround counts {total_unknown:?})"
+        total_unknown.is_empty(),
+        "fullgame has invalid opcodes: {total_unknown:?} (decoded {total_decoded} across {scripts} scripts)"
     );
 }

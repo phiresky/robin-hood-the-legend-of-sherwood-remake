@@ -550,22 +550,29 @@ impl NativeContext<'_, '_> {
             ForbidNPCRemark => {
                 // ForbidNPCRemark(Actor, int remark_id, bool forbid)
                 // Adds or removes a remark ID from this NPC's forbidden list.
-                // Both trailing arguments are narrowed to a signed byte before
-                // they reach the implementation.
-                let forbid = i32::from(stack.pop_i32() as i8);
-                let remark_id = i32::from(stack.pop_i32() as i8);
+                // VM int and bool slots are full width. Older captures may
+                // encode byte narrowing; do not restore that truncation, which
+                // aliases invalid remark IDs and loses nonzero booleans.
+                let forbid = stack.pop_i32() != 0;
+                let remark_id = stack.pop_i32();
                 let actor = stack.pop_i32();
+                if !(0..crate::ai::Remark::NumberOfRemarks as i32).contains(&remark_id) {
+                    tracing::warn!(remark_id, "ForbidNPCRemark: invalid remark ID");
+                    return 0;
+                }
                 if let Some(entity) = self.get_entity_mut(actor)
                     && let Some(ai) = entity.ai_controller_mut()
                 {
                     let id = remark_id as u32;
-                    if forbid != 0 {
+                    if forbid {
                         if !ai.forbidden_remark_ids.contains(&id) {
                             ai.forbidden_remark_ids.push(id);
                         }
                     } else {
                         ai.forbidden_remark_ids.retain(|&r| r != id);
                     }
+                } else {
+                    tracing::warn!(actor, "ForbidNPCRemark: invalid NPC");
                 }
                 0
             }

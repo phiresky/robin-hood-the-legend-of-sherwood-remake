@@ -241,16 +241,11 @@ pub fn decode(q: Quad) -> Result<Instruction, DecodeError> {
     Ok(decode_with(op, q.operands))
 }
 
-/// Checked preparation policy shared by runtime programs and best-effort
-/// decompilation. Raw disassembly must keep using [`decode`] to show the bytes
-/// as authored. Only these four shipped opcodes are known Q_EMPTY workarounds.
-/// TODO(parity): locate the Original rewrite rationale for these exceptions.
+/// Runtime preparation and decompilation use the same strict opcode table as
+/// raw disassembly. Invalid bytes must retain their identity in diagnostics;
+/// historical substitutions of 58/107/208/229 with Empty hid malformed code.
 pub fn decode_for_preparation(q: Quad) -> Result<Instruction, DecodeError> {
-    if [58, 107, 208, 229].contains(&q.operation) {
-        Ok(Instruction::Empty)
-    } else {
-        decode(q)
-    }
+    decode(q)
 }
 
 fn decode_with(op: Opcode, ops: [u8; 8]) -> Instruction {
@@ -572,14 +567,17 @@ mod tests {
     }
 
     #[test]
-    fn preparation_preserves_only_named_shipped_empty_exceptions() {
-        for operation in [58, 107, 208, 229] {
+    fn preparation_rejects_every_undefined_opcode() {
+        for operation in 48..=u8::MAX {
             let quad = Quad {
                 operation,
                 operands: [0; 8],
             };
             assert_eq!(decode(quad), Err(DecodeError::UnknownOpcode(operation)));
-            assert_eq!(decode_for_preparation(quad), Ok(Instruction::Empty));
+            assert_eq!(
+                decode_for_preparation(quad),
+                Err(DecodeError::UnknownOpcode(operation))
+            );
         }
         let invalid = Quad {
             operation: 255,

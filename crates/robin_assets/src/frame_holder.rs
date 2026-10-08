@@ -237,7 +237,7 @@ pub struct BankSpan {
 /// zip-overlay datadirs).
 #[derive(Debug)]
 enum BankStorage {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), target_endian = "little"))]
     Mapped(memmap2::Mmap),
     Owned(Vec<u16>),
 }
@@ -245,7 +245,7 @@ enum BankStorage {
 impl BankStorage {
     fn words(&self) -> &[u16] {
         match self {
-            #[cfg(not(target_arch = "wasm32"))]
+            #[cfg(all(not(target_arch = "wasm32"), target_endian = "little"))]
             BankStorage::Mapped(map) => bytemuck::try_cast_slice(&map[..])
                 .expect("bank mapping was validated as even-length at load; maps are page-aligned"),
             BankStorage::Owned(words) => words,
@@ -257,7 +257,7 @@ impl BankStorage {
 /// when one resolves, otherwise fall back to reading it fully into
 /// memory (wasm, zip-overlay datadirs).
 fn open_bank_storage(bks_path: &str, files: &SbFileSystem) -> Result<BankStorage> {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(all(not(target_arch = "wasm32"), target_endian = "little"))]
     if let Some(native) = files.resolve_data_path(bks_path) {
         let file = std::fs::File::open(&native)
             .with_context(|| format!("open sprite bank '{}'", native.display()))?;
@@ -291,10 +291,10 @@ fn open_bank_storage(bks_path: &str, files: &SbFileSystem) -> Result<BankStorage
             bytes.len()
         ));
     }
-    // One copy into an owned, aligned word buffer. cast_slice assumes LE
-    // host byte order, matching the only targets we ship.
+    // Typed mapped words are used only on little-endian hosts. Owned words
+    // must decode the file byte order even when the input is already aligned.
     let words = match bytemuck::try_cast_slice::<u8, u16>(&bytes) {
-        Ok(words) => words.to_vec(),
+        Ok(words) => words.iter().copied().map(u16::from_le).collect(),
         Err(_) => bytes
             .as_chunks::<2>()
             .0
@@ -1298,7 +1298,14 @@ impl FrameHolder {
             // Each entry is 4 u16 pixels = 8 bytes.
             let byte_count = usize::from(num_entries) * 8;
             let raw_bytes = reader.take(byte_count, format!("dictionary {i} pixels"))?;
-            let data: Vec<u16> = bytemuck::cast_slice::<u8, u16>(raw_bytes).to_vec();
+            // File pixels are little-endian; byte slices need not be word-aligned.
+            let data = raw_bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .copied()
+                .map(u16::from_le_bytes)
+                .collect();
             let dict = FrameDictionary::from_raw(num_entries, data);
             let real_index = self.add_dictionary(dict);
             dict_conversion.insert(i as u16, real_index);
@@ -1867,6 +1874,27 @@ mod tests {
 
         assets.install_preloaded_asset(path, Vec::new()).unwrap();
         assert!(open_bank_storage(path, &files).unwrap().words().is_empty());
+    }
+
+    #[test]
+    fn sprite_dictionary_decodes_little_endian_pixels_at_any_alignment() {
+        let mut index = 123u32.to_le_bytes().to_vec();
+        index.extend_from_slice(&1u16.to_le_bytes());
+        index.extend_from_slice(&1u16.to_le_bytes());
+        index.extend_from_slice(&[0x34, 0x12, 0xcd, 0xab, 0x02, 0x01, 0x04, 0x03]);
+        index.extend_from_slice(&0u32.to_le_bytes());
+        for offset in 0..2 {
+            let mut storage = vec![0; offset];
+            storage.extend_from_slice(&index);
+            let mut holder = FrameHolder::new();
+            holder
+                .load_sprite_index_bytes(&storage[offset..], 0, &mut |_| {})
+                .unwrap();
+            assert_eq!(
+                holder.dictionary(0).unwrap().lookup_pixels(0),
+                &[0x1234, 0xabcd, 0x0102, 0x0304]
+            );
+        }
     }
 
     #[test]

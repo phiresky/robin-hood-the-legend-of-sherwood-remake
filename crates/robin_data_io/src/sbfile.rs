@@ -1190,12 +1190,13 @@ impl SbFile {
 
     pub fn skip(&mut self, distance: i64, mode: u32) -> Result<(), SbFileError> {
         let seek_from = match mode {
-            0 => SeekFrom::Start(distance as u64),
+            // A negative absolute seek is an error, not a wrapped offset.
+            0 => SeekFrom::Start(u64::try_from(distance).map_err(|_| SbFileError::Seek)?),
             1 => SeekFrom::Current(distance),
             2 => SeekFrom::End(distance),
             other => {
-                tracing::warn!("SbFile::skip: unknown mode {other}, falling back to SEEK_CUR");
-                SeekFrom::Current(distance)
+                tracing::warn!("SbFile::skip: unknown mode {other}");
+                return Err(SbFileError::Seek);
             }
         };
         self.file
@@ -2350,11 +2351,12 @@ mod tests {
         assert_eq!(file.read(&mut last), Ok(()));
         assert_eq!(last, *b"o");
         assert_eq!(file.tell(), 5);
-        // Preserve the legacy absolute-seek cast and overflow handling.
-        assert_eq!(file.skip(-1, 0), Ok(()));
-        assert_eq!(file.tell(), u64::MAX);
-        assert_eq!(file.skip(1, 1), Err(SbFileError::Seek));
-        assert_eq!(file.tell(), u64::MAX);
+        assert_eq!(file.skip(-1, 0), Err(SbFileError::Seek));
+        assert_eq!(file.tell(), 5);
+        assert_eq!(file.skip(1, 99), Err(SbFileError::Seek));
+        assert_eq!(file.tell(), 5);
+        assert_eq!(file.skip(-3, 1), Ok(()));
+        assert_eq!(file.tell(), 2);
         assert_eq!(file.get_size(), 5);
     }
 

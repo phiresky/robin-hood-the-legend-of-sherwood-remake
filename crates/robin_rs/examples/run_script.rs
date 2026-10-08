@@ -123,11 +123,14 @@ mod tests {
 
     #[test]
     fn checked_ingestion_reports_malformed_opcode_with_class_and_address() {
+        for opcode in [58, 107, 208, 229] {
+            assert!(run_script(fixture(opcode), "Probe", "Initialize").is_err());
+        }
         let error = run_script(fixture(255), "Probe", "Initialize").unwrap_err();
         assert!(error.contains("0xff"), "{error}");
         assert!(error.contains("Probe"), "{error}");
         assert!(error.contains("instruction 0"), "{error}");
-        let mut whole_file = fixture(58);
+        let mut whole_file = fixture(0);
         let mut corrupt = fixture(255).classes.remove(0);
         corrupt.class_name = "Other".into();
         whole_file.classes.push(corrupt);
@@ -139,8 +142,8 @@ mod tests {
     }
 
     #[test]
-    fn known_empty_workaround_remains_an_explicit_stop() {
-        for opcode in [0, 58, 107, 208, 229] {
+    fn authored_empty_remains_an_explicit_stop() {
+        for opcode in [0] {
             let (stop, ip, frames) = run_script(fixture(opcode), "Probe", "Initialize").unwrap();
             assert!(matches!(stop, StopReason::HitEmpty));
             assert!(ip <= 1);
@@ -154,12 +157,12 @@ mod tests {
     #[test]
     fn missing_class_function_and_file_are_errors() {
         assert!(
-            run_script(fixture(58), "Missing", "Initialize")
+            run_script(fixture(0), "Missing", "Initialize")
                 .unwrap_err()
                 .contains("class not found")
         );
         assert!(
-            run_script(fixture(58), "Probe", "Missing")
+            run_script(fixture(0), "Probe", "Missing")
                 .unwrap_err()
                 .contains("function not found")
         );

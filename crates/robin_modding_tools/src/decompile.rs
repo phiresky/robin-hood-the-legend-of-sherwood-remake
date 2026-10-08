@@ -1558,11 +1558,6 @@ fn find_first_popup_text_id(class: &ClassEntry) -> Option<i32> {
             match &instrs[j] {
                 Ok(Aff0IConstant { constant, .. }) => return Some(*constant),
                 Ok(Nop) | Ok(NativeParam { .. }) => continue,
-                // Preserve the established skip for the preparation helper's
-                // shipped no-op exceptions, but not an authored Q_EMPTY.
-                Ok(Empty) if class.quads[j].operation != robin_engine::vm::Opcode::Empty as u8 => {
-                    continue;
-                }
                 // Unknown instructions can overwrite the candidate argument.
                 // Never infer a popup ID by looking through missing semantics.
                 Err(_) => break,
@@ -2037,13 +2032,13 @@ mod tests {
     }
 
     #[test]
-    fn shipped_empty_exceptions_remain_decompilable() {
+    fn formerly_rewritten_opcodes_remain_visible_as_errors() {
         let output = decompile(&ScbFile {
             version: scb::SCB_VERSION,
-            classes: vec![diagnostic_class("Shipped", &[58, 107, 208, 229, 6])],
+            classes: vec![diagnostic_class("Malformed", &[58, 107, 208, 229, 6])],
         });
-        assert!(output.contains("Initialize("));
-        assert!(!output.contains("Cannot decompile"));
+        assert!(output.contains("Cannot decompile"));
+        assert!(output.contains("UnknownOpcode(58)"));
     }
 
     #[test]
@@ -2064,7 +2059,7 @@ mod tests {
         assert_eq!(find_first_popup_text_id(&class), Some(17));
         for operation in [58, 107, 208, 229] {
             class.quads[1].operation = operation;
-            assert_eq!(find_first_popup_text_id(&class), Some(17));
+            assert_eq!(find_first_popup_text_id(&class), None);
         }
         class.quads[1].operation = Opcode::Empty as u8;
         assert_eq!(find_first_popup_text_id(&class), None);
