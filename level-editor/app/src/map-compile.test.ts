@@ -24,6 +24,7 @@ import {
   liftAssetCompilerFixture,
   changingLiftCompilerFixture,
   changingClimbCompilerFixture,
+  entranceBarrierClimbCompilerFixture,
   copiedChangingLiftCompilerFixture,
   disconnectedLiftCompilerFixture,
   liftLightCompilerFixture,
@@ -1195,9 +1196,7 @@ test("physical stair landings retain fractional receiving boundaries at zero hei
   assert.equal(receivers.length, 1);
   const receiver = receivers[0]!;
   assert.ok(receiver.points.every((point) => point.z_top === 0));
-  assert.ok(
-    receiver.points.some((point) => point.x === lift.doors[0]!.point_mid[0] + 0.25),
-  );
+  assert.ok(receiver.points.some((point) => point.x === lift.doors[0]!.point_mid[0] + 0.25));
   assert.ok(receiver.points.some((point) => point.x % 1 === 0.25));
   assert.notDeepEqual(receiver.points[0], receiver.points.at(-1));
 });
@@ -1218,9 +1217,7 @@ test("preserved ground boundaries retain physical stair receiving precision", ()
       obstacle.projection_area[1] === door.layer_out,
   );
   assert.equal(receivers.length, 1);
-  assert.ok(
-    receivers[0]!.points.some((point) => point.x === lift.doors[0]!.point_mid[0] + 0.25),
-  );
+  assert.ok(receivers[0]!.points.some((point) => point.x === lift.doors[0]!.point_mid[0] + 0.25));
   assert.ok(receivers[0]!.points.every((point) => point.z_top === 0));
 });
 
@@ -1272,6 +1269,33 @@ test("changing climb exports match native placed traversal fixtures", async () =
   ] as const) {
     for (const rotation of [0, 90, 180, 270]) {
       const { document, assets } = changingClimbCompilerFixture(type, high);
+      document.groups[0]!.transform = { dx: 900, dy: 900, dz: 20, rot_deg: rotation };
+      assert.deepEqual(
+        compileMap(document, [0, 0, 2000, 2000], assets).descriptor,
+        fixtures[index++],
+      );
+    }
+  }
+});
+
+test("climb entrance barriers are exported with current approaches and graphs", async () => {
+  const fixtures = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-climb-entrance-barriers.levels.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  let index = 0;
+  for (const [type, high] of [
+    [2, 4],
+    [3, 4],
+    [3, 6],
+  ] as const) {
+    for (const rotation of [0, 90, 180, 270]) {
+      const { document, assets } = entranceBarrierClimbCompilerFixture(type, high);
       document.groups[0]!.transform = { dx: 900, dy: 900, dz: 20, rot_deg: rotation };
       assert.deepEqual(
         compileMap(document, [0, 0, 2000, 2000], assets).descriptor,

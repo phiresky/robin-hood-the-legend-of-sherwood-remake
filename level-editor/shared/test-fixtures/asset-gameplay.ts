@@ -1363,6 +1363,21 @@ export function changingClimbCompilerFixture(type: 2 | 3, highDoor: 4 | 6 = 4, c
   return fixture;
 }
 
+export function entranceBarrierClimbCompilerFixture(type: 2 | 3, highDoor: 4 | 6 = 4) {
+  const fixture = changingClimbCompilerFixture(type, highDoor);
+  const barrier = fixture.hut.gameplay!.movementTransitions![0]!.applied[0]!;
+  // Put the barrier inside the entry animation, before the inner route point.
+  barrier.polygon = [
+    [273, 0],
+    [275, 0],
+    [275, 300],
+    [273, 300],
+  ];
+  barrier.height = [15, 25, 25, 15];
+  fixture.document.map = "Climb entrance barrier fixture";
+  return fixture;
+}
+
 export function receivingLadderCompilerFixture() {
   const fixture = changingClimbCompilerFixture(2);
   const gameplay = fixture.hut.gameplay!;

@@ -783,14 +783,12 @@ fn changing_climb_barrier_near_entrance_blocks_actor_approach() {
     let sprite = complete_climb_sprite();
     let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/asset-changing-lifts.levels.json"
+        "/tests/fixtures/asset-climb-entrance-barriers.levels.json"
     )))
     .unwrap();
-    for lift_type in [2, 3] {
-        let mut fixture = fixtures[0].clone();
-        fixture["asset_geometry"]["lifts"][0]["lift_type"] = lift_type.into();
-        fixture["asset_geometry"]["motion_data"]["layers"][2][0]["obstacles"][0]["polygon"]["points"] =
-            serde_json::json!([[1293, 1165], [1295, 1155], [1295, 1255], [1293, 1265]]);
+    assert_eq!(fixtures.len(), 12);
+    for (placement, fixture) in fixtures.iter().enumerate() {
+        let lift_type = &fixture["asset_geometry"]["lifts"][0]["lift_type"];
         let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(&fixture).unwrap());
         let sim = crate::sim_rng::test_context();
         let patch = crate::patch::PatchIndex::new(0).unwrap();
@@ -817,13 +815,13 @@ fn changing_climb_barrier_near_entrance_blocks_actor_approach() {
                         result
                             .as_ref()
                             .is_err_and(|error| error.starts_with("lift route stalled")),
-                        "closed entrance type={lift_type}, entrance={entrance}: {result:?}"
+                        "closed entrance placement={placement}, type={lift_type}, entrance={entrance}: {result:?}"
                     );
                 } else {
                     assert_eq!(
                         result,
                         Ok(true),
-                        "open entrance type={lift_type}, entrance={entrance}"
+                        "open entrance placement={placement}, type={lift_type}, entrance={entrance}"
                     );
                 }
             }

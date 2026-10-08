@@ -39,7 +39,7 @@ read its versioned header. Runtime link identities already use 32 bits; this
 format extension does not change search or movement algorithms. Boundary checks avoid polygon Boolean
 operations, and outward/collinear floor corners no longer produce detour nodes.
 
-Current validation: the game builds; 214 selected editor compiler/export tests
+Current validation: the game builds; 215 selected editor compiler/export tests
 pass; native map integration reports **69 passed, 5 ignored**. The engine suite
 reports **4,339 passed, 0 failed, 34 ignored**. Stair receivers,
 overlapping/copied traversal and changing stair barriers now pass with prepared
@@ -89,12 +89,15 @@ Broader gameplay, other large scenes and full sprite/rendered validation remain 
 
 Fresh complete-character-animation checks also pass for climb barriers through
 initial/apply/reset states, independent copies, closure during a climb and 72
-mid-climb reopening cases. One separate entrance-barrier probe remains unresolved:
-`changing_climb_barrier_near_entrance_blocks_actor_approach` permits entry for
-wall type 3 while the barrier is active. That probe changes a serialized stair's
-lift type and obstacle polygon without recompiling its approaches or graph.
-Reproduce it from authored climb assets before deciding whether the compiler or
-runtime needs a correction; its historical pass is not current parity evidence.
+mid-climb reopening cases. Entrance-animation blocking remains a confirmed gap.
+`changing_climb_barrier_near_entrance_blocks_actor_approach` now consumes twelve
+fresh editor exports (ladder and both wall-top variants, four rotations), rather
+than mutating serialized stair geometry. The authored barrier lies between the
+entrance midpoint and inner route point. Its active state is crossed at placement
+0/type 2/entrance 0. The existing externally enabled regression remains failing.
+The editor/native fixture equality test passes, proving this is actual export
+output. Prepare connection-state constraints for these animation passages; do
+not restore runtime physical geometry solving.
 
 The pipeline-wide TypeScript check currently fails in `state-delivery.test.ts`
 (presentation-frame fields and assertion/narrowing types), outside these changes.
