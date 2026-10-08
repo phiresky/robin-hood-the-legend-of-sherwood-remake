@@ -14,7 +14,7 @@ this prepared stream through the existing graph parser. The separate physical-fl
 solver, load-time bindings, movement
 dispatch and per-step routing have also been removed. An optimized three-player
 stock-mission regression completes all 540 frames, including Silver Arrow frame 5;
-median ticks range from 0.18 to 0.95 ms in the latest run. Current graph validation: 215 selected
+median ticks range from 0.18 to 0.95 ms in the latest run. Current graph validation: 218 selected
 compiler/export tests pass; native map integration is 69 passed, 5 ignored; the
 engine suite is **4,339 passed, 0 failed, 34 ignored**. Passage approaches are now
 prepared at export, and the loader's approach search has been deleted. Exports

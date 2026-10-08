@@ -39,7 +39,7 @@ read its versioned header. Runtime link identities already use 32 bits; this
 format extension does not change search or movement algorithms. Boundary checks avoid polygon Boolean
 operations, and outward/collinear floor corners no longer produce detour nodes.
 
-Current validation: the game builds; 215 selected editor compiler/export tests
+Current validation: the game builds; 218 selected editor compiler/export tests
 pass; native map integration reports **69 passed, 5 ignored**. The engine suite
 reports **4,339 passed, 0 failed, 34 ignored**. Stair receivers,
 overlapping/copied traversal and changing stair barriers now pass with prepared
@@ -98,6 +98,13 @@ entrance midpoint and inner route point. Its active state is crossed at placemen
 The editor/native fixture equality test passes, proving this is actual export
 output. Prepare connection-state constraints for these animation passages; do
 not restore runtime physical geometry solving.
+
+Export-time preparation now computes per-area passage clearance masks, sharing
+the walking graph's swept-footprint checks. All twelve entrance fixtures detect
+the active barrier, leave the opposite entrance unrestricted and preserve their
+geometry. Tests cover independent state pairs, alternate-state obstacles,
+permanent blockers and the high state bit. This helper is not yet serialized or
+bound to gate authorization: the native entrance regression remains unresolved.
 
 The pipeline-wide TypeScript check currently fails in `state-delivery.test.ts`
 (presentation-frame fields and assertion/narrowing types), outside these changes.

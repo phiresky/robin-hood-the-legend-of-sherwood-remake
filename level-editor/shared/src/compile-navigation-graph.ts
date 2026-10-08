@@ -113,6 +113,48 @@ function avoid(masks: number[], blocked: number): number[] {
 }
 
 /**
+ * Prepare export-time corridor checks. Each returned mask is an alternative
+ * required state; no alternatives means blocked, and [0] means unconditional.
+ * Pass a floor for walking links. Animated passages cross a floor boundary and
+ * therefore check obstacles without requiring the footprint inside that floor.
+ */
+export function prepareCorridorStates(
+  obstacles: Layers[number][number]["obstacles"],
+  floor?: Point[],
+): (a: Point, b: Point) => number[] {
+  const floorEdges = floor && edges(floor);
+  const blockers = obstacles.map((obstacle) => ({
+    points: obstacle.polygon.points,
+    edges: edges(obstacle.polygon.points),
+    bounds: bounds(obstacle.polygon.points),
+    state: obstacle.state_id >>> 0,
+  }));
+  return (a, b) => {
+    const footprint = sweep(a, b);
+    const footprintEdges = edges(footprint);
+    if (
+      floor &&
+      (!pointInGameplayPolygon(footprint[0]!, floor) || touches(footprintEdges, floorEdges!))
+    )
+      return [];
+    const box = bounds(footprint);
+    let states = [0];
+    for (const obstacle of blockers) {
+      if (
+        disjoint(box, obstacle.bounds) ||
+        (!touches(footprintEdges, obstacle.edges) &&
+          !pointInGameplayPolygon(footprint[0]!, obstacle.points) &&
+          !pointInGameplayPolygon(obstacle.points[0]!, footprint))
+      )
+        continue;
+      states = avoid(states, obstacle.state);
+      if (!states.length) break;
+    }
+    return states;
+  };
+}
+
+/**
  * Construct the native graph stream from placed motion geometry at export time.
  * Each node owns one docking position, so switching between sides of a corner
  * requires an explicitly clearance-checked link, including its state constraints.
@@ -122,36 +164,7 @@ export function compileNavigationGraph(layers: Layers): number[] {
   const hierarchy = layers.map((areas, layer) =>
     areas.map((area, areaIndex) => {
       // These are the contours consumed by the native movement grid.
-      const floor = area.polygon.points;
-      const floorEdges = edges(floor);
-      const blockers = area.obstacles.map((obstacle) => ({
-        points: obstacle.polygon.points,
-        edges: edges(obstacle.polygon.points),
-        bounds: bounds(obstacle.polygon.points),
-        state: obstacle.state_id >>> 0,
-      }));
-      const allowed = (a: Point, b: Point): number[] => {
-        const footprint = sweep(a, b);
-        const footprintEdges = edges(footprint);
-        // Without an edge crossing, a connected swept footprint is wholly
-        // inside or outside each simple contour. No polygon Boolean is needed.
-        if (!pointInGameplayPolygon(footprint[0]!, floor) || touches(footprintEdges, floorEdges))
-          return [];
-        const box = bounds(footprint);
-        let states = [0];
-        for (const obstacle of blockers) {
-          if (
-            disjoint(box, obstacle.bounds) ||
-            (!touches(footprintEdges, obstacle.edges) &&
-              !pointInGameplayPolygon(footprint[0]!, obstacle.points) &&
-              !pointInGameplayPolygon(obstacle.points[0]!, footprint))
-          )
-            continue;
-          states = avoid(states, obstacle.state);
-          if (!states.length) break;
-        }
-        return states;
-      };
+      const allowed = prepareCorridorStates(area.obstacles, area.polygon.points);
       const nodes: Node[] = [];
       for (const [ringIndex, raw] of [
         area.polygon.points,
