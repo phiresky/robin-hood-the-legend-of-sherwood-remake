@@ -285,7 +285,8 @@ cannot support the lower entrance, a real ground landing restores the route,
 and its live blocker still stops movement. All 23 navigation and 30 physical-lift
 regressions pass, and the game binary builds.
 
-The three-entrance Sherwood candidate remains unpublished and unresolved.
+The initial three-entrance Sherwood investigation remained unresolved; the
+subsequent centered-contact correction described below now passes traversal.
 Before these runtime corrections, all 48 routes failed across eight placements.
 Tracing found both upper landings rejected because another shared edge was
 278 units below them. The corrections restore landing support, but all six
@@ -295,7 +296,7 @@ supports the lower entrance and right upper endpoint; the left contact and
 actor-sized route through the climbing surface still need correction. Near-point
 diagnostic paths do not certify an actor-sized route. Complex support queries
 also remain expensive: these six-route audits take roughly two minutes.
-No candidate asset metadata was published from this investigation.
+No candidate asset metadata was published from that initial investigation.
 
 Mesh alignment audit `climb-mesh-audit-Ol6GV6` loads the hash-checked live oak model
 and staged climbing surface. Its plane intersects only two of the 28 selected
@@ -1044,19 +1045,19 @@ matches the corrected platform, the clearance is limited to the added strip,
 and the platform hole remains intact. The upper seam's 3.381-unit mesh discrepancy
 is an explicit draft warning. Published exports match the tested candidates and
 all ten scenes reopen; rendered integration remains unverified.
-The remaining three-entrance Sherwood ladder oak needs a mesh-based platform
+The three-entrance Sherwood ladder oak still needs rendered platform
 and climbing-surface review: its authored platform hole excludes mostly
 mesh-supported upper approaches, while its rung centers diverge from the current
-climbing plane. The reconstructed plank footprint is still an unpublished
-candidate; all three connections must survive the correction.
+climbing plane. The reconstructed plank footprint and centered left contact
+are now published as a draft, retaining all three connections.
 The first three-entrance candidate retains all doors and passes 36/48 moved
 routes, with twelve 90-degree failures. A separate compiler correction accepts
 ladder seams on platform-hole edges while still rejecting hole interiors.
 The focused native fixture passes both directions; a broader rotation check
 exposed a receiver mismatch also present without a hole. That mismatch is now
 fixed: ladder exit animations retain the physical seam instead of snapping back
-to its integer waypoint, and all eight rotated fixture routes pass. Neither
-complex Sherwood candidate is published, and its traversal remains unresolved.
+to its integer waypoint, and all eight rotated fixture routes pass. These
+earlier complex candidates did not establish complete traversal.
 The 2026-10-08 recheck (`local-stair-placements-Vxn5ch`) still passes only 36/48
 complete-sprite routes; all twelve 90-degree routes fail. All eight placements
 retain three doors but lack physical navigation at the left upper landing, and
@@ -1064,6 +1065,17 @@ eight raised-ground cases reject. The pinned-model audit finds only 2/28 rung
 parts crossing the current climbing plane, with a maximum center-plane distance
 of 12.012175 units. This remains an asset geometry/contact review, not evidence
 that an engine extension is needed.
+The centered-contact correction (`three-door-centered-contact-pu1uxP`) now passes
+all 48 complete-sprite routes at four rotations and two elevations
+(`local-stair-placements-OTv6aK`), with physical navigation at every placement.
+All eight raised-ground cases still reject. Full Sherwood
+(`saved-map-exports-yQPQJi`) passes native construction, ten climbs and two stairs.
+Its left landing allowance extends up to 2.366 game units beyond sampled mesh;
+rung alignment remains incomplete. These limitations are explicit asset draft
+warnings, not a rendered-contact parity claim. The correction changes asset-local
+surfaces, clearances, a receiving volume and the left upper approach; it requires
+no engine change. The hash-bound replacement is retained in
+`refinement/catalogs/sherwood-ladder-oak-centered-gameplay.json`.
 All 84 climb routes in the ten saved-scene exports now pass, as do all 71 control
 apply/reset checks and Derby's 28/28 stair routes. The published tower matches
 its native-tested candidate; Leicester retains 22/22 climb and 16/16 stair

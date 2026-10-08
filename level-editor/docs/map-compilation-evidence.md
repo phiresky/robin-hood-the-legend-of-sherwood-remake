@@ -4,7 +4,42 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
-## Current three-entrance ladder recheck (2026-10-08)
+## Published centered three-entrance ladder (2026-10-08)
+
+`refinement/catalogs/sherwood-ladder-oak-centered-gameplay.json` records the
+published draft replacement, bound to reviewed descriptor and model hashes.
+It reconstructs the platform opening, supplies matching movement clearances and
+a receiving volume, and centers the left upper approach along its authored
+flight edge. The three approach waypoints move together by
+`[-2.8565409062500464, -0.43463385174097446]` without changing their heights.
+All definitions remain asset-local and follow placement transforms.
+
+The uncentered landing-strip candidate passed only 24/48 complete-sprite routes
+in `local-stair-placements-omaXjD`. The centered candidate passes all 48 in
+`local-stair-placements-OTv6aK`, covering rotations 0, 37, 90 and 180 degrees at
+elevations 0 and 40. Each placement retains three entrances and physical
+navigation; all eight raised-ground negative cases reject the disconnected
+ladder. This correction needs no engine implementation change.
+
+Full Sherwood stage `saved-map-exports-yQPQJi` passes native construction,
+ten complete-sprite climb routes and two stair routes. The state-control audit
+reports zero transitions and fails its nonempty-coverage guard; it provides no
+state-transition evidence for this scene. Published export
+`saved-map-exports-zVBfvB` is byte-identical to the tested staged descriptor
+(SHA-256 `4e60fd7ccd42c29d168ae4f9b8b7fe69098f73386595461c794c6d2056f0dbe3`).
+All ten saved scenes reopen with current descriptor pins. Five publication
+tests pass, including stale-model rejection and rollback.
+
+This is best-effort traversal support, not full rendered parity. The left upper
+approach exceeds sampled platform mesh by up to 2.366 game units
+(`centered-ladder-landings-lfIQrN`). Only two of 28 selected rung parts cross the
+authored climbing plane; maximum bounding-center distance is 12.012175 units
+(`climb-mesh-audit-IR3yV4`). These measurements do not establish actor-foot
+contact. Both limitations remain explicit draft warnings, and the full export
+still reports 258 warnings across the scene. Publication backups are in
+`work/map-compile/centered-oak-publication-review`.
+
+## Earlier three-entrance ladder recheck (2026-10-08)
 
 The unpublished mesh-platform candidate `three-door-oak-7osA0K` still matches
 the current `sherwood-ladder-oak-platform` descriptor hash. Fresh compilation
