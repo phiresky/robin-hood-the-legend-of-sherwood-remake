@@ -131,6 +131,8 @@ pub struct SoundSourceInfo {
     pub inner_volume: u16,
     pub outer_volume: u16,
     pub shape: Vec<MapPoint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shape_breaks: Vec<u32>,
 }
 
 /// Sound settings passed to `get_logical_playing_params`.  The union
@@ -514,9 +516,15 @@ impl SoundGeometry {
         // line through the origin along the segment's normal and
         // intersecting it with the segment.
         let mut point_a = scratch.decrunched_geometry[0];
+        let mut breaks = source.shape_breaks.iter().copied().peekable();
 
         for i in 1..n {
             let point_b = scratch.decrunched_geometry[i];
+            if breaks.peek() == Some(&(i as u32)) {
+                breaks.next();
+                point_a = point_b;
+                continue;
+            }
             let seg_idx = i - 1;
 
             // Project origin onto line defined by segment [point_a, point_b]
@@ -726,6 +734,38 @@ impl SoundGeometry {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn disconnected_emitter_does_not_cover_or_attenuate_across_the_gap() {
+        let mut source = crate::sound_source::SoundSource {
+            active: true,
+            noise_covering_distance: 1000,
+            shape: vec![
+                crate::coordinates::MapPoint::new(-1000., 0.),
+                crate::coordinates::MapPoint::new(-100., 0.),
+                crate::coordinates::MapPoint::new(100., 0.),
+                crate::coordinates::MapPoint::new(1000., 0.),
+            ],
+            shape_breaks: vec![2],
+            ..Default::default()
+        };
+        let geometry = make_geometry();
+        assert_eq!(
+            geometry
+                .geometry_for_listen_pos(&source.to_source_info())
+                .source_distance,
+            100.
+        );
+        assert_eq!(source.noise_covering_volume_for_3d(0., 0., 0.), 900);
+        source.shape_breaks.clear();
+        assert_eq!(
+            geometry
+                .geometry_for_listen_pos(&source.to_source_info())
+                .source_distance,
+            0.
+        );
+        assert_eq!(source.noise_covering_volume_for_3d(0., 0., 0.), 1000);
+    }
+
     use super::*;
 
     fn make_geometry() -> SoundGeometry {
@@ -916,6 +956,7 @@ mod tests {
             inner_volume: 255,
             outer_volume: 0,
             shape: vec![MapPoint::new(300.0, 0.0)],
+            shape_breaks: Vec::new(),
         };
 
         let settings = SoundSettings {
@@ -946,6 +987,7 @@ mod tests {
             inner_volume: 255,
             outer_volume: 0,
             shape: vec![],
+            shape_breaks: Vec::new(),
         };
 
         let settings = SoundSettings {
@@ -995,6 +1037,7 @@ mod tests {
             inner_volume: 255,
             outer_volume: 0,
             shape: vec![MapPoint::new(100.0, 0.0), MapPoint::new(200.0, 0.0)],
+            shape_breaks: Vec::new(),
         };
 
         let settings = SoundSettings {

@@ -1721,6 +1721,9 @@ pub struct RawSoundSource {
     pub inner_distance: Option<u16>,
     pub outer_distance: Option<u16>,
     pub polyline: Option<Vec<(i16, i16)>>,
+    /// Point indices beginning disconnected fragments of one emitter.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub polyline_breaks: Vec<u32>,
     pub inner_volume: Option<u16>,
     pub outer_volume: Option<u16>,
     pub noise_covering_distance: Option<u16>,
@@ -3594,11 +3597,26 @@ impl LoadedLevel {
                     }
                     _ => false,
                 };
+                let breaks_valid =
+                    sound
+                        .polyline_breaks
+                        .iter()
+                        .enumerate()
+                        .all(|(index, &point)| {
+                            !sound.global
+                                && point > 0
+                                && sound
+                                    .polyline
+                                    .as_ref()
+                                    .is_some_and(|points| (point as usize) < points.len())
+                                && (index == 0 || sound.polyline_breaks[index - 1] < point)
+                        });
                 if sound.id < 0
                     || sound.source_kind > 3
                     || sound.altitude > 3
                     || !delay_valid
                     || !spatial_valid
+                    || !breaks_valid
                 {
                     return Err("invalid compiled environmental sound source".into());
                 }
@@ -5502,6 +5520,7 @@ fn read_sound_sources(
             inner_distance,
             outer_distance,
             polyline,
+            polyline_breaks: Vec::new(),
             inner_volume,
             outer_volume,
             noise_covering_distance,

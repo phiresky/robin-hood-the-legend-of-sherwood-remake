@@ -678,28 +678,32 @@ export function wallSplineGameplay(
           continue;
         }
         const points = sound.spatial.polyline.map((p) => source(sound.node, p));
+        const cuts = [0, ...(sound.spatial.polylineBreaks ?? []), points.length];
+        const parts = cuts.slice(0, -1).map((cut, i) => points.slice(cut, cuts[i + 1]));
         for (let repeat = 0; repeat < repeats; repeat++) {
           const fragments = run
-            ? clipSplinePolyline(
-                points,
-                axis,
-                start,
-                Math.min(end, start + (end - start) * (length / run.repeatLength - repeat)),
-                stations,
+            ? parts.flatMap((part) =>
+                clipSplinePolyline(
+                  part,
+                  axis,
+                  start,
+                  Math.min(end, start + (end - start) * (length / run.repeatLength - repeat)),
+                  stations,
+                ),
               )
-            : [points];
-          if (fragments.length > 1) {
-            warnings.push(
-              `Wall spline ${path.id}, sound ${sound.id}, repeat ${repeat}: cropping produces disconnected emitter fragments; emitter omitted.`,
-            );
-            continue;
-          }
+            : parts;
           if (!fragments.length) continue;
+          const polyline = fragments.flatMap((fragment) => fragment.map((p) => warp(p, repeat)));
+          let offset = 0;
+          const polylineBreaks = fragments
+            .slice(0, -1)
+            .map((fragment) => (offset += fragment.length));
+          const { polylineBreaks: _sourceBreaks, ...spatial } = sound.spatial;
           out.sounds!.push({
             ...sound,
             id: `sound-${out.sounds!.length}`,
             node: "$root",
-            spatial: { ...sound.spatial, polyline: fragments[0]!.map((p) => warp(p, repeat)) },
+            spatial: { ...spatial, polyline, ...(polylineBreaks.length ? { polylineBreaks } : {}) },
           });
         }
       }

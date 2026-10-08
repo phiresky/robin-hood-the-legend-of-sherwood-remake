@@ -84,6 +84,8 @@ pub struct SoundSource {
     pub outer_volume: u16,
     /// Shape points defining the source geometry (map-space polyline).
     pub shape: Vec<MapPoint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shape_breaks: Vec<u32>,
     /// Altitude classification affecting volume with zoom.
     pub altitude: SoundSourceAltitude,
     /// Minimum delay ticks (for [`SoundSourceKind::Delayed`]).
@@ -120,6 +122,7 @@ impl Default for SoundSource {
             inner_volume: 0,
             outer_volume: 0,
             shape: Vec::new(),
+            shape_breaks: Vec::new(),
             altitude: SoundSourceAltitude::Ground,
             min_delay: 0,
             max_delay: 0,
@@ -150,6 +153,7 @@ impl SoundSource {
             inner_volume: self.inner_volume,
             outer_volume: self.outer_volume,
             shape: self.shape.clone(),
+            shape_breaks: self.shape_breaks.clone(),
         }
     }
 
@@ -240,7 +244,13 @@ impl SoundSource {
 
                 // Check segment projection distances
                 let mut prev = self.shape[0];
-                for &curr in &self.shape[1..] {
+                let mut breaks = self.shape_breaks.iter().copied().peekable();
+                for (index, &curr) in self.shape.iter().enumerate().skip(1) {
+                    if breaks.peek() == Some(&(index as u32)) {
+                        breaks.next();
+                        prev = curr;
+                        continue;
+                    }
                     if let Some(d) = Self::distance_to_segment(prev, curr, position)
                         && d < min_dist
                     {

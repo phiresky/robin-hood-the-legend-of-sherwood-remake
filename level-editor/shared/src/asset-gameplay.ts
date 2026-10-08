@@ -325,6 +325,8 @@ export interface AssetSoundSource {
   /** Omitted for a global emitter. Distances use game units, volumes use percent. */
   spatial?: {
     polyline: [number, number, number][];
+    /** Start indices of disconnected fragments within the point array. */
+    polylineBreaks?: number[];
     innerDistance: number;
     outerDistance: number;
     innerVolume: number;
@@ -1007,6 +1009,15 @@ export function validateAssetGameplay(
         !Array.isArray(s.polyline) ||
         !s.polyline.length ||
         !s.polyline.every((p) => point(p, 3)) ||
+        (s.polylineBreaks !== undefined &&
+          (!Array.isArray(s.polylineBreaks) ||
+            !s.polylineBreaks.every(
+              (n, i) =>
+                Number.isInteger(n) &&
+                n > 0 &&
+                n < s.polyline.length &&
+                (i === 0 || n > s.polylineBreaks![i - 1]!),
+            ))) ||
         !integer(s.innerDistance, 65535) ||
         !integer(s.outerDistance, 65535) ||
         s.innerDistance > s.outerDistance ||

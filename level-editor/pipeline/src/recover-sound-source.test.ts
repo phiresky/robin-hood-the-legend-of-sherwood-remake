@@ -8,6 +8,19 @@ import {
 } from "./recover-sound-source.ts";
 import { compileAssetGameplay } from "../../shared/src/compile-asset-gameplay.ts";
 import { soundAssetCompilerFixture } from "../../shared/test-fixtures/asset-gameplay.ts";
+import { wallDisconnectedSoundFixture } from "../../shared/test-fixtures/wall-spline.ts";
+import { compileSoundSource } from "../../shared/src/compile-sound-source.ts";
+
+test("sound extraction retains disconnected fragments through local frame translation", () => {
+  const { document, assets, bounds } = wallDisconnectedSoundFixture();
+  const raw = compileAssetGameplay(document, assets, bounds).sound_sources![0]!;
+  const local = recoverSoundSource(raw, "wind", "body", ([x, y, z]) => [x - 100, y - 200, z]);
+  assert.deepEqual(local.spatial!.polylineBreaks, [2]);
+  assert.deepEqual(
+    compileSoundSource(local, (_, [x, y, z]) => [x + 100, y + 200, z]),
+    raw,
+  );
+});
 
 test("reviewed sound ownership chooses one frame despite overlapping asset footprints", () => {
   const { document, assets } = soundAssetCompilerFixture();

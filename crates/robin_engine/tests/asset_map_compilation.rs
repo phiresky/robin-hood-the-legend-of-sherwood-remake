@@ -2458,6 +2458,42 @@ fn spline_sounds_load_at_repeated_positions_with_acoustic_settings() {
 }
 
 #[test]
+fn disconnected_spline_sound_keeps_one_clock_without_covering_the_clipped_gap() {
+    let bytes = include_bytes!("fixtures/asset-spline-disconnected-sound.level.json");
+    let mut loaded = LoadedLevel::hackable_from_json(bytes).unwrap();
+    loaded.mission.header.ambiance = 1;
+    assert_eq!(loaded.proto.sound_sources.len(), 2);
+    let mut assets = LevelAssets::new();
+    let engine = construct_loaded(loaded, &mut assets);
+    let snapshot = serde_json::to_value(engine.capture_persisted_state().unwrap()).unwrap();
+    let sources = snapshot["feedback"]["sound_sim"]["sources"]["sources"]
+        .as_array()
+        .unwrap();
+    assert_eq!(sources.len(), 2);
+    for raw in sources {
+        let source: robin_engine::sound_source::SoundSource =
+            serde_json::from_value(raw.clone()).unwrap();
+        assert_eq!(source.shape_breaks, [2]);
+        assert_eq!(source.delay_stepping, 3);
+        let gap = robin_engine::coordinates::MapPoint::new(
+            (source.shape[1].x + source.shape[2].x) * 0.5,
+            (source.shape[1].y + source.shape[2].y) * 0.5,
+        );
+        assert_eq!(source.noise_covering_volume_for_3d(gap.x, gap.y, 0.), 0);
+    }
+    for breaks in [
+        serde_json::json!([0]),
+        serde_json::json!([4]),
+        serde_json::json!([2, 2]),
+        serde_json::json!([3, 2]),
+    ] {
+        let mut invalid: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+        invalid["asset_geometry"]["sound_sources"][0]["polyline_breaks"] = breaks;
+        assert!(LoadedLevel::hackable_from_json(&serde_json::to_vec(&invalid).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn receiving_materials_keep_navigation_connected_and_ground_independent() {
     use robin_engine::{coordinates::MapPoint, element::GameMaterial};
     let mut assets = LevelAssets::new();

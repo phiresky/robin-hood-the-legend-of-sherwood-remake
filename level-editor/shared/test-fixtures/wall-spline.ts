@@ -5,6 +5,41 @@ import { createTerrainGrid } from "../src/authored-terrain.ts";
 import { sceneToGame } from "../src/geometry.ts";
 import { splineCurve } from "../src/spline-sampling.ts";
 
+export function wallDisconnectedSoundFixture() {
+  const fixture = wallSplineFixture();
+  const { document, asset } = fixture;
+  asset.gameplay!.sounds = [
+    {
+      id: "cropped-wind",
+      node: "body",
+      sample: 12,
+      kind: 2,
+      active: true,
+      delay: [10, 20, 2],
+      altitude: 3,
+      ambiences: 5,
+      spatial: {
+        polyline: [
+          [-40, -20, 0],
+          [80, -20, 0],
+          [80, 20, 0],
+          [-40, 20, 0],
+        ].map(([x, y, z]) => sceneToGame(document.camera, [x!, y!, z!])),
+        innerDistance: 10,
+        outerDistance: 60,
+        innerVolume: 80,
+        outerVolume: 0,
+        noiseCoveringDistance: 15,
+      },
+    },
+  ];
+  document.splines![0]!.points = [
+    [100, 200, 0],
+    [245, 200, 0],
+  ];
+  return fixture;
+}
+
 export function wallSplineFixture() {
   const camera = { kind: "oblique-orthographic" as const, elevation_deg: 35 };
   const corners = [

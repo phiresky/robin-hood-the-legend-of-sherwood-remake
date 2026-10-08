@@ -1,5 +1,10 @@
 # Post-port Features
 
+- **Disconnected sound emitters.** Cropping a spline preserves disconnected
+  sound fragments within one emitter per repetition. Prepared fragment indices
+  prevent acoustic coverage across the removed gap without duplicating playback
+  clocks. Asset-local recovery preserves the same shape after moving the asset.
+
 - **Export-prepared navigation.** Map export constructs native route graphs and
   actor-sized passage approaches from placed asset geometry. The separate physical
   navigation solver and graph-free fallback have been removed; earlier entries

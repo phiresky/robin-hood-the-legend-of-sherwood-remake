@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   wallSplineFixture,
+  wallDisconnectedSoundFixture,
   wallMaterialFixture,
   wallDisconnectedMaskFixture,
   wallDisconnectedLightFixture,
@@ -506,6 +507,49 @@ test("wall lighting follows repeated and turned paths and preserves ambience fil
     compileAssetGameplay(document, assets, bounds).light_sectors,
     bentCompiled.light_sectors,
   );
+});
+
+test("cropped sound fragments retain one emitter per repeat and no connecting edge", () => {
+  const { document, asset, assets, bounds } = wallDisconnectedSoundFixture();
+  const before = structuredClone(asset);
+  const generated = wallSplineGameplay(document, assets, false);
+  assert.deepEqual(generated.warnings, []);
+  const sounds = generated.descriptors[0]!.gameplay!.sounds!;
+  assert.equal(sounds.length, 2);
+  for (const sound of sounds) assert.deepEqual(sound.spatial!.polylineBreaks, [2]);
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.equal(compiled.sound_sources!.length, 2);
+  for (const source of compiled.sound_sources!) {
+    assert.deepEqual(source.polyline_breaks, [2]);
+    assert.equal(source.polyline!.length, 4);
+    assert.deepEqual(source.delayed_params, [10, 20, 2]);
+  }
+  assert.deepEqual(asset, before);
+});
+
+test("sound fragment indices are validated and survive bent rising placement", () => {
+  const { document, asset, assets, bounds } = wallDisconnectedSoundFixture();
+  const spatial = asset.gameplay!.sounds![0]!.spatial!;
+  for (const invalid of [[0], [4], [2, 2], [3, 2], [1.5]]) {
+    spatial.polylineBreaks = invalid;
+    assert.throws(() => validateAssetGameplay(asset.gameplay, asset), /invalid sound geometry/);
+  }
+  spatial.polylineBreaks = [2];
+  document.splines![0]!.curved = true;
+  document.splines![0]!.points = [
+    [300, 400, 20],
+    [380, 480, 35],
+    [470, 400, 60],
+  ];
+  const generated = wallSplineGameplay(document, assets, false);
+  assert.deepEqual(generated.warnings, []);
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.ok(compiled.sound_sources!.length > 1);
+  for (const sound of compiled.sound_sources!) {
+    assert.equal(sound.polyline_breaks?.length, 1);
+    assert.ok(sound.polyline_breaks![0]! > 0);
+    assert.ok(sound.polyline_breaks![0]! < sound.polyline!.length);
+  }
 });
 
 test("wall spatial sounds repeat and crop with their acoustic rules intact", () => {

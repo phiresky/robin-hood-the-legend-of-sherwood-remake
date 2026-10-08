@@ -176,7 +176,8 @@ pub struct ReplayHeader {
 /// Version 67 retains ordinary physical floor identities on movement orders.
 /// Version 68 removes physical solver orders and runtime door endpoints.
 /// Version 69 stores the prepared passage availability bit on doors.
-pub const REPLAY_SCHEMA_VERSION: u32 = 69;
+/// Version 70 stores disconnected fragments of a shared sound emitter.
+pub const REPLAY_SCHEMA_VERSION: u32 = 70;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { wallDisconnectedSoundFixture } from "../../shared/test-fixtures/wall-spline.ts";
 import { decode } from "fast-png";
 import { unzipSync, strFromU8 } from "fflate";
 import * as THREE from "three";
@@ -756,6 +757,20 @@ test("map ZIP includes paired appearance resources bound to compiled patch indic
   const state = manifest.regions[0].states[1];
   assert.deepEqual([...decode(files[state.color]!).data], [255, 0, 0, 255]);
   assert.deepEqual([...decode(files[state.depth]!).data], [40000]);
+});
+
+test("cropped sound fragments export as one native emitter per repetition", async () => {
+  const { document, assets, bounds } = wallDisconnectedSoundFixture();
+  const fixture = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-spline-disconnected-sound.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compileMap(document, bounds, assets).descriptor, fixture);
 });
 
 test("asset environmental sound export matches the native source fixture", async () => {

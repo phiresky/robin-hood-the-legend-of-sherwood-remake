@@ -942,6 +942,7 @@ impl EngineInner {
                     inner_volume,
                     outer_volume,
                     shape,
+                    shape_breaks: raw.polyline_breaks.clone(),
                     altitude,
                     min_delay,
                     max_delay,

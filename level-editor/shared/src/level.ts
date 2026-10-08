@@ -137,6 +137,7 @@ export interface SoundSource {
   delayed_params: [number, number, number] | null;
   global: boolean;
   polyline: Point[] | null;
+  polyline_breaks?: number[];
   inner_distance: number | null;
   outer_distance: number | null;
   inner_volume: number | null;

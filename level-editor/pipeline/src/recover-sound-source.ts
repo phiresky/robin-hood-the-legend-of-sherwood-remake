@@ -122,6 +122,7 @@ export function recoverSoundSource(
       throw new Error(`Sound ${id} has incomplete spatial data`);
     value.spatial = {
       polyline: raw.polyline.map(([x, y]) => localize([x, y, 0])),
+      ...(raw.polyline_breaks?.length ? { polylineBreaks: [...raw.polyline_breaks] } : {}),
       innerDistance: raw.inner_distance!,
       outerDistance: raw.outer_distance!,
       innerVolume: raw.inner_volume!,

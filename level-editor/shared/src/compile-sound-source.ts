@@ -22,6 +22,7 @@ export function compileSoundSource(
     source_kind: sound.kind,
     delayed_params: sound.delay ? [...sound.delay] : null,
     global: !s,
+    ...(s?.polylineBreaks?.length ? { polyline_breaks: [...s.polylineBreaks] } : {}),
     polyline: s
       ? s.polyline.map((p) => {
           const [x, y, z] = transform(sound.node, p);
