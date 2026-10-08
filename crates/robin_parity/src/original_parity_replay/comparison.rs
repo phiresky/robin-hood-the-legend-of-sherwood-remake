@@ -194,6 +194,7 @@ pub(super) fn project_constructor_storage(
     first_frame: bool,
     flying_order: bool,
     non_actor: bool,
+    zero_displacement_step: bool,
     shadows: &mut ConstructorStorage,
 ) {
     let computed_3d = runtime
@@ -253,8 +254,9 @@ pub(super) fn project_constructor_storage(
     // Admit that producer only at the current goal with the unchanged initial
     // increment. Outside it, retain only the exact last forecast until a write.
     // Position and all other movement outputs remain authoritative.
-    if at_goal
-        && computed_3d
+    // A completed motion can reset its goal and computed bits before the
+    // snapshot. Its recorded zero-displacement step proves the same producer.
+    if ((at_goal && computed_3d) || zero_displacement_step)
         && !flying_order
         && undefined.contains_key("/position/forecasted_movement")
     {
@@ -709,6 +711,13 @@ impl FrameComparison<'_> {
                     self.frame.frame_before == 0,
                     flying_order,
                     expected.actor.is_none(),
+                    self.frame.movement_steps.iter().any(|step| {
+                        step.entity == expected.entity_id
+                            && step.pre_position.x.bits == step.goal.x.bits
+                            && step.pre_position.y.bits == step.goal.y.bits
+                            && step.post_position.x.bits == step.pre_position.x.bits
+                            && step.post_position.y.bits == step.pre_position.y.bits
+                    }),
                     storage,
                 );
             }
@@ -2044,7 +2053,7 @@ mod constructor_storage_tests {
     fn constructor_residue_stops_being_excluded_after_a_write_or_validity() {
         let mut shadows = ConstructorStorage::new();
         let mut first = runtime();
-        project_constructor_storage(&mut first, 12, true, false, false, &mut shadows);
+        project_constructor_storage(&mut first, 12, true, false, false, false, &mut shadows);
         assert!(first.pointer("/position/goal_world").is_none());
         assert!(first.pointer("/sprite/flight_countdown").is_none());
         assert_eq!(first.pointer("/position/old_posture"), Some(&json!(1)));
@@ -2055,12 +2064,12 @@ mod constructor_storage_tests {
 
         let mut walking = runtime();
         walking["position"]["computed_increment"] = json!(7);
-        project_constructor_storage(&mut walking, 12, false, false, false, &mut shadows);
+        project_constructor_storage(&mut walking, 12, false, false, false, false, &mut shadows);
         assert!(walking.pointer("/position/goal_world").is_none());
         assert!(walking.pointer("/position/increment").is_some());
 
         let mut flying = runtime();
-        project_constructor_storage(&mut flying, 12, false, true, false, &mut shadows);
+        project_constructor_storage(&mut flying, 12, false, true, false, false, &mut shadows);
         assert!(flying.pointer("/position/goal_world").is_some());
         assert!(flying.pointer("/position/increment").is_some());
         assert!(flying.pointer("/sprite/flight_countdown").is_some());
@@ -2068,7 +2077,7 @@ mod constructor_storage_tests {
         let mut later = runtime();
         later["position"]["door_direction"] = json!(false);
         later["sprite"]["display_order_reference"] = json!({"kind": "pc", "index": 1});
-        project_constructor_storage(&mut later, 12, false, false, false, &mut shadows);
+        project_constructor_storage(&mut later, 12, false, false, false, false, &mut shadows);
         assert!(later.pointer("/position/goal_world").is_some());
         assert!(later.pointer("/position/door_direction").is_some());
         assert!(
@@ -2087,10 +2096,18 @@ mod constructor_storage_tests {
         first["position"]["door"] = json!(4);
         first["sprite"]["display_order_reference"] = json!(1);
         let before = first.clone();
-        project_constructor_storage(&mut first, 12, true, true, false, &mut shadows);
+        project_constructor_storage(&mut first, 12, true, true, false, false, &mut shadows);
         assert_eq!(first, before);
         let mut later_created = runtime();
-        project_constructor_storage(&mut later_created, 13, false, false, false, &mut shadows);
+        project_constructor_storage(
+            &mut later_created,
+            13,
+            false,
+            false,
+            false,
+            false,
+            &mut shadows,
+        );
         assert_eq!(later_created, runtime());
     }
 
@@ -2100,16 +2117,16 @@ mod constructor_storage_tests {
         let mut first = runtime();
         first["position"]["radius"] = json!(12345);
         let mut actor = first.clone();
-        project_constructor_storage(&mut actor, 1, true, false, false, &mut shadows);
+        project_constructor_storage(&mut actor, 1, true, false, false, false, &mut shadows);
         assert_eq!(actor["position"]["radius"], json!(12345));
-        project_constructor_storage(&mut first, 2, true, false, true, &mut shadows);
+        project_constructor_storage(&mut first, 2, true, false, true, false, &mut shadows);
         assert!(first.pointer("/position/radius").is_none());
         let mut changed = runtime();
         changed["position"]["radius"] = json!(10);
-        project_constructor_storage(&mut changed, 2, false, false, true, &mut shadows);
+        project_constructor_storage(&mut changed, 2, false, false, true, false, &mut shadows);
         assert_eq!(changed["position"]["radius"], json!(10));
         changed["position"]["radius"] = json!(12345);
-        project_constructor_storage(&mut changed, 2, false, false, true, &mut shadows);
+        project_constructor_storage(&mut changed, 2, false, false, true, false, &mut shadows);
         assert_eq!(changed["position"]["radius"], json!(12345));
     }
 
@@ -2117,14 +2134,14 @@ mod constructor_storage_tests {
     fn zero_displacement_can_copy_only_the_initial_undefined_increment() {
         let mut shadows = ConstructorStorage::new();
         let mut first = runtime();
-        project_constructor_storage(&mut first, 1, true, false, false, &mut shadows);
+        project_constructor_storage(&mut first, 1, true, false, false, false, &mut shadows);
         let mut stationary = runtime();
         stationary["position"]["computed_increment"] = json!(7);
         stationary["position"]["map"] = json!({"x": 10, "y": 20});
         stationary["position"]["goal_map"] = stationary["position"]["map"].clone();
         stationary["position"]["forecasted_movement"] = stationary["position"]["increment"].clone();
         let mut recorded = stationary.clone();
-        project_constructor_storage(&mut stationary, 1, false, false, false, &mut shadows);
+        project_constructor_storage(&mut stationary, 1, false, false, false, false, &mut shadows);
         assert!(stationary.pointer("/position/increment").is_none());
         assert!(
             stationary
@@ -2134,12 +2151,27 @@ mod constructor_storage_tests {
         let mut scaled = recorded.clone();
         scaled["position"]["forecasted_movement"] = json!({"x": 684});
         recorded = scaled.clone();
-        project_constructor_storage(&mut scaled, 1, false, false, false, &mut shadows);
+        project_constructor_storage(&mut scaled, 1, false, false, false, false, &mut shadows);
         assert!(scaled.pointer("/position/forecasted_movement").is_none());
+        let mut completed = recorded.clone();
+        completed["position"]["goal_map"]["x"] = json!(11);
+        completed["position"]["computed_increment"] = json!(0);
+        completed["position"]["forecasted_movement"] = json!({"x": 1368});
+        recorded = completed.clone();
+        project_constructor_storage(&mut completed, 1, false, false, false, true, &mut shadows);
+        assert!(completed.pointer("/position/forecasted_movement").is_none());
         let mut retained_forecast = recorded.clone();
         retained_forecast["position"]["goal_map"]["x"] = json!(11);
         retained_forecast["position"]["computed_increment"] = json!(0);
-        project_constructor_storage(&mut retained_forecast, 1, false, false, false, &mut shadows);
+        project_constructor_storage(
+            &mut retained_forecast,
+            1,
+            false,
+            false,
+            false,
+            false,
+            &mut shadows,
+        );
         assert!(
             retained_forecast
                 .pointer("/position/forecasted_movement")
@@ -2154,6 +2186,7 @@ mod constructor_storage_tests {
             false,
             false,
             false,
+            false,
             &mut shadows,
         );
         assert!(
@@ -2162,12 +2195,13 @@ mod constructor_storage_tests {
                 .is_some()
         );
         let mut moving = recorded.clone();
+        moving["position"]["computed_increment"] = json!(7);
         moving["position"]["goal_map"]["x"] = json!(11);
-        project_constructor_storage(&mut moving, 1, false, false, false, &mut shadows);
+        project_constructor_storage(&mut moving, 1, false, false, false, false, &mut shadows);
         assert!(moving.pointer("/position/increment").is_some());
         assert!(moving.pointer("/position/forecasted_movement").is_some());
         let mut later = recorded;
-        project_constructor_storage(&mut later, 1, false, false, false, &mut shadows);
+        project_constructor_storage(&mut later, 1, false, false, false, false, &mut shadows);
         assert!(later.pointer("/position/increment").is_some());
         assert!(later.pointer("/position/forecasted_movement").is_some());
     }

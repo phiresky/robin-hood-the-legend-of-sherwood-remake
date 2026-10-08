@@ -77,7 +77,7 @@ impl TraceCapabilities {
         };
         register(
             "mission-start-constructor-storage",
-            "Fresh-mission sprite goal_world, increment, door_direction, flight_countdown, behind_display_order_reference and non-actor radius may retain undefined constructor bytes. Exclude unchanged first-frame residue only until a recorded change or flight/nonzero-movement/door/reference validity establishes the field; zero-displacement movement with computed bits may also scale that unchanged undefined increment into forecasted_movement; outside that producer, exclude only its unchanged retained result. Never apply to loaded saves or re-exclude established fields",
+            "Fresh-mission sprite goal_world, increment, door_direction, flight_countdown, behind_display_order_reference and non-actor radius may retain undefined constructor bytes. Exclude unchanged first-frame residue only until a recorded change or flight/nonzero-movement/door/reference validity establishes the field; zero-displacement movement proved by computed bits or recorded motion telemetry may also scale that unchanged undefined increment into forecasted_movement; outside that producer, exclude only its unchanged retained result. Never apply to loaded saves or re-exclude established fields",
             "All fresh-mission captures initialize dormant constructor storage deterministically",
         );
         register(
