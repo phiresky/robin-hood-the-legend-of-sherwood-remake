@@ -50,7 +50,19 @@ def fit(lower,upper,*,include_geometry=False,tangent_mode="up-projection",forced
     if height<=0:raise ValueError('Collar height is not positive')
     for normals,points in [(lower_normals,lower_points),(upper_normals,upper_points)]:
         normals/=np.linalg.norm(normals,axis=1)[:,None]
-        if tangent_mode=='boundary-cross':
+        if tangent_mode=='horizontal-secant':
+            # Keep every intermediate ring horizontal while following the
+            # lateral limb displacement. Project that secant into each surface
+            # tangent plane without changing its vertical derivative.
+            secant=upper_points-lower_points
+            horizontal=np.sum(normals[:,:2]**2,axis=1)
+            if np.any(horizontal<1e-8):raise ValueError('Horizontal surface cannot support a horizontal-section loft')
+            tangent=secant.copy();tangent[:,2]=height
+            correction=np.sum(normals*tangent,axis=1)/horizontal
+            tangent[:,:2]-=normals[:,:2]*correction[:,None]
+            tangents.append(tangent)
+            continue
+        elif tangent_mode=='boundary-cross':
             forward=np.roll(points,-1,axis=0)-points;backward=points-np.roll(points,1,axis=0)
             around=forward/np.linalg.norm(forward,axis=1)[:,None]+backward/np.linalg.norm(backward,axis=1)[:,None]
             around/=np.linalg.norm(around,axis=1)[:,None]

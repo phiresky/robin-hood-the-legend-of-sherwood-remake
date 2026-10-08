@@ -85,6 +85,10 @@ def main():
         raise ValueError('Pinned construction input changed')
     if sha(Path(record['source_mask'])) != record['source_mask_sha256']:
         raise ValueError('Pinned source domain changed')
+    rim = record.get('rim_report') or {}
+    for name in ('input_mesh', 'input_report'):
+        if name in rim and sha(Path(rim[name])) != rim[name+'_sha256']:
+            raise ValueError('Pinned physical section input changed: '+name)
     arrays = np.load(payload, allow_pickle=False)
     acquire()
     try:
