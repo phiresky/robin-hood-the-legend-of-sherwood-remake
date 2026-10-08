@@ -127,11 +127,11 @@ the distribution.
 
 | Mission | Prepared nodes | Frame 5 | Median tick | p95 | Maximum |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| H07_Not_MK | 891 | 1.458 ms | 1.046 ms | 1.690 ms | 3.163 ms |
-| H01_Lin_VL | 633 | 0.210 ms | 0.193 ms | 0.274 ms | 0.489 ms |
-| S01_Not_VL | 891 | 0.641 ms | 0.691 ms | 0.794 ms | 0.959 ms |
+| H07_Not_MK | 891 | 0.864 ms | 0.869 ms | 1.002 ms | 1.203 ms |
+| H01_Lin_VL | 633 | 0.174 ms | 0.175 ms | 0.228 ms | 0.286 ms |
+| S01_Not_VL | 891 | 0.560 ms | 0.595 ms | 0.695 ms | 0.782 ms |
 
-Latest evidence: `work/map-compile/passage-performance-20261008.json` under
+Latest evidence: `work/map-compile/passage-pause-performance-20261008.json` under
 the editor directory. These are working-tree measurements, including concurrent
 engine fixes and timing variation; they do not isolate the cost of this change.
 
