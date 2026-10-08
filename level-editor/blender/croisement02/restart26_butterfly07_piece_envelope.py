@@ -8,7 +8,7 @@ import restart14_butterfly_canopy22_audit as reader
 import restart26_butterfly07_depth_refinement as pinned
 from restart14_butterfly07_anatomy_contacts import geometry_binding,clip_planes
 from restart14_butterfly07_prism_contacts import box_clip,alpha_maximum
-OUT=reader.B/'butterfly07-v3-piece-depth-envelope-v1'
+OUT=reader.B/'butterfly07-v3-piece-depth-envelope-v2'
 N=8;MARGIN_Z=.25
 
 def merge_bands(bands):
@@ -17,6 +17,10 @@ def merge_bands(bands):
         if merged and lo<=merged[-1][1]+1e-9:merged[-1][1]=max(hi,merged[-1][1])
         else:merged.append([float(lo),float(hi)])
     return merged
+
+def body_box(parameters,radii):
+    corners=np.array([[x,y,z]for x in [-radii[0],radii[0]]for y in [-radii[1],radii[1]]for z in [-radii[2],radii[2]]])
+    return Rotation.from_euler('xyz',parameters[:3],degrees=True).apply(corners)
 
 def translation_interval(receiver,body,pad):
     # R-P contains exactly those translations for which two convex sets meet.
@@ -37,12 +41,15 @@ def translation_interval(receiver,body,pad):
 def main():
     assert not OUT.exists();assert reader.sha(pinned.FIT)==pinned.FIT_SHA
     fit=json.loads(pinned.FIT.read_text());rows={r['phase']:r for r in fit['rows']};assert set(rows)==set(range(99))
-    geometry,radii,binding=geometry_binding(fit,pinned.HELPER,pinned.HELPER_SHA);units=[]
+    geometry,radii,binding=geometry_binding(fit,pinned.HELPER,pinned.HELPER_SHA);units=[];body_containment=[]
     for phase in range(99):
         a,b=rows[phase],rows[(phase+1)%99];p=np.array(a['parameters']);q=np.array(b['parameters']);rotations=Rotation.from_euler('xyz',[p[:3],q[:3]],degrees=True);slerp=Slerp([0,1],rotations)
         angle=(rotations[0].inv()*rotations[1]).magnitude();hinges=np.abs(np.deg2rad(q[3:5]-p[3:5]))
-        def at(t):
+        def at(t,boxed=True):
             parameters=(1-t)*p+t*q;parameters[:3]=slerp([t])[0].as_euler('xyz',degrees=True);source=(1-t)*np.array(a['source']['alpha_centroid_display'])+t*np.array(b['source']['alpha_centroid_display']);shift=np.array([source[0]+parameters[5],source[1]+parameters[6],reader.COS*source[1]/reader.SIN]);body,wings=geometry(parameters)
+            actual_local=Rotation.from_euler('xyz',parameters[:3],degrees=True).inv().apply(body)
+            assert np.all(abs(actual_local)<=np.array(binding['fixed_geometry']['body_radii'])+1e-8)
+            if boxed:body=body_box(parameters,binding['fixed_geometry']['body_radii'])
             result=[('body',body+shift,radii['body']*angle**2)]
             for k,wing in enumerate(wings):
                 for i in range(1,len(wing)-1):result.append((f'wing{k}-{i}',wing[[0,i,i+1]]+shift,radii['wing']*(angle+hinges[k])**2))
@@ -50,6 +57,10 @@ def main():
         for step in range(N):
             for (name,v,curvature),(_,w,_)in zip(at(step/N),at((step+1)/N)):
                 pad=curvature/(8*N*N)+1e-6;points=np.vstack([v,w]);lo=points.min(0)-pad;hi=points.max(0)+pad
+                if name=='body':
+                    bounds=ConvexHull(points,qhull_options='QJ').equations.copy();bounds[:,3]-=pad
+                    error=max(float((at(t,False)[0][1]@bounds[:,:3].T+bounds[:,3]).max())for t in [step/N,(step+.5)/N,(step+1)/N])
+                    assert error<=1e-7;body_containment.append(error)
                 if np.linalg.matrix_rank(points[:,:2]-points[0,:2],tol=1e-10)==2:
                     projection=ConvexHull(points[:,:2]);planes=np.c_[projection.equations[:,:2],np.zeros(len(projection.equations)),projection.equations[:,2]-pad]
                 else:planes=None
@@ -79,7 +90,7 @@ def main():
                 counts.update(unit['counts'])
                 for owner,bands in unit['bands'].items():by_owner[owner].extend(bands)
             by_owner={k:merge_bands(v)for k,v in by_owner.items()if v};merged=merge_bands([band for bands in by_owner.values()for band in bands]);records.append(dict(start=segment/N,end=(segment+1)/N,forbidden_height_bands=merged,receiver_bands=by_owner,counts=counts))
-        result=dict(status='CONSERVATIVE_CONTINUOUS_PIECE_CLEARANCE_ENVELOPE',fit_sha256=pinned.FIT_SHA,geometry_binding=binding,map_sha256=reader.sha(map_path),assets=assets,recipe_sha256=reader.sha(Path(__file__)),subdivisions=N,height_margin=MARGIN_Z,records=records,method='Body convex hull and individual wing triangles swept by endpoint hulls plus rigorous angular padding. Receiver polygons clipped to each swept projection and alpha-filtered. Minkowski receiver-minus-swept-body intersection with the camera-depth axis gives a forbidden height interval. Per-triangle intervals are unioned without bridging real gaps.',limits=['Exact alpha can reject wholly transparent polygons; partly transparent intervals remain conservative.','Swept hulls may exclude genuine motion-dependent gaps.','Source shape,99anchors and timing retained. Source quality held; static receivers only.'])
+        result=dict(status='CONSERVATIVE_CONTINUOUS_PIECE_CLEARANCE_ENVELOPE',fit_sha256=pinned.FIT_SHA,geometry_binding=binding,map_sha256=reader.sha(map_path),assets=assets,recipe_sha256=reader.sha(Path(__file__)),subdivisions=N,height_margin=MARGIN_Z,body_envelope='Oriented rest-radii box contains actual body at endpoints; angular chord-error padding contains every intermediate actual body pose.',body_endpoint_midpoint_check_count=len(body_containment)*3,maximum_body_containment_error=max(body_containment),records=records,method='Conservative oriented body box and individual wing triangles swept by endpoint hulls plus rigorous angular padding. Receiver polygons clipped to each swept projection and alpha-filtered. Minkowski receiver-minus-swept-body intersection with the camera-depth axis gives a forbidden height interval. Per-triangle intervals are unioned without bridging real gaps.',limits=['Exact alpha can reject wholly transparent polygons; partly transparent intervals remain conservative.','Swept hulls may exclude genuine motion-dependent gaps.','Source shape,99anchors and timing retained. Source quality held; static receivers only.'])
         OUT.mkdir();payload=json.dumps(result,indent=2)+'\n';assert len(payload)<8*1024**2;(OUT/'report.json').write_text(payload);print('PIECE_ENVELOPE',len(records),flush=True);return result
     reader.main(ray_records=[dict(screen=p.tolist(),hits=[])for p in query],postprocess=finish,output=OUT,triangle_callback=inspect,query_margin=margin,output_limit_bytes=8*1024**2)
 

@@ -4,9 +4,28 @@ from scipy.interpolate import CubicSpline
 from restart26_butterfly07_clearance_envelope import forbidden_height,MARGIN_Z
 from restart26_butterfly07_envelope_path import free_bands,band_paths,solve_bands
 from restart14_butterfly_canopy22_audit import SIN
-from restart26_butterfly07_piece_envelope import translation_interval,merge_bands
+from restart26_butterfly07_piece_envelope import translation_interval,merge_bands,body_box
+from scipy.spatial import ConvexHull
+from scipy.spatial.transform import Rotation,Slerp
+from restart21_butterfly07_geometry_v2 import geometry,fixed_geometry
 
 class ContinuousEnvelopeTests(unittest.TestCase):
+    def test_body_box_sweep_contains_actual_interpolated_body(self):
+        radii=np.array(fixed_geometry()['body_radii'])
+        start=np.array([30.,-70.,110.]);end=np.array([-55.,20.,-140.])
+        rotations=Rotation.from_euler('xyz',[start,end],degrees=True)
+        slerp=Slerp([0,1],rotations)
+        angle=(rotations[0].inv()*rotations[1]).magnitude()
+        for i in range(8):
+            def parameters(t):
+                return np.r_[slerp([t])[0].as_euler('xyz',degrees=True),0.,0.,0.,0.]
+            points=np.vstack([body_box(parameters(t),radii) for t in [i/8,(i+1)/8]])
+            planes=ConvexHull(points).equations
+            pad=max(radii)*angle**2/(8*8**2)+1e-6
+            for t in np.linspace(i/8,(i+1)/8,33):
+                body,_=geometry(parameters(t))
+                self.assertLessEqual(float((body@planes[:,:3].T+planes[:,3]).max()),pad)
+
     def test_minkowski_depth_band_matches_cube_receiver_contact(self):
         cube=np.array([[x,y,z]for x in [-1.,1.]for y in [-1.,1.]for z in [-1.,1.]])
         receiver=np.array([[-3.,-3.,5.],[3.,-3.,5.],[0.,3.,5.]])
