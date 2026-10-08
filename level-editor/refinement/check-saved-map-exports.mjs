@@ -41,6 +41,13 @@ for (const file of files) {
   if (selectedMaps.length && !selectedMaps.includes(map)) continue;
   const start = performance.now();
   const timings = {};
+  const gameplayPhases = [];
+  let gameplayPhaseStart;
+  const finishGameplayPhase = () => {
+    if (gameplayPhaseStart === undefined) return;
+    gameplayPhases.at(-1).elapsedMs = performance.now() - gameplayPhaseStart;
+    gameplayPhaseStart = undefined;
+  };
   let phase = "load";
   let phaseStart = start;
   const finished = () => {
@@ -69,7 +76,14 @@ for (const file of files) {
     phase = "compile";
     const compiled = compileMap(document, bounds, prepared.assets, {
       bestEffort: true,
+      onProgress: (stage) => {
+        finishGameplayPhase();
+        gameplayPhaseStart = performance.now();
+        gameplayPhases.push({ stage });
+        console.log(`${map}: ${stage} (${Math.round(gameplayPhaseStart - start)} ms elapsed)`);
+      },
     });
+    finishGameplayPhase();
     finished();
     phase = "write";
     await fs.writeFile(`${output}/${map}.level.json`, JSON.stringify(compiled.descriptor));
@@ -80,14 +94,17 @@ for (const file of files) {
       warnings: [...prepared.warnings, ...compiled.warnings],
       bounds,
       timings,
+      gameplayPhases,
       elapsedMs: performance.now() - start,
     });
     console.log(`${map}: compiled`);
   } catch (error) {
+    finishGameplayPhase();
     results.push({
       map,
       phase,
       timings,
+      gameplayPhases,
       error: String(error),
       stack: error.stack,
       cause: error.cause,

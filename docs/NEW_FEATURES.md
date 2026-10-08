@@ -2729,6 +2729,12 @@ Best-effort export now reuses generated terrain across retries that omit
 unavailable controls or traversal assemblies. Each new export regenerates terrain,
 so subsequent editor changes remain authoritative.
 
+Map export now reports gameplay compilation phases from its worker to the editor,
+including terrain, walkable geometry, receiving surfaces, masks and connections.
+Progress messages keep the export pending and cancellation remains available.
+Saved-map audits record each phase's duration, including repeated phases during
+best-effort retries.
+
 Map compilation now retains asset-local changing barriers on ladders and climbable
 walls. Placed fixtures verify collision, pathfinding and complete actor traversal
 before applying the barrier, while closed and after reset, including a barrier

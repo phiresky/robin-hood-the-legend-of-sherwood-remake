@@ -27,6 +27,7 @@ import {
 
 test("wall export matches the fixture exercised by native routing and sight", async () => {
   const f = wallSplineFixture();
+  const stages: string[] = [];
   const expected = JSON.parse(
     await readFile(
       new URL(
@@ -36,7 +37,15 @@ test("wall export matches the fixture exercised by native routing and sight", as
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(f.document, f.bounds, f.assets).descriptor, expected);
+  assert.deepEqual(
+    compileMap(f.document, f.bounds, f.assets, { onProgress: (stage) => stages.push(stage) })
+      .descriptor,
+    expected,
+  );
+  assert.ok(stages.includes("Constructing terrain"));
+  assert.ok(stages.includes("Connecting navigation regions"));
+  assert.ok(stages.includes("Constructing masks"));
+  assert.equal(stages.at(-1), "Finalizing sight and appearance bindings");
 });
 
 test("wall materials match the fixture exercised by native material queries", async () => {

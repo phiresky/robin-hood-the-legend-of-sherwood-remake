@@ -88,7 +88,7 @@ export function compileMap(
   document: Level3D,
   requestedBounds: BakeBounds,
   assets?: ReadonlyMap<string, ProjectionAssetDescriptor>,
-  options: { bestEffort?: boolean } = {},
+  options: { bestEffort?: boolean; onProgress?: (stage: string) => void } = {},
 ) {
   // TODO: Compile visual/depth state resources and recover remaining asset mask definitions.
   const bounds = validateBakeBounds(requestedBounds);

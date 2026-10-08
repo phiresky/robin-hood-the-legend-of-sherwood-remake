@@ -19,6 +19,7 @@ export type ExportRequest =
       scenery?: SceneryResources;
     };
 export type ExportResponse =
+  | { kind: "progress"; stage: string }
   | { kind: "compiled"; compiled: CompiledMap }
   | { kind: "packaged"; bytes: Uint8Array }
   | { kind: "error"; message: string };
@@ -29,6 +30,8 @@ globalThis.addEventListener("message", async (event: MessageEvent<ExportRequest>
     if (request.kind === "compile") {
       const compiled = compileMap(request.document, request.bounds, request.assets, {
         bestEffort: true,
+        onProgress: (stage) =>
+          globalThis.postMessage({ kind: "progress", stage } satisfies ExportResponse, {}),
       });
       globalThis.postMessage({ kind: "compiled", compiled } satisfies ExportResponse, {});
     } else {

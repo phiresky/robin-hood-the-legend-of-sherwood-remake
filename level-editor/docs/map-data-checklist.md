@@ -11,6 +11,11 @@ not certification of every library asset or gameplay case. Best-effort exports
 warn about omissions and preserve initial states where possible; warnings are
 not evidence that an omitted feature works.
 
+Export reports gameplay phases from its worker while keeping compilation pending
+and cancellable. The saved-map audit records per-phase durations, including
+best-effort retries. Eleven focused wall/worker checks pass; phase reporting does
+not itself certify gameplay or browser interaction.
+
 The current ten-scene export batch (`saved-map-exports-EdJxua`) compiles and passes
 native construction plus all 71 control apply/reset checks. That batch exposed a
 verification-script gap: it omitted the editor's mesh-derived spline calibration.

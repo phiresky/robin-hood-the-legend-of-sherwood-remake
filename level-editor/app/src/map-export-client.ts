@@ -13,8 +13,20 @@ export class MapExportWorker {
     | { resolve: (response: ExportResponse) => void; reject: (error: Error) => void }
     | undefined;
   private disposed = false;
-  constructor() {
+  constructor(onProgress?: (stage: string) => void) {
     this.worker.onmessage = (event: MessageEvent<ExportResponse>) => {
+      if (event.data.kind === "progress") {
+        if (this.pending && !this.disposed) {
+          try {
+            onProgress?.(event.data.stage);
+          } catch (error) {
+            this.pending?.reject(error instanceof Error ? error : new Error(String(error)));
+            this.pending = undefined;
+            this.dispose();
+          }
+        }
+        return;
+      }
       const pending = this.pending;
       this.pending = undefined;
       if (event.data.kind === "error") pending?.reject(new Error(event.data.message));

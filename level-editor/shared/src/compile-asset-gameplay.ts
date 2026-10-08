@@ -188,6 +188,7 @@ export function compileAssetGameplay(
   bounds: [number, number, number, number],
   options: {
     bestEffort?: boolean;
+    onProgress?: (stage: string) => void;
     onSceneryCompiled?: (sources: CompiledScenerySource[]) => void;
   } = {},
 ): CompiledAssetGeometry {
@@ -278,13 +279,14 @@ function compileAssetGameplayAttempt(
   document: Level3D,
   descriptors: ReadonlyMap<string, ProjectionAssetDescriptor>,
   bounds: [number, number, number, number],
-  options: { bestEffort?: boolean },
+  options: { bestEffort?: boolean; onProgress?: (stage: string) => void },
   omitted: ReadonlySet<string>,
   fixedTransitions: ReadonlySet<string>,
   scenerySources: CompiledScenerySource[],
   getTerrain: (document: Level3D) => ReturnType<typeof terrainGameplay>,
 ): CompiledAssetGeometry {
   const warnings: string[] = [];
+  options.onProgress?.("Preparing asset placements");
   ({ document, descriptors } = normalizeGameplayStateViews(document, descriptors));
   // Saved placements may contain old obstacle snapshots. Geometry authority is
   // the pinned asset; scene instances supply identity, visibility and transforms.
@@ -299,7 +301,9 @@ function compileAssetGameplayAttempt(
     }),
   };
   let placements = instances(document, descriptors);
+  options.onProgress?.("Constructing terrain");
   const terrain = getTerrain(document);
+  options.onProgress?.("Constructing spline walls");
   const walls = wallSplineGameplay(document, descriptors, !!options.bestEffort, bounds);
   warnings.push(...walls.warnings);
   for (const descriptor of walls.descriptors)
@@ -468,6 +472,7 @@ function compileAssetGameplayAttempt(
       throw new Error("Asset gameplay exceeds signed 16-bit coordinates");
     return result;
   };
+  options.onProgress?.("Transforming asset gameplay");
   for (const placement of placements) {
     let authored = placement.descriptor.gameplay!;
     // Merged asset drafts can repeat advisory text. Best-effort export keeps
@@ -1211,6 +1216,7 @@ function compileAssetGameplayAttempt(
         });
     }
   }
+  options.onProgress?.("Connecting asset interiors and traversal");
   const connections: { from: string; to: string }[] = [];
   const availableInteriors = new Set(placedInteriors.map((interior) => interior.id));
   if (document.interiorConnections)
@@ -1307,6 +1313,7 @@ function compileAssetGameplayAttempt(
     support.materialIndices = remapMaterials(support.materialIndices);
   groundMaterials.splice(0, groundMaterials.length, ...remapMaterials(groundMaterials));
   materials.splice(0, materials.length, ...clippedMaterials);
+  options.onProgress?.("Constructing walkable geometry");
   const planes: HeightPlane[] = [];
   const planeBuckets = new Map<string, HeightPlane[]>();
   const canonicalPlanes = new Map<HeightPlane, HeightPlane>();
@@ -1698,6 +1705,7 @@ function compileAssetGameplayAttempt(
     });
     return compiled;
   };
+  options.onProgress?.("Connecting navigation regions");
   let navigationRegions: ReturnType<typeof assembleNavigationRegions>;
   for (;;) {
     try {
@@ -1761,6 +1769,7 @@ function compileAssetGameplayAttempt(
   // A raised receiving volume can supply the physical landing over a lower
   // navigation plane. Require an unambiguous ground binding and retain its
   // actual walkable boundary and holes when checking the ladder approach.
+  options.onProgress?.("Constructing receiving surfaces");
   const receiverContours = new Map<
     NavigationPiece,
     Pick<NavigationPiece, "polygon" | "blockers">
@@ -2223,6 +2232,7 @@ function compileAssetGameplayAttempt(
         blockers: [...area.blockers, ...region.slice(1)],
       });
   }
+  options.onProgress?.("Constructing masks");
   const masks: NonNullable<CompiledAssetGeometry["masks"]> = [];
   const maskIndices = new Map<string, number[]>();
   for (const mask of placedMasks) {
@@ -2334,6 +2344,7 @@ function compileAssetGameplayAttempt(
     });
   // Airborne jumps do not collision-check each frame. Any volume that can
   // become active must still constrain the permanently generated jump span.
+  options.onProgress?.("Connecting jumps and doors");
   const changingSight = new Set(
     transitions.flatMap((transition) => [...transition.initialSight, ...transition.appliedSight]),
   );
@@ -2577,6 +2588,7 @@ function compileAssetGameplayAttempt(
     ...doors.filter((door) => !door.lift && !door.interior),
   ].filter((door) => !omittedDoors.has(door.name));
   const doorIndices = new Map(patchDoors.map((door, index) => [door.name, index]));
+  options.onProgress?.("Constructing lighting and state controls");
   const lightCoverage = new Map<string, Point[][]>();
   for (const light of lights) {
     if (!light.receiverGroup) continue;
@@ -2855,6 +2867,7 @@ function compileAssetGameplayAttempt(
         }
       : {}),
   };
+  options.onProgress?.("Finalizing sight and appearance bindings");
   const assembled = assembleSightVolumes(compiled, sightJoins, sightCaps);
   orderSightVolumes(compiled, sightOrders, assembled);
   if (compiled.movement_transitions)

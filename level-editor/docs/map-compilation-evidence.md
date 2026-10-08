@@ -4,6 +4,27 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Gameplay compilation phase reporting (2026-10-08)
+
+The export worker now reports compilation phases to the editor without settling
+the pending export request. The saved-map audit logs those same phase boundaries
+and records durations for each occurrence, retaining repeated phases during
+best-effort retries. This exposes terrain, navigation, receiving-surface, mask,
+connection and state-control work separately; it does not measure completion as
+a percentage or change generated gameplay.
+
+All eleven focused wall/worker checks pass. Worker checks cover keeping a request
+pending through multiple progress messages, busy-request rejection, cancellation,
+late messages, final-response delivery and callback failure. The wall descriptor
+still exactly matches the native fixture when progress callbacks are enabled.
+App type checking, focused lint and the production build pass. Browser interaction is not verified by
+these transport tests.
+
+A separate current Wychford diagnostic measured loading at 252 ms, pinned wall
+calibration at 134 ms, and terrain generation at 35,155 ms with 17,924 surfaces
+and 728 blockers. These component measurements do not establish full export
+duration or identify the later compiler bottleneck.
+
 ## Generated receivers at native coordinate precision (2026-10-08)
 
 The terrain integration fixture had drifted from current editor output and

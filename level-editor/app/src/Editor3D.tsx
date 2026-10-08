@@ -1051,7 +1051,9 @@ export default function Editor3D(props: EditorProps) {
         document.sceneAssets,
       );
       progress({ stage: "Compiling gameplay and connections…", completed: 0, total: 0 });
-      const worker = new MapExportWorker();
+      const worker = new MapExportWorker((stage) =>
+        progress({ stage: `${stage}…`, completed: 0, total: 0 }),
+      );
       exportWorker = worker;
       const { compiled, pixels, appearance } = await viewport.bakeMapAsync(
         document,
