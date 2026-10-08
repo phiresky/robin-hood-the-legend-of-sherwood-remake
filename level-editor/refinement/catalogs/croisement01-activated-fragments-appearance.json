@@ -1,0 +1,152 @@
+[
+  {
+    "asset": "croisement01-group-083",
+    "modelSha256": "7a4aad3ba63053195c1dcefc14231b2182b2854fd0cc5c85e61caf1f97f670d6",
+    "descriptorSha256": "c48a2d7ead14ffadf88f5439db13a550a12798693adcee4671b32ed6d1fba920",
+    "gameplay": {
+      "version": 1,
+      "collision": "parts",
+      "surfaces": [],
+      "doors": [],
+      "movementBlockers": [],
+      "movementTransitions": [
+        {
+          "id": "activate-fragment",
+          "node": "building-083",
+          "active": true,
+          "definitive": true,
+          "waypoint": [
+            -0.3168850000000134,
+            0.20944631390040058,
+            0
+          ],
+          "applyPolygon": [],
+          "noApplyPolygon": [],
+          "initial": [],
+          "applied": [
+            {
+              "id": "activated-footprint",
+              "node": "building-083",
+              "polygon": [
+                [
+                  35.60410000000002,
+                  -22.843868686099597
+                ],
+                [
+                  13.361799999999903,
+                  30.116001313900398
+                ],
+                [
+                  -36.23789999999997,
+                  23.2627613139004
+                ],
+                [
+                  -13.995540000000005,
+                  -29.697108686099597
+                ]
+              ],
+              "height": 0,
+              "preserveMovementPrecision": true
+            }
+          ],
+          "initialSight": [],
+          "appliedSight": [
+            "building-083"
+          ],
+          "appearances": [
+            "activate-fragment"
+          ]
+        }
+      ],
+      "draft": {
+        "issues": [
+          "Independent activated-fragment draft; full gameplay parity is not certified.",
+          "Ground blocking is derived from this fragment's solid footprint; shared assembly exclusion and remote trigger placement are deliberately not inherited.",
+          "The control starts unapplied. Activate it explicitly to enable this fragment; rendered state appearance and mesh contact still require review."
+        ]
+      }
+    },
+    "partAppearances": {
+      "building-083": {
+        "show": [
+          "activate-fragment"
+        ]
+      }
+    }
+  },
+  {
+    "asset": "croisement01-group-084",
+    "modelSha256": "ffde7a47c805accbaf1070dc4f9e0461b914ea86e6b0295ced348716a66a2fb1",
+    "descriptorSha256": "6c4b99552cc977e7aaefb17bd60a683ea278e25612693c55391179983519b8ed",
+    "gameplay": {
+      "version": 1,
+      "collision": "parts",
+      "surfaces": [],
+      "doors": [],
+      "movementBlockers": [],
+      "movementTransitions": [
+        {
+          "id": "activate-fragment",
+          "node": "building-084",
+          "active": true,
+          "definitive": true,
+          "waypoint": [
+            -0.30933749999999804,
+            0.26033424105982306,
+            0
+          ],
+          "applyPolygon": [],
+          "noApplyPolygon": [],
+          "initial": [],
+          "applied": [
+            {
+              "id": "activated-footprint",
+              "node": "building-084",
+              "polygon": [
+                [
+                  23.004800000000046,
+                  -24.534880758940176
+                ],
+                [
+                  0.7624499999999443,
+                  28.424979241059816
+                ],
+                [
+                  -23.623500000000035,
+                  25.055549241059822
+                ],
+                [
+                  -1.3810999999999467,
+                  -27.90431075894017
+                ]
+              ],
+              "height": 0,
+              "preserveMovementPrecision": true
+            }
+          ],
+          "initialSight": [],
+          "appliedSight": [
+            "building-084"
+          ],
+          "appearances": [
+            "activate-fragment"
+          ]
+        }
+      ],
+      "draft": {
+        "issues": [
+          "Independent activated-fragment draft; full gameplay parity is not certified.",
+          "Ground blocking is derived from this fragment's solid footprint; shared assembly exclusion and remote trigger placement are deliberately not inherited.",
+          "The control starts unapplied. Activate it explicitly to enable this fragment; rendered state appearance and mesh contact still require review."
+        ]
+      }
+    },
+    "partAppearances": {
+      "building-084": {
+        "show": [
+          "activate-fragment"
+        ]
+      }
+    }
+  }
+]
