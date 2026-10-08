@@ -25,6 +25,15 @@ Batch `spline-clearance-planes-i1SuhK` passes all eight native constructions and
 native thin-path geometry coverage, not complete actor walking, curved-path
 native traversal, or rendered contact. No engine runtime change was required.
 
+Follow-up `spline-clearance-planes-PgrCSo` widens each side of the cutout while
+retaining the central pillar. All eight constructions and 96 thin probes pass,
+plus 48 directed native pathfinder routes through the openings. Route endpoints
+must fit the normal movement footprint, and each forty-unit crossing has a
+45-unit maximum path length so walking around the wall cannot satisfy the check.
+Both directions pass on flat/rising terrain at elevations 0/40. This exercises
+actor-sized routing, not animation ticks or full actor motion execution. The
+external native regression manifest now accepts optional `route_probes[].max_length`.
+
 ## Independent activated solid fragments (2026-10-08)
 
 Removable Croisement03 fragments 098/099 are authored by

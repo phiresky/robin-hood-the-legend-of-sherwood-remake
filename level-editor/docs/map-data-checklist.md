@@ -1427,7 +1427,9 @@ movement probes now pass across repeated openings on flat/rising terrain at two
 elevations, with clearances enabled/disabled and solid pillars preserved. This
 exposed and fixed a rounding gap under nominally touching sloped walls: contact
 and clearance-plane matching now tolerate 1/1024 map unit, while a tested real
-0.01-unit gap remains open. Full actor traversal remains pending.
+0.01-unit gap remains open. A widened-opening follow-up passes 48 directed
+actor-sized pathfinder routes in both directions, with a maximum route length
+that rejects detours around the wall. Full animated actor traversal remains pending.
 Pipeline typechecking remains blocked
 by existing errors in `state-delivery.test.ts`; touched files pass scoped lint and
 app typechecking/build.

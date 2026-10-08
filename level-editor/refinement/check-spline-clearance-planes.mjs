@@ -28,10 +28,10 @@ for (const elevation of [0, 40]) {
             height: 30,
             navigationHeight: 0,
             polygon: [
-              [-20, -80],
-              [20, -80],
-              [20, 80],
-              [-20, 80],
+              [-40, -80],
+              [40, -80],
+              [40, 80],
+              [-40, 80],
             ],
             holes: [
               [
@@ -48,10 +48,10 @@ for (const elevation of [0, 40]) {
       const probes = [];
       for (let repeat = 0; repeat < 3; repeat++) {
         for (const [offset, opening] of [
-          [-12, true],
+          [-22, true],
           [0, false],
-          [12, true],
-          [30, false],
+          [22, true],
+          [45, false],
         ]) {
           const centre = curve.getPointAt((repeat * 100 + 50 + offset) / curve.getLength());
           const [x, y, z] = sceneToGame(document.camera, centre.toArray());
@@ -67,7 +67,20 @@ for (const elevation of [0, 40]) {
       const file = `clearance-${elevation}-${rise}-${enabled}.level.json`;
       await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
       await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
-      results.push({ file, map: file, warnings: compiled.warnings, movement_probes: probes });
+      results.push({
+        file,
+        map: file,
+        warnings: compiled.warnings,
+        movement_probes: probes,
+        route_probes: enabled
+          ? probes
+              .filter((probe) => probe.reachable)
+              .flatMap((probe) => [
+                { ...probe, sector: 0, max_length: 45 },
+                { ...probe, start: probe.end, end: probe.start, sector: 0, max_length: 45 },
+              ])
+          : [],
+      });
     }
   }
 }

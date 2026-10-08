@@ -980,6 +980,19 @@ fn recovered_static_exports_construct_native_geometry() {
                     ),
                     route_grid.get_sector(goal, goal, probe["layer"].as_u64().unwrap() as u16)
                 );
+                if let Some(limit) = probe["max_length"].as_f64() {
+                    let mut previous = point("start");
+                    let mut length = 0.0_f32;
+                    for next in route.as_ref().unwrap() {
+                        length +=
+                            ((next.x - previous.x).powi(2) + (next.y - previous.y).powi(2)).sqrt();
+                        previous = *next;
+                    }
+                    assert!(
+                        f64::from(length) <= limit,
+                        "{file}: route detoured around the tested opening: {length} > {limit}; {probe}"
+                    );
+                }
             }
         }
         assert_eq!(
