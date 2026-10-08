@@ -1296,7 +1296,15 @@ fn convert_rhm(src: &Path, dst: &Path, is_beggar: &dyn Fn(u32) -> bool) -> Resul
 
 fn convert_scb(src: &Path, dst: &Path) -> Result<()> {
     let scb = scb::parse_file(src).map_err(|e| anyhow!("scb: {e}"))?;
-    write_json_pretty(dst, &scb)
+    write_json_pretty(dst, &scb)?;
+    let source_path = dst.with_extension("ts");
+    let source = format!(
+        "// Inspection-only pseudo-TypeScript; this file is not read by the game.\n\
+         // Edit the adjacent .scb.json to change script bytecode.\n\n{}",
+        robin_modding_tools::decompile::decompile(&scb)
+    );
+    fs::write(&source_path, source)
+        .with_context(|| format!("write decompiled script {}", source_path.display()))
 }
 
 fn convert_res(src: &Path, out_dir: &Path) -> Result<()> {

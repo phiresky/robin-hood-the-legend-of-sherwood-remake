@@ -1,5 +1,9 @@
 # Post-port Features
 
+- **Script inspection sidecars.** Hackable datadir conversion writes decompiled
+  pseudo-TypeScript in `*.scb.ts` beside each `*.scb.json`. These files are for
+  inspection only; the game continues to load script bytecode from JSON.
+
 - **Disconnected sound emitters.** Cropping a spline preserves disconnected
   sound fragments within one emitter per repetition. Prepared fragment indices
   prevent acoustic coverage across the removed gap without duplicating playback
