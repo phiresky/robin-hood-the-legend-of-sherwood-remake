@@ -47,7 +47,7 @@ impl TraceCapabilities {
     pub fn new(schema: u32, native_version: u32, missing_npc_transients: bool) -> Self {
         let mut exceptions = vec![ProjectionException {
             id: "original-runtime-representation".into(),
-            scope: "Original zero-based order IDs map to Rust nonzero IDs; unset all-positive-zero blocked boxes map to null; allocation identities map by persistent rank".into(),
+            scope: "Original zero-based order IDs map to Rust nonzero IDs; unset all-positive-zero blocked boxes and non-actor point move boxes map to null; position layer 65535 maps to null; allocation identities map by persistent rank".into(),
             removal_condition: "Retain while Original and Rust use different equivalent representations".into(),
         }];
         if schema <= 16 {
@@ -75,6 +75,11 @@ impl TraceCapabilities {
                 removal_condition: removal.into(),
             });
         };
+        register(
+            "mission-start-constructor-storage",
+            "Fresh-mission sprite goal_world, increment, door_direction, flight_countdown, behind_display_order_reference and non-actor radius may retain undefined constructor bytes. Exclude unchanged first-frame residue only until a recorded change or flight/nonzero-movement/door/reference validity establishes the field; zero-displacement movement with computed bits may also scale that unchanged undefined increment into forecasted_movement; outside that producer, exclude only its unchanged retained result. Never apply to loaded saves or re-exclude established fields",
+            "All fresh-mission captures initialize dormant constructor storage deterministically",
+        );
         register(
             "background-fx",
             "compare_frame excludes entire Fx entities from logical gameplay comparison; their recorded animation is retained for diagnostics, not renderer equivalence",
@@ -253,6 +258,11 @@ impl TraceCapabilities {
                 "presentation-rng-homogeneous-burst",
                 "legacy_presentation_sprite_rng_burst requires an ordinary in-progress simulated frame, equal callsite/value lengths, no commands, retained scrolls, a homogeneous terminal burst longer than the scroll set, previously unseen callsite and distinct suffix values; consume only when the entire exact suffix remains after Rust tick",
                 "The trace records the omitted ForceRandomSpriteFrame host lifecycle/presentation boundary directly",
+            );
+            register(
+                "presentation-rng-dialogue-portrait",
+                "A completed recorded play_dialog manager boundary refreshes sprite sound latches and may own a homogeneous, previously unseen terminal RNG callsite burst. Replay consumes it only when the entire exact suffix is unconsumed after simulation, including any player commands that triggered the dialogue",
+                "Every dialogue portrait uses the isolated host RNG rather than the simulation stream",
             );
             register(
                 "presentation-rng-mobile-vibration",

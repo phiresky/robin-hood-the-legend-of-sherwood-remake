@@ -366,6 +366,8 @@ pub(super) fn run_replay(
         initialize_headless_engine(&header, initial_rng_draws.clone(), &timing)?;
     let mut loaded_save_host = None;
     let mut legacy_blocked_box_shadows = BTreeMap::new();
+    let mut constructor_storage =
+        (header.start_state == super::TraceStartState::MissionStart).then(BTreeMap::new);
     if let Some(initial_save) = initial_save {
         let save = robin_engine::legacy_save::initialized::decode_initialized_v48_save(
             initial_save,
@@ -903,6 +905,11 @@ pub(super) fn run_replay(
             &current_legacy_presentation_entities,
         );
         previous_legacy_presentation_entities = Some(current_legacy_presentation_entities);
+        let has_dialogue_lifecycle = frame.sequence_lifecycle_events.iter().any(|event| {
+            event.command == robin_engine::element::Command::PlayDialog as u16
+                && event.event == "sequence_go_result"
+                && event.phase == "sequence_manager_hourglass"
+        });
         let legacy_presentation_sprite_rng_draws = legacy_presentation_sprite_rng_burst(
             header.schema,
             trace_commands_were_empty,
@@ -910,6 +917,7 @@ pub(super) fn run_replay(
             frame.simulation_body_ran,
             engine.parity_replay_setup().retained_scroll_count(),
             has_teleport_star_lifecycle,
+            has_dialogue_lifecycle,
             &frame.rng_draws.gameplay_callsite_offsets(),
             &frame.rng_draws.gameplay_values(),
         );
@@ -1014,6 +1022,11 @@ pub(super) fn run_replay(
             );
             std::panic::resume_unwind(payload);
         });
+        if has_dialogue_lifecycle {
+            engine
+                .parity_replay_setup()
+                .replay_modal_sprite_sound_refresh();
+        }
         let rust_rng_after_tick = engine
             .original_rng_replay_cursor()
             .expect("original RNG replay unexpectedly disabled after Rust frame");
@@ -1148,6 +1161,7 @@ pub(super) fn run_replay(
             header.initial_npc_transients.is_none(),
             header.schema <= LAST_TRACE_SCHEMA_WITHOUT_DRAW_VIEW,
             &mut legacy_blocked_box_shadows,
+            &mut constructor_storage,
         )?);
         if profile_timing {
             comparison_time += comparison_started.elapsed();

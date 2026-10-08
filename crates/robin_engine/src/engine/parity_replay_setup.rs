@@ -179,6 +179,13 @@ impl ParityReplaySetup<'_> {
         }
     }
 
+    /// A modal dialogue captures a refreshed game background during the
+    /// sequence-manager pass, before the ordinary post-tick snapshot. Restore
+    /// its animation-sound refresh without advancing animations or simulation.
+    pub fn replay_modal_sprite_sound_refresh(&mut self) {
+        self.engine.inner.dispatch_frame_sounds();
+    }
+
     /// Cross the game's post-recording presentation boundary.
     ///
     /// Target-sprite creation overwrites the serialized width/height

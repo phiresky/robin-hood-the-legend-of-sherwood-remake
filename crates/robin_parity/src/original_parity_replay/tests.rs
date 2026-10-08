@@ -342,6 +342,39 @@ fn legacy_blocked_box_reset_requires_perform_motion_execute_arm() {
     let rows = [
         (bored, true, Start, 10, soldier, 10, false, None, false),
         (stop_walk, false, Start, 10, soldier, 10, false, None, false),
+        (
+            bored,
+            false,
+            InProgress,
+            11,
+            soldier,
+            10,
+            true,
+            Some(10),
+            true,
+        ),
+        (
+            bored,
+            false,
+            InProgress,
+            11,
+            soldier,
+            10,
+            false,
+            Some(10),
+            false,
+        ),
+        (
+            bored,
+            false,
+            InProgress,
+            11,
+            soldier,
+            10,
+            true,
+            Some(9),
+            false,
+        ),
         (walk, true, Start, 10, soldier, 10, false, None, true),
         (walk, true, InProgress, 11, soldier, 10, true, None, true),
         (walk, true, InProgress, 10, soldier, 10, true, None, false),
@@ -1832,9 +1865,36 @@ fn live_sprite_rng_burst(
         true,
         scroll_count,
         has_teleport_star_lifecycle,
+        false,
         gameplay_callsite_offsets,
         gameplay_values,
     )
+}
+
+#[test]
+fn dialogue_portrait_rng_requires_dialogue_and_a_new_terminal_site() {
+    let candidate = |dialogue, commands_empty, sites: &[u32]| {
+        legacy_presentation_sprite_rng_burst(
+            TRACE_SCHEMA_VERSION,
+            commands_empty,
+            GameCode::LevelInProgress as i32,
+            true,
+            0,
+            false,
+            dialogue,
+            sites,
+            &[1, 2, 3],
+        )
+    };
+    assert_eq!(candidate(true, true, &[10, 20, 20]), Some(2));
+    assert_eq!(candidate(true, false, &[10, 20, 20]), Some(2));
+    assert_eq!(candidate(false, true, &[10, 20, 20]), None);
+    assert_eq!(candidate(false, false, &[10, 20, 20]), None);
+    assert_eq!(candidate(true, true, &[20, 10, 20]), None);
+    assert_eq!(
+        missing_legacy_presentation_sprite_rng_draws(Some(2), 3, 3),
+        None
+    );
 }
 
 #[test]
@@ -1848,6 +1908,7 @@ fn legacy_presentation_sprite_rng_requires_exact_new_terminal_burst() {
             GameCode::LevelInProgress as i32,
             true,
             3,
+            false,
             false,
             &offsets,
             &values,
@@ -1872,6 +1933,7 @@ fn legacy_presentation_sprite_rng_requires_exact_new_terminal_burst() {
             true,
             4,
             false,
+            false,
             &offsets,
             &values,
         ),
@@ -1884,6 +1946,7 @@ fn legacy_presentation_sprite_rng_requires_exact_new_terminal_burst() {
             GameCode::LevelInProgress as i32,
             true,
             4,
+            false,
             false,
             &offsets,
             &values,
@@ -1898,6 +1961,7 @@ fn legacy_presentation_sprite_rng_requires_exact_new_terminal_burst() {
             true,
             4,
             false,
+            false,
             &offsets,
             &values,
         ),
@@ -1910,6 +1974,7 @@ fn legacy_presentation_sprite_rng_requires_exact_new_terminal_burst() {
             GameCode::LevelInProgress as i32,
             false,
             4,
+            false,
             false,
             &offsets,
             &values,
@@ -1949,6 +2014,7 @@ fn legacy_mobile_vibration_rng_accepts_only_new_terminal_xy_pairs() {
             GameCode::LevelInProgress as i32,
             true,
             3,
+            false,
             false,
             &[11, 12, 71, 72, 71, 72, 71, 72],
             &[1, 2, 3, 4, 5, 6, 7, 8],
@@ -4131,6 +4197,21 @@ fn runtime_snapshot_canonicalizes_original_zero_based_order_ids() {
     assert_eq!(expected["sprite"]["unrelated_id"], 41);
     assert_eq!(expected["nested"][0]["last_processed_order_id"], 1);
     assert_eq!(expected["sentinel"]["last_processed_order_id"], u32::MAX);
+}
+
+#[test]
+fn runtime_snapshot_canonicalizes_absent_position_layer_only() {
+    let mut expected = serde_json::json!({
+        "position": {"layer": 65535, "layer_goal": 65535},
+        "unrelated": {"layer": 65535}
+    });
+    canonicalize_original_runtime_representation(&mut expected);
+    assert!(expected["position"]["layer"].is_null());
+    assert_eq!(expected["position"]["layer_goal"], 65535);
+    assert_eq!(expected["unrelated"]["layer"], 65535);
+    expected["position"]["layer"] = serde_json::json!(0);
+    canonicalize_original_runtime_representation(&mut expected);
+    assert_eq!(expected["position"]["layer"], 0);
 }
 
 #[test]

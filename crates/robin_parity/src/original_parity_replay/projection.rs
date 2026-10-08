@@ -40,6 +40,15 @@ pub(super) fn original_blocked_box_is_unset(value: &serde_json::Value) -> bool {
 /// blocked box as an all-positive-zero object. Rust represents the same unset
 /// state as `null`.
 pub(super) fn canonicalize_original_runtime_representation(value: &mut serde_json::Value) {
+    // Airborne projectiles use the unsigned -1 layer sentinel; the engine
+    // represents absence of a terrain layer as None.
+    if value
+        .pointer("/position/layer")
+        .and_then(serde_json::Value::as_u64)
+        == Some(u64::from(u16::MAX))
+    {
+        value["position"]["layer"] = serde_json::Value::Null;
+    }
     match value {
         serde_json::Value::Array(values) => {
             for value in values {

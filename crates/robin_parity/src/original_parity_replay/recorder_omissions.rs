@@ -349,6 +349,14 @@ pub(super) fn original_reset_blocked_box_this_frame(
         return true;
     }
 
+    // The pending movement can execute, then a script/AI action can replace
+    // it before the snapshot. Its retained processed ID plus displacement
+    // still proves motion ran even though the current sequence is animation.
+    // The caller also requires that the processed ID changed this frame.
+    if moved_this_frame && prior_pending_motion_order_id == Some(last_processed_order_id) {
+        return true;
+    }
+
     let Some(current_motion_order_id) = original_motion_executor_order_id(actor, entity_id) else {
         return false;
     };
@@ -757,6 +765,7 @@ pub(super) fn legacy_presentation_sprite_rng_burst(
     simulation_body_ran: bool,
     scroll_count: usize,
     has_teleport_star_lifecycle: bool,
+    has_dialogue_lifecycle: bool,
     gameplay_callsite_offsets: &[u32],
     gameplay_values: &[u32],
 ) -> Option<usize> {
@@ -806,13 +815,19 @@ pub(super) fn legacy_presentation_sprite_rng_burst(
         && trace_commands_were_empty
         && presentation_suffix.len() == 10
         && has_teleport_star_lifecycle;
+    // A modal dialogue refreshes its portrait on wall-clock UI events. Older
+    // captures labeled those rand() calls as simulation. Require a completed
+    // recorded play-dialog boundary and the exact unconsumed terminal burst.
+    // A player action can trigger the dialogue in the same frame (for example,
+    // the final duel strike). Its gameplay draws must still be consumed first.
+    let dialogue_portrait_burst = homogeneous && has_dialogue_lifecycle;
     let callsites_were_seen = if homogeneous {
         ordinary_prefix.contains(&terminal_callsite)
     } else {
         ordinary_prefix.contains(&presentation_suffix[0])
             || ordinary_prefix.contains(&presentation_suffix[1])
     };
-    if (!large_unretained_burst && !exact_teleport_star_burst)
+    if (!large_unretained_burst && !exact_teleport_star_burst && !dialogue_portrait_burst)
         || callsites_were_seen
         || (homogeneous
             && suffix_values

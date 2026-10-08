@@ -183,6 +183,117 @@ pub(super) fn project_runtime_projectile_constructor_storage(value: &mut serde_j
     }
 }
 
+/// Fresh mission sprites can have constructor residue. Saved-state fields stay
+/// authoritative. Keep each exclusion until a recorded write or its consumer
+/// establishes a value; once established it is never excluded again.
+pub(super) type ConstructorStorage = BTreeMap<u32, BTreeMap<String, serde_json::Value>>;
+
+pub(super) fn project_constructor_storage(
+    runtime: &mut serde_json::Value,
+    creation_order: u32,
+    first_frame: bool,
+    flying_order: bool,
+    non_actor: bool,
+    shadows: &mut ConstructorStorage,
+) {
+    let computed_3d = runtime
+        .pointer("/position/computed_increment")
+        .and_then(serde_json::Value::as_u64)
+        .is_some_and(|bits| bits & 2 != 0);
+    let has_door = runtime
+        .pointer("/position/door")
+        .is_some_and(|v| !v.is_null());
+    let has_reference = runtime
+        .pointer("/sprite/display_order_reference")
+        .is_some_and(|v| !v.is_null());
+    let at_goal = runtime
+        .pointer("/position/goal_map")
+        .zip(runtime.pointer("/position/map"))
+        .is_some_and(|(goal, position)| goal == position);
+    let fields = [
+        // Ground movement also computes a 3D increment, but only flight
+        // initializes the world-space goal (walking uses goal_map).
+        ("/position/goal_world", flying_order),
+        (
+            "/position/increment",
+            flying_order || (computed_3d && !at_goal),
+        ),
+        ("/position/door_direction", has_door),
+        ("/position/radius", !non_actor),
+        ("/sprite/flight_countdown", flying_order),
+        ("/sprite/behind_display_order_reference", has_reference),
+    ];
+    if first_frame && !shadows.contains_key(&creation_order) {
+        let mut initial: BTreeMap<String, serde_json::Value> = fields
+            .iter()
+            .filter_map(|(path, defined)| {
+                (!defined)
+                    .then(|| {
+                        runtime
+                            .pointer(path)
+                            .map(|v| ((*path).to_owned(), v.clone()))
+                    })
+                    .flatten()
+            })
+            .collect();
+        // Null is eligibility only: the constructor initializes the forecast
+        // to zero, so it remains checked until a proven residue copy occurs.
+        initial.insert(
+            "/position/forecasted_movement".into(),
+            serde_json::Value::Null,
+        );
+        shadows.insert(creation_order, initial);
+    }
+    let Some(undefined) = shadows.get_mut(&creation_order) else {
+        return;
+    };
+    // Computing an exactly zero map displacement sets the computed bits but
+    // retains the previous 3D increment. Before its first real computation that
+    // feeds constructor residue into forecast = distance * increment / wait.
+    // Admit that producer only at the current goal with the unchanged initial
+    // increment. Outside it, retain only the exact last forecast until a write.
+    // Position and all other movement outputs remain authoritative.
+    if at_goal
+        && computed_3d
+        && !flying_order
+        && undefined.contains_key("/position/forecasted_movement")
+    {
+        if let Some(increment) = undefined.get("/position/increment") {
+            if runtime.pointer("/position/increment") == Some(increment) {
+                if let Some(forecast) = runtime.pointer("/position/forecasted_movement") {
+                    undefined.insert("/position/forecasted_movement".into(), forecast.clone());
+                }
+            }
+        }
+    }
+    for (path, defined) in fields {
+        if defined || undefined.get(path) != runtime.pointer(path) {
+            undefined.remove(path);
+        } else if undefined.contains_key(path) {
+            let (parent, key) = path.rsplit_once('/').expect("constructor field path");
+            runtime
+                .pointer_mut(parent)
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("recorded constructor field parent")
+                .remove(key);
+        }
+    }
+    if let Some(forecast) = undefined.get("/position/forecasted_movement") {
+        if forecast.is_null() {
+            if !undefined.contains_key("/position/increment") {
+                undefined.remove("/position/forecasted_movement");
+            }
+        } else if runtime.pointer("/position/forecasted_movement") == Some(forecast) {
+            runtime["position"]
+                .as_object_mut()
+                .expect("position object")
+                .remove("forecasted_movement");
+        } else {
+            undefined.remove("/position/forecasted_movement");
+        }
+    }
+}
+
 pub(super) fn compare_frame(
     engine: &Engine,
     assets: &LevelAssets,
@@ -193,6 +304,7 @@ pub(super) fn compare_frame(
     legacy_additive_omissions: bool,
     legacy_missing_draw_view: bool,
     legacy_blocked_box_shadows: &mut BTreeMap<u32, LegacyBlockedBoxShadow>,
+    constructor_storage: &mut Option<ConstructorStorage>,
 ) -> TraceRunResult<Vec<String>> {
     let mut comparison = FrameComparison {
         engine,
@@ -203,6 +315,7 @@ pub(super) fn compare_frame(
         legacy_additive_omissions,
         legacy_missing_draw_view,
         legacy_blocked_box_shadows,
+        constructor_storage,
         differences: Vec::new(),
     };
     comparison.compare_selection(actual_game_code)?;
@@ -221,6 +334,7 @@ struct FrameComparison<'a> {
     legacy_additive_omissions: bool,
     legacy_missing_draw_view: bool,
     legacy_blocked_box_shadows: &'a mut BTreeMap<u32, LegacyBlockedBoxShadow>,
+    constructor_storage: &'a mut Option<ConstructorStorage>,
     differences: Vec<String>,
 }
 
@@ -560,6 +674,14 @@ impl FrameComparison<'_> {
                 .actor
                 .as_ref()
                 .and_then(original_stoppable_current_motion_order);
+            // Motion telemetry proves execution even when a stop transition is
+            // allocated and replaced between the surrounding actor snapshots.
+            // The shadow still requires a changed processed ID before reset.
+            let reset_by_new_movement_order = reset_by_new_movement_order
+                || self.frame.movement_steps.iter().any(|step| {
+                    step.entity == expected.entity_id
+                        && Some(step.order_id) == original_last_processed_order_id
+                });
             canonicalize_legacy_blocked_box(
                 &mut expected_runtime,
                 expected.creation_order,
@@ -568,6 +690,38 @@ impl FrameComparison<'_> {
                 current_stoppable_motion_order,
                 legacy_blocked_box_shadows,
             );
+            if let Some(storage) = self.constructor_storage.as_mut() {
+                let flying_order = expected
+                    .actor
+                    .as_ref()
+                    .and_then(|actor| actor.sequence_element.as_ref())
+                    .and_then(|sequence| sequence.current_order.as_ref())
+                    .is_some_and(|order| {
+                        order
+                            .to_json()
+                            .get("can_fly")
+                            .and_then(serde_json::Value::as_bool)
+                            == Some(true)
+                    });
+                project_constructor_storage(
+                    &mut expected_runtime,
+                    expected.creation_order,
+                    self.frame.frame_before == 0,
+                    flying_order,
+                    expected.actor.is_none(),
+                    storage,
+                );
+            }
+            if expected.actor.is_none() {
+                // Stationary sprites retain an unset box. The trace omits the
+                // bounds-set bit and translates its zero corners to a point.
+                let point_box = expected_runtime
+                    .pointer("/position/move_box")
+                    .is_some_and(|b| b.get("min").zip(b.get("max")).is_some_and(|(a, b)| a == b));
+                if point_box {
+                    expected_runtime["position"]["move_box"] = serde_json::Value::Null;
+                }
+            }
             canonicalize_original_runtime_representation(&mut expected_runtime);
             if expected.kind == TraceEntityKind::Projectile
                 && expected.creation_order >= entity_map.runtime_creation_order_boundary
@@ -1868,5 +2022,153 @@ pub(super) fn collect_json_subset_differences(
             differences.dedup();
         }
         _ => differences.push(format!("{path}: original={expected:?} rust={actual:?}")),
+    }
+}
+
+#[cfg(test)]
+mod constructor_storage_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn runtime() -> serde_json::Value {
+        json!({
+            "position": {"computed_increment": 0, "goal_world": {"x": 123},
+                "increment": {"x": 456}, "door": null, "door_direction": true,
+                "old_posture": 1},
+            "sprite": {"flight_countdown": 54321, "display_order_reference": null,
+                "behind_display_order_reference": true, "last_processed_order_id": 17}
+        })
+    }
+
+    #[test]
+    fn constructor_residue_stops_being_excluded_after_a_write_or_validity() {
+        let mut shadows = ConstructorStorage::new();
+        let mut first = runtime();
+        project_constructor_storage(&mut first, 12, true, false, false, &mut shadows);
+        assert!(first.pointer("/position/goal_world").is_none());
+        assert!(first.pointer("/sprite/flight_countdown").is_none());
+        assert_eq!(first.pointer("/position/old_posture"), Some(&json!(1)));
+        assert_eq!(
+            first.pointer("/sprite/last_processed_order_id"),
+            Some(&json!(17))
+        );
+
+        let mut walking = runtime();
+        walking["position"]["computed_increment"] = json!(7);
+        project_constructor_storage(&mut walking, 12, false, false, false, &mut shadows);
+        assert!(walking.pointer("/position/goal_world").is_none());
+        assert!(walking.pointer("/position/increment").is_some());
+
+        let mut flying = runtime();
+        project_constructor_storage(&mut flying, 12, false, true, false, &mut shadows);
+        assert!(flying.pointer("/position/goal_world").is_some());
+        assert!(flying.pointer("/position/increment").is_some());
+        assert!(flying.pointer("/sprite/flight_countdown").is_some());
+
+        let mut later = runtime();
+        later["position"]["door_direction"] = json!(false);
+        later["sprite"]["display_order_reference"] = json!({"kind": "pc", "index": 1});
+        project_constructor_storage(&mut later, 12, false, false, false, &mut shadows);
+        assert!(later.pointer("/position/goal_world").is_some());
+        assert!(later.pointer("/position/door_direction").is_some());
+        assert!(
+            later
+                .pointer("/sprite/behind_display_order_reference")
+                .is_some()
+        );
+        assert!(shadows[&12].is_empty());
+    }
+
+    #[test]
+    fn already_defined_or_later_created_fields_remain_authoritative() {
+        let mut shadows = ConstructorStorage::new();
+        let mut first = runtime();
+        first["position"]["computed_increment"] = json!(2);
+        first["position"]["door"] = json!(4);
+        first["sprite"]["display_order_reference"] = json!(1);
+        let before = first.clone();
+        project_constructor_storage(&mut first, 12, true, true, false, &mut shadows);
+        assert_eq!(first, before);
+        let mut later_created = runtime();
+        project_constructor_storage(&mut later_created, 13, false, false, false, &mut shadows);
+        assert_eq!(later_created, runtime());
+    }
+
+    #[test]
+    fn non_actor_radius_exclusion_ends_at_first_recorded_change() {
+        let mut shadows = ConstructorStorage::new();
+        let mut first = runtime();
+        first["position"]["radius"] = json!(12345);
+        let mut actor = first.clone();
+        project_constructor_storage(&mut actor, 1, true, false, false, &mut shadows);
+        assert_eq!(actor["position"]["radius"], json!(12345));
+        project_constructor_storage(&mut first, 2, true, false, true, &mut shadows);
+        assert!(first.pointer("/position/radius").is_none());
+        let mut changed = runtime();
+        changed["position"]["radius"] = json!(10);
+        project_constructor_storage(&mut changed, 2, false, false, true, &mut shadows);
+        assert_eq!(changed["position"]["radius"], json!(10));
+        changed["position"]["radius"] = json!(12345);
+        project_constructor_storage(&mut changed, 2, false, false, true, &mut shadows);
+        assert_eq!(changed["position"]["radius"], json!(12345));
+    }
+
+    #[test]
+    fn zero_displacement_can_copy_only_the_initial_undefined_increment() {
+        let mut shadows = ConstructorStorage::new();
+        let mut first = runtime();
+        project_constructor_storage(&mut first, 1, true, false, false, &mut shadows);
+        let mut stationary = runtime();
+        stationary["position"]["computed_increment"] = json!(7);
+        stationary["position"]["map"] = json!({"x": 10, "y": 20});
+        stationary["position"]["goal_map"] = stationary["position"]["map"].clone();
+        stationary["position"]["forecasted_movement"] = stationary["position"]["increment"].clone();
+        let mut recorded = stationary.clone();
+        project_constructor_storage(&mut stationary, 1, false, false, false, &mut shadows);
+        assert!(stationary.pointer("/position/increment").is_none());
+        assert!(
+            stationary
+                .pointer("/position/forecasted_movement")
+                .is_none()
+        );
+        let mut scaled = recorded.clone();
+        scaled["position"]["forecasted_movement"] = json!({"x": 684});
+        recorded = scaled.clone();
+        project_constructor_storage(&mut scaled, 1, false, false, false, &mut shadows);
+        assert!(scaled.pointer("/position/forecasted_movement").is_none());
+        let mut retained_forecast = recorded.clone();
+        retained_forecast["position"]["goal_map"]["x"] = json!(11);
+        retained_forecast["position"]["computed_increment"] = json!(0);
+        project_constructor_storage(&mut retained_forecast, 1, false, false, false, &mut shadows);
+        assert!(
+            retained_forecast
+                .pointer("/position/forecasted_movement")
+                .is_none()
+        );
+        let mut different_forecast = recorded.clone();
+        different_forecast["position"]["goal_map"]["x"] = json!(11);
+        different_forecast["position"]["forecasted_movement"] = json!({"x": 999});
+        project_constructor_storage(
+            &mut different_forecast,
+            1,
+            false,
+            false,
+            false,
+            &mut shadows,
+        );
+        assert!(
+            different_forecast
+                .pointer("/position/forecasted_movement")
+                .is_some()
+        );
+        let mut moving = recorded.clone();
+        moving["position"]["goal_map"]["x"] = json!(11);
+        project_constructor_storage(&mut moving, 1, false, false, false, &mut shadows);
+        assert!(moving.pointer("/position/increment").is_some());
+        assert!(moving.pointer("/position/forecasted_movement").is_some());
+        let mut later = recorded;
+        project_constructor_storage(&mut later, 1, false, false, false, &mut shadows);
+        assert!(later.pointer("/position/increment").is_some());
+        assert!(later.pointer("/position/forecasted_movement").is_some());
     }
 }
