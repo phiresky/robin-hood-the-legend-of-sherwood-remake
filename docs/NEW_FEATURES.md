@@ -1,5 +1,12 @@
 # Post-port Features
 
+- **Export-prepared navigation.** Map export constructs native route graphs and
+  actor-sized passage approaches from placed asset geometry. The separate physical
+  navigation solver and graph-free fallback have been removed; earlier entries
+  describing those experimental runtime paths are superseded. Larger exports use
+  a versioned graph stream with 32-bit link counts and indices, loaded into the
+  existing pathfinder without changing its search or movement algorithm.
+
 - **Multiplayer desync recovery.** A client hash mismatch requests diagnostics,
   suspends gameplay and reconnects for a fresh host snapshot. Input resumes only
   after the readiness barrier; pending recovery suppresses duplicate requests.

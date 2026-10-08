@@ -32,13 +32,18 @@ Export now generates the native graph in
 links and state constraints from placed motion polygons during export. The game
 only loads the prepared stream and uses its existing pathfinder. The graph builder
 uses the same integer collision contours as the native grid and rejects boundary
-contact. It currently supports the stock 6×3 half-diagonal and the existing
-65,535-link stream limit. Best-effort overflow is an explicit warning and omitted
-graph, not a compatibility solver.
+contact. It currently supports the stock 6×3 half-diagonal. Graphs exceeding
+65,535 links use the [extended stream](navigation-graph-format.md): only link
+counts and indices widen to 32 bits. Both the actor-size prepass and graph loader
+read its versioned header. Runtime link identities already use 32 bits; search
+and movement algorithms are unchanged. Boundary checks avoid polygon Boolean
+operations, and outward/collinear floor corners no longer produce detour nodes.
 
-Current validation: the game builds; 213 selected editor compiler/export tests
+Current validation: the game builds; 214 selected editor compiler/export tests
 pass; native map integration reports **69 passed, 5 ignored**. The engine suite
-reports **4,335 passed, 0 failed, 33 ignored**. Stair receivers,
+passed **4,335 tests, 0 failed, 33 ignored** after endpoint preparation. The
+subsequent graph-extension run reports **4,331 passed, 6 failed, 33 ignored**;
+the failures are concurrent frozen-encoder snapshot comparisons. Stair receivers,
 overlapping/copied traversal and changing stair barriers now pass with prepared
 native endpoints. Earlier physical traversal results do not certify this
 architecture. Authorized direct-route probes now enable the native direct check;
@@ -59,12 +64,22 @@ unoptimized harness. Evidence: `work/map-compile/saved-map-exports-GEMe4m` under
 the editor directory. Its 268 other authoring warnings remain; this is not full
 gameplay parity.
 
-Wychford exposed the native graph capacity limit: export spent approximately
-337 seconds preparing the graph before exceeding 65,535 links, and 571 seconds
-overall. Best-effort output explicitly warns that its graph was omitted and
-indirect routes are unavailable. Evidence:
-`work/map-compile/saved-map-exports-EPZ3ds`. This is an unresolved compiler/format
-gap, not evidence of working Wychford navigation. Other large scenes remain open.
+Wychford previously spent 337 seconds reaching the 65,535-link limit and omitted
+its graph. The optimized clearance check reached the same limit in 4.5 seconds
+without changing the existing fixture graphs. With inward-floor-corner pruning
+and extended link indices, the complete scene compiles in 257 seconds, including
+about 21 seconds for the graph. Evidence:
+`work/map-compile/saved-map-exports-f0f5B4`; final graph-only regeneration from that
+descriptor is `work/map-compile/wychford-graph-final-iaAtSp` (**3,069 nodes,
+321,516 links, 10,359,643 bytes**). No graph omission warning remains.
+
+Native construction succeeds (86 areas, 16,442 sight obstacles, 31 doors, no jump
+pairs), but route sampling is not green. Sector 291/layer 15 returns a segment
+from (2433,296) to (2440,331) that touches collision, for the query
+(2520,251) to (2440,331). The returned route passes through (2505,261) and
+(2433,296). Check route smoothing and actual actor traversal before deciding
+whether this requires compiler data or a runtime correction. Do not count loading
+alone as navigation parity. Other large scenes remain open.
 
 The pipeline-wide TypeScript check currently fails in `state-delivery.test.ts`
 (presentation-frame fields and assertion/narrowing types), outside these changes.

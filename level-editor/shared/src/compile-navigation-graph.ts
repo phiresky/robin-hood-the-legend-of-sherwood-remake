@@ -1,6 +1,6 @@
-import polygonClipping from "polygon-clipping";
 import type { CompiledAssetGeometry } from "./asset-gameplay.ts";
 import type { Point } from "./level.ts";
+import { pointInGameplayPolygon } from "./navigation-anchor.ts";
 
 type Layers = CompiledAssetGeometry["motion_data"]["layers"];
 type Address = [number, number, number, number];
@@ -41,10 +41,10 @@ function sweep(a: Point, b: Point): Point[] {
     [x + 5, y + 2],
     [x - 5, y + 2],
   ]);
-  // Horizontal native corridors extend opposite end corners by one unit.
+  // Horizontal native corridors shift their left edge one unit farther out.
   if (a[1] === b[1] && a[0] !== b[0]) {
     points.push([Math.min(a[0], b[0]) - 6, a[1] - 2]);
-    points.push([Math.max(a[0], b[0]) + 6, a[1] + 2]);
+    points.push([Math.min(a[0], b[0]) - 6, a[1] + 2]);
   }
   points.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
   const side = (input: Point[]) => {
@@ -72,13 +72,21 @@ function disjoint(a: number[], b: number[]): boolean {
   return a[2]! < b[0]! || b[2]! < a[0]! || a[3]! < b[1]! || b[3]! < a[1]!;
 }
 
-function touches(a: Point[], b: Point[]): boolean {
-  for (const [i, p] of a.entries()) {
-    const q = a[(i + 1) % a.length]!;
-    const edgeBounds = bounds([p, q]);
-    for (const [j, r] of b.entries()) {
-      const s = b[(j + 1) % b.length]!;
-      if (disjoint(edgeBounds, bounds([r, s]))) continue;
+function edges(points: Point[]) {
+  return points.map((a, index) => {
+    const b = points[(index + 1) % points.length]!;
+    return {
+      a,
+      b,
+      box: [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])],
+    };
+  });
+}
+
+function touches(a: ReturnType<typeof edges>, b: ReturnType<typeof edges>): boolean {
+  for (const { a: p, b: q, box } of a) {
+    for (const { a: r, b: s, box: other } of b) {
+      if (disjoint(box, other)) continue;
       if (cross(p, q, r) * cross(p, q, s) <= 0 && cross(r, s, p) * cross(r, s, q) <= 0) return true;
     }
   }
@@ -115,22 +123,28 @@ export function compileNavigationGraph(layers: Layers): number[] {
     areas.map((area, areaIndex) => {
       // These are the contours consumed by the native movement grid.
       const floor = area.polygon.points;
+      const floorEdges = edges(floor);
       const blockers = area.obstacles.map((obstacle) => ({
         points: obstacle.polygon.points,
+        edges: edges(obstacle.polygon.points),
         bounds: bounds(obstacle.polygon.points),
         state: obstacle.state_id >>> 0,
       }));
       const allowed = (a: Point, b: Point): number[] => {
         const footprint = sweep(a, b);
-        if (touches(footprint, floor) || polygonClipping.difference([footprint], [floor]).length)
+        const footprintEdges = edges(footprint);
+        // Without an edge crossing, a connected swept footprint is wholly
+        // inside or outside each simple contour. No polygon Boolean is needed.
+        if (!pointInGameplayPolygon(footprint[0]!, floor) || touches(footprintEdges, floorEdges))
           return [];
         const box = bounds(footprint);
         let states = [0];
         for (const obstacle of blockers) {
           if (
             disjoint(box, obstacle.bounds) ||
-            (!touches(footprint, obstacle.points) &&
-              !polygonClipping.intersection([footprint], [obstacle.points]).length)
+            (!touches(footprintEdges, obstacle.edges) &&
+              !pointInGameplayPolygon(footprint[0]!, obstacle.points) &&
+              !pointInGameplayPolygon(obstacle.points[0]!, footprint))
           )
             continue;
           states = avoid(states, obstacle.state);
@@ -155,8 +169,9 @@ export function compileNavigationGraph(layers: Layers): number[] {
         for (const [index, position] of ring.entries()) {
           const before = ring[(index + ring.length - 1) % ring.length]!;
           const after = ring[(index + 1) % ring.length]!;
-          // Retain floor corners for native source/goal attachment in open areas.
-          if (ringIndex > 0 && cross(before, position, after) * sign >= 0) continue;
+          // Routes bend around obstacle corners and inward floor corners.
+          // Outward floor corners and collinear vertices do not create detours.
+          if (cross(before, position, after) * sign >= 0) continue;
           const to: Point = [(position[0] - before[0]) * sign, (position[1] - before[1]) * sign];
           const from: Point = [(after[0] - position[0]) * sign, (after[1] - position[1]) * sign];
           for (const [place, offset] of offsets.entries()) {
@@ -192,8 +207,6 @@ export function compileNavigationGraph(layers: Layers): number[] {
             ]) {
               start!.links.push(links.length);
               links.push({ from: start!, to: end!, distance, state });
-              if (links.length > 65535)
-                throw new Error("Compiled navigation exceeds the native 65535-link limit");
             }
           }
         }
@@ -217,6 +230,8 @@ export function compileNavigationGraph(layers: Layers): number[] {
     u16(value & 65535);
   };
   const u32 = (value: number) => {
+    if (!Number.isInteger(value) || value < 0 || value > 0xffffffff)
+      throw new Error(`Navigation graph link value out of range: ${value}`);
     u16(value & 65535);
     u16(value >>> 16);
   };
@@ -224,6 +239,14 @@ export function compileNavigationGraph(layers: Layers): number[] {
     scalar.setFloat32(0, value, true);
     for (let index = 0; index < 4; index++) u8(scalar.getUint8(index));
   };
+  // The extended stream changes only link counts and indices to 32 bits.
+  // Node addresses, geometry and runtime search semantics remain identical.
+  const wideLinks = links.length > 65535;
+  const linkIndex = wideLinks ? u32 : u16;
+  if (wideLinks) {
+    u16(65535);
+    u16(1);
+  }
   u16(1);
   f32(half[0]);
   f32(half[1]);
@@ -240,12 +263,12 @@ export function compileNavigationGraph(layers: Layers): number[] {
         node.from.forEach(i16);
         node.to.forEach(i16);
         u32(node.state);
-        u16(node.links.length);
-        node.links.forEach(u16);
+        linkIndex(node.links.length);
+        node.links.forEach(linkIndex);
       }
     }
   }
-  u16(links.length);
+  linkIndex(links.length);
   for (const link of links) {
     link.to.address.forEach(u16);
     link.from.address.forEach(u16);

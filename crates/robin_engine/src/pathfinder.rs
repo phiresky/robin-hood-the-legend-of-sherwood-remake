@@ -41,6 +41,22 @@ use crate::fast_find_grid::FastFindGrid;
 use crate::geo2d;
 use crate::static_arc::StaticArc;
 
+/// Extended graph version 1 widens only link counts and indices to u32.
+/// A reserved unit-size count introduces the version and actual size count.
+fn graph_stream_header(data: &[u8], pos: &mut usize) -> Result<(u16, bool), String> {
+    let count = crate::le_bytes::read_u16(data, pos)?;
+    if count != u16::MAX {
+        return Ok((count, false));
+    }
+    let version = crate::le_bytes::read_u16(data, pos)?;
+    if version != 1 {
+        return Err(format!(
+            "unsupported extended navigation graph version {version}"
+        ));
+    }
+    Ok((crate::le_bytes::read_u16(data, pos)?, true))
+}
+
 // ─── Geometry helpers ────────────────────────────────────────────
 
 /// Ray-casting point-in-polygon test in projected map space.
@@ -589,17 +605,16 @@ impl PathGraph {
         if data.len() < 2 {
             return Err("proto stream shorter than u16 count".into());
         }
-        // Idempotent: calling twice (prepass + full load) is safe.
-        if !self.static_data.half_diagonals.is_empty() {
-            let count = u16::from_le_bytes([data[0], data[1]]) as usize;
-            return Ok(2 + count * 8);
-        }
         let mut pos = 0usize;
-        let count = u16::from_le_bytes([data[0], data[1]]) as usize;
-        pos += 2;
+        let (count, _) = graph_stream_header(data, &mut pos)?;
+        let count = usize::from(count);
         let needed = count * 8;
         if data.len() < pos + needed {
             return Err("proto stream truncated in half-diagonal section".into());
+        }
+        // Idempotent: calling twice (prepass + full load) is safe.
+        if !self.static_data.half_diagonals.is_empty() {
+            return Ok(pos + needed);
         }
         for _ in 0..count {
             let x = f32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
@@ -636,7 +651,14 @@ impl PathGraph {
         // pre-populated by `preload_half_diagonals_from_proto` during
         // `initialize_from_mission` (before soldier spawn) — in that
         // case, just fast-forward past the section.
-        let num_sizes = read_u16(data, &mut pos)?;
+        let (num_sizes, wide_links) = graph_stream_header(data, &mut pos)?;
+        let read_link_index = |pos: &mut usize| -> Result<u32, String> {
+            if wide_links {
+                Ok(read_u32(data, pos)?)
+            } else {
+                Ok(u32::from(read_u16(data, pos)?))
+            }
+        };
         let already_loaded = !self.static_data.half_diagonals.is_empty();
         for _ in 0..num_sizes {
             let x = read_f32(data, &mut pos)?;
@@ -704,11 +726,15 @@ impl PathGraph {
                         let required_state = read_u32(data, &mut pos)?;
 
                         // Link indices (wrapped in `LinkIdx` typed-id).
-                        let num_links = read_u16(data, &mut pos)?;
+                        let num_links = read_link_index(&mut pos)?;
+                        let link_width = if wide_links { 4 } else { 2 };
+                        if num_links as usize > data.len().saturating_sub(pos) / link_width {
+                            return Err("proto stream truncated in node link indices".into());
+                        }
                         let mut link_indices = Vec::with_capacity(num_links as usize);
                         for _ in 0..num_links {
-                            let link_idx = read_u16(data, &mut pos)?;
-                            link_indices.push(LinkIdx(link_idx as u32));
+                            let link_idx = read_link_index(&mut pos)?;
+                            link_indices.push(LinkIdx(link_idx));
                         }
 
                         self.nodes.push(PathGraphNode {
@@ -748,7 +774,7 @@ impl PathGraph {
         }
 
         // 3. Load links
-        let num_links = read_u16(data, &mut pos)?;
+        let num_links = read_link_index(&mut pos)?;
         for _ in 0..num_links {
             // Next node address
             let next_layer = read_u16(data, &mut pos)? as usize;
@@ -851,7 +877,7 @@ impl PathGraph {
         }
 
         // 6. Resolve node link indices (nodes stored raw link indices during load)
-        // The link indices in nodes were stored as raw u16 values cast to LinkIdx
+        // The link indices in nodes were decoded directly into LinkIdx.
         // They are already correct indices into self.static_data.links, so no resolution needed.
 
         // 7. Build sector conversion table
@@ -2344,6 +2370,70 @@ impl PathSearch<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extended_graph_loads_link_counts_and_indices_above_u16() {
+        let mut bytes = Vec::new();
+        for word in [u16::MAX, 1, 1] {
+            bytes.extend(word.to_le_bytes());
+        }
+        bytes.extend(6f32.to_le_bytes());
+        bytes.extend(3f32.to_le_bytes());
+        // One layer, area, obstacle, node and actor-size configuration.
+        for _ in 0..5 {
+            bytes.extend(1u16.to_le_bytes());
+        }
+        bytes.push(TOP_LEFT);
+        bytes.extend([0; 12]); // Position and both corner vectors.
+        bytes.extend(0u32.to_le_bytes());
+        let count = 65_537u32;
+        bytes.extend(count.to_le_bytes());
+        for index in 0..count {
+            bytes.extend(index.to_le_bytes());
+        }
+        bytes.extend(count.to_le_bytes());
+        for _ in 0..count {
+            bytes.extend([0; 16]); // Both node addresses.
+            bytes.extend(1f32.to_le_bytes());
+            bytes.extend(0u32.to_le_bytes());
+            bytes.extend(1u16.to_le_bytes());
+            bytes.extend(0u16.to_le_bytes());
+        }
+        bytes.extend(1u16.to_le_bytes());
+        bytes.extend([TOP_LEFT, TOP_LEFT]);
+        bytes.extend(1u16.to_le_bytes());
+        bytes.push(TOP_LEFT);
+        bytes.extend(1u16.to_le_bytes());
+        bytes.push(TOP_LEFT);
+        let mut graph = PathGraph::new();
+        let mut grid = FastFindGrid::new();
+        for _ in 0..2 {
+            assert_eq!(
+                graph.preload_half_diagonals_from_proto(&mut grid, &bytes),
+                Ok(14)
+            );
+        }
+        graph.load_from_proto_stream(&mut grid, &bytes).unwrap();
+        assert_eq!(graph.static_data.half_diagonals.len(), 1);
+        assert_eq!(graph.static_data.links.len(), count as usize);
+        assert_eq!(graph.nodes[0].link_indices.len(), count as usize);
+        assert_eq!(graph.nodes[0].link_indices.last(), Some(&LinkIdx(65_536)));
+        assert_eq!(graph.static_data.links[65_536].next_node, NodeIdx(0));
+    }
+
+    #[test]
+    fn extended_graph_header_rejects_unknown_versions_and_truncation() {
+        for bytes in [vec![255, 255], vec![255, 255, 2, 0], vec![255, 255, 1, 0]] {
+            let mut graph = PathGraph::new();
+            let mut grid = FastFindGrid::new();
+            assert!(
+                graph
+                    .preload_half_diagonals_from_proto(&mut grid, &bytes)
+                    .is_err()
+            );
+            assert!(graph.load_from_proto_stream(&mut grid, &bytes).is_err());
+        }
+    }
 
     fn goal_reachable_test_node(position: MapPoint, score: f32) -> PathGraphNode {
         PathGraphNode {

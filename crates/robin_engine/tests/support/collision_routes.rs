@@ -120,10 +120,10 @@ pub fn check_collision_routes(
                 routing_time += query_started.elapsed();
                 assert_eq!(route.last(), Some(&to), "{label}: incomplete route");
                 let mut previous = from;
-                for point in route {
+                for &point in &route {
                     assert!(
                         grid.is_reachable_thick(previous, point, layer, half),
-                        "{label}: route crosses collision in sector {number}, layer {layer}: {previous:?} -> {point:?}"
+                        "{label}: route crosses collision in sector {number}, layer {layer}: {previous:?} -> {point:?}; query {from:?} -> {to:?}; route {route:?}"
                     );
                     previous = point;
                 }
