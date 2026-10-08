@@ -162,8 +162,10 @@ fn persistent_life_and_concussion_are_visible_after_engine_yield_in_same_callbac
             crate::natives::ScriptCallFrame::actor(handle),
         )
         .expect("life setter resumes");
-    assert_eq!(life, 37);
-    assert_eq!(engine.npc(receiver).life_points, 37);
+    // Deliberately rejects the byte truncation recorded by older parity traces:
+    // 250 health must keep the duel challenger alive, not become -6 and kill him.
+    assert_eq!(life, 250);
+    assert_eq!(engine.npc(receiver).life_points, 250);
 
     let concussion = engine
         .call_script_vm(
@@ -179,16 +181,12 @@ fn persistent_life_and_concussion_are_visible_after_engine_yield_in_same_callbac
 }
 
 #[test]
-fn persistent_setters_preserve_narrowing_and_death_processing() {
+fn persistent_setters_preserve_word_narrowing_and_death_processing() {
     let (mut engine, receiver, handle) = engine_with_receiver();
     let assets = engine.test_runtime_assets();
 
-    // The VM hands the trailing arguments to the native through a
-    // signed-byte read, so every script constant above 127 already arrives
-    // negative (250 becomes -6). The concussion setter then narrows the
-    // sign-extended amount to 16 bits and zeroes any value that re-reads
-    // as a negative signed 16-bit value.
-    for amount in [-1, 65_535, 250] {
+    // Concussion storage still interprets the low 16 bits as a signed word.
+    for amount in [-1, 65_535] {
         assert_eq!(
             engine
                 .call_external_native(
@@ -202,7 +200,7 @@ fn persistent_setters_preserve_narrowing_and_death_processing() {
         let human = engine.human(receiver);
         assert_eq!(
             human.concussion_of_the_brain, 0,
-            "byte-narrowed amount {amount:#x} is negative when re-read as SWORD"
+            "amount {amount:#x} is negative when re-read as SWORD"
         );
         assert!(!human.unconscious);
     }
@@ -318,14 +316,11 @@ fn scripted_pc_concussion_and_ko_unselect_immediately() {
     let posture_handle = ScriptHandleCodec::actor_handle(posture_pc);
     engine.players.seats[0].selection = vec![persistent_pc, posture_pc];
 
-    // The native's trailing arguments pass through a signed-byte read, so
-    // the KO amount must sit in 70..=127 to survive narrowing above the
-    // concussion threshold (CONCUSSION_MAX itself would wrap to 44).
     engine
         .call_external_native(
             TickCtx::new(&crate::sim_rng::test_context(), &assets),
             "SetPersistentProperty",
-            &[persistent_handle, 3, 100],
+            &[persistent_handle, 3, 300],
         )
         .expect("persistent concussion");
     assert_eq!(engine.players.seats[0].selection, vec![posture_pc]);

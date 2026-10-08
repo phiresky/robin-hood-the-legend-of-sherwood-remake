@@ -951,13 +951,13 @@ impl NativeContext<'_, '_> {
                 }
             }
             SetPersistentProperty => {
-                // The property id and the amount are narrowed to a signed byte
-                // before they reach the implementation, so a script constant
-                // above 127 arrives negative (250 becomes -6). Missions rely on
-                // this: H07 sets the Sheriff's life points to 250, which lands
-                // as -6 and kills him.
-                let amount = i32::from(stack.pop_i32() as i8);
-                let prop = i32::from(stack.pop_i32() as i8);
+                // Intentionally preserve the script's full integer arguments.
+                // Byte truncation turned the H07 sheriff's 250 health into -6,
+                // killing him before his duel. Older parity captures encode
+                // that bug and may diverge here; regenerate those captures
+                // with the corrected producer instead of restoring truncation.
+                let amount = stack.pop_i32();
+                let prop = stack.pop_i32();
                 let actor = stack.pop_i32();
                 self.set_persistent_property(actor, prop, amount) as i32
             }

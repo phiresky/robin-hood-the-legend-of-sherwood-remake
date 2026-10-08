@@ -159,7 +159,7 @@ fn receiver_class() -> ClassEntry {
             native_call(NativeFn::ThisActor),
             native_return(TMP0),
             integer_constant(TMP1, 2),
-            integer_constant(TMP2, 37),
+            integer_constant(TMP2, 250),
             native_param(TMP0),
             native_param(TMP1),
             native_param(TMP2),
