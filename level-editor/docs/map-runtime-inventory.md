@@ -42,7 +42,7 @@ operations, and outward/collinear floor corners no longer produce detour nodes.
 Current validation: the game builds; 248 selected editor compiler/export/sound tests
 pass; native map integration reports **71 passed, 5 ignored**, and level-data
 tests report **88 passed, 8 ignored**. The engine suite
-reports **4,345 passed, 0 failed, 35 ignored**. Stair receivers,
+reports **4,345 passed, 0 failed, 36 ignored**. Stair receivers,
 overlapping/copied traversal and changing stair barriers now pass with prepared
 native endpoints. Earlier physical traversal results do not certify this
 architecture. Authorized direct-route probes now enable the native direct check;
@@ -55,6 +55,9 @@ movements ending 0.8 or 1.6 units before the clicked point match finite startup
 animation completion while turning. A native control test confirms the rule;
 the audit measures each step's turning loss and checks command completion. No
 runtime movement change or additional solver was introduced for it.
+An additional 120 isolated sword-jump cases pass with the same prepared data:
+sword animation, exact landing, receiver identity and retained combat state are
+checked. Complete combat interactions and assisted jumps remain unverified.
 
 The [sound shape extension](sound-source-format.md) carries export-prepared
 fragment indices for cropped emitters. Existing acoustic distance loops skip

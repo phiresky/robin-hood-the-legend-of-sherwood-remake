@@ -50,16 +50,27 @@ final point within 0.001 unit. This is not a blanket near-goal tolerance. Report
 retain the actual final offset and measured turning loss. **All 120 complete
 walk–jump–walk cases now pass**: 8 exact arrivals and 112 native turning completions.
 The 120 isolated jumps still land exactly. No production engine behavior changed.
-The full engine suite passes **4,345 tests, 0 failed, 35 ignored**.
+The full engine suite passes **4,345 tests, 0 failed, 36 ignored**.
 The earlier eight-unit audit additionally
 requested points outside this fixture's guaranteed landing band and is not proof
 that the authored four-unit approach is obstructed.
 
-Reproduce the two external sprite audits using `cargo test -p robin_engine --lib
+The same batch also passes **120 isolated sword-jump dispatch/landing cases**.
+Each case installs an opponent relationship, enters the native combat state and
+executes the complete sprite orders. It requires an observed sword-flight
+animation, exact landing, the correct receiver/layer/sector, a return to the
+waiting-with-sword state and preserved opponent relationships in both directions.
+This checks prepared connections with the dedicated combat animation; it does
+not certify combat AI, player-click authorization or an entire combat approach.
+Player clicks use upright walking/running for their approach and continuation,
+so substituting sword walking is not an equivalent click test.
+
+Reproduce the three external sprite audits using `cargo test -p robin_engine --lib
 exported_jumps -j 1 -- --ignored --nocapture`, with `RUST_MIN_STACK=33554432`,
 `ROBIN_ASSET_MAP_DIAGNOSTICS` set to the generated directory, and
 `ROBIN_CLIMB_RHS` pointing to the installed complete `RobinTown.rhs`. These checks
-do not certify combat/assisted dispatch, click authorization or rendered contact.
+do not certify assisted dispatch, complete combat interactions, click authorization
+or rendered contact. The combat report is `actor-jump-sword-report.json`.
 
 ## Spline clearance navigation planes (2026-10-08)
 

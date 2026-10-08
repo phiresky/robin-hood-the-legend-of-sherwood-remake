@@ -135,16 +135,22 @@ fn short_startup_finishes_its_animation_with_only_the_turning_distance_loss() {
 #[test]
 #[ignore = "requires exported jump pairs and ROBIN_CLIMB_RHS"]
 fn exported_jumps_complete_sprite_dispatch_and_land_on_receivers() {
-    audit_jump_dispatch(false);
+    audit_jump_dispatch(false, false);
 }
 
 #[test]
 #[ignore = "requires exported jump pairs and ROBIN_CLIMB_RHS"]
 fn exported_jumps_walk_to_launch_and_continue_after_landing() {
-    audit_jump_dispatch(true);
+    audit_jump_dispatch(true, false);
 }
 
-fn audit_jump_dispatch(approach: bool) {
+#[test]
+#[ignore = "requires exported long-jump pairs and ROBIN_CLIMB_RHS"]
+fn exported_jumps_complete_sword_dispatch_and_preserve_combat() {
+    audit_jump_dispatch(false, true);
+}
+
+fn audit_jump_dispatch(approach: bool, combat: bool) {
     let sprite = super::exported_stairs::complete_climb_sprite();
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
@@ -176,6 +182,7 @@ fn audit_jump_dispatch(approach: bool) {
                     t,
                     approach,
                     approach_depth,
+                    combat,
                 );
                 results.push(serde_json::json!({
                     "file": file, "line": index, "t": t,
@@ -191,10 +198,13 @@ fn audit_jump_dispatch(approach: bool) {
         .filter(|result| result["passed"] != true)
         .count();
     let report = serde_json::json!({
-        "scope": if approach { "upright-walk-jump-walk-sequence-not-click-authorization-or-rendering" } else { "upright-sprite-dispatch-and-landing-not-click-approach-or-rendering" },
+        "stance": if combat { "sword" } else { "upright" },
+        "scope": if approach { "walk-jump-walk-sequence-not-click-authorization-or-rendering" } else { "sprite-dispatch-and-landing-not-click-approach-or-rendering" },
         "complete": !results.is_empty() && failed == 0, "results": results,
     });
-    let path = directory.join(if approach {
+    let path = directory.join(if combat {
+        "actor-jump-sword-report.json"
+    } else if approach {
         "actor-jump-approach-report.json"
     } else {
         "actor-jump-landing-report.json"
@@ -218,6 +228,7 @@ fn dispatch_jump(
     t: f32,
     approach: bool,
     approach_depth: f32,
+    combat: bool,
 ) -> Result<JumpArrival, String> {
     let source = engine.world.fast_grid.level.jump_lines[index].clone();
     let destination_index = source.associated_line_index.unwrap();
@@ -274,6 +285,20 @@ fn dispatch_jump(
         .get_projection_area_index(&assets, source_sector, source.layer, start)
         .ok_or_else(|| format!("launch point has no receiver: {start:?}"))?;
     let owner = walking_pc(&mut engine, &mut assets, start, source.layer, source_sector);
+    let opponent = combat.then(|| {
+        let opponent = walking_pc(
+            &mut engine,
+            &mut assets,
+            MapPoint::new(start.x - 100., start.y - 100.),
+            source.layer,
+            source_sector,
+        );
+        engine.human_mut(owner).opponents.push(opponent);
+        engine.human_mut(opponent).opponents.push(owner);
+        engine.ent_mut(owner).actor_data_mut().unwrap().action_state =
+            crate::element_kinds::ActionState::WaitingSword;
+        opponent
+    });
     let element = engine.ent_mut(owner).element_data_mut();
     let position = element.sprite.position_iface.clone();
     element.sprite = sprite.clone();
@@ -338,6 +363,7 @@ fn dispatch_jump(
         sequence
     };
     let mut flew = false;
+    let mut sword_flew = false;
     let mut startup = StartupWalkAudit::default();
     for _ in 0..1000 {
         engine.control.frame_counter += 1;
@@ -352,6 +378,7 @@ fn dispatch_jump(
             startup.observe(before, &element.sprite);
         }
         flew |= element.posture() == Posture::Flying;
+        sword_flew |= element.sprite.last_action == OrderType::JumpingLongSword;
         let finished = engine
             .orders
             .sequence_manager
@@ -391,6 +418,25 @@ fn dispatch_jump(
                 destination.layer,
                 element.position_map(),
             )?;
+            if let Some(opponent) = opponent {
+                let actor = engine.ent(owner);
+                if !sword_flew
+                    || actor.actor_data().unwrap().action_state
+                        != crate::element_kinds::ActionState::WaitingSword
+                    || !actor.human_data().unwrap().opponents.contains(&opponent)
+                    || !engine
+                        .ent(opponent)
+                        .human_data()
+                        .unwrap()
+                        .opponents
+                        .contains(&owner)
+                {
+                    return Err(format!(
+                        "sword jump did not preserve combat: sword_flew={sword_flew}, state={:?}",
+                        actor.actor_data().unwrap().action_state
+                    ));
+                }
+            }
             return Ok(JumpArrival {
                 final_distance,
                 completed_turning_startup,
