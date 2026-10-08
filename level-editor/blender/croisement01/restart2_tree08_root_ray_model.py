@@ -1,0 +1,49 @@
+"""Saved lower-root depth hypothesis with frozen upper source and strict CPU guard."""
+import hashlib,json,math,shutil,sys
+from pathlib import Path
+import bpy,numpy as np
+from mathutils import Vector
+from mathutils.bvhtree import BVHTree
+from PIL import Image,ImageDraw
+ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'));sys.path.insert(0,str(Path(__file__).parent))
+from render_slots import acquire
+from restart2_tree08_union import topology
+R=ROOT/'level-editor/work/croisement01-refinement/restart2';packet=R/('tree08-root-ray-cpu-v4' if '--fit' in sys.argv else 'tree08-root-ray-cpu-v3');out=R/('tree08-wood-prototype-v14-root-ray' if '--fit' in sys.argv else 'tree08-wood-prototype-v13-root-ray');parent=R/'tree08-wood-prototype-v12-local-junctions/model.blend';cap=32*1024**2
+assert not out.exists()
+def guard(reserve=1024**2):
+ used=sum(p.stat().st_size for p in out.rglob('*') if p.is_file());assert used+reserve<=cap
+ assert shutil.disk_usage(R).free>=10*1024**3+cap-used
+ assert next(int(s.split()[1]) for s in Path('/proc/meminfo').read_text().splitlines() if s.startswith('MemAvailable:'))>=6*1024**2
+report=json.loads((packet/'report.json').read_text());proof=json.loads((packet/'intersection-guard.json').read_text());assert proof['status']=='PASS_NO_NEW_INTERSECTIONS' and not proof['new_intersections'];assert proof['candidate_sha256']==report['candidate_sha256']==hashlib.sha256((packet/'candidate.npz').read_bytes()).hexdigest();assert hashlib.sha256(parent.read_bytes()).hexdigest()==report['model_parent_sha256'];guard();acquire();out.mkdir();bpy.ops.wm.open_mainfile(filepath=str(parent));bpy.context.preferences.filepaths.save_version=0;obj=next(o for o in bpy.context.scene.objects if o.type=='MESH');mesh=obj.data;data=np.load(packet/'candidate.npz');before=np.array([obj.matrix_world@v.co for v in mesh.vertices]);assert np.max(abs(before-data['before_vertices'][:len(before)]))<.0001;old_topology=topology(obj);oldmesh=mesh;materials=list(mesh.materials);mesh=bpy.data.meshes.new('Conforming lower-root source-ray bands');mesh.from_pydata((data['vertices']-np.array(obj.location)).tolist(),[],data['faces'].tolist());obj.data=mesh
+for material in materials:mesh.materials.append(material)
+for face in mesh.polygons:face.use_smooth=True
+mesh.uv_layers.new(name='Native source projection');bpy.data.meshes.remove(oldmesh)
+mesh.update();bpy.context.view_layer.update();saved_topology=topology(obj);assert not any(saved_topology[k] for k in ['zero_area_triangles','nonmanifold_edges','inconsistent_edge_winding']);s,c=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-c,s));down=Vector((0,-s,-c));right=Vector((1,0,0));uv=mesh.uv_layers.active
+for loop in mesh.loops:
+ point=obj.matrix_world@mesh.vertices[loop.vertex_index].co;uv.data[loop.index].uv=((point.x-331)/446,1-(-point.y*s-point.z*c-11)/461)
+guard(8*1024**2);bpy.ops.wm.save_as_mainfile(filepath=str(out/'model.blend'),compress=True);assert (out/'model.blend').stat().st_size<=8*1024**2;model_hash=hashlib.sha256((out/'model.blend').read_bytes()).hexdigest()
+bpy.ops.wm.open_mainfile(filepath=str(out/'model.blend'));scene=bpy.context.scene;obj=next(o for o in scene.objects if o.type=='MESH');mesh=obj.data
+bvh=BVHTree.FromPolygons([obj.matrix_world@v.co for v in mesh.vertices],[list(p.vertices) for p in mesh.polygons]);core=np.asarray(Image.open(R/'tree08-semantic-source-v1/bark-core-proposal.png'))>0;missing=[]
+for yy,xx in np.argwhere(core):
+ x,y=int(xx)+331+.5,int(yy)+11+.5
+ if bvh.ray_cast(right*x+down*y+ray*2000,-ray,4000)[0] is None:missing.append([int(x-.5),int(y-.5)])
+assert not missing,'Saved model lost source core after local junction reconstruction'
+reopened_topology=topology(obj);assert reopened_topology==saved_topology,'Saved topology changed'
+scene.render.threads_mode='FIXED';scene.render.threads=2;scene.render.image_settings.file_format='PNG';scene.render.resolution_percentage=100;scene.render.film_transparent=False
+scene.world=bpy.data.worlds.new('Neutral review background');scene.world.color=(.1,.1,.1)
+camdata=bpy.data.cameras.new('Tree08 review camera');cam=bpy.data.objects.new('Tree08 review camera',camdata);scene.collection.objects.link(cam);camdata.type='ORTHO';camdata.clip_end=10000;scene.camera=cam
+points=[obj.matrix_world@v.co for v in mesh.vertices];target=Vector(tuple((min(v[k] for v in points)+max(v[k] for v in points))/2 for k in range(3)));extent=0;directions=[]
+for i in range(8):
+ a=math.tau*i/8;direction=Vector((c*math.sin(a),-c*math.cos(a),s));side=direction.cross(Vector((0,0,1))).normalized();up=side.cross(direction).normalized();extent=max(extent,max(max(abs((v-target).dot(side)),abs((v-target).dot(up))) for v in points));directions.append(direction)
+records=[]
+for mode in ['actual','solid']:
+ folder=out/mode;folder.mkdir();scene.render.engine='CYCLES' if mode=='actual' else 'BLENDER_WORKBENCH';scene.cycles.samples=4;scene.cycles.device='CPU';scene.cycles.use_denoising=False
+ scene.display.shading.light='STUDIO';scene.display.shading.color_type='SINGLE';scene.display.shading.single_color=(.5,.5,.5);scene.display.shading.show_shadows=True;scene.display.shading.show_cavity=True
+ scene.render.resolution_x=384;scene.render.resolution_y=384;camdata.ortho_scale=extent*2*1.12
+ sheet=Image.new('RGB',(1536,816),'#222222');draw=ImageDraw.Draw(sheet)
+ for i,direction in enumerate(directions):
+  cam.location=target+direction*1800;cam.rotation_euler=(-direction).to_track_quat('-Z','Y').to_euler();scene.render.filepath=str(folder/f'{i}.png');guard(2*1024**2);bpy.ops.render.render(write_still=True);sheet.paste(Image.open(folder/f'{i}.png').convert('RGB'),(i%4*384,i//4*408+24));draw.text((i%4*384+5,i//4*408+5),f'{mode} {i}'+(' native angle' if i==0 else ''),fill='white')
+ guard(2*1024**2);sheet.save(folder/'sheet.png');records.append(dict(mode=mode,sheet_sha256=hashlib.sha256((folder/'sheet.png').read_bytes()).hexdigest()))
+scene.render.engine='CYCLES';scene.render.resolution_x=446;scene.render.resolution_y=461;camdata.ortho_scale=461;native_target=right*554+down*241.5;cam.location=native_target+ray*1500;cam.rotation_euler=(-ray).to_track_quat('-Z','Y').to_euler();scene.render.filepath=str(out/'native.png');guard();bpy.ops.render.render(write_still=True)
+
+assert hashlib.sha256(parent.read_bytes()).hexdigest()==report['model_parent_sha256'];guard();(out/'receipt.json').write_text(json.dumps(dict(status='SAVED HYPOTHESIS; SELF REVIEW PENDING',model_sha256=model_hash,cpu_report=report,cpu_intersection_guard_sha256=hashlib.sha256((packet/'intersection-guard.json').read_bytes()).hexdigest(),saved_source_core_pixels=int(core.sum()),miss_native_pixels=missing,saved_topology=saved_topology,actual8_and_solid8=records),indent=2)+'\n');print('ROOT RAY MODEL COMPLETE',model_hash,flush=True)
