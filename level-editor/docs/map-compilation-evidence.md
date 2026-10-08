@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Repositioned automatic vertical connections (2026-10-08)
+
+The previously omitted rotated fixture placements were not a matrix mismatch.
+Rigid 3D rotation preserves the asset assembly, but does not preserve projected
+ledge overlap at different heights. Native matching and jump direction use the
+projected navigation plane. The original rotated placements remain rejection
+examples; widening attachment tolerances would not fix their facing/overlap.
+
+`node refinement/check-vertical-jump-placements.mjs --automatic --reposition`
+rotates each assembly, then translates its separate upper asset so its ledge
+again faces the lower edge across a 40-unit projected gap. This changes only
+editor placement; it does not edit compiled data or restore saved connections.
+The reusable authored edges have sufficient inset for the native footprint.
+Attachment limits are unchanged. Each assembly has an independent copy.
+
+Batch `work/map-compile/prepared-vertical-jumps-mxxHd2` retains both connections at
+0/37/90/180 degrees and elevations 0/40. All eight editor documents reopen and
+recompile identically. **160 isolated native traversals and 160 player-click routes
+pass**, including assisted ascent, unassisted-ascent rejection, upright descent,
+receiver ownership and helper recovery. Export-time clearance covers all **7,840
+recorded positions**. No click occlusion exceptions occur in these placements.
+
+Another **32 export checks** move one upper asset out of range or beyond the rise
+limit: that connection disappears with a warning while the other copy stays
+connected. No production compiler or engine change was needed for this placement
+coverage. Sloped receiving planes and surface-derived climbing-edge authoring
+remain open.
+
 ## Export-time vertical-jump clearance (2026-10-08)
 
 Geometrically matched `long: false` asset edges no longer reject every climb of
