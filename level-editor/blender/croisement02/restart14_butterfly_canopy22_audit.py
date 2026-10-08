@@ -10,10 +10,10 @@ SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));sha=lambda p:hashl
 def guard(minimum_free_bytes=8*1024**3,output_limit_bytes=8*1024**2):
  used=sum(p.stat().st_size for p in O.rglob('*')if p.is_file())if O.exists()else 0
  assert used<output_limit_bytes and shutil.disk_usage(ROOT).free>=minimum_free_bytes+output_limit_bytes-used,'CPU extraction free-space reserve or output limit failed'
-def main(ray_records=None,postprocess=None,output=None,*,asset_ids=None,triangle_callback=None,query_margin=0.,minimum_free_bytes=8*1024**3,output_limit_bytes=8*1024**2):
+def main(ray_records=None,postprocess=None,output=None,*,asset_ids=None,triangle_callback=None,query_margin=0.,minimum_free_bytes=8*1024**3,output_limit_bytes=8*1024**2,expected_map_sha256=None):
  global O
  if output is not None:O=output
- guard(minimum_free_bytes,output_limit_bytes);plan=json.loads((B/'all7-context-plan-v1/plan.json').read_text());mp=LIB/'scenes/croisement02.rhlos-map.json';assert sha(mp)==plan['map_sha256'];m=json.loads(mp.read_text());sources={r['id']:r for r in m['assetSources']};rays=[]
+ guard(minimum_free_bytes,output_limit_bytes);plan=json.loads((B/'all7-context-plan-v1/plan.json').read_text());mp=LIB/'scenes/croisement02.rhlos-map.json';map_bytes=mp.read_bytes();map_hash=hashlib.sha256(map_bytes).hexdigest();assert map_hash==(expected_map_sha256 or plan['map_sha256']);m=json.loads(map_bytes);sources={r['id']:r for r in m['assetSources']};rays=[]
  for s in plan['sequences']:
   for f in s['path']:
    assert sha(Path(f['source']))==f['sha256'];rays.append({'sequence':s['index'],'phase':f['phase'],'screen':f['alpha_centroid_display'],'hits':[]})
@@ -96,6 +96,7 @@ def main(ray_records=None,postprocess=None,output=None,*,asset_ids=None,triangle
   raw.close();fd.close();print('ASSET',placed['id'],touched,flush=True)
  for r in rays:
   r['hits'].sort(key=lambda v:v['camera_depth'],reverse=True);passing=[v for v in r['hits']if v['passes_alpha_and_culling']];r['first_hit']=passing[0]if passing else None;r['height_hypotheses']=[{'z':z,'native_front_of_first_hit':r['first_hit']is None or (COS*r['screen'][1]/SIN+z/SIN)>r['first_hit']['camera_depth']}for z in [10,30,60,100,150]]
+ assert sha(mp)==map_hash,'Receiver map changed during extraction'
  if postprocess is not None:return postprocess(rays,records,mp)
  O.mkdir(exist_ok=True);(O/'report.json').write_text(json.dumps({'status':'READ_ONLY_CENTER_RAYS_NOT_COLLISION_COMPLETION','map_sha256':sha(mp),'source_count':693,'selected_center_rays':22,'disk_override':'Root authorizes readonlyCPU8GiB+remaining8MiB underrestart17policy; no model/render lane','policy_sha256':sha(W/'restart17-small-job-disk-policy.json'),'records':records,'rays':rays,'limits':['Nearest vertex-inclusive alpha and runtime bilinearlevel0 alpha both recorded. Runtime foliage ignores vertex alpha; mip filtering remains view-dependent.','Centroid rays only; body registration and entire wing swept volume not yet tested.','Height proposals are inferred, not source elevation.','Static installed active placements only; native FX layering remains separate.']},indent=2)+'\n');assert sum(p.stat().st_size for p in O.iterdir())<8*1024**2
 if __name__=='__main__':main()

@@ -1,5 +1,5 @@
 """CPU receiver contacts for fixed butterfly07 poses and bounded rigid motion."""
-import collections,json,math,importlib.util
+import collections,json,math,importlib.util,time
 from pathlib import Path
 import numpy as np
 from scipy.spatial import ConvexHull
@@ -65,7 +65,7 @@ def curve_acceleration_bound(curve, start, end):
     return float(np.abs(curve(times,2)).max())
 
 
-def main(fit_path=None, midpoint_hinge_offsets=None, transition_candidates=None, registration_controls=None, depth_trials=None, continuous_height_curve=None, sweep_subdivisions=8, dense_pose_steps=None, geometry_helper=None, geometry_helper_sha256=None, receiver_asset_ids=('croisement02-tree-01','croisement02-tree-02'), first_witness_only=False):
+def main(fit_path=None, midpoint_hinge_offsets=None, transition_candidates=None, registration_controls=None, depth_trials=None, continuous_height_curve=None, sweep_subdivisions=8, dense_pose_steps=None, geometry_helper=None, geometry_helper_sha256=None, receiver_asset_ids=('croisement02-tree-01','croisement02-tree-02'), first_witness_only=False,expected_map_sha256=None):
     assert not OUT.exists(),'Preserve prior evidence'
     fitp=Path(fit_path) if fit_path else B/'butterfly07-pose-fit-v1/fit.json';fit=json.loads(fitp.read_text());rows={r['phase']:r for r in fit['rows']};bound_geometry,radii,binding=geometry_binding(fit,geometry_helper,geometry_helper_sha256)
     curve=None if continuous_height_curve is None else CubicSpline(continuous_height_curve['times'],continuous_height_curve['heights'],bc_type='periodic')
@@ -147,6 +147,7 @@ def main(fit_path=None, midpoint_hinge_offsets=None, transition_candidates=None,
     screen_high=np.c_[unit_highs[:,0],-reader.SIN*unit_lows[:,1]-reader.COS*unit_lows[:,2]]
     q=np.array([r['screen'] for r in queries])
     query_margin=max(float(np.maximum(abs(q-lo),abs(q-hi)).max(axis=1).min()) for lo,hi in zip(screen_low,screen_high))+EPS
+    progress={"triangles":0,"cpu":time.process_time()}
     def inspect(placed,node,ni,pi,tri,uvs,mat,alpha,texture_record):
         world=np.stack([tri[:,:,0],-tri[:,:,2],tri[:,:,1]],axis=2)
         uv=np.zeros((*tri.shape[:2],2)) if uvs is None else uvs
@@ -159,6 +160,9 @@ def main(fit_path=None, midpoint_hinge_offsets=None, transition_candidates=None,
             if first_witness_only and unit['contacts'][placed['id']]:continue
             indexes=np.flatnonzero(np.all(high>=unit['low'],axis=1)&np.all(low<=unit['high'],axis=1))
             for idx in indexes:
+                progress["triangles"]+=1
+                if progress["triangles"]%1024==0 and time.process_time()-progress["cpu"]>20:
+                    progress["cpu"]=time.process_time();print("CONTACT_PROGRESS",placed["id"],progress,flush=True)
                 poly=clip_planes(attrs[idx],unit['planes'])
                 if not len(poly):continue
                 value,witness,_=alpha_maximum(poly,image,sampler,factor)
@@ -179,6 +183,6 @@ def main(fit_path=None, midpoint_hinge_offsets=None, transition_candidates=None,
         OUT.mkdir();payload=json.dumps(report,indent=2)+'\n';assert len(payload)<2*1024**2;(OUT/'report.json').write_text(payload)
         print(json.dumps({k:v['contact_counts'] for k,v in results.items()}),flush=True)
         return report
-    reader.main(ray_records=queries,postprocess=finish,output=OUT,asset_ids=receiver_asset_ids,triangle_callback=inspect,query_margin=query_margin,output_limit_bytes=2*1024**2)
+    reader.main(ray_records=queries,postprocess=finish,output=OUT,asset_ids=receiver_asset_ids,triangle_callback=inspect,query_margin=query_margin,output_limit_bytes=2*1024**2,expected_map_sha256=expected_map_sha256)
 
 if __name__=='__main__':main()
