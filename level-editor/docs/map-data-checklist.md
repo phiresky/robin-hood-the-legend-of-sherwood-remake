@@ -14,8 +14,9 @@ this prepared stream through the existing graph parser. The separate physical-fl
 solver, load-time bindings, movement
 dispatch and per-step routing have also been removed. An optimized three-player
 stock-mission regression completes all 540 frames, including Silver Arrow frame 5;
-median ticks range from 0.18 to 0.87 ms in the latest run (before the sound-fragment
-extension). Current validation: 248 selected compiler/export/sound tests pass;
+median ticks range from 0.32 to 1.66 ms in the latest repeat, including the
+sound-fragment and carrier-recovery changes. This confirms freeze removal, not a
+consistent 1 ms budget. Current validation: 248 selected compiler/export/sound tests pass;
 native map integration is 71 passed, 5 ignored; the
 engine suite is **4,347 passed, 0 failed, 39 ignored**. Passage approaches are now
 prepared at export, and the loader's approach search has been deleted. Exports

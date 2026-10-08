@@ -163,13 +163,17 @@ the distribution.
 
 | Mission | Prepared nodes | Frame 5 | Median tick | p95 | Maximum |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| H07_Not_MK | 891 | 0.864 ms | 0.869 ms | 1.002 ms | 1.203 ms |
-| H01_Lin_VL | 633 | 0.174 ms | 0.175 ms | 0.228 ms | 0.286 ms |
-| S01_Not_VL | 891 | 0.560 ms | 0.595 ms | 0.695 ms | 0.782 ms |
+| H07_Not_MK | 891 | 1.344 ms | 1.658 ms | 2.034 ms | 2.434 ms |
+| H01_Lin_VL | 633 | 0.313 ms | 0.324 ms | 0.368 ms | 0.403 ms |
+| S01_Not_VL | 891 | 1.594 ms | 1.101 ms | 1.639 ms | 1.884 ms |
 
-Latest evidence: `work/map-compile/passage-pause-performance-20261008.json` under
-the editor directory. These are working-tree measurements, including concurrent
-engine fixes and timing variation; they do not isolate the cost of this change.
+Latest evidence: `work/map-compile/carrier-recovery-performance-repeat-20261008.log`
+under the editor directory. This optimized rebuild includes the carrier-recovery
+fix in `2b9dff95a`; the Cargo test and a direct repeat both pass all 540 ticks.
+The table records the repeat. These are working-tree measurements, including
+concurrent engine fixes and timing variation; they do not isolate any individual
+change. The earlier passage-pause run measured medians of 0.869/0.175/0.595 ms;
+the current results are slower and do not prove a consistent 1 ms budget.
 
 The pre-removal reproduction stalled at Silver Arrow frame 5 until a 60-second
 external timeout. That reproduction used the unoptimized test profile, so these
