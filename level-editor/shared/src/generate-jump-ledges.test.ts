@@ -34,11 +34,43 @@ test("surface ledges face outward, with receiving bands entirely inside the surf
     for (const point of [segment.edge.a, segment.edge.b]) {
       const x = point[0],
         y = point[1] - point[2];
-      assert.ok(x - 6 >= 0 && x + 6 <= 100 && y - 4 >= 0 && y + 4 <= 100);
+      assert.ok(x - 6 >= 0 && x + 6 <= 100 && y - 3 >= 0 && y + 3 <= 100);
     }
   }
-  assert.deepEqual(generated.segments[1]!.edge.a, [93, 115, 20]);
-  assert.deepEqual(generated.segments[1]!.edge.b, [93, 25, 20]);
+  assert.deepEqual(generated.segments[1]!.edge.a, [93, 116, 20]);
+  assert.deepEqual(generated.segments[1]!.edge.b, [93, 24, 20]);
+});
+
+test("narrow ledges use the graph's native footprint and keep a rounding margin", () => {
+  for (const depth of [6, 8]) {
+    const result = generateJumpLedges(
+      "narrow-roof",
+      [
+        [0, 0],
+        [100, 0],
+        [100, depth],
+        [0, depth],
+      ],
+      [],
+      [0, 0, 0],
+      {
+        ...rules,
+        edges: [0],
+        inset: 0,
+        landingDepth: 1,
+      },
+    );
+    assert.equal(result.segments.length, depth === 8 ? 1 : 0);
+    if (depth === 8) {
+      assert.deepEqual(result.warnings, []);
+      const edge = result.segments[0]!.edge;
+      for (const point of [edge.a, edge.b]) {
+        assert.equal(point[1], 4);
+        assert.ok(point[0] - 6 >= 1 && point[0] + 6 <= 99);
+        assert.ok(point[1] - 3 >= 1 && point[1] + 3 <= depth - 1);
+      }
+    } else assert.match(result.warnings[0]!, /no character-sized receiving span/);
+  }
 });
 
 test("a ledge without room for a character warns and omits the unusable connection", () => {
@@ -72,10 +104,12 @@ test("holes cut receiving bands into independent usable spans", () => {
   assert.equal(generated.segments.length, 2);
   const edges = generated.segments.map((segment) => segment.edge);
   assert.deepEqual(
-    edges.map((edge) => [edge.a[1], edge.b[1]]),
+    edges.map((edge) =>
+      [edge.a[1], edge.b[1]].map((coordinate) => Math.round(coordinate * 1e9) / 1e9),
+    ),
     [
-      [95, 65],
-      [35, 5],
+      [96, 64],
+      [36, 4],
     ],
   );
 });

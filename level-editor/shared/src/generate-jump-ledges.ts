@@ -5,6 +5,7 @@ import { mergeIntervals, type JumpEdge, type Interval } from "./jump-clearance.t
 import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
 import { planeHeight, type HeightPlane } from "./gameplay-plane.ts";
+import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
 
 export interface JumpLandingBand {
   plane: HeightPlane;
@@ -58,10 +59,10 @@ export function generateJumpLedges(
       length = Math.hypot(dx, dy);
     if (length < rules.minOverlap) continue;
     const inward: Point = [dy / length, -dx / length];
-    // Graph-free maps use a 6-by-4 half-size human movement box. Reserve its
-    // normal and tangential extents, plus one unit for final grid rounding.
-    const normalClearance = 6 * Math.abs(inward[0]) + 4 * Math.abs(inward[1]);
-    const alongClearance = (6 * Math.abs(dx) + 4 * Math.abs(dy)) / length + 1;
+    // Reserve the same footprint as the prepared graph, plus one unit for
+    // final grid rounding, in both the normal and tangential directions.
+    const normalClearance = half[0] * Math.abs(inward[0]) + half[1] * Math.abs(inward[1]);
+    const alongClearance = (half[0] * Math.abs(dx) + half[1] * Math.abs(dy)) / length + 1;
     const inset = Math.max(rules.inset, normalClearance + 1);
     const at = (t: number, depth: number): Point => [
       a[0] + dx * t + inward[0] * depth,

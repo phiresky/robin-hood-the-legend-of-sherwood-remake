@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Shared native footprint for jump ledges (2026-10-08)
+
+Automatic ledge generation reserved a 6×4 half-size actor while the prepared
+navigation graph stores 6×3. This unnecessarily omitted an eight-unit-deep flat
+roof that can contain the native footprint and a one-unit rounding margin.
+The ledge generator and graph writer now share `NAVIGATION_HALF_DIAGONAL`.
+Graph corner and sweep construction use the same constant; their output is
+unchanged. Ledge normal/tangential clearance now uses 6×3 and retains the extra
+rounding margin. A focused regression accepts the eight-unit roof and rejects
+a six-unit roof with insufficient margin. Hole boundaries remain excluded.
+
+Six checked-in native jump fixtures were regenerated from editor documents and
+asset metadata. Only jump edges, zones and associated warnings changed; collision,
+receivers, materials and navigation graph data are unchanged. The new ledges can
+extend usable spans while the existing walking/flight obstacle checks still trim
+them. The focused editor/compiler suite passes **246 tests**; native map integration
+passes **71 tests, 5 ignored**. The refreshed fixtures also pass **85 native jump
+tests, 5 ignored**. App typechecking and scoped type-aware lint also pass.
+
+Fresh batch `work/map-compile/prepared-roof-placements-oshhrm` passes **120 isolated
+upright jumps, 120 complete upright approaches, 120 isolated sword jumps and 120
+player-click routes**. Isolated jumps and interior clicks arrive exactly. All
+four-unit approach cases finish the finite turning startup 0.8 or 1.6 units short,
+verified by the step-distance and command-completion audit described below.
+The two 90-degree cases still omit connections with explicit receiving-span
+warnings; this change does not certify those omissions or full placement coverage.
+No production runtime code changed. Assisted jumps, complete combat interactions,
+multi-PC click formations and rendered contact remain open.
+
 ## Prepared roof jumps and continuous receivers (2026-10-08)
 
 `node refinement/check-roof-jump-placements.mjs` (from `level-editor/`) exports

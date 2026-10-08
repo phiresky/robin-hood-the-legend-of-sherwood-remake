@@ -32,7 +32,8 @@ Moved/copied roof assemblies at three usable rotations and two elevations now
 pass 120 isolated sprite jumps and landing-receiver checks. The fourth rotation
 omits its connections because no character-sized receiving span is generated.
 All 120 authored four-unit approaches pass native footprint checks and complete
-walk–jump–walk execution. Eight arrive exactly; 112 finish their finite startup
+walk–jump–walk execution. After aligning generated ledges with the graph's 6×3
+footprint, all 120 four-unit approaches finish their finite startup
 animation 0.8 or 1.6 units short while turning, matching the reference behavior.
 The audit verifies each step's distance and animation/command completion rather
 than accepting an arbitrary near-goal offset. No runtime change was needed.
@@ -43,8 +44,10 @@ normal player movement with exact arrival. The checked-in fixture also verifies
 that removing jump skill rejects both directions of both copied connections.
 Full combat interaction, assisted jumps, multi-PC click formations and rendering
 remain open.
-The 101 focused editor/compiler tests
-pass; see [reproduction and scope](map-compilation-evidence.md#prepared-roof-jumps-and-continuous-receivers-2026-10-08).
+The 246 focused editor/compiler tests pass. Ledges and graph preparation now use
+one footprint definition; an eight-unit-deep roof retains its usable ledge while
+six units still fails the rounding margin. See [current evidence](map-compilation-evidence.md#shared-native-footprint-for-jump-ledges-2026-10-08)
+and [reproduction and scope](map-compilation-evidence.md#prepared-roof-jumps-and-continuous-receivers-2026-10-08).
 
 **Large-map progress and remaining gap:** Wychford now exports its graph using
 [32-bit link indices](navigation-graph-format.md), with no runtime search change.

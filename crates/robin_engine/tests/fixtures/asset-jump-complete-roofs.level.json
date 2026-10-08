@@ -29,6 +29,7 @@
       "Draft gameplay asset york-bridge-square-central-timber-house: Review movement contour ownership: footprint intersections can split exclusions shared by adjacent assets",
       "Draft gameplay asset york-bridge-square-central-timber-house: Door ownership resolved from geometry above its landing; review the physical doorway before publication",
       "Draft gameplay asset york-bridge-square-central-timber-house: Review cross-asset jump sockets and landing ownership before publication",
+      "Jump copy/york-bridge-square-central-timber-house/building-117-walk-0/ledge-3-0: obstacles obstruct the flight or walking approach; 1 usable span(s) retained.",
       "Jump copy/york-bridge-square-central-timber-house/jump-pair-47-side-0: no matching edge after placement; connection is unavailable.",
       "Jump copy/york-bridge-square-central-timber-house/jump-pair-48-side-0: no matching edge after placement; connection is unavailable.",
       "Jump york-bridge-square-central-timber-house/york-bridge-square-central-timber-house/jump-pair-47-side-0: no matching edge after placement; connection is unavailable.",
@@ -105,20 +106,20 @@
         "polygon": {
           "points": [
             [
-              528,
-              710
+              532,
+              711
             ],
             [
               509,
-              696
+              695
             ],
             [
               511,
-              693
+              692
             ],
             [
-              530,
-              707
+              534,
+              708
             ]
           ]
         },
@@ -130,20 +131,20 @@
         "polygon": {
           "points": [
             [
-              549,
-              641
+              548,
+              642
             ],
             [
-              568,
-              655
-            ],
-            [
-              566,
+              571,
               658
             ],
             [
-              547,
-              644
+              569,
+              661
+            ],
+            [
+              546,
+              645
             ]
           ]
         },
@@ -156,26 +157,26 @@
       {
         "line1": {
           "point_a": [
-            530,
-            707,
-            264
+            534,
+            708,
+            262
           ],
           "point_b": [
             511,
-            693,
-            264
+            692,
+            262
           ],
           "jump_zone_index": 1
         },
         "line2": {
           "point_a": [
-            547,
-            644,
+            546,
+            645,
             248
           ],
           "point_b": [
-            566,
-            658,
+            569,
+            661,
             248
           ],
           "jump_zone_index": 0

@@ -1,6 +1,7 @@
 import type { CompiledAssetGeometry } from "./asset-gameplay.ts";
 import type { Point } from "./level.ts";
 import { pointInGameplayPolygon } from "./navigation-anchor.ts";
+import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
 
 type Layers = CompiledAssetGeometry["motion_data"]["layers"];
 type Address = [number, number, number, number];
@@ -21,13 +22,13 @@ interface Link {
   distance: number;
 }
 
-const half: Point = [6, 3];
 const offsets: Point[] = [
-  [-6, -3],
-  [6, -3],
-  [6, 3],
-  [-6, 3],
+  [-half[0], -half[1]],
+  [half[0], -half[1]],
+  [half[0], half[1]],
+  [-half[0], half[1]],
 ];
+const insetHalf: Point = [half[0] - 1, half[1] - 1];
 
 function cross(a: Point, b: Point, c: Point): number {
   return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
@@ -36,15 +37,15 @@ function cross(a: Point, b: Point, c: Point): number {
 /** Swept movement footprint, with the normal one-unit movement inset. */
 function sweep(a: Point, b: Point): Point[] {
   const points: Point[] = [a, b].flatMap(([x, y]) => [
-    [x - 5, y - 2],
-    [x + 5, y - 2],
-    [x + 5, y + 2],
-    [x - 5, y + 2],
+    [x - insetHalf[0], y - insetHalf[1]],
+    [x + insetHalf[0], y - insetHalf[1]],
+    [x + insetHalf[0], y + insetHalf[1]],
+    [x - insetHalf[0], y + insetHalf[1]],
   ]);
   // Horizontal native corridors shift their left edge one unit farther out.
   if (a[1] === b[1] && a[0] !== b[0]) {
-    points.push([Math.min(a[0], b[0]) - 6, a[1] - 2]);
-    points.push([Math.min(a[0], b[0]) - 6, a[1] + 2]);
+    points.push([Math.min(a[0], b[0]) - half[0], a[1] - insetHalf[1]]);
+    points.push([Math.min(a[0], b[0]) - half[0], a[1] + insetHalf[1]]);
   }
   points.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
   const side = (input: Point[]) => {

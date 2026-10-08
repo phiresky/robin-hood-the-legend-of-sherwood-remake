@@ -50,7 +50,7 @@ forcing graph-only search for an already clear segment is not the request contra
 
 The [roof jump audit](map-compilation-evidence.md#prepared-roof-jumps-and-continuous-receivers-2026-10-08)
 now passes 120 isolated sprite jumps after removing unnecessary receiver splits
-at export, plus all 120 complete walk–jump–walk cases. The 112 short post-jump
+at export, plus all 120 complete walk–jump–walk cases. The 120 short post-jump
 movements ending 0.8 or 1.6 units before the clicked point match finite startup
 animation completion while turning. A native control test confirms the rule;
 the audit measures each step's turning loss and checks command completion. No
@@ -62,6 +62,10 @@ The same exports pass 120 interior-click routes through normal group-movement
 dispatch, with exact arrival and no supplied jump/gate/sector override. A regular
 fixture test verifies overlay selection and missing-jump-skill rejection. These
 are validation additions only; no runtime algorithm changed.
+Ledge generation now shares the prepared graph's 6×3 half-size footprint instead
+of reserving 6×4. The one-unit rounding margin and obstacle checks remain. The
+[refreshed batch](map-compilation-evidence.md#shared-native-footprint-for-jump-ledges-2026-10-08)
+passes all four audits above; graph bytes and runtime algorithms are unchanged.
 
 The [sound shape extension](sound-source-format.md) carries export-prepared
 fragment indices for cropped emitters. Existing acoustic distance loops skip
