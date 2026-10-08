@@ -825,33 +825,30 @@ impl MultiplayerMenuState {
                     h,
                 );
                 y += h + 12;
-                add(
-                    ID_HERO_SETUP,
-                    if locked {
-                        rules.team_string().map_or_else(
-                            || "Saved story team".into(),
-                            |team| format!("Saved team: {team}"),
-                        )
-                    } else if self.coop.campaign
-                        || self
-                            .selected_mission()
-                            .is_some_and(|m| m.campaign_rules.is_some())
-                    {
-                        "Campaign team".into()
-                    } else {
-                        format!("Edit team ({}/5)", self.coop.team_len())
-                    },
-                    !locked
-                        && !self.coop.campaign
-                        && !self
-                            .selected_mission()
-                            .is_some_and(|m| m.campaign_rules.is_some()),
-                    x,
-                    y,
-                    w,
-                    h,
-                );
-                y += h + 12;
+                if locked
+                    || self.coop.campaign
+                    || self
+                        .selected_mission()
+                        .is_some_and(|m| m.campaign_rules.is_some())
+                {
+                    add(
+                        ID_HERO_SETUP,
+                        if locked {
+                            rules.team_string().map_or_else(
+                                || "Saved story team".into(),
+                                |team| format!("Saved team: {team}"),
+                            )
+                        } else {
+                            "Campaign team".into()
+                        },
+                        false,
+                        x,
+                        y,
+                        w,
+                        h,
+                    );
+                    y += h + 12;
+                }
                 if self.coop.control == CharacterControl::Assigned
                     && !self.coop.campaign
                     && !self
