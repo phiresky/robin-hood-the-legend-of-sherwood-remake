@@ -171,17 +171,34 @@ impl PhysicalWalkingSurface {
             {
                 continue;
             }
-            let swept = MultiPoint::from_iter(
-                initial
-                    .exterior()
-                    .points()
-                    .chain(footprint(point).exterior().points()),
-            )
-            .convex_hull();
+            let permitted = |a: Point<f64>, b: Point<f64>| {
+                let center = geo::Line::new(a.0, b.0);
+                let swept = MultiPoint::from_iter(
+                    footprint(a)
+                        .exterior()
+                        .points()
+                        .chain(footprint(b).exterior().points()),
+                )
+                .convex_hull();
+                floor.relate(&center).is_covers()
+                    && !solids.iter().any(|solid| solid.intersects(&center))
+                    && swept.difference(&allowed).0.is_empty()
+            };
             // Use the same polygon difference as clearance construction. An
             // independent edge-relation test can disagree at a computed tangent
             // even when subtraction leaves no unsupported region.
-            if !swept.difference(&allowed).0.is_empty() {
+            // At a diagonal edge the direct sweep can add new overhang even
+            // though an axis-aligned inward path stays within the initial
+            // footprint and real support. Recovery snaps to the same bounded
+            // endpoint; each leg must independently preserve those constraints.
+            if !permitted(source, point)
+                && ![
+                    Point::new(source.x(), point.y()),
+                    Point::new(point.x(), source.y()),
+                ]
+                .into_iter()
+                .any(|bend| permitted(source, bend) && permitted(bend, point))
+            {
                 continue;
             }
             let distance =
@@ -216,6 +233,40 @@ mod tests {
             .world_position(point)
             .unwrap()
             .map(|v| v as f32)
+    }
+
+    #[test]
+    fn recover_fractional_diagonal_platform_landing() {
+        let floor = PhysicalWalkingSurface {
+            boundary: vec![
+                [518.6642570326546, 938.7731802592877],
+                [551.2521904800288, 932.2677040476297],
+                [575.150390625, 961.2464671914417],
+                [624.150390625, 956.2464671914417],
+                [777.150390625, 918.2464671914417],
+                [793.150390625, 938.2464671914417],
+                [636.150390625, 974.2464671914415],
+                [558.150390625, 979.2464671914417],
+            ],
+            holes: vec![],
+            plane: [0., 0., 12.001],
+            obstacles: vec![],
+            support: vec![],
+        };
+        let half = MoveBoxHalfDiagonal { x: 6., y: 3. };
+        let source = [784.5, 928.501, 12.001];
+        assert!(floor.route(source, source, half).unwrap().is_none());
+        assert!(floor.recover_source(source, half, 1.).unwrap().is_none());
+        let recovered = floor
+            .recover_source(source, half, f64::from(half.x.hypot(half.y)) + 0.5)
+            .unwrap();
+        assert!(
+            recovered.is_some(),
+            "a landing inside the diagonal platform must recover locally"
+        );
+        let recovered = recovered.unwrap().map(|value| value as f32);
+        assert!(floor.route(recovered, recovered, half).unwrap().is_some());
+        assert_eq!(recovered[2], source[2]);
     }
 
     #[test]

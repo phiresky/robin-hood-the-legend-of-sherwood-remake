@@ -58,10 +58,13 @@ The stronger sprite audit found unsupported rounded boundary points in that firs
 candidate. A one-unit ledge inset and two-unit corner trims now pass all 160
 upright sprite-dispatch/landing checks, including endpoints and closing animations,
 while retaining the 480 clear flight paths and all 64 endpoint-zone memberships.
-The subsequent walk–jump–walk audit passes only 12/160 cases: receiver lookup
-alone does not prove support for the actor's full walking footprint. Measured
-return landings cannot recover a supported footprint; some approach endpoints
-also lack receivers. Walking clearance remains unresolved. Click authorization,
+The subsequent walk–jump–walk audit initially passed only 12/160 cases: receiver
+lookup alone does not prove support for the actor's full walking footprint.
+A measured runtime recovery fix raises this to 56/160: a bounded two-leg inward
+recovery can stay inside the initial footprint and real floor where a direct
+sweep cannot. All 45 floor/navigation and 55 enabled compiled-navigation tests
+pass. Some approach endpoints still lack receivers and walking clearance remains
+unresolved. Click authorization,
 sword/assisted sprite dispatch and rendered contact remain unverified; the
 candidate is still unpublished.
 

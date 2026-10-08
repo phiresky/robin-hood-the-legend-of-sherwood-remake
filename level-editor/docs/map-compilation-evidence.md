@@ -6,6 +6,22 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Exported jump diagnostics (2026-10-08)
 
+The failed walk-away recovery now has a standalone geometric regression. A
+fractional diagonal platform rejects the direct recovery sweep because it adds
+a triangular overhang outside the actor's initial footprint. The same supported
+endpoint is reachable by an axis-aligned two-leg path without introducing any
+new unsupported area. Recovery now tries those two inward paths when the direct
+sweep fails. Each leg must keep its center on the floor, avoid solids, and keep
+the swept footprint inside existing support plus the initial overlap. The
+endpoint displacement limit and receiving height remain unchanged.
+
+This runtime correction raises `watermill-platform-placements-6bZOzc` from
+12/160 to 56/160 walk–jump–walk passes. All 160 isolated upright sprite jumps
+still pass. The standalone regression checks the displacement limit and support
+after recovery; all 45 floor/navigation and 55 enabled compiled-navigation tests
+pass (20 external audits remain ignored in that suite). Remaining route failures
+and publication requirements are still open.
+
 Follow-up authoring recipe `refinement/stage-watermill-boundary-jump.mjs` replaces
 the inset watermill pair with a geometric ledge on the platform's outward end
 and an asset-local ground counterpart. The ground ledge is wider so oblique
