@@ -46,6 +46,8 @@ export interface ProjectionAssetDescriptor {
     node: string;
     name: string;
     default_hidden?: boolean;
+    /** Asset-local appearance controls for this complete visual part. */
+    appearance?: Pick<import("./patch-bindings.ts").PatchBinding, "hide" | "show">;
     /** Non-rendering coordinate frame for asset-local gameplay. */
     gameplay_only?: true;
     /** Keep visual component bounds without compiling them as physical obstacles. */

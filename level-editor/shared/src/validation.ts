@@ -1071,6 +1071,36 @@ export function parseProjectionAssetDescriptor(value: unknown): ProjectionAssetD
     nodes.add(part.node);
     if (part.default_hidden !== undefined)
       check(typeof part.default_hidden === "boolean", part.node, "invalid default_hidden");
+    if (part.appearance !== undefined) {
+      const binding = part.appearance;
+      check(
+        binding && typeof binding === "object" && !Array.isArray(binding),
+        part.node,
+        "invalid part appearance",
+      );
+      const keys = Object.keys(binding);
+      check(
+        keys.length > 0 && keys.every((key) => key === "hide" || key === "show"),
+        part.node,
+        "invalid part appearance fields",
+      );
+      for (const key of keys) {
+        const ids = binding[key];
+        check(
+          Array.isArray(ids) &&
+            ids.length > 0 &&
+            ids.every((id: unknown) => typeof id === "string" && id.length > 0) &&
+            new Set(ids).size === ids.length,
+          part.node,
+          "invalid part appearance IDs",
+        );
+      }
+      check(
+        !(binding.hide ?? []).some((id: string) => binding.show?.includes(id)),
+        part.node,
+        "contradictory part appearance",
+      );
+    }
     if (part.collision !== undefined)
       check(
         part.collision === "none" &&

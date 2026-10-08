@@ -16,7 +16,13 @@ import { disposeObjectResources } from "./resources.ts";
 import { insertProjectionAsset } from "./asset-commands.ts";
 import { PatchDisplay, applyPlacementPatches } from "./patch-display.ts";
 import { prepareMapCandidate } from "./map-candidate.ts";
-import { expandStoredMap, parseStoredMap, serializeStoredMap, type Level3D } from "@rle/shared";
+import {
+  expandStoredMap,
+  parseStoredMap,
+  serializeStoredMap,
+  parseProjectionAssetDescriptor,
+  type Level3D,
+} from "@rle/shared";
 import { authorLightRegionAsset } from "../../pipeline/src/author-light-region-asset.ts";
 import { authorAmbientSoundAsset } from "../../pipeline/src/author-ambient-sound-asset.ts";
 import { compileMap } from "./map-compile.ts";
@@ -160,6 +166,77 @@ test("standalone index filters the current map and actual model parts receive na
   assert.equal(f.disposed(), 0);
   disposeObjectResources([prepared.asset]);
   assert.equal(f.disposed(), 1);
+});
+
+test("descriptor part appearances survive insertion, independent copies and reopening", async (t) => {
+  const f = fixture();
+  const descriptor = {
+    ...f.descriptor,
+    parts: f.descriptor.parts.map((part) => ({ ...part, appearance: { show: ["activate"] } })),
+  };
+  f.json(f.entry.descriptor, descriptor);
+  t.mock.method(GLTFLoader.prototype, "parseAsync", async () => ({ scene: f.asset }));
+  const prepared = await prepareProjectionPlacement(f.directory, f.entry, "Leicester");
+  assert.deepEqual(prepared.appearanceIds, { house: ["activate"] });
+  let document: Level3D = {
+    version: 1,
+    map: "Leicester",
+    size: [200, 200],
+    camera: { kind: "oblique-orthographic", elevation_deg: 35 },
+    sceneAssets: [],
+    groups: [],
+    objects: [],
+  };
+  for (const x of [25, 125])
+    document = insertProjectionAsset(
+      document,
+      prepared.descriptor,
+      prepared.reference,
+      [x, 50, 0],
+      prepared.additionalAssets,
+      prepared.appearanceIds,
+    ).document;
+  const assets = new Map([[prepared.descriptor.id, prepared.descriptor]]);
+  document = parseStoredMap(serializeStoredMap(document, assets), assets);
+  const clones = document.objects.map((part) => {
+    const clone = prepared.sources.get(part.node)!.clone(true);
+    applyPlacementPatches(clone, document, part, new Set(prepared.sources.keys()));
+    return clone;
+  });
+  const display = new PatchDisplay();
+  for (const first of [false, true])
+    for (const second of [false, true]) {
+      display.set(document.groups[0]!.patches!.house!.activate!, first);
+      display.set(document.groups[1]!.patches!.house!.activate!, second);
+      clones.forEach((clone) => display.apply(clone));
+      assert.deepEqual(
+        clones.map((clone) => clone.visible),
+        [first, second],
+      );
+    }
+  assert.deepEqual(prepared.descriptor, descriptor);
+  disposeObjectResources([prepared.asset]);
+});
+
+test("invalid or contradictory descriptor appearance rules are rejected", () => {
+  const f = fixture();
+  for (const appearance of [
+    {},
+    { show: [] },
+    { show: [""] },
+    { show: ["a", "a"] },
+    { hide: ["a"], show: ["a"] },
+    { show: "a" },
+    { unknown: ["a"] },
+  ])
+    assert.throws(
+      () =>
+        parseProjectionAssetDescriptor({
+          ...f.descriptor,
+          parts: [{ ...f.descriptor.parts[0], appearance }],
+        }),
+      /part appearance/,
+    );
 });
 
 test("verified nested appearance metadata reaches placement without descriptor mutation", async (t) => {

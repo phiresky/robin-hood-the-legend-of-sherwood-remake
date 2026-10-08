@@ -6,6 +6,48 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { loadSceneModel } from "./scene-assets.ts";
 
+test("pipeline models receive pinned descriptor appearance rules without changing mesh files", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "descriptor-appearance-"));
+  try {
+    const model = JSON.stringify({
+      asset: { version: "2.0" },
+      scene: 0,
+      scenes: [{ nodes: [0] }],
+      nodes: [{ name: "scenery-body", extras: { scenery: true } }],
+    });
+    const descriptor = JSON.stringify({
+      version: 1,
+      kind: "projection-mapped-asset",
+      id: "prop",
+      name: "Prop",
+      source_map: "Authored",
+      model: "model.gltf",
+      parts: [
+        { node: "scenery-body", name: "Body", scenery: true, appearance: { show: ["activate"] } },
+      ],
+    });
+    const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+    await fs.writeFile(path.join(root, "model.gltf"), model);
+    await fs.writeFile(path.join(root, "asset.json"), descriptor);
+    const loaded = await loadSceneModel(root, {
+      id: "prop",
+      role: "objects",
+      model: "model.gltf",
+      model_sha256: hash(model),
+      descriptor: "asset.json",
+      descriptor_sha256: hash(descriptor),
+      resources: [],
+    });
+    assert.deepEqual(loaded.getRoot().listNodes()[0]!.getExtras(), {
+      scenery: true,
+      reveal_show_when_applied: ["activate"],
+    });
+    assert.equal(await fs.readFile(path.join(root, "model.gltf"), "utf8"), model);
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test("hybrid GLB loads its embedded and pinned external buffers together", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "hybrid-scene-"));
   try {

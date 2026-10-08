@@ -2,12 +2,24 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   assertPatchMappingEquivalent,
+  assetPartAppearanceExtras,
   deriveAppearancePatches,
   endpointPatchRule,
   patchBindingExtras,
   patchBindingsFromMetadata,
   remapPatchExtras,
 } from "./patch-bindings.ts";
+
+test("part appearances preserve mesh metadata and reject conflicting mesh rules", () => {
+  const model = { source_obstacle: 2, reveal_show_when_applied: ["gate"] };
+  const before = structuredClone(model);
+  assert.deepEqual(assetPartAppearanceExtras(model, { show: ["gate"], hide: ["destroy"] }), {
+    ...model,
+    reveal_hide_when_applied: ["destroy"],
+  });
+  assert.deepEqual(model, before);
+  assert.throws(() => assetPartAppearanceExtras(model, { show: ["other"] }), /conflicts/);
+});
 
 test("publication metadata yields only active placement patch rules", () => {
   const bindings = patchBindingsFromMetadata({

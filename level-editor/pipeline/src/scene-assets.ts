@@ -5,6 +5,8 @@ import { NodeIO } from "@gltf-transform/core";
 import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import {
   safeLibraryPath,
+  assetPartAppearanceExtras,
+  parseProjectionAssetDescriptor,
   selectGlbScene,
   selectGltfScene,
   resolveGltfResources,
@@ -32,7 +34,9 @@ export async function readSceneAsset(
     return bytes;
   };
   let bytes = await checked(reference.model, reference.model_sha256);
-  if (reference.descriptor) await checked(reference.descriptor, reference.descriptor_sha256!);
+  const descriptor = reference.descriptor
+    ? JSON.parse((await checked(reference.descriptor, reference.descriptor_sha256!)).toString())
+    : undefined;
   if (!reference.model.endsWith(".gltf"))
     bytes = Buffer.from(
       selectGlbScene(
@@ -48,6 +52,14 @@ export async function readSceneAsset(
       )
     : JSON.parse(bytes.toString("utf8", 20, 20 + bytes.readUInt32LE(12)));
   const resources: Record<string, Uint8Array<ArrayBuffer>> = {};
+  if (descriptor?.kind === "projection-mapped-asset") {
+    const parts = parseProjectionAssetDescriptor(descriptor).parts;
+    for (const node of json.nodes ?? []) {
+      const part = parts.find((part) => part.node === node.name);
+      if (part?.appearance)
+        node.extras = assetPartAppearanceExtras(node.extras ?? {}, part.appearance);
+    }
+  }
   for (const resource of reference.resources)
     resources[resource.path] = new Uint8Array(await checked(resource.path, resource.sha256));
   return { json, resources, bytes };

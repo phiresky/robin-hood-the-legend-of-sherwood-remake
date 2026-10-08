@@ -422,6 +422,11 @@ Eight copied/rotated/elevated maps pass native construction and 32 apply/reset
 checks, including 96 thin-route probes. Published export/reopen geometry matches
 the tested stage; all ten saved scenes still reopen. Rendered state appearance,
 mesh contact and complete actor routes remain unverified.
+Descriptor-owned part appearance rules now reach both editor and pipeline loaders.
+Insertion/save/reopen tests verify independent visibility for two copies through
+all four control combinations, and conflicting model rules are rejected. These
+loader tests do not certify the fragments' baked images or runtime rendering;
+their visual bindings still need publication and a rendered round trip.
 The timber bridge, both ferns, fallen log, upright fences 94/95 and supplemental
 wood 09/44 and Croisement01 tree 03 have published draft definitions. These counts
 reflect the current asset inventory, not gameplay certification.

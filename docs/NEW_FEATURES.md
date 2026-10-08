@@ -2788,3 +2788,9 @@ selected cap, mission changes restore the original receivers, and shared render
 resources retire once with the map. The Croisement02 hole integration remains a
 private geometry review fixture; no new terrain derivative is published by this
 runtime support.
+
+Reusable assets can author whole-part visibility in descriptor `parts[].appearance`
+with local `show` and `hide` control IDs. Editor and pipeline loaders combine these
+with model metadata, reject conflicting rules, and retain independent controls
+when assets are copied or reopened. This uses the existing appearance export and
+runtime format without rewriting mesh files.

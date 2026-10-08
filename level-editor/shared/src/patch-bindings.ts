@@ -10,6 +10,19 @@ export type PatchBindings = Record<string, PatchBinding>;
 /** Asset-local appearance IDs mapped to mission patch IDs for a placement. */
 export type AppearancePatches = Record<string, Record<string, string>>;
 
+/** Descriptor-owned visibility augments, but cannot silently replace, mesh rules. */
+export function assetPartAppearanceExtras(
+  extras: Record<string, unknown>,
+  appearance: Pick<PatchBinding, "hide" | "show"> | undefined,
+): Record<string, unknown> {
+  if (!appearance) return extras;
+  const authored = patchBindingExtras(appearance);
+  for (const [key, value] of Object.entries(authored))
+    if (extras[key] !== undefined && JSON.stringify(extras[key]) !== JSON.stringify(value))
+      throw new Error(`Asset part appearance conflicts with model ${key}`);
+  return { ...extras, ...authored };
+}
+
 export function remapPatchExtras(extras: Record<string, unknown>, mapping: Record<string, string>) {
   const result = { ...extras };
   for (const field of ["reveal_hide_when_applied", "reveal_show_when_applied"] as const) {

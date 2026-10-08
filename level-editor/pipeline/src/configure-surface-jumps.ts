@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import type { PatchBinding } from "../../shared/src/patch-bindings.ts";
 import {
   parseProjectionAssetIndex,
   parseProjectionAssetDescriptor,
@@ -26,6 +27,8 @@ export interface GameplayEdit {
   /** Geometry-derived definitions are also bound to the model used for review. */
   modelSha256?: string;
   gameplay: AssetGameplay;
+  /** Explicit whole-part visual state rules, without rewriting model geometry. */
+  partAppearances?: Record<string, Pick<PatchBinding, "hide" | "show">>;
 }
 export interface SurfacePrecisionEdit {
   asset: string;
@@ -105,6 +108,12 @@ export async function configureAssetGameplay(
     }
     validateAssetGameplay(gameplay, descriptor);
     const next = { ...raw, gameplay };
+    for (const [node, appearance] of Object.entries(replacements[0]?.partAppearances ?? {})) {
+      const part = next.parts.find((part: { node: string }) => part.node === node);
+      if (!part) throw new Error(`Missing appearance part: ${asset}/${node}`);
+      part.appearance = structuredClone(appearance);
+    }
+    parseProjectionAssetDescriptor(next);
     const after = encode(next);
     changes.push({ file, before, after });
     pins.set(file, { before: digest, after: hash(after) });

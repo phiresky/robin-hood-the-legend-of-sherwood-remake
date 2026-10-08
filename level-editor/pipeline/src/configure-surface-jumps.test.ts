@@ -54,6 +54,35 @@ async function fixture() {
   };
 }
 
+test("gameplay publication validates part appearance ownership and preserves geometry", async () => {
+  const f = await fixture();
+  try {
+    const descriptor = JSON.parse(f.before);
+    const edit = {
+      asset: descriptor.id,
+      descriptorSha256: f.hash(f.before),
+      gameplay: descriptor.gameplay,
+      partAppearances: { missing: { show: ["activate"] } },
+    };
+    await assert.rejects(
+      configureAssetGameplay(f.library, [edit], path.join(f.root, "invalid"), true),
+      /Missing appearance part/,
+    );
+    assert.equal(await fs.readFile(f.descriptor, "utf8"), f.before);
+    const node = descriptor.parts[0].node;
+    const reviewed = { ...edit, partAppearances: { [node]: { show: ["activate"] } } };
+    await configureAssetGameplay(f.library, [reviewed], path.join(f.root, "published"), true);
+    const after = JSON.parse(await fs.readFile(f.descriptor, "utf8"));
+    assert.deepEqual(after.parts[0], {
+      ...descriptor.parts[0],
+      appearance: { show: ["activate"] },
+    });
+    assert.deepEqual(after.gameplay, descriptor.gameplay);
+  } finally {
+    await fs.rm(f.root, { recursive: true, force: true });
+  }
+});
+
 test("surface authoring stages reviewable data then updates every scene pin without changing placements", async () => {
   const f = await fixture();
   try {
