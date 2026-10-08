@@ -323,8 +323,11 @@ Fresh published York and Sherwood exports (`saved-map-exports-vDlOcb`) pass all
 the runtime corrections, including the final contact-separation geometry.
 Their rendered integration remains unverified.
 
-The current library-wide audit (`gameplay-coverage-S4Wdmj`) finds 28 of 1,279
-indexed assets without gameplay definitions. None is placed in the saved scenes.
+The current library-wide audit (`gameplay-coverage-OsGuIg`) finds 28 of 1,279
+indexed assets without gameplay definitions. None is referenced by placements,
+scene assets or wall-spline sources/corner assets in the ten saved scenes. The
+audit now includes spline references: Wychford uses 84 distinct assets rather
+than the 82 counted from placements and scene assets alone.
 The timber bridge, both ferns, fallen log, upright fences 94/95 and supplemental
 wood 09/44 and Croisement01 tree 03 have published draft definitions. These counts
 reflect the current asset inventory, not gameplay certification.
@@ -1186,8 +1189,9 @@ Lincoln static props now have reviewed scenery-only definitions: their nearby
 collision belongs to other assets. Lincoln's geometry is unchanged, all eleven
 controls pass apply/reset, and twenty rotated/copied prop assemblies retain the
 underlying terrain without adding collision or floors. All ten scenes in that
-batch reopened with gameplay definitions for their placed assets; the newer
-library audit above identifies four uncovered placements in Croisement03.
+batch reopened with gameplay definitions for their placed assets. An intermediate
+audit subsequently identified four uncovered placements in Croisement03; those
+have since received definitions, as reflected by the current library audit above.
 Neither check certifies the completeness of existing definitions. Wychford retains an unused great-keep
 library reference without gameplay. The separate calibrated Wychford export also
 passes native construction and all three control apply/reset checks, retaining

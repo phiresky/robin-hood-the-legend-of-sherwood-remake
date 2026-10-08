@@ -36,6 +36,10 @@ for (const file of (await fs.readdir("library/scenes")).sort((a, b) => a.localeC
   const used = new Set([
     ...scene.placements.flatMap((placement) => placement.assets),
     ...(scene.sceneAssets ?? []).map((asset) => asset.id),
+    ...(scene.splines ?? [])
+      .filter((spline) => spline.kind === "wall")
+      .flatMap((spline) => [spline.asset, spline.cornerAsset])
+      .filter((id) => id !== undefined),
   ]);
   for (const id of used) {
     assert.ok(descriptors.has(id), `Unknown placed asset ${id} in ${file}`);
