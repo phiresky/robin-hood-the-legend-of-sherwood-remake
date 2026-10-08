@@ -25,6 +25,23 @@ elevations. Planned paths and frame-integrated paths clear active solid geometry
 This does not exercise full sprite dispatch, ordinary approach or landing
 receiver publication; those and rendered contact remain required.
 
+The new ignored native audit
+`exported_jumps_complete_sprite_dispatch_and_land_on_receivers` uses the complete
+character sprite at five positions on every directed line, including both ends.
+It requires receiving floors at launch and landing, observes airborne posture,
+waits for the complete order chain, and checks destination sector/layer, receiver
+identity and physical height. It starts on the launch line and does not exercise
+the click/approach route. Reports are written as `actor-jump-landing-report.json`.
+The boundary-only batch above fails 104 of 160 cases in this stronger audit.
+
+The staging recipe now insets the ledge one unit into the floor and trims two
+units from each corner before geometric matching. Stage
+`watermill-boundary-jump-hAHGgJ`, batch `watermill-platform-placements-6bZOzc`,
+passes all 160 upright sprite-dispatch/landing cases and all 480 airborne-path
+checks. All 64 endpoints remain in their home zones. These asset-only changes
+preserve the receiving plane and native jump behavior. Walking approaches,
+sword/assisted complete sprite dispatch and rendered contact remain unverified.
+
 All compiled jump pairs now receive a diagnostic pass after integer conversion,
 including authored pairs and exact socket joins. Opposing map-space vectors must
 match for distance-along-source translation to cover the paired landing edge.

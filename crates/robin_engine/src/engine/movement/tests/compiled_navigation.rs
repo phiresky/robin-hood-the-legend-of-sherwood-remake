@@ -16,6 +16,10 @@ mod exported_stairs {
     include!("exported_stairs.rs");
 }
 
+mod exported_jumps {
+    include!("exported_jumps.rs");
+}
+
 fn compiled_walkway(bytes: &[u8]) -> (EngineInner, LevelAssets) {
     compiled_walkway_with_dimensions(bytes, (2000., 2000.))
 }

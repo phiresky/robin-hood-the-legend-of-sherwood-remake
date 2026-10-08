@@ -22,6 +22,19 @@ const b = [...surface.polygon.at(-1), surface.height];
 const dx = b[0] - a[0],
   dy = b[1] - a[1];
 const length = Math.hypot(dx, dy);
+// Keep rounded launch points on the receiving floor, inside its boundary.
+for (const point of [a, b]) {
+  point[0] += dy / length;
+  point[1] -= dx / length;
+}
+// Avoid the adjacent boundary at each platform corner after grid rounding.
+for (const [point, sign] of [
+  [a, 1],
+  [b, -1],
+]) {
+  point[0] += (sign * 2 * dx) / length;
+  point[1] += (sign * 2 * dy) / length;
+}
 const groundHeight = pair.edges[1].a[2];
 const ground = (point) => [
   point[0] - (40 * dy) / length,

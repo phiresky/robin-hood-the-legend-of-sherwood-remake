@@ -54,8 +54,12 @@ warnings identify review work and do not certify playable jumps.
 A further unpublished boundary-ledged watermill candidate passes 480 native
 airborne-path checks across the eight placements, with all 64 exported endpoints
 inside their home jump zones. The upper zone is derived from the physical floor.
-Complete jump approach/landing execution and rendered contact remain unverified;
-these flight checks do not yet justify publishing the candidate.
+The stronger sprite audit found unsupported rounded boundary points in that first
+candidate. A one-unit ledge inset and two-unit corner trims now pass all 160
+upright sprite-dispatch/landing checks, including endpoints and closing animations,
+while retaining the 480 clear flight paths and all 64 endpoint-zone memberships.
+Walking/click approach, sword/assisted sprite dispatch and rendered contact remain
+unverified; the candidate is still unpublished.
 
 Receiving-material unions now batch equivalent patches. A 1,024-island component
 benchmark improves from about 4 seconds to 0.1 seconds; full-map timing remains
