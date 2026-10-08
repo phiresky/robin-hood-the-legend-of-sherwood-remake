@@ -382,8 +382,12 @@ export default function StatePreview(props: {
                   void updateActor(actorEnabled(), id);
                 }}
               >
-                <For each={actors()}>
-                  {(actor) => <option value={actor.id}>{actor.name}</option>}
+                <For each={actors().map((actor) => actor.id)}>
+                  {(id) => (
+                    <option value={id}>
+                      {actors().find((actor) => actor.id === id)?.name ?? id}
+                    </option>
+                  )}
                 </For>
               </select>
             </label>
