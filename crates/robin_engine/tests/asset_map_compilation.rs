@@ -7,6 +7,120 @@ use robin_engine::level_data::LoadedLevel;
 mod route_sampling;
 
 #[test]
+fn editor_precomputed_graph_routes_around_obstacles_and_switches_links() {
+    use robin_engine::coordinates::MapPoint;
+    use robin_engine::pathfinder::PathFinder;
+    let motion: serde_json::Value =
+        serde_json::from_slice(include_bytes!("fixtures/editor-navigation-graph.json")).unwrap();
+    let descriptor = serde_json::json!({
+        "title": "Compiled graph", "map_filename": "compiled-graph",
+        "spawn_points": [],
+        "walkable_polygon": [[0,0],[600,0],[600,300],[0,300]],
+        "asset_geometry": {"motion_data": motion, "sight_obstacles": [], "doors": [],
+            "movement_transitions": [{"id": "barrier", "waypoint": [330,100],
+                "sector": 2, "layer": 0, "active": true, "definitive": false,
+                "apply_polygon": {"points": []}, "no_apply_polygon": {"points": []},
+                "motion_changes": [{"layer": 0, "sector": 2, "changing_obstacle": 0}]}]
+        }
+    });
+    let mut assets = LevelAssets::new();
+    let engine = construct(&serde_json::to_vec(&descriptor).unwrap(), &mut assets);
+    let graph = &assets.navigation.pathfinder_graph;
+    assert!(!graph.nodes.is_empty());
+    assert!(!graph.static_data.links.is_empty());
+    let mut grid = engine.fast_grid().clone();
+    let mut finder = PathFinder::new();
+    finder.initialize_from_graph(graph, &mut grid);
+    let docking = |index: robin_engine::pathfinder::NodeIdx| {
+        let node = &graph.nodes[index.0 as usize];
+        let (x, y) = match node.configurations[0] {
+            1 => (-6., -3.),
+            2 => (6., -3.),
+            4 => (6., 3.),
+            8 => (-6., 3.),
+            other => panic!("unexpected compiled docking configuration {other}"),
+        };
+        MapPoint::new(node.position.x + x, node.position.y + y)
+    };
+    for (source, goal) in [
+        (MapPoint::new(30., 100.), MapPoint::new(170., 100.)),
+        (MapPoint::new(170., 100.), MapPoint::new(30., 100.)),
+    ] {
+        assert!(!grid.is_reachable_thin(source, goal, 0));
+        let route = finder
+            .find_path(graph, &grid, 0, 0, 0, source, goal, false)
+            .expect("exported graph must provide the detour");
+        assert_eq!(route.last(), Some(&goal));
+        assert!(
+            route.len() > 2,
+            "route must go around the obstacle: {route:?}"
+        );
+        for pair in route.windows(2) {
+            assert!(
+                grid.is_reachable_thick(
+                    pair[0],
+                    pair[1],
+                    0,
+                    grid.try_move_box_half_diagonal(0).unwrap()
+                ),
+                "{route:?}"
+            );
+        }
+    }
+    let source = MapPoint::new(330., 100.);
+    let goal = MapPoint::new(470., 100.);
+    assert!(
+        graph
+            .static_data
+            .links
+            .iter()
+            .any(|link| link.required_state != 0)
+    );
+    for open in [false, true, false, true] {
+        if open != (finder.states[0][1] & 1 == 0) {
+            finder.toggle_obstacle_state(graph, &mut grid, 0, 1, 0);
+        }
+        for link in &graph.static_data.links {
+            let from = docking(link.prev_node);
+            let to = docking(link.next_node);
+            let area = usize::from(from.x > 300.);
+            let state = finder.states[0][area];
+            if link.required_state & state == link.required_state {
+                assert!(
+                    grid.is_reachable_thick(
+                        from,
+                        to,
+                        0,
+                        grid.try_move_box_half_diagonal(0).unwrap()
+                    ),
+                    "compiled link violates native clearance: {from:?} -> {to:?}, open={open}"
+                );
+            }
+        }
+        let route = finder.find_path(graph, &grid, 0, 2, 0, source, goal, false);
+        assert_eq!(route.is_some(), open, "state-dependent route: {route:?}");
+        // The fixed obstacle still requires a detour when the gate opens.
+        assert!(!grid.is_reachable_thick(
+            source,
+            goal,
+            0,
+            grid.try_move_box_half_diagonal(0).unwrap()
+        ));
+        if let Some(route) = route {
+            assert_eq!(route.last(), Some(&goal));
+            for pair in route.windows(2) {
+                assert!(grid.is_reachable_thick(
+                    pair[0],
+                    pair[1],
+                    0,
+                    grid.try_move_box_half_diagonal(0).unwrap()
+                ));
+            }
+        }
+    }
+}
+
+#[test]
 fn editor_asset_masks_construct_baked_coverage_and_local_state_links() {
     let mut assets = LevelAssets::new();
     let engine = construct(
@@ -478,7 +592,7 @@ fn terrain_bound_receiver_retains_physical_height_and_actor_routes() {
     let b = MapPoint::new(450., 325.);
     for (start, end) in [(a, b), (b, a)] {
         let route = finder
-            .find_path(graph, &grid, 0, 0, 0, start, end, false)
+            .find_path(graph, &grid, 0, 0, 0, start, end, true)
             .expect("receiver retains continuous walking");
         assert_eq!(route.last(), Some(&end));
         for segment in route.windows(2) {
@@ -967,7 +1081,7 @@ fn recovered_static_exports_construct_native_geometry() {
                     0,
                     point("start"),
                     goal,
-                    false,
+                    true,
                 );
                 assert_eq!(
                     route.as_ref().and_then(|r| r.last()),
@@ -1235,7 +1349,7 @@ fn native_pathfinder_crosses_compiled_navigation_seam_with_actor_clearance() {
     let destination = MapPoint::new(404., 290.);
     for (start, goal) in [(source, destination), (destination, source)] {
         let path = finder
-            .find_path(graph, &grid, 0, 0, 0, start, goal, false)
+            .find_path(graph, &grid, 0, 0, 0, start, goal, true)
             .expect("an actor can route across the joined surface boundary");
         assert_eq!(path.last(), Some(&goal));
     }
@@ -1249,7 +1363,7 @@ fn native_pathfinder_crosses_compiled_navigation_seam_with_actor_clearance() {
                 0,
                 source,
                 MapPoint::new(420., 290.),
-                false
+                true
             )
             .is_none(),
         "joining surfaces must not open a route beyond the walkway edge"
@@ -1273,7 +1387,7 @@ fn partial_navigation_overlap_supports_actor_routes_without_opening_the_outer_ed
     let b = MapPoint::new(415., 290.);
     for (start, end) in [(a, b), (b, a)] {
         let path = finder
-            .find_path(graph, &grid, 0, 0, 0, start, end, false)
+            .find_path(graph, &grid, 0, 0, 0, start, end, true)
             .expect("partially overlapping sockets provide a route");
         assert_eq!(path.last(), Some(&end));
         for segment in path.windows(2) {
@@ -1287,7 +1401,7 @@ fn partial_navigation_overlap_supports_actor_routes_without_opening_the_outer_ed
     }
     assert!(
         finder
-            .find_path(graph, &grid, 0, 0, 0, a, MapPoint::new(415., 350.), false)
+            .find_path(graph, &grid, 0, 0, 0, a, MapPoint::new(415., 350.), true)
             .is_none()
     );
 }
@@ -1314,7 +1428,7 @@ fn native_routes_follow_rotated_walkways_without_connecting_separate_copies() {
         for (start, goal) in [(source, destination), (destination, source)] {
             assert_eq!(
                 finder
-                    .find_path(graph, &grid, layer, sector, 0, start, goal, false)
+                    .find_path(graph, &grid, layer, sector, 0, start, goal, true)
                     .expect("placed walkway must support routes across its seam")
                     .last(),
                 Some(&goal)
@@ -1323,7 +1437,7 @@ fn native_routes_follow_rotated_walkways_without_connecting_separate_copies() {
         let other_copy = if layer == 0 { routes[1].2 } else { routes[0].2 };
         assert!(
             finder
-                .find_path(graph, &grid, layer, sector, 0, source, other_copy, false)
+                .find_path(graph, &grid, layer, sector, 0, source, other_copy, true)
                 .is_none(),
             "a repeated asset identity must not connect spatially separate copies"
         );
@@ -1585,7 +1699,7 @@ fn generated_roof_jump_edges_have_character_sized_walkable_approaches() {
                     let route = finder
                         .find_path(
                             graph, &grid, line.layer, i16::from(sector) as u16,
-                            0, start, goal, false,
+                            0, start, goal, true,
                         )
                         .unwrap_or_else(|| {
                             panic!(
@@ -2570,7 +2684,7 @@ fn authored_spline_wall_blocks_native_sight_and_routes_around_its_ends() {
     let mut finder = PathFinder::new();
     finder.initialize_from_graph(graph, &mut grid);
     let route = finder
-        .find_path(graph, &grid, 0, 0, 0, start, goal, false)
+        .find_path(graph, &grid, 0, 0, 0, start, goal, true)
         .expect("route around wall ends");
     assert_eq!(route.last(), Some(&goal));
     assert!(
@@ -2618,7 +2732,7 @@ fn spline_walkway_crosses_repetitions_behind_solid_battlements() {
     finder.initialize_from_graph(graph, &mut grid);
     assert_eq!(
         finder
-            .find_path(graph, &grid, 1, 2, 0, start, end, false)
+            .find_path(graph, &grid, 1, 2, 0, start, end, true)
             .unwrap()
             .last(),
         Some(&end)
@@ -2642,7 +2756,7 @@ fn curved_spline_walkway_routes_around_its_outer_boundary() {
     let mut finder = PathFinder::new();
     finder.initialize_from_graph(graph, &mut grid);
     let route = finder
-        .find_path(graph, &grid, 1, 2, 0, start, end, false)
+        .find_path(graph, &grid, 1, 2, 0, start, end, true)
         .expect("curved deck has a route");
     assert_eq!(route.last(), Some(&end));
     let footprint = grid.try_move_box_half_diagonal(0).unwrap();
@@ -2668,7 +2782,7 @@ fn rising_spline_walkway_retains_one_route_and_changing_receiving_height() {
     let mut finder = PathFinder::new();
     finder.initialize_from_graph(graph, &mut grid);
     let route = finder
-        .find_path(graph, &grid, 0, 0, 0, start, end, false)
+        .find_path(graph, &grid, 0, 0, 0, start, end, true)
         .expect("rising wall deck has a connected route");
     assert_eq!(route.last(), Some(&end));
     for segment in route.windows(2) {
@@ -2934,7 +3048,7 @@ fn terrain_bound_entrances_remain_approachable_and_link_the_building() {
                     0,
                     start,
                     end,
-                    false,
+                    true,
                 )
                 .expect("terrain approach has a walkable route");
             assert_eq!(path.last(), Some(&end));
@@ -3182,7 +3296,7 @@ fn editable_grid_hill_river_ford_and_export_crop_construct_native_gameplay() {
             0,
             MapPoint::new(20., 120.),
             goal,
-            false,
+            true,
         )
         .expect("actor-clearance routing crosses the hill and ford");
     assert_eq!(route.last(), Some(&goal));

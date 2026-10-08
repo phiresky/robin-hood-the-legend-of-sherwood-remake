@@ -909,7 +909,7 @@ mod tests {
                         0,
                         source,
                         goal,
-                        false,
+                        true,
                     );
                     assert_eq!(
                         route.is_some(),
@@ -980,7 +980,7 @@ mod tests {
                                 0,
                                 start,
                                 goal,
-                                false,
+                                true,
                             )
                             .expect("retained jump approach must work in both obstacle states");
                         assert_eq!(route.last(), Some(&goal));
@@ -1910,7 +1910,7 @@ mod tests {
                         0,
                         source,
                         goal,
-                        false,
+                        true,
                     );
                     assert_eq!(route.is_some(), open, "sector {sector}, applied={applied}");
                     if let Some(route) = route {

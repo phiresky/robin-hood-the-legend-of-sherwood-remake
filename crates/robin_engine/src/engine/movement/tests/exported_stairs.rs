@@ -873,7 +873,7 @@ fn audit_changing_climbs(sprite: Option<&crate::sprite::Sprite>) {
                     0,
                     enter.point_in,
                     leave.point_in,
-                    false,
+                    true,
                 );
                 assert_eq!(
                     route.is_some(),

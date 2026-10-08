@@ -27,18 +27,34 @@ by that deletion. A small compiled-data extension may be justified by a concrete
 export requirement; a second runtime solver is not the intended architecture.
 Static descriptor validation remains in the level-data crate.
 
-Export still needs to generate the graph: its current empty `graph_bytes` no
-longer supports fallback detours. Earlier physical traversal results do not
-certify the resulting exports.
+Export now generates the native graph in
+`level-editor/shared/src/compile-navigation-graph.ts`. It constructs actor-clearance
+links and state constraints from placed motion polygons during export. The game
+only loads the prepared stream and uses its existing pathfinder. The graph builder
+uses the same integer collision contours as the native grid and rejects boundary
+contact. It currently supports the stock 6×3 half-diagonal and the existing
+65,535-link stream limit. Best-effort overflow is an explicit warning and omitted
+graph, not a compatibility solver.
 
-Removal validation: `cargo build -p robin_rs --bin robin -j 1` passes.
-`cargo test -p robin_engine --lib -j 1 -- --quiet` reports **4,323 passed,
-11 failed, 33 ignored**. All failures are in compiled-map route/stair/state-change
-coverage: wall-end detours, curved/rising walkways, changing and copied stair
-barriers, overlapping stair layers, movement/sight transitions, jump approaches,
-and the collision-route fixture. These remain failing tests, not ignored tests
-or evidence of parity. Exported navigation must be repaired through compiled
-data rather than reintroducing a runtime solver.
+Current validation: the game builds; 211 selected editor compiler/export tests
+pass; native map integration reports **69 passed, 5 ignored**. The engine suite
+reports **4,331 passed, 4 failed, 33 ignored**. Remaining failures are stair
+receivers, overlapping/copied stair traversal and changing stair barriers. They
+remain failing tests. Earlier physical traversal results do not certify this
+architecture. Authorized direct-route probes now enable the native direct check;
+forcing graph-only search for an already clear segment is not the request contract.
+
+The saved Derby scene compiles a **613,728-byte graph**, with no graph omission
+warning, in roughly 4.6 seconds of export-time graph preparation. Its descriptor
+constructs 60 areas, 848 sight obstacles, 70 doors and 2 jump pairs. Native sampling
+passes **144 ordinary routes**, spending 0.01 seconds in pathfinding in the
+unoptimized harness. Evidence: `work/map-compile/saved-map-exports-GEMe4m` under
+the editor directory. Its 268 other authoring warnings remain; this is not full
+gameplay parity. Other large saved scenes still need validation.
+
+The pipeline-wide TypeScript check currently fails in `state-delivery.test.ts`
+(presentation-frame fields and assertion/narrowing types), outside these changes.
+Focused lint of the modified compiler/test files passes.
 
 The optimized `parity` profile passes
 `game_session::multiplayer::story_regression::stock_three_player_navigation_tick_cost`

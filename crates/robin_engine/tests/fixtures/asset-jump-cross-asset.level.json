@@ -1,6 +1,6 @@
 {
-  "title": "Authored fixture",
-  "map_filename": "editor-authored-fixture",
+  "title": "Cross-asset jump fixture",
+  "map_filename": "editor-cross-asset-jump-fixture",
   "spawn_points": [],
   "walkable_polygon": [
     [
@@ -23,7 +23,7 @@
   "volumes": [],
   "asset_geometry": {
     "warnings": [
-      "Jump hut-a/hut/wall-jump: flight clearance is unverified: Ledges leave no forward flight after the 15-unit takeoff."
+      "Jump hut-a/hut/lower-edge: flight clearance is unverified: Ledges leave no forward flight after the 15-unit takeoff."
     ],
     "motion_data": {
       "layers": [

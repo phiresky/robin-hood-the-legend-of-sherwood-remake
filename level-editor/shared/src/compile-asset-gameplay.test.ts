@@ -3451,7 +3451,7 @@ test("asset-only compilation constructs motion areas, fresh references and doors
   const result = compileAssetGameplay(document, assets, bounds);
   assert.equal(result.motion_data.layers.length, 2);
   assert.equal(result.motion_data.layers[0]!.length, 2);
-  assert.deepEqual(result.motion_data.graph_bytes, []);
+  assert.ok(result.motion_data.graph_bytes.length > 0);
   assert.equal("marker" in result, false);
   assert.deepEqual(result.sight_obstacles[0]!.material_indices, []);
   assert.equal(result.doors[0]!.sector_out, 0);

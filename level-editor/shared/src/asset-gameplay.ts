@@ -365,7 +365,7 @@ export interface CompiledAssetGeometry {
       flags: number;
       obstacles: { state_id: number; polygon: { points: Point[] }; precise_polygon?: Point[] }[];
     }[][];
-    graph_bytes: never[];
+    graph_bytes: number[];
   };
   sight_obstacles: SightObstacle[];
   /** Baked typed masks; obstacle references use this compilation's sight array. */

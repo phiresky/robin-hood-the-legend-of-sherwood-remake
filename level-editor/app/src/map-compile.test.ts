@@ -337,7 +337,10 @@ test("cross-asset jumps export the geometry verified by the native traversal fix
   const { document, assets } = crossAssetJumpCompilerFixture();
   const fixture = JSON.parse(
     await readFile(
-      new URL("../../../crates/robin_engine/tests/fixtures/asset-jump.level.json", import.meta.url),
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-jump-cross-asset.level.json",
+        import.meta.url,
+      ),
       "utf8",
     ),
   );

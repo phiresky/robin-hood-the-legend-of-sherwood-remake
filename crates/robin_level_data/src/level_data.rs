@@ -3039,9 +3039,11 @@ impl LoadedLevel {
                     }
                 }
             }
-            if geometry.motion_data.layers.len() < 2 || !geometry.motion_data.graph_bytes.is_empty()
-            {
-                return Err("asset geometry requires ordinary motion layers, a reserved lift layer and a freshly constructed graph".into());
+            if geometry.motion_data.layers.len() < 2 {
+                return Err(
+                    "asset geometry requires ordinary motion layers and a reserved lift layer"
+                        .into(),
+                );
             }
             let mut area_refs = std::collections::BTreeSet::new();
             let mut motion_states = std::collections::BTreeMap::new();

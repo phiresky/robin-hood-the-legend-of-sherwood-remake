@@ -1,4 +1,5 @@
 import { terrainGameplay } from "./authored-terrain.ts";
+import { compileNavigationGraph } from "./compile-navigation-graph.ts";
 import { placeGameplaySurface } from "./place-gameplay-surface.ts";
 import { compilePhysicalStairRegion } from "./compile-physical-stair-region.ts";
 import {
@@ -2653,9 +2654,19 @@ function compileAssetGameplayAttempt(
     contours.push(light.receiverContour, light.polygon);
     lightCoverage.set(light.receiverGroup, contours);
   }
+  options.onProgress?.("Compiling navigation graph");
+  let graphBytes: number[] = [];
+  try {
+    graphBytes = compileNavigationGraph(layers);
+  } catch (error) {
+    if (!options.bestEffort) throw error;
+    warnings.push(
+      `Navigation graph omitted: ${error instanceof Error ? error.message : String(error)}. Indirect movement routes are unavailable.`,
+    );
+  }
   const compiled: CompiledAssetGeometry = {
     ...(warnings.length ? { warnings } : {}),
-    motion_data: { layers, graph_bytes: [] },
+    motion_data: { layers, graph_bytes: graphBytes },
     ...(masks.length ? { masks } : {}),
     ...(compiledJumpZones.length
       ? { jump_zones: compiledJumpZones, jump_line_pairs: compiledJumpPairs }

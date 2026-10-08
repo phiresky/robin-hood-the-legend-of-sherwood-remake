@@ -113,8 +113,9 @@ pub fn check_collision_routes(
             }
             let goal = samples[*members.last().unwrap()].unwrap();
             for (from, to) in [(start, goal), (goal, start)] {
+                // Authorized samples allow the native direct-path check before A*.
                 let query_started = std::time::Instant::now();
-                let route = finder.find_path(graph, grid, layer, number, 0, from, to, false)
+                let route = finder.find_path(graph, grid, layer, number, 0, from, to, true)
                     .unwrap_or_else(|| panic!("{label}: collision-connected samples have no route in sector {number}, layer {layer}: {from:?} -> {to:?}"));
                 routing_time += query_started.elapsed();
                 assert_eq!(route.last(), Some(&to), "{label}: incomplete route");

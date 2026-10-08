@@ -8,13 +8,18 @@ Connections and runtime indices are rebuilt after placement, rotation and copyin
 
 **Navigation architecture correction (2026-10-08):** the graph-less runtime
 visibility fallback has been removed, with no compatibility replacement. Export
-currently emits empty `graph_bytes`; it must generate prepared navigation before
-indirect exported-map routing is restored. Earlier route results below predate
-this removal. The separate physical-floor solver, load-time bindings, movement
+now compiles native `graph_bytes` from placed motion geometry, with actor clearance
+and state-dependent nodes/links. No source graph is copied. The loader accepts
+this prepared stream through the existing graph parser. The separate physical-floor
+solver, load-time bindings, movement
 dispatch and per-step routing have also been removed. An optimized three-player
 stock-mission regression completes all 540 frames, including Silver Arrow frame 5;
-median ticks range from 0.93 to 2.83 ms. Removing the solver does not repair
-exported navigation: 11 compiled-map route/stair/state tests still fail. See the
+median ticks range from 0.93 to 2.83 ms. Current graph validation: 211 selected
+compiler/export tests pass; native map integration is 69 passed, 5 ignored; the
+engine suite is 4,331 passed, 4 failed, 33 ignored. The remaining failures cover
+stair receivers and changing/copied stair traversal. Derby's saved-scene export
+loads natively and passes 144 sampled ordinary routes (0.01 seconds pathfinding
+in the unoptimized harness). This does not certify all scene connections. See the
 [runtime inventory](map-runtime-inventory.md) for the full scope and correction
 requirements. Earlier physical traversal evidence does not certify this architecture.
 
@@ -1408,7 +1413,7 @@ this does not repair Wychford's already-elevated approach automatically.
 | Walkable regions and layers | Transform surfaces and heights; join matching boundaries, coplanar surfaces and authored multi-plane regions. | Synthetic joins and sampled map routes pass; complete connectivity/traversal remains open. |
 | Movement collision and openings | Intersect placed solids/contours with receiving planes; apply asset-owned clearances and optional per-volume upright headroom. | Compiler/runtime fixtures pass, including slopes, raised solids and spline headroom. Recovered geometry still needs review. |
 | Spline walls | Measure pinned source meshes and deform local surfaces, collision, material contours, lighting, mask coverage and spatial sound emitters with source rotation, trimming, straightening and path placement. | Geometry comparisons pass 24 combinations; Wychford native loading/state checks pass. Material ownership passes moved/repeated, turned, sloped, corner and fractional-origin compiler checks; native ground/obstacle queries pass for three repeated sections. Explicit point/segment probes pass repeated, rising and curved compiler checks and native-fixture equality; native ambience queries pass. Disconnected lighting probes survive clipping independently and match the native ambience fixture. Automatic curved/rising lighting binds from source surfaces and passes native elevated-layer shadow queries. Spatial sound placement and acoustic settings pass native construction. Broader receiver-material, playback and traversal checks remain open. Repeated masks pass native bitmap, character/projectile boundary, altitude and obstacle-isolation checks; curved/cropped coverage passes editor tests. Longitudinal mask probes preserve bends and reject missing or competing receiving layers. A surviving explicit probe also preserves masks whose point anchor was trimmed. Disconnected receiving probes survive trimming without artificial connections and match the native mask fixture. Disconnected open character/projectile application boundaries now export as separate masks, retaining their independent ranges and sharing coverage; view and obstacle rules are emitted once per repeat. Editor/native fixture equality and native application-range queries pass, including moved curved/rising compiler checks. Closed application contours now split into independent islands, with moved/bent/rising compiler comparisons, native character/projectile queries and editor export/reopen equality passing. Point-only cropped mask anchors, stateful sources, global sounds and disconnected sound crops remain unsupported and emit warnings. |
-| Navigation graph and fast-find grid | Build fresh graph/spatial structures from compiled geometry. | Native initial/switch-state route checks pass; no source grid or graph bytes are copied. Full actor coverage remains open. |
+| Navigation graph and fast-find grid | Compile native nodes, clearance configurations, distances and state-constrained links at export; bind grid/spatial structures at mission start. | Native detours and state switches pass; Derby passes 144 sampled ordinary routes. Uses the stock 6×3 half-diagonal; the native 65,535-link limit produces an explicit omission warning in best-effort mode. Full actor/stair and large-scene coverage remains open. |
 | Sight/physical obstacles | Transform local shapes, heights and physical/opaque flags. | Native initialization, apply and reset tested; asset ownership coverage remains incomplete. |
 | Projection/elevation receivers | Derive height planes and crossing boundaries from placed receiving surfaces. | Fractional seams, slopes, copies and sampled actor crossings tested. Generated contours are checked at native float precision; pinched contours are triangulated and zero-area pieces warned/omitted. The refreshed editor terrain export passes native polygon, hill/ford/crop and route-sampling checks; complete placement coverage remains open. |
 | Doors, gates and locks | Transform endpoints; resolve current neighbours and local initial/alternate permissions. | Compiler/runtime fixtures pass; incomplete assets still warn. |
