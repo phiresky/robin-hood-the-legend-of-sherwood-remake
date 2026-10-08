@@ -358,6 +358,71 @@ fn ambush_refresh_drains_look_sidewards_before_next_tail_phase() {
 }
 
 #[test]
+fn ambush_refresh_classifies_both_sides_in_projected_map_space() {
+    use crate::ai::{AiState, AmbushPoint, Position, Substate};
+    use crate::ai_enemy::AmbushPointStatus;
+    use crate::element::Command;
+
+    let sim = &crate::sim_rng::test_context();
+    let mut engine = EngineInner::new();
+    let npc_id = engine.add_test_entity(make_test_ai_soldier(crate::element::Camp::Lacklandists));
+    let mut assets = engine.test_runtime_assets();
+    let Entity::Soldier(soldier) = engine.ent_mut(npc_id) else {
+        panic!("ambush owner changed kind")
+    };
+    soldier.element.active = true;
+    soldier
+        .element
+        .set_position_map(MapPoint::new(923.0, 863.0));
+    soldier.element.set_direction_instantly(3);
+    let enemy = soldier
+        .npc
+        .ai_brain
+        .enemy_mut()
+        .expect("ambush owner has enemy AI");
+    enemy.base.current_state = AiState::Seeking;
+    enemy.base.current_substate = Substate::SeekingSeekpoint;
+    crate::engine::test_support::actors::edit_enemy_profile(&mut assets, enemy, |profile| {
+        profile.intelligence = 100
+    });
+    enemy.ambush_point_status = vec![AmbushPointStatus::Near; 2];
+    // The first point changes sides if map Y scaling is omitted. The second
+    // remains on the left, so the correct response is a look to both sides.
+    engine.ai.global.ambush_points = [(920.0, 864.0), (981.0, 828.0)]
+        .into_iter()
+        .enumerate()
+        .map(|(id, (x, y))| AmbushPoint {
+            position: Position {
+                x,
+                y,
+                ..Position::default()
+            },
+            direction: 0,
+            position_3d: crate::coordinates::WorldPoint3D::new(x, y, 32.0),
+            id: id as u16,
+        })
+        .collect();
+
+    engine.tick_refresh_ambush_points_for_npc(TickCtx::new(sim, &assets), npc_id);
+
+    let enemy = engine.enemy(npc_id);
+    assert_eq!(
+        enemy.base.current_substate,
+        Substate::SeekingSeekpointCheckingAmbushPoint
+    );
+    assert!(
+        [Command::LookLeft]
+            .into_iter()
+            .any(|command| engine.actor_command(npc_id) == command
+                || engine
+                    .orders
+                    .sequence_manager
+                    .element_is_about_to_be_launched(npc_id, command)),
+        "ambush-point refresh must launch a sideways look before deafness/busy checks"
+    );
+}
+
+#[test]
 fn normal_timer_uses_unsigned_wrapped_overflow_guard() {
     let sim = &crate::sim_rng::test_context();
     let mut engine = EngineInner::new();

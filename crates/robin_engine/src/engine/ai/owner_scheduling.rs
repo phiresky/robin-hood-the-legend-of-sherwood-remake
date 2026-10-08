@@ -825,6 +825,10 @@ impl EngineInner {
                     .element_data()
                     .direction();
                 let (dx, dy) = crate::element::direction_vector_16(direction as i16);
+                // Ambush positions use projected map coordinates. Match the
+                // actor's map-space direction vector before testing sides;
+                // an unscaled Y can put opposite-side points on the same side.
+                let dy = dy * crate::position_interface::ASPECT_RATIO;
                 let ambush = self.ai.global.ambush_points[idx].position;
                 let right = dx * (ambush.y - position.y) - dy * (ambush.x - position.x) > 0.0;
                 let substate = self.observation_ai(npc_id).base.current_substate;
