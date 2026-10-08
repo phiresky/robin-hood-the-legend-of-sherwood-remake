@@ -1,5 +1,5 @@
 """Check vertical wood intervals against unchanged bound receiver surfaces."""
-import hashlib,json,struct
+import argparse,hashlib,json,struct
 from pathlib import Path
 import numpy as np
 ROOT=Path(__file__).resolve().parents[3]
@@ -22,8 +22,8 @@ def heights(packet,xy):
  ok=valid&(a>=-1e-8)&(b>=-1e-8)&(a+b<=1+1e-8);z=t[ok,0,2]+a[ok]*(t[ok,1,2]-t[ok,0,2])+b[ok]*(t[ok,2,2]-t[ok,0,2]);z=np.sort(z)
  return z[np.r_[True,np.diff(z)>1e-5]] if len(z) else z
 def main():
- O.mkdir(exist_ok=False)
- m=np.load(R/'tree08-root-ray-cpu-v4/candidate.npz');wood=triangles(m['vertices'],m['faces']);receipt=json.loads((P/'current-contact/receipt.json').read_text());receivers=[]
+ parser=argparse.ArgumentParser();parser.add_argument('--candidate',default='tree08-root-ray-cpu-v4');parser.add_argument('--output',default='tree08-root-embedding-cpu-v1');args=parser.parse_args();candidate=R/args.candidate/'candidate.npz';output=R/args.output;assert output.resolve().parent==R.resolve() and candidate.resolve().parent.parent==R.resolve();output.mkdir(exist_ok=False)
+ m=np.load(candidate);wood=triangles(m['vertices'],m['faces']);receipt=json.loads((P/'current-contact/receipt.json').read_text());receivers=[]
  for binding in receipt['bindings']:
   v,f=mesh(binding['asset']);v+=binding['translation'];receivers.append((binding['asset']['id'],triangles(v,f)))
  route=json.loads((P/'current-contact/root-route-visibility.json').read_text());rows=[]
@@ -38,7 +38,7 @@ def main():
    lo,hi=matches[0];top=row['receiver_top'][1];row.update(bottom_minus_receiver=float(lo-top),top_minus_receiver=float(hi-top),status='FLOATING' if lo>top+0.05 else ('BURIED' if hi<top-0.05 else 'INTERSECTS_RECEIVER_HEIGHT'))
   rows.append(row)
  counts={k:sum(x['status']==k for x in rows) for k in sorted({x['status'] for x in rows})}
- out={'model_sha256':receipt['model_sha256'],'candidate_sha256':sha(R/'tree08-root-ray-cpu-v4/candidate.npz'),'counts':counts,'samples':rows,'scope':'Vertical interval test at traced source-facing root samples. Height intersection is not full receiver-volume intersection or soil anatomy approval. No geometry changed.'}
- (O/'report.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(counts));print('floating examples',json.dumps([x for x in rows if x['status']=='FLOATING'][:3]))
+ out={'source_hit_reference_model_sha256':receipt['model_sha256'],'candidate_sha256':sha(candidate),'counts':counts,'samples':rows,'scope':'Vertical interval test at traced source-facing root samples. Height intersection is not full receiver-volume intersection or soil anatomy approval. No geometry changed.'}
+ (output/'report.json').write_text(json.dumps(out,indent=2)+'\n');print(json.dumps(counts));print('floating examples',json.dumps([x for x in rows if x['status']=='FLOATING'][:3]))
  
 if __name__=='__main__':main()
