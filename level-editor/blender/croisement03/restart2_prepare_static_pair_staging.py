@@ -7,7 +7,7 @@ R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refine
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def read(p):return json.loads(Path(p).read_text())
 def main():
- O.mkdir(exist_ok=False);archive=read(B/'approved-hub-v17-v23-plus-two-v1/verified-scope.json');source=B.parent/'baseline/covered.png';src=np.array(Image.open(source).convert('RGBA'));proposal=B/'trio-tree-integration-v1/static-leaf-source-proposal-v2';scope=read(proposal/'scope.json');pins={}
+ assert not (O/'source-guards-and-recipes.json').exists();O.mkdir(exist_ok=True);archive=read(B/'approved-hub-v17-v23-plus-two-v1/verified-scope.json');source=B.parent/'baseline/covered.png';src=np.array(Image.open(source).convert('RGBA'));proposal=B/'trio-tree-integration-v1/static-leaf-source-proposal-v2';scope=read(proposal/'scope.json');pins={}
  def pin(p,expected=None):
   p=Path(p);digest=sha(p)
   if expected:assert digest==expected,str(p)
@@ -16,7 +16,7 @@ def main():
  inventorypath=pin(B.parent/'baseline/masks/manifest.json');inventory=read(inventorypath);reserved=np.zeros(src.shape[:2],bool)
  for index in (35,76,107):
   row=next(r for r in inventory['masks'] if r['index']==index);patch=np.array(Image.open(pin(B.parent/'baseline/masks'/row['png'])))>0;x,y=row['box_top_left'];reserved[y:y+patch.shape[0],x:x+patch.shape[1]]|=patch
- prior13=pin(B/'tree13-canopy-context-v1/provisional75-excluding-known-bark.png');reserved|=np.array(Image.open(prior13))>0
+ prior13=pin(B/'tree13-canopy-context-v1/provisional75-excluding-known-bark.png');reserved[:57,1006:1132]|=np.array(Image.open(prior13))[:,:,3]>0
  rows=[]
  for n in (12,14):
   asset=f'croisement03-tree-{n}';member=archive['effective_assets'][asset];model=pin(member['model'],member['model_sha256']);folder=model.parent;receipt=read(pin(folder/'receipt.json',archive['verified_files'][str(folder/'receipt.json')]));audit=read(pin(folder/'native-audit.json',archive['verified_files'][str(folder/'native-audit.json')]));assert audit['model_sha256']==sha(model)
