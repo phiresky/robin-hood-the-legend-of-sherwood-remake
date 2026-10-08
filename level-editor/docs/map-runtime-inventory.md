@@ -35,15 +35,13 @@ uses the same integer collision contours as the native grid and rejects boundary
 contact. It currently supports the stock 6×3 half-diagonal. Graphs exceeding
 65,535 links use the [extended stream](navigation-graph-format.md): only link
 counts and indices widen to 32 bits. Both the actor-size prepass and graph loader
-read its versioned header. Runtime link identities already use 32 bits; search
-and movement algorithms are unchanged. Boundary checks avoid polygon Boolean
+read its versioned header. Runtime link identities already use 32 bits; this
+format extension does not change search or movement algorithms. Boundary checks avoid polygon Boolean
 operations, and outward/collinear floor corners no longer produce detour nodes.
 
 Current validation: the game builds; 214 selected editor compiler/export tests
 pass; native map integration reports **69 passed, 5 ignored**. The engine suite
-passed **4,335 tests, 0 failed, 33 ignored** after endpoint preparation. The
-subsequent graph-extension run reports **4,331 passed, 6 failed, 33 ignored**;
-the failures are concurrent frozen-encoder snapshot comparisons. Stair receivers,
+reports **4,339 passed, 0 failed, 34 ignored**. Stair receivers,
 overlapping/copied traversal and changing stair barriers now pass with prepared
 native endpoints. Earlier physical traversal results do not certify this
 architecture. Authorized direct-route probes now enable the native direct check;
@@ -74,12 +72,29 @@ descriptor is `work/map-compile/wychford-graph-final-iaAtSp` (**3,069 nodes,
 321,516 links, 10,359,643 bytes**). No graph omission warning remains.
 
 Native construction succeeds (86 areas, 16,442 sight obstacles, 31 doors, no jump
-pairs), but route sampling is not green. Sector 291/layer 15 returns a segment
-from (2433,296) to (2440,331) that touches collision, for the query
-(2520,251) to (2440,331). The returned route passes through (2505,261) and
-(2433,296). Check route smoothing and actual actor traversal before deciding
-whether this requires compiler data or a runtime correction. Do not count loading
-alone as navigation parity. Other large scenes remain open.
+pairs), and **98 ordinary sampled routes now pass**, with 0.14 seconds spent in
+pathfinding in the unoptimized harness. The report in the same directory records
+the scope as ordinary-sector, initial-state routing.
+
+A narrow-contour route in sector 291/layer 15 exposed a shortcut-clearance defect.
+Route smoothing tested slightly shortened endpoints, then emitted the unshortened
+segment. Floating-point rounding let a corner contact pass that test. The actor
+tick regression reproduced the collision; checking the exact emitted segment
+fixes it. This replaces the existing corridor query, without adding another query
+or a solver. Runtime endpoints depend on the actor's requested destination, so
+static graph preparation alone cannot validate this shortcut. The isolated
+regression and the Wychford query (2520,251) to (2440,331), in both directions,
+now pass; every actor step also checks collision, receiving identity and height.
+Broader gameplay, other large scenes and full sprite/rendered validation remain open.
+
+Fresh complete-character-animation checks also pass for climb barriers through
+initial/apply/reset states, independent copies, closure during a climb and 72
+mid-climb reopening cases. One separate entrance-barrier probe remains unresolved:
+`changing_climb_barrier_near_entrance_blocks_actor_approach` permits entry for
+wall type 3 while the barrier is active. That probe changes a serialized stair's
+lift type and obstacle polygon without recompiling its approaches or graph.
+Reproduce it from authored climb assets before deciding whether the compiler or
+runtime needs a correction; its historical pass is not current parity evidence.
 
 The pipeline-wide TypeScript check currently fails in `state-delivery.test.ts`
 (presentation-frame fields and assertion/narrowing types), outside these changes.
@@ -94,9 +109,13 @@ the distribution.
 
 | Mission | Prepared nodes | Frame 5 | Median tick | p95 | Maximum |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| H07_Not_MK | 891 | 3.107 ms | 2.750 ms | 3.426 ms | 4.772 ms |
-| H01_Lin_VL | 633 | 0.847 ms | 0.927 ms | 1.363 ms | 5.989 ms |
-| S01_Not_VL | 891 | 1.770 ms | 2.834 ms | 3.367 ms | 4.707 ms |
+| H07_Not_MK | 891 | 0.819 ms | 0.949 ms | 1.117 ms | 1.487 ms |
+| H01_Lin_VL | 633 | 0.226 ms | 0.183 ms | 0.284 ms | 0.526 ms |
+| S01_Not_VL | 891 | 0.602 ms | 0.670 ms | 0.810 ms | 0.891 ms |
+
+Latest evidence: `work/map-compile/navigation-performance-20261008.json` under
+the editor directory. These are working-tree measurements, including concurrent
+engine fixes; the improvement is not attributed solely to shortcut verification.
 
 The pre-removal reproduction stalled at Silver Arrow frame 5 until a 60-second
 external timeout. That reproduction used the unoptimized test profile, so these

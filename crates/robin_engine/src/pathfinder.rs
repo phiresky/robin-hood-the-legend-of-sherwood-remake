@@ -2098,18 +2098,14 @@ impl PathSearch<'_> {
             let middle = path[i + 1];
             let last = path[i + 2];
 
-            let small_vec = MapVec::new(0.5e-4 * (last.x - first.x), 0.5e-4 * (last.y - first.y));
-            let p1 = MapPoint::new(first.x + small_vec.x, first.y + small_vec.y);
-            let p2 = MapPoint::new(last.x - small_vec.x, last.y - small_vec.y);
-
-            let reachable = self.is_reachable_grid(grid, p1, p2);
+            // Test the segment that will actually be emitted. Shortening its
+            // endpoints can round a corner contact into a false clearance.
+            let reachable = self.is_reachable_grid(grid, first, last);
             tracing::trace!(
                 index = i,
                 ?first,
                 ?middle,
                 ?last,
-                probe_start = ?p1,
-                probe_end = ?p2,
                 reachable,
                 "smooth_path: tested waypoint shortcut"
             );
@@ -2370,6 +2366,52 @@ impl PathSearch<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn smoothing_preserves_clearance_at_a_nearly_tangent_corner() {
+        let mut grid = FastFindGrid::new();
+        grid.size_map(64, 64);
+        grid.allocate_layers(1);
+        grid.add_line(
+            crate::fast_find_grid::GridLine::new(
+                MapPoint::new(2439., 299.),
+                MapPoint::new(2461., 313.),
+                true,
+            ),
+            0,
+        );
+        let graph = PathGraph::new();
+        let partition = PathPartition::from_graph(&graph);
+        let mut scratch = PathSearchScratch::default();
+        scratch.current_half_diagonal = MoveBoxHalfDiagonal::new(6., 3.);
+        let search = PathSearch {
+            graph: &graph,
+            partition: &partition,
+            number_of_attempts: 1,
+            scratch: &mut scratch,
+        };
+        let mut path = vec![
+            MapPoint::new(2433., 296.),
+            MapPoint::new(2433., 314.),
+            MapPoint::new(2440., 331.),
+            MapPoint::new(2450., 331.),
+        ];
+        for segment in path.windows(2) {
+            assert!(search.is_reachable_grid(&grid, segment[0], segment[1]));
+        }
+        assert!(!search.is_reachable_grid(&grid, path[0], path[2]));
+        let delta = MapVec::new(
+            (path[2].x - path[0].x) * 0.5e-4,
+            (path[2].y - path[0].y) * 0.5e-4,
+        );
+        assert!(search.is_reachable_grid(&grid, path[0] + delta, path[2] - delta));
+        search.smooth_path(&grid, &mut path);
+        for segment in path.windows(2) {
+            assert!(search.is_reachable_grid(&grid, segment[0], segment[1]));
+        }
+        assert_eq!(path.first(), Some(&MapPoint::new(2433., 296.)));
+        assert_eq!(path.last(), Some(&MapPoint::new(2450., 331.)));
+    }
 
     #[test]
     fn extended_graph_loads_link_counts_and_indices_above_u16() {

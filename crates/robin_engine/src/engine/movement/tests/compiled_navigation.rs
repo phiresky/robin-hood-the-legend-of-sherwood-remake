@@ -234,7 +234,40 @@ fn tick_compiled_route(
     source: MapPoint,
     goal: MapPoint,
 ) -> Vec<MapPoint> {
-    let (mut engine, mut assets) = compiled_walkway(bytes);
+    tick_compiled_route_in(compiled_walkway(bytes), layer, sector, source, goal)
+}
+
+#[test]
+#[ignore = "requires ROBIN_WYCHFORD_DESCRIPTOR pointing to a current editor export"]
+fn exported_wychford_narrow_contour_actor_route() {
+    let bytes = std::fs::read(std::env::var("ROBIN_WYCHFORD_DESCRIPTOR").unwrap()).unwrap();
+    let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let corner = &document["walkable_polygon"][2];
+    let dimensions = (
+        corner[0].as_f64().unwrap() as f32 + 1.,
+        corner[1].as_f64().unwrap() as f32 + 1.,
+    );
+    for (source, goal) in [
+        (MapPoint::new(2520., 251.), MapPoint::new(2440., 331.)),
+        (MapPoint::new(2440., 331.), MapPoint::new(2520., 251.)),
+    ] {
+        tick_compiled_route_in(
+            compiled_walkway_with_dimensions(&bytes, dimensions),
+            15,
+            291,
+            source,
+            goal,
+        );
+    }
+}
+
+fn tick_compiled_route_in(
+    (mut engine, mut assets): (EngineInner, LevelAssets),
+    layer: u16,
+    sector: u16,
+    source: MapPoint,
+    goal: MapPoint,
+) -> Vec<MapPoint> {
     let grid = &engine.world.fast_grid;
     let half = grid.try_move_box_half_diagonal(0).unwrap();
     assert!(!grid.is_reachable_thick(source, goal, layer, half));
