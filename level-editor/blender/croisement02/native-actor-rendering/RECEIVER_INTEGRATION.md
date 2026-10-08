@@ -33,8 +33,16 @@ Changing the receiver placement invalidates the cached projection. Missing or
 ambiguous support retires the owned shadow and reports an error.
 
 The production loader has GPU evidence for four authored directions from front
-and reverse cameras, with current body and shadow frames checked together. The
-complete viewport/control proof remains pending. Existing imported character
-shadows still use the older support path; editable actors do not implicitly
-acquire receiver ownership. This scoped preview does not simulate a mission or
-establish character-body ground contact.
+and reverse cameras, with current body and shadow frames checked together. A
+normal-library-route editor proof also checks explicit receiver selection,
+position changes, camera reversal, clearing, and playback/view controls. Its
+copied runtime is bound to commit `5f394d36e`: 13 control assertions and four
+independent full-frame pixel comparisons pass. The character dropdown retains
+its stable identity when edits replace an actor record. Full-scene foliage
+occludes the reverse-view character, so the separate unobstructed loader captures
+remain the physical-shadow inspection evidence. Root review is still required.
+
+Existing imported character shadows still use the older support path; editable
+actors do not implicitly acquire receiver ownership. This scoped preview does
+not simulate a mission or establish character-body ground contact. Later changes
+to the live runtime are not implicitly accepted by a copied-runtime proof.
