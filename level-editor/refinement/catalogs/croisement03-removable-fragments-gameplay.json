@@ -1,0 +1,152 @@
+[
+    {
+        "asset": "croisement03-group-098",
+        "descriptorSha256": "929be8428009cf13f464b9fb915f2f15ec0ed427fbd415418d85f6d3db05dda3",
+        "modelSha256": "a89291f51005366924a463b8e80cf1a353ebffa7dee851c7b6147ccc2959f349",
+        "gameplay": {
+            "version": 1,
+            "collision": "parts",
+            "surfaces": [],
+            "doors": [],
+            "movementBlockers": [],
+            "movementTransitions": [
+                {
+                    "id": "remove-fragment",
+                    "appearances": [
+                        "remove-fragment"
+                    ],
+                    "node": "building-098",
+                    "active": true,
+                    "definitive": true,
+                    "waypoint": [
+                        0.4945149999999927,
+                        -0.2830506346016932,
+                        0
+                    ],
+                    "applyPolygon": [],
+                    "noApplyPolygon": [],
+                    "applied": [],
+                    "initial": [
+                        {
+                            "id": "initial-footprint",
+                            "node": "building-098",
+                            "polygon": [
+                                [
+                                    23.943849999999998,
+                                    -21.54400813460171
+                                ],
+                                [
+                                    43.069759999999974,
+                                    -6.331758134601671
+                                ],
+                                [
+                                    -22.954830000000015,
+                                    20.977911865398312
+                                ],
+                                [
+                                    -42.080719999999985,
+                                    5.765651865398297
+                                ]
+                            ],
+                            "height": 0,
+                            "preserveMovementPrecision": true
+                        }
+                    ],
+                    "appliedSight": [],
+                    "initialSight": [
+                        "building-098"
+                    ]
+                }
+            ],
+            "draft": {
+                "issues": [
+                    "Independent removable-fragment draft; full gameplay parity is not certified.",
+                    "Ground blocking is derived from this fragment's solid footprint; shared assembly exclusion and remote trigger placement are deliberately not inherited.",
+                    "The control starts unapplied with the fragment present. Apply it explicitly to remove this fragment; rendered state appearance and mesh contact still require review."
+                ]
+            }
+        },
+        "partAppearances": {
+            "building-098": {
+                "hide": [
+                    "remove-fragment"
+                ]
+            }
+        }
+    },
+    {
+        "asset": "croisement03-group-099",
+        "descriptorSha256": "58feb1cb783c42ce0064ceea4e6c0e3487e90e2c7e792d7c8744b17de54378d5",
+        "modelSha256": "41cec689b946a1c5dc99f3819d8aad9d56d441d6863e84250d687123860387a7",
+        "gameplay": {
+            "version": 1,
+            "collision": "parts",
+            "surfaces": [],
+            "doors": [],
+            "movementBlockers": [],
+            "movementTransitions": [
+                {
+                    "id": "remove-fragment",
+                    "appearances": [
+                        "remove-fragment"
+                    ],
+                    "node": "building-099",
+                    "active": true,
+                    "definitive": true,
+                    "waypoint": [
+                        -0.28052250000000356,
+                        -0.08146222582556106,
+                        0
+                    ],
+                    "applyPolygon": [],
+                    "noApplyPolygon": [],
+                    "applied": [],
+                    "initial": [
+                        {
+                            "id": "initial-footprint",
+                            "node": "building-099",
+                            "polygon": [
+                                [
+                                    -25.08069999999998,
+                                    20.105092774174466
+                                ],
+                                [
+                                    -41.504939999999976,
+                                    7.041672774174458
+                                ],
+                                [
+                                    24.519649999999956,
+                                    -20.268017225825588
+                                ],
+                                [
+                                    40.943899999999985,
+                                    -7.20459722582558
+                                ]
+                            ],
+                            "height": 0,
+                            "preserveMovementPrecision": true
+                        }
+                    ],
+                    "appliedSight": [],
+                    "initialSight": [
+                        "building-099"
+                    ]
+                }
+            ],
+            "draft": {
+                "issues": [
+                    "Independent removable-fragment draft; full gameplay parity is not certified.",
+                    "Ground blocking is derived from this fragment's solid footprint; shared assembly exclusion and remote trigger placement are deliberately not inherited.",
+                    "The control starts unapplied with the fragment present. Apply it explicitly to remove this fragment; rendered state appearance and mesh contact still require review."
+                ]
+            }
+        },
+        "partAppearances": {
+            "building-099": {
+                "hide": [
+                    "remove-fragment"
+                ]
+            }
+        }
+    }
+]

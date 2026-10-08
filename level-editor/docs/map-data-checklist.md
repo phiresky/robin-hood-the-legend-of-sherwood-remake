@@ -403,12 +403,12 @@ Fresh published York and Sherwood exports (`saved-map-exports-vDlOcb`) pass all
 the runtime corrections, including the final contact-separation geometry.
 Their rendered integration remains unverified.
 
-The current library-wide audit (`gameplay-coverage-Qd1DCH`) finds 23 of 1,279
+The current library-wide audit (`gameplay-coverage-OhuGjZ`) finds 21 of 1,279
 indexed assets without gameplay definitions. None is referenced by placements,
 scene assets or wall-spline sources/corner assets in the ten saved scenes. The
 audit now includes spline references: Wychford uses 84 distinct assets rather
 than the 82 counted from placements and scene assets alone.
-Nineteen missing definitions contain parts explicitly owned by initial/applied
+Seventeen missing definitions contain parts explicitly owned by initial/applied
 sight states in existing assemblies. The audit now records those owner and
 transition memberships per part. They cannot safely become static definitions
 by copying all visible volumes: some contain both state endpoints. The remaining
@@ -421,6 +421,11 @@ pass native construction and 48 apply/reset checks with 144 thin-route probes.
 All three published assets pass browser overlap export and native ZIP loading;
 mesh contact and complete actor traversal remain unverified. Fragment 102 remains
 separate because its assembly also owns a persistent initial blocker.
+Croisement03 fragments 098/099 have independent removable-solid drafts: each starts
+present, removes only its own footprint/sight/appearance when applied, and restores
+on reset. Eight native constructions, 32 apply/reset checks and 96 thin-route probes
+pass. Both published assets pass overlapping-copy browser exports and native ZIP
+loading; these remain drafts pending full actor and mesh-contact review.
 Croisement01 fragments 083 and 084 now have independent activated-solid drafts.
 Each uses its own collision footprint and local control, preserving the initial
 inactive state without copying the assembly's shared exclusion or remote waypoint.

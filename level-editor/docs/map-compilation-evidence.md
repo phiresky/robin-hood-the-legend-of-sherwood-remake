@@ -6,6 +6,29 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Independent activated solid fragments (2026-10-08)
 
+Removable Croisement03 fragments 098/099 are authored by
+`refinement/stage-croisement03-removable-fragments.mjs`, pinned in
+`refinement/catalogs/croisement03-removable-fragments-gameplay.json`. Each starts
+with its local footprint and sight volume enabled, then removes them with its
+descriptor-owned hide binding. The assembly's larger applied contour extends
+beyond these parts and is not inherited. Stage
+`croisement03-removable-fragments-e49PrS` passes eight native constructions,
+32 apply/reset checks and 96 thin-route probes across copied placements at four
+rotations and two elevations. Routes are blocked initially, open after removal,
+and blocked again after reset. This does not simulate full actor walking.
+
+Publication backup `croisement03-removable-publication-e49PrS` contains both
+descriptor changes; no model or saved-scene changes are needed. Published browser
+archives `croisement03-fragment-098.zip` and `croisement03-fragment-099.zip` pass
+overlapping-copy insertion, independent visibility, save/reopen, color/depth
+bake and native ZIP construction without base data. Both carry two controls in
+one region with four states. Audit `gameplay-coverage-OhuGjZ` reports 21 missing
+definitions, 17 with known sight-state dependencies, and zero missing placed
+definitions in the ten saved scenes. Full mesh-contact and actor review remain open.
+Both archives also pass OpenGL GPU color/depth probes for each control through
+all four combinations, transition suppression and reset. Patch flags are assigned
+directly, so this checks rendering independently of actor-triggered activation.
+
 Croisement03 fragments 103/104/105 now have independent drafts authored by
 `refinement/stage-croisement03-activated-fragments.mjs` and pinned in
 `refinement/catalogs/croisement03-activated-fragments-gameplay.json`. Each has

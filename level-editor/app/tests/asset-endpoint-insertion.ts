@@ -31,6 +31,7 @@ const result = document.querySelector("#result")!;
 try {
   const parameters = new URLSearchParams(location.search);
   const fragments = parameters.has("fragments");
+  const removing = parameters.has("remove");
   const onlyAsset = parameters.get("asset");
   const base = parameters.get("library") ?? "/library/";
   const directory = (prefix: string): FileSystemDirectoryHandle =>
@@ -150,7 +151,9 @@ try {
       const controller = descriptors
         .get(id)!
         .gameplay!.movementTransitions!.find((transition) =>
-          transition.appearances?.includes(fragments ? "activate-fragment" : "state"),
+          transition.appearances?.includes(
+            fragments ? (removing ? "remove-fragment" : "activate-fragment") : "state",
+          ),
         )!;
       display.set(`${current.groups[0]!.id}/${id}/${controller.id}`, true);
       display.apply(root);
@@ -172,8 +175,8 @@ try {
             display.set(`${current.groups[1]!.id}/${id}/${controller.id}`, second);
             display.apply(root);
             check(
-              root.children[0]!.children[0]!.visible === first &&
-                root.children[1]!.children[0]!.visible === second,
+              root.children[0]!.children[0]!.visible === (first !== removing) &&
+                root.children[1]!.children[0]!.visible === (second !== removing),
               "Fragment copies must support all independent control combinations",
             );
           }
