@@ -249,3 +249,24 @@ export function wallDisconnectedBoundaryFixture() {
   mask.projectileBoundary = [local(-30, -15), local(80, -15), local(80, -25), local(20, -25)];
   return fixture;
 }
+
+export function wallClosedBoundaryFixture() {
+  const fixture = wallMaterialFixture();
+  const { document, asset } = fixture;
+  const mask = asset.gameplay!.masks![0]!;
+  const contour = [
+    [-40, -20],
+    [80, -20],
+    [80, 20],
+    [-40, 20],
+    [-40, 10],
+    [70, 10],
+    [70, -10],
+    [-40, -10],
+  ];
+  mask.characterBoundaryClosed = true;
+  mask.projectileBoundaryClosed = true;
+  mask.characterBoundary = contour.map(([x, y]) => sceneToGame(document.camera, [x!, y!, 0]));
+  mask.projectileBoundary = structuredClone(mask.characterBoundary);
+  return fixture;
+}

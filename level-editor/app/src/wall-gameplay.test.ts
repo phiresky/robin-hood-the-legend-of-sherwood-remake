@@ -6,6 +6,7 @@ import {
   wallMaterialFixture,
   wallDisconnectedMaskFixture,
   wallDisconnectedBoundaryFixture,
+  wallClosedBoundaryFixture,
   wallDisconnectedLightFixture,
   wallAutomaticLightFixture,
 } from "../../shared/test-fixtures/wall-spline.ts";
@@ -75,6 +76,35 @@ test("split wall mask applications match the native query fixture", async () => 
     await readFile(
       new URL(
         "../../../crates/robin_engine/tests/fixtures/asset-spline-split-masks.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const compiled = compileMap(f.document, f.bounds, f.assets);
+  assert.deepEqual(compiled.descriptor.asset_geometry!.masks, expected);
+  const reopened = parseStoredMap(compiled.editorDocument, f.assets);
+  assert.deepEqual(compileMap(reopened, f.bounds, f.assets).descriptor, compiled.descriptor);
+  const base = wallMaterialFixture();
+  const baseline = compileMap(base.document, base.bounds, base.assets).descriptor;
+  assert.deepEqual(
+    {
+      ...compiled.descriptor,
+      asset_geometry: {
+        ...compiled.descriptor.asset_geometry,
+        masks: baseline.asset_geometry!.masks,
+      },
+    },
+    baseline,
+  );
+});
+
+test("closed wall mask islands survive native export and editor reopening", async () => {
+  const f = wallClosedBoundaryFixture();
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-spline-closed-masks.json",
         import.meta.url,
       ),
       "utf8",

@@ -6,12 +6,30 @@ import {
   wallDisconnectedMaskFixture,
   wallDisconnectedLightFixture,
   wallDisconnectedBoundaryFixture,
+  wallClosedBoundaryFixture,
 } from "../test-fixtures/wall-spline.ts";
 import { wallSplineGameplay } from "./wall-spline-gameplay.ts";
 import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
 import { validateAssetGameplay } from "./asset-gameplay.ts";
 import { sceneToGame } from "./geometry.ts";
 import { splineCurve } from "./spline-sampling.ts";
+
+test("closed mask boundaries split at cropped necks without reconnecting islands", () => {
+  const { document, assets, bounds } = wallClosedBoundaryFixture();
+  const generated = wallSplineGameplay(document, assets, false);
+  assert.deepEqual(generated.warnings, []);
+  const masks = generated.descriptors[0]!.gameplay!.masks!;
+  assert.equal(masks.length, 6);
+  for (const output of masks) {
+    assert.equal(output.characterBoundaryClosed, true);
+    assert.equal(output.projectileBoundaryClosed, true);
+    const ys = output.characterBoundary!.map((p) => p[1]);
+    assert.ok(Math.max(...ys) - Math.min(...ys) < 20, "Each island retains only its own boundary");
+  }
+  assert.equal(masks.filter((m) => m.view).length, 3);
+  assert.equal(masks.filter((m) => m.obstacles.length).length, 3);
+  assert.equal(compileAssetGameplay(document, assets, bounds).masks!.length, 6);
+});
 
 test("cropped open mask boundaries retain separate character and projectile applications", () => {
   const { document, asset, assets, bounds } = wallDisconnectedBoundaryFixture();
@@ -43,6 +61,55 @@ test("cropped open mask boundaries retain separate character and projectile appl
     [23, 3, 23, 3, 23, 3],
   );
   assert.deepEqual(asset, before);
+});
+
+test("closed mask islands match independently authored contours after bending and moving", () => {
+  for (const angle of [0, 37, 180]) {
+    const { document, asset, assets, bounds } = wallClosedBoundaryFixture();
+    asset.gameplay!.materials = [];
+    asset.gameplay!.lights = [];
+    asset.gameplay!.sounds = [];
+    const radians = (angle * Math.PI) / 180;
+    const path = document.splines![0]!;
+    path.curved = true;
+    path.points = [
+      [-120, 0, 20],
+      [0, 25, 30],
+      [120, 0, 40],
+    ].map(([x, y, z]) => [
+      250 + x! * Math.cos(radians) - y! * Math.sin(radians),
+      250 + x! * Math.sin(radians) + y! * Math.cos(radians),
+      z!,
+    ]);
+    path.repeatLength = splineCurve(path, document.camera).getLength() / 3;
+    const original = asset.gameplay!.masks![0]!;
+    original.receiverSegment = [
+      sceneToGame(document.camera, [-40, 0, -100]),
+      sceneToGame(document.camera, [-40, 0, 100]),
+    ];
+    const split = compileAssetGameplay(document, assets, bounds).masks!;
+    assert.ok(split.length >= 4);
+    const second = structuredClone(original);
+    second.id = "second-island";
+    second.view = false;
+    second.obstacles = [];
+    for (const [mask, minY] of [
+      [original, -20],
+      [second, 10],
+    ] as const) {
+      mask.characterBoundary = [
+        [-40, minY],
+        [80, minY],
+        [80, minY + 10],
+        [-40, minY + 10],
+      ].map(([x, y]) => sceneToGame(document.camera, [x!, y!, 0]));
+      mask.projectileBoundary = structuredClone(mask.characterBoundary);
+    }
+    asset.gameplay!.masks!.push(second);
+    const separate = compileAssetGameplay(document, assets, bounds).masks!;
+    const ordered = (masks: typeof split) => masks.map((m) => JSON.stringify(m)).sort();
+    assert.deepEqual(ordered(split), ordered(separate));
+  }
 });
 
 test("split mask applications do not inherit another fragment's boundary or closure flag", () => {

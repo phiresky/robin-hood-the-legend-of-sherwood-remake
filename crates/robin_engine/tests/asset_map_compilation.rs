@@ -170,6 +170,38 @@ fn descriptor_with_compiled_masks() -> serde_json::Value {
 }
 
 #[test]
+fn spline_closed_mask_islands_keep_separate_native_application_rules() {
+    use robin_engine::coordinates::MapPoint;
+    let mut descriptor: serde_json::Value =
+        serde_json::from_slice(include_bytes!("fixtures/asset-spline-material.level.json"))
+            .unwrap();
+    descriptor["asset_geometry"]["masks"] =
+        serde_json::from_slice(include_bytes!("fixtures/asset-spline-closed-masks.json")).unwrap();
+    let mut assets = LevelAssets::new();
+    let engine = construct(&serde_json::to_vec(&descriptor).unwrap(), &mut assets);
+    let masks = &engine.fast_grid().level.masks;
+    assert_eq!(masks.len(), 6);
+    for (repeat, pair) in masks.chunks_exact(2).enumerate() {
+        assert_eq!(pair[0].bitmap, pair[1].bitmap);
+        assert_eq!(pair[0].mask_type, 23);
+        assert_eq!(pair[1].mask_type, 3);
+        assert_eq!(pair[0].obstacle_indices.len(), 2);
+        assert!(pair[1].obstacle_indices.is_empty());
+        for x in 95..=205 {
+            for y in 185..=216 {
+                let point = MapPoint::new(x as f32 + 100. * repeat as f32, y as f32);
+                for (fragment, mask) in pair.iter().enumerate() {
+                    let expected =
+                        (110..=200).contains(&x) && y < if fragment == 0 { 211 } else { 194 };
+                    assert_eq!(mask.is_applied_to_point_character(point), expected);
+                    assert_eq!(mask.is_applied_to_point_projectile(point), expected);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn editor_encoded_mask_bitmaps_decode_to_the_complete_baked_silhouette() {
     #[derive(serde::Serialize, serde::Deserialize)]
     struct Case {

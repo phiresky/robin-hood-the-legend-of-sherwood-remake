@@ -18,6 +18,7 @@ import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 import { matchesWallSource, wallSectionAt } from "./wall-section-profile.ts";
 import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 import { clipSplinePolyline } from "./clip-spline-polyline.ts";
+import { clipSplineBoundary } from "./clip-spline-boundary.ts";
 import { splineLightReceivers } from "./spline-light-receivers.ts";
 import type { MaskTriangle } from "./compile-mask-geometry.ts";
 import type { MaskTriangleAlpha } from "./mask-alpha-sampler.ts";
@@ -424,13 +425,12 @@ export function wallSplineGameplay(
           let boundaryMissing = false;
           const boundary = (points: Vec3[] | undefined, closed = true): Vec3[][] => {
             if (!points) return [];
-            let local = points.map((p) => source(mask.node, p));
-            if (run && closed)
-              local = clip(clip(local, axis, start, true), axis, limit, false).map((p): Vec3 => [
-                p[0]!,
-                p[1]!,
-                p[2]!,
-              ]);
+            const local = points.map((p) => source(mask.node, p));
+            if (run && closed) {
+              const fragments = clipSplineBoundary(local, axis, start, limit, stations);
+              if (!fragments.length) boundaryMissing = true;
+              return fragments.map((fragment) => fragment.map((p) => warp(p, repeat)));
+            }
             if (local.length < (closed ? 3 : 2)) {
               boundaryMissing = true;
               return [];

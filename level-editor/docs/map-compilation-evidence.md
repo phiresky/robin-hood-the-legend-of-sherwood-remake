@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Closed spline mask contours (2026-10-08)
+
+Closed concave application contours previously used single-ring strip clipping,
+which could connect surviving islands along the trimmed edge. The compiler now
+clips in a spatial projection that includes the crop axis, retains separate
+closed components, restores the third coordinate from source contour edges and
+adds the spline's bend stations before deformation. Uncropped boundaries retain
+their original points. Each island gets an independent character/projectile
+application; coverage is shared and view/obstacle rules remain single per repeat.
+No engine behavior changes are required.
+
+The synthetic closed-neck fixture produces six masks across three repeats.
+Its compiled masks exactly match `asset-spline-closed-masks.json`, and exporting
+the embedded editor document, reopening it and recompiling preserves the entire
+descriptor. Independent-island comparisons pass at 0, 37 and 180 degrees on
+bent, rising paths. Helper tests cover both crop axes, reversed winding, sloped
+and vertical contours, complete removal and a boundary-only touch.
+All 32 focused editor/compiler tests pass. The native fixture checks both mask
+application rules for 21,312 mask/point combinations, including island and repeat
+edges, and verifies shared bitmap coverage plus independent obstacle ownership.
+All 68 enabled native map-compilation tests pass; five external-data audits are
+ignored by that suite.
+
+App typecheck, production build, changed-file lint and formatting pass. Full
+lint reports five findings in unchanged state-preview/catalog files; it does
+not pass. Rendered character occlusion and full browser ZIP baking remain
+separate unfinished checks.
+
 ## Exported jump diagnostics (2026-10-08)
 
 Contact review recipe `refinement/stage-watermill-jump-contact.mjs` varies the
