@@ -42,7 +42,7 @@ operations, and outward/collinear floor corners no longer produce detour nodes.
 Current validation: the game builds; 248 selected editor compiler/export/sound tests
 pass; native map integration reports **71 passed, 5 ignored**, and level-data
 tests report **88 passed, 8 ignored**. The engine suite
-reports **4,346 passed, 0 failed, 37 ignored**. Stair receivers,
+reports **4,347 passed, 0 failed, 39 ignored**. Stair receivers,
 overlapping/copied traversal and changing stair barriers now pass with prepared
 native endpoints. Earlier physical traversal results do not certify this
 architecture. Authorized direct-route probes now enable the native direct check;
@@ -57,7 +57,7 @@ the audit measures each step's turning loss and checks command completion. No
 runtime movement change or additional solver was introduced for it.
 An additional 120 isolated sword-jump cases pass with the same prepared data:
 sword animation, exact landing, receiver identity and retained combat state are
-checked. Complete combat interactions and assisted jumps remain unverified.
+checked. Complete combat interactions remain unverified.
 The same exports pass 120 interior-click routes through normal group-movement
 dispatch, with exact arrival and no supplied jump/gate/sector override. A regular
 fixture test verifies overlay selection and missing-jump-skill rejection. These
@@ -66,6 +66,16 @@ Ledge generation now shares the prepared graph's 6×3 half-size footprint instea
 of reserving 6×4. The one-unit rounding margin and obstacle checks remain. The
 [refreshed batch](map-compilation-evidence.md#shared-native-footprint-for-jump-ledges-2026-10-08)
 passes all four audits above; graph bytes and runtime algorithms are unchanged.
+
+The [assisted roof audit](map-compilation-evidence.md#assisted-roof-jumps-and-carrier-recovery-2026-10-08)
+adds 120 shoulder jumps and 120 player-click routes with rider/helper animations.
+It found a missing carrier recovery event: the rider landed, but its helper stayed
+in the carrying posture. The recovery animation now restores upright/waiting at
+TERMINATED, registers Wait, and clears the help action while preserving any newer
+selected action. This adds an animation-completion state/action handoff only;
+there is no geometry search or static preparation in movement ticks. Both carry
+links, final receivers and helper recovery are checked. Helper-required vertical
+jumps and rendered contact remain open. Stock tick timings below predate this fix.
 
 The [sound shape extension](sound-source-format.md) carries export-prepared
 fragment indices for cropped emitters. Existing acoustic distance loops skip

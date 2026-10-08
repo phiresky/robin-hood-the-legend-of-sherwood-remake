@@ -1207,6 +1207,13 @@ fn apply_active_animation_start_state_side_effect(
             }
             return;
         }
+        (
+            OrderType::TransitionWaitingCarryingOnShouldersWaitingUpright,
+            MotionState::Terminated,
+        ) => {
+            set_actor_states(engine, entity_id, Posture::Upright, ActionState::Waiting);
+            return;
+        }
         (OrderType::TransitionWaitingUprightSimulatingBeggar, MotionState::Done) => {
             set_actor_states(
                 engine,

@@ -576,9 +576,16 @@ pub(super) fn complete_climb_sprite() -> crate::sprite::Sprite {
             )
             .try_init();
     }
+    let path = std::env::var("ROBIN_CLIMB_RHS").expect("path to a complete RobinTown RHS sprite");
+    complete_character_sprite(std::path::Path::new(&path), "Robin des bois")
+}
+
+pub(super) fn complete_character_sprite(
+    path: &std::path::Path,
+    name: &str,
+) -> crate::sprite::Sprite {
     use crate::sprite_script::{FrameKind, MissionResourceEnvironment, SpriteScriptor};
     use robin_util::asset_fs::{AssetVfs, Bundle};
-    let path = std::env::var("ROBIN_CLIMB_RHS").expect("path to a complete RobinTown RHS sprite");
     let bytes = std::fs::read(path).unwrap();
     let signature = u32::from_le_bytes(bytes[..4].try_into().unwrap());
     let vfs = Arc::new(AssetVfs::new());
@@ -597,7 +604,7 @@ pub(super) fn complete_climb_sprite() -> crate::sprite::Sprite {
             FrameKind::Character,
             "Data/Characters",
             "audit",
-            "Robin des bois",
+            name,
             signature,
             None,
         )

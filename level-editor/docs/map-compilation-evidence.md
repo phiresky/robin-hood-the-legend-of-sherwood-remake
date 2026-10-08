@@ -4,6 +4,40 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Assisted roof jumps and carrier recovery (2026-10-08)
+
+The prepared roof batch `work/map-compile/prepared-roof-placements-oshhrm` now
+passes **120 isolated shoulder jumps and 120 shoulder-jump player-click routes**.
+These use the complete RobinTown and LittleJohn animation profiles. Both actors
+start linked at the source receiver. The click path selects the exported jump
+overlay and uses normal group movement, which routes the carrier to the source
+edge and retains the rider as owner of the jump and continuation.
+
+Both audits originally landed the rider but left the empty helper permanently
+in the carrying posture. The carrier recovery animation had no completion
+state handler. On its TERMINATED edge, the runtime now restores upright/waiting,
+registers the helper's wait, and clears HelpToClimb through the action-selection
+handoff. A newer selected action is preserved. This is a missing animation event;
+there is no added geometry computation, path preparation or navigation solver.
+The direct sequence and player-click audits require the shoulder-launch animation,
+release of both carry links, rider arrival and a valid receiver, and completed
+helper recovery on the source sector/layer/receiver. The isolated landings are
+exact; the click routes finish within 0.0001 unit of the requested point.
+
+The full engine suite passes **4,347 tests, 0 failed, 39 ignored**. An always-on
+native regression runs the complete recovery sequence with a finite animation:
+DONE retains the carrying posture/action; TERMINATED restores upright/waiting
+and installs Wait. Four selected/unselected action cases verify that only a newer
+selected action survives the help-action deselection.
+
+Reproduce with the existing `exported_jumps` ignored-test filter and set
+`ROBIN_CARRIER_RHS` to the installed complete `LittleJohn.rhs`, in addition to
+`ROBIN_CLIMB_RHS` and `ROBIN_ASSET_MAP_DIAGNOSTICS` described below. Reports are
+`actor-jump-shoulders-report.json` and `actor-jump-shoulders-click-report.json`.
+The four earlier upright/sword/click audits still pass (480 cases). This adds
+coverage for assisted long roof jumps; helper-required vertical jumps, multi-PC
+formations and rendered contact remain open.
+
 ## Shared native footprint for jump ledges (2026-10-08)
 
 Automatic ledge generation reserved a 6×4 half-size actor while the prepared

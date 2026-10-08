@@ -440,6 +440,30 @@ impl EngineInner {
         self.set_pc_action_from_message(tcx, 0, pc_id, crate::profiles::Action::HelpToClimb);
     }
 
+    pub(in crate::engine) fn execute_pc_shoulder_recovery_wait(
+        &mut self,
+        tcx: TickCtx<'_>,
+        pc_id: EntityId,
+    ) {
+        // The empty carrier recovers at animation termination, then registers
+        // its wait before deselecting HelpToClimb. Preserve a newer selection.
+        self.actor_wait(tcx, pc_id);
+        if self.players.seats[0].selection.contains(&pc_id) {
+            if self.players.seats[0].selected_action == crate::profiles::Action::HelpToClimb {
+                self.players.seats[0].selected_action = crate::profiles::Action::NoAction;
+                self.unselect_action(tcx, pc_id);
+            }
+        } else {
+            self.world
+                .entities
+                .get_mut(pc_id)
+                .expect("shoulder recovery owner disappeared")
+                .pc_data_mut()
+                .expect("shoulder recovery owner is not a PC")
+                .current_action = crate::profiles::Action::NoAction;
+        }
+    }
+
     pub(in crate::engine) fn execute_hidden_titbit_removals(&mut self, effect: EntityId) {
         let entity_id = effect;
         self.feedback.titbit_manager.remove_titbit(

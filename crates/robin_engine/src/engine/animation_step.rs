@@ -1587,6 +1587,12 @@ impl EngineInner {
                 anim_type,
                 motion_state,
             );
+            if owner_is_pc
+                && anim_type == OrderType::TransitionWaitingCarryingOnShouldersWaitingUpright
+                && motion_state == MotionState::Terminated
+            {
+                self.execute_pc_shoulder_recovery_wait(tcx, entity_id);
+            }
             let equip_bow = forwards_pc_bow_action_on_start(
                 self.expect_entity(entity_id, "animation owner"),
                 anim_type,

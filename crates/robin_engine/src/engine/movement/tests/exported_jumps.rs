@@ -7,6 +7,13 @@ enum JumpDispatch {
     Click,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JumpStance {
+    Upright,
+    Sword,
+    Shoulders,
+}
+
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct JumpArrival {
     final_distance: f32,
@@ -142,7 +149,115 @@ fn short_startup_finishes_its_animation_with_only_the_turning_distance_loss() {
 #[test]
 #[ignore = "requires exported jump pairs and ROBIN_CLIMB_RHS"]
 fn exported_jumps_complete_sprite_dispatch_and_land_on_receivers() {
-    audit_jump_dispatch(JumpDispatch::Isolated, false);
+    audit_jump_dispatch(JumpDispatch::Isolated, JumpStance::Upright);
+}
+
+#[test]
+fn empty_shoulder_carrier_recovers_only_at_termination_and_preserves_newer_actions() {
+    use crate::profiles::Action;
+    let recovery = OrderType::TransitionWaitingCarryingOnShouldersWaitingUpright;
+    for (selected, action) in [
+        (false, Action::HelpToClimb),
+        (false, Action::Net),
+        (true, Action::HelpToClimb),
+        (true, Action::Net),
+    ] {
+        let (mut engine, mut assets) = compiled_walkway(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/asset-navigation-copies.level.json"
+        )));
+        let sector = crate::position_interface::SectorHandle::from_number(
+            engine.world.fast_grid.level.sectors[0].sector_number,
+        )
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap());
+        let owner = walking_pc(
+            &mut engine,
+            &mut assets,
+            MapPoint::new(400., 300.),
+            0,
+            sector,
+        );
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
+        let mut scripts = vec![];
+        for animation in [
+            recovery,
+            OrderType::WaitingUpright,
+            OrderType::WaitingCarryingOnShoulders,
+        ] {
+            conversion[animation as usize] = scripts.len() as u16;
+            scripts.extend(vec![
+                crate::sprite_script::SpriteScript {
+                    action_id: animation as u16,
+                    action_done: if animation == recovery { 1 } else { 2 },
+                    average_speed: 0.,
+                    hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+                    sum_distance: 0,
+                    frame_ids: vec![1, 2, 3],
+                    delays: vec![0; 3],
+                    distances: vec![0; 3],
+                    offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+                    sound_ids: vec![0; 3],
+                };
+                16
+            ]);
+        }
+        let element = engine.ent_mut(owner).element_data_mut();
+        let position = element.sprite.position_iface.clone();
+        element.sprite = crate::sprite::Sprite::new(Arc::new(scripts), Arc::new(conversion));
+        element.sprite.position_iface = position;
+        engine.set_entity_posture(owner, Posture::CarryingOnShoulders);
+        engine.ent_mut(owner).actor_data_mut().unwrap().action_state = ActionState::Waiting;
+        engine.pc_mut(owner).current_action = action;
+        if selected {
+            engine.players.seats[0].selection.push(owner);
+            engine.players.seats[0].selected_action = action;
+        }
+        let sim = crate::sim_rng::test_context();
+        engine.launch_element(
+            TickCtx::new(&sim, &assets),
+            SequenceElement::new(1, Command::LeaveHelpingClimb, Some(owner)),
+        );
+        let mut saw_done = false;
+        for _ in 0..12 {
+            engine.control.frame_counter += 1;
+            engine.t_hourglass_phase_sequences(&assets);
+            engine.t_tick_actor_owner_envelopes(&assets);
+            let entity = engine.ent(owner);
+            let element = entity.element_data();
+            if element.sprite.last_action == recovery
+                && element.sprite.last_motion_state == Some(crate::sprite::MotionState::Done)
+            {
+                saw_done = true;
+                assert_eq!(element.posture(), Posture::CarryingOnShoulders);
+                assert_eq!(entity.pc_data().unwrap().current_action, action);
+            }
+            if element.posture() == Posture::Upright {
+                break;
+            }
+        }
+        assert!(saw_done, "the animation must reach DONE before TERMINATED");
+        assert_eq!(engine.ent(owner).element_data().posture(), Posture::Upright);
+        assert_eq!(
+            engine.ent(owner).actor_data().unwrap().action_state,
+            ActionState::Waiting
+        );
+        let expected = if selected && action == Action::Net {
+            Action::Net
+        } else {
+            Action::NoAction
+        };
+        assert_eq!(engine.pc(owner).current_action, expected);
+        if selected {
+            assert_eq!(engine.players.seats[0].selected_action, expected);
+        }
+        engine.t_hourglass_phase_sequences(&assets);
+        engine.t_tick_actor_owner_envelopes(&assets);
+        let (sequence, index) = engine.entities().current_element_for_actor(owner).unwrap();
+        assert_eq!(
+            engine.seq().get_element(sequence, index).unwrap().command,
+            Command::Wait
+        );
+    }
 }
 
 #[test]
@@ -222,23 +337,40 @@ fn resolve_jump_click(
 #[test]
 #[ignore = "requires exported jump pairs and ROBIN_CLIMB_RHS"]
 fn exported_jumps_walk_to_launch_and_continue_after_landing() {
-    audit_jump_dispatch(JumpDispatch::Approach, false);
+    audit_jump_dispatch(JumpDispatch::Approach, JumpStance::Upright);
 }
 
 #[test]
 #[ignore = "requires exported long-jump pairs and ROBIN_CLIMB_RHS"]
 fn exported_jumps_complete_sword_dispatch_and_preserve_combat() {
-    audit_jump_dispatch(JumpDispatch::Isolated, true);
+    audit_jump_dispatch(JumpDispatch::Isolated, JumpStance::Sword);
 }
 
 #[test]
 #[ignore = "requires exported jump pairs and ROBIN_CLIMB_RHS"]
 fn exported_jumps_resolve_player_clicks_and_complete_the_route() {
-    audit_jump_dispatch(JumpDispatch::Click, false);
+    audit_jump_dispatch(JumpDispatch::Click, JumpStance::Upright);
 }
 
-fn audit_jump_dispatch(mode: JumpDispatch, combat: bool) {
+#[test]
+#[ignore = "requires exported jump pairs, ROBIN_CLIMB_RHS and ROBIN_CARRIER_RHS"]
+fn exported_jumps_from_shoulders_land_and_release_the_carrier() {
+    audit_jump_dispatch(JumpDispatch::Isolated, JumpStance::Shoulders);
+}
+
+#[test]
+#[ignore = "requires exported jump pairs, ROBIN_CLIMB_RHS and ROBIN_CARRIER_RHS"]
+fn exported_jump_clicks_route_the_carrier_then_land_the_rider() {
+    audit_jump_dispatch(JumpDispatch::Click, JumpStance::Shoulders);
+}
+
+fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
     let sprite = super::exported_stairs::complete_climb_sprite();
+    let carrier_sprite = (stance == JumpStance::Shoulders).then(|| {
+        let path =
+            std::env::var("ROBIN_CARRIER_RHS").expect("path to a complete LittleJohn RHS sprite");
+        super::exported_stairs::complete_character_sprite(std::path::Path::new(&path), "Petit Jean")
+    });
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
@@ -280,7 +412,8 @@ fn audit_jump_dispatch(mode: JumpDispatch, combat: bool) {
                     t,
                     mode,
                     approach_depth,
-                    combat,
+                    stance,
+                    carrier_sprite.as_ref(),
                 );
                 results.push(serde_json::json!({
                     "file": file, "line": index, "t": t,
@@ -296,7 +429,7 @@ fn audit_jump_dispatch(mode: JumpDispatch, combat: bool) {
         .filter(|result| result["passed"] != true)
         .count();
     let report = serde_json::json!({
-        "stance": if combat { "sword" } else { "upright" },
+        "stance": match stance { JumpStance::Sword => "sword", JumpStance::Shoulders => "shoulders", JumpStance::Upright => "upright" },
         "scope": match mode {
             JumpDispatch::Click => "player-click-resolution-and-walk-jump-walk-not-rendering",
             JumpDispatch::Approach => "walk-jump-walk-sequence-not-click-authorization-or-rendering",
@@ -304,15 +437,21 @@ fn audit_jump_dispatch(mode: JumpDispatch, combat: bool) {
         },
         "complete": !results.is_empty() && failed == 0, "results": results,
     });
-    let path = directory.join(if combat {
-        "actor-jump-sword-report.json"
-    } else if mode == JumpDispatch::Click {
-        "actor-jump-click-report.json"
-    } else if mode == JumpDispatch::Approach {
-        "actor-jump-approach-report.json"
-    } else {
-        "actor-jump-landing-report.json"
-    });
+    let path = directory.join(
+        if stance == JumpStance::Shoulders && mode == JumpDispatch::Click {
+            "actor-jump-shoulders-click-report.json"
+        } else if stance == JumpStance::Shoulders {
+            "actor-jump-shoulders-report.json"
+        } else if stance == JumpStance::Sword {
+            "actor-jump-sword-report.json"
+        } else if mode == JumpDispatch::Click {
+            "actor-jump-click-report.json"
+        } else if mode == JumpDispatch::Approach {
+            "actor-jump-approach-report.json"
+        } else {
+            "actor-jump-landing-report.json"
+        },
+    );
     std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     assert!(!results.is_empty());
     assert_eq!(
@@ -332,7 +471,8 @@ fn dispatch_jump(
     t: f32,
     mode: JumpDispatch,
     approach_depth: f32,
-    combat: bool,
+    stance: JumpStance,
+    carrier_sprite: Option<&crate::sprite::Sprite>,
 ) -> Result<JumpArrival, String> {
     let approach = mode != JumpDispatch::Isolated;
     let source = engine.world.fast_grid.level.jump_lines[index].clone();
@@ -391,7 +531,7 @@ fn dispatch_jump(
         .ok_or_else(|| format!("launch point has no receiver: {start:?}"))?;
     let owner = walking_pc(&mut engine, &mut assets, start, source.layer, source_sector);
     engine.ent_mut(owner).pc_data_mut().unwrap().has_jump = true;
-    let opponent = combat.then(|| {
+    let opponent = (stance == JumpStance::Sword).then(|| {
         let opponent = walking_pc(
             &mut engine,
             &mut assets,
@@ -410,6 +550,27 @@ fn dispatch_jump(
     element.sprite = sprite.clone();
     element.sprite.position_iface = position;
     engine.set_obstacle_and_material(&assets, owner, Some(receiver));
+    let carrier = carrier_sprite.map(|sprite| {
+        let carrier = walking_pc(&mut engine, &mut assets, start, source.layer, source_sector);
+        let element = engine.ent_mut(carrier).element_data_mut();
+        let position = element.sprite.position_iface.clone();
+        element.sprite = sprite.clone();
+        element.sprite.position_iface = position;
+        engine.set_obstacle_and_material(&assets, carrier, Some(receiver));
+        engine.set_entity_posture(carrier, Posture::CarryingOnShoulders);
+        engine.set_entity_posture(owner, Posture::OnShoulders);
+        engine
+            .ent_mut(carrier)
+            .actor_data_mut()
+            .unwrap()
+            .action_state = ActionState::Waiting;
+        engine.ent_mut(owner).actor_data_mut().unwrap().action_state = ActionState::Waiting;
+        let pc = engine.ent_mut(carrier).pc_data_mut().unwrap();
+        pc.carried = Some(owner);
+        pc.set_live_carried_posture(Posture::OnShoulders);
+        engine.human_mut(owner).carrier = Some(carrier);
+        carrier
+    });
     let mut jump = SequenceElement::new_generic(1, Command::JumpCmd, Some(owner));
     jump.set_property(
         crate::sequence::Field::JumplineSource,
@@ -487,10 +648,11 @@ fn dispatch_jump(
     };
     let mut flew = false;
     let mut sword_flew = false;
+    let mut shoulder_launched = false;
     let mut startup = StartupWalkAudit::default();
     for _ in 0..1000 {
         engine.control.frame_counter += 1;
-        if approach {
+        if approach || carrier.is_some() {
             engine.t_hourglass_phase_sequences(&assets);
             engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
         }
@@ -502,6 +664,8 @@ fn dispatch_jump(
         }
         flew |= element.posture() == Posture::Flying;
         sword_flew |= element.sprite.last_action == OrderType::JumpingLongSword;
+        shoulder_launched |=
+            element.sprite.last_action == OrderType::TransitionWaitingOnShouldersJumpingLong;
         let finished = sequence.is_some_and(|sequence| {
             engine
                 .orders
@@ -543,6 +707,40 @@ fn dispatch_jump(
                 destination.layer,
                 element.position_map(),
             )?;
+            if let Some(carrier) = carrier {
+                if !shoulder_launched
+                    || engine.ent(owner).human_data().unwrap().carrier.is_some()
+                    || engine.ent(carrier).pc_data().unwrap().carried.is_some()
+                {
+                    return Err(format!(
+                        "shoulder jump did not release the carrier: launched={shoulder_launched}"
+                    ));
+                }
+                if engine.ent(carrier).element_data().posture() != Posture::Upright {
+                    continue;
+                }
+                if engine
+                    .entities()
+                    .current_element_for_actor(carrier)
+                    .and_then(|(id, index)| engine.seq().get_element(id, index))
+                    .is_some_and(|selected| {
+                        !selected.orders.is_empty() && selected.command != Command::Wait
+                    })
+                {
+                    continue;
+                }
+                if engine.ent(carrier).element_data().sector() != Some(source_sector) {
+                    return Err("carrier left the source sector".into());
+                }
+                actor_receiver_result(
+                    &engine,
+                    &assets,
+                    carrier,
+                    source_sector,
+                    source.layer,
+                    engine.ent(carrier).element_data().position_map(),
+                )?;
+            }
             if let Some(opponent) = opponent {
                 let actor = engine.ent(owner);
                 if !sword_flew
@@ -574,8 +772,17 @@ fn dispatch_jump(
         .current_element_for_actor(owner)
         .and_then(|(id, index)| engine.seq().get_element(id, index));
     Err(format!(
-        "jump stalled: flew={flew}, position={:?}, posture={:?}, goal={goal:?}, startup={startup:?}, selected={selected:?}",
+        "jump stalled: flew={flew}, position={:?}, posture={:?}, goal={goal:?}, startup={startup:?}, selected={selected:?}, carrier={:?}",
         engine.ent(owner).element_data().position(),
-        engine.ent(owner).element_data().posture()
+        engine.ent(owner).element_data().posture(),
+        carrier.map(|id| (
+            engine.ent(id).element_data().posture(),
+            engine.ent(id).actor_data().unwrap().action_state,
+            engine.ent(id).element_data().sprite.last_motion_state,
+            engine
+                .entities()
+                .current_element_for_actor(id)
+                .and_then(|(sequence, index)| engine.seq().get_element(sequence, index))
+        ))
     ))
 }
