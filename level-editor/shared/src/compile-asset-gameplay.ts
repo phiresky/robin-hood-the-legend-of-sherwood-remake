@@ -1391,6 +1391,9 @@ function compileAssetGameplayAttempt(
     }
     return bounds;
   };
+  const supportBounds = new Map(
+    projectionSupports.map((support) => [support, boundsOf(support.polygon)]),
+  );
   const solidGeometry = movementSolids
     .filter(({ shape }) => shape.solid)
     .map(({ owner, shape, headroom = 0 }) => {
@@ -2033,19 +2036,28 @@ function compileAssetGameplayAttempt(
               piece.blockers.map((b) => [b]),
             )
           : [[polygon(piece.polygon)[0]!, ...piece.blockers.map((h) => polygon(h)[0]!)]];
-      const supports = (planeSupports.get(piece.plane) ?? []).filter(
-        (support) =>
+      const receivingBounds = boundsOf(walkableCoverage.flatMap((polygon) => polygon[0]!));
+      const supports = (planeSupports.get(piece.plane) ?? []).filter((support) => {
+        const box = supportBounds.get(support)!;
+        return (
           support.lift === piece.lift &&
           support.navigationRegion === piece.navigationRegion &&
           support.plane.every((n, i) => Math.abs(n - piece.plane[i]!) < 1e-7) &&
+          // Distant supports cannot overlap this floor. Keep touching bounds
+          // for the exact fixed-point intersection below.
+          box[0] <= receivingBounds[2] &&
+          box[2] >= receivingBounds[0] &&
+          box[1] <= receivingBounds[3] &&
+          box[3] >= receivingBounds[1] &&
           // Receiving footprints may extend into blocked space, but ownership
           // comes from walkable coverage, excluding separate islands in holes.
           fixedPolygonBoolean(
             "intersection",
             [polygon(support.polygon)[0]!, ...support.holes.map((h) => polygon(h)[0]!)],
             walkableCoverage,
-          ).length > 0,
-      );
+          ).length > 0
+        );
+      });
       for (const support of supports) {
         if (support.obstacleIndex === undefined) continue;
         const receiver = sight[support.obstacleIndex]!;

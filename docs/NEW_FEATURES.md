@@ -2757,6 +2757,8 @@ Equivalent receiving-material patches are now unioned in batches, avoiding
 repeated reconstruction of a growing terrain region. Material priority, physical
 receiver ownership and unsupported gaps remain distinct. The terrain regression
 checks the regenerated receiver polygons and native traversal.
+Receiver ownership checks also skip spatially disjoint supports before exact
+intersection, retaining the existing check for touching or overlapping bounds.
 
 Spline lighting also preserves disconnected receiving-probe fragments after
 trimming, retaining valid light regions and their ambience filters.

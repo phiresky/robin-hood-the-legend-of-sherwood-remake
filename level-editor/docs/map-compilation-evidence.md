@@ -32,6 +32,16 @@ floating-point heights are not claimed. Type checking, focused lint, formatting,
 the editor production build and the game build pass. No engine implementation
 changed.
 
+A subsequent bounds prefilter skips support/floor intersections when their
+footprints are spatially disjoint. Cached support bounds and each floor's actual
+clipped coverage bound retain touching cases for exact intersection. In
+`receiver-support-bounds-w8C2Tn`, 64 and 256 separated 10-by-10 floors on a 20-unit
+grid retain byte-identical compiled descriptors. Receiver construction drops
+from approximately 74 to 31 ms and 599 to 44 ms respectively; total compilation
+for the larger case drops from 1,361 to 785 ms. All 166 focused checks, type
+checking, lint and formatting pass, with unchanged native fixtures. These are
+component measurements, not a completed Wychford export timing.
+
 ## Gameplay compilation phase reporting (2026-10-08)
 
 The export worker now reports compilation phases to the editor without settling

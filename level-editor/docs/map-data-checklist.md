@@ -23,6 +23,9 @@ tests pass. The refreshed hill/river fixture has 211 receivers; 194,481 paired
 native queries retain coverage and materials, with height rounding differences
 up to 0.0000038146973 units. The exact-height comparison therefore does not pass;
 the detailed evidence records that limitation.
+Spatially disjoint receiver supports are now rejected by cached bounds before
+exact intersection. The 256-floor benchmark drops from 599 to 44 ms for receiver
+construction with a byte-identical descriptor; native fixtures remain unchanged.
 
 The current ten-scene export batch (`saved-map-exports-EdJxua`) compiles and passes
 native construction plus all 71 control apply/reset checks. That batch exposed a
