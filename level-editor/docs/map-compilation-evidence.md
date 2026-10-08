@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Watermill physical platform candidate (2026-10-08)
+
+The remaining Wychford receiver omission is asset-local: the watermill has a
+raised receiving volume but no walkable surface. Its foundation navigation
+anchor is about 90.7 units above the containing terrain in that saved placement.
+Automatically binding it to that terrain would conceal a real height gap.
+
+Mesh review `watermill-platform-review-rjec6W` binds descriptor
+`b008913a237417aadef280b0ac3ab8835ea69482aeefa81fc0055833c153c01b` and model
+`ba0b9fc1d5047e0bffc876e357408270651414e3d31c8190bee86466a133dc11`.
+Only four triangles lie within 0.01 units of the authored top, but eight lie
+within 0.1 units and cover nearly the complete platform. The authored footprint
+is 5,886.206 square units; 3.431 square units remain outside that sampled mesh.
+Raising the tolerance to five units does not materially reduce that remainder.
+
+`refinement/stage-watermill-platform-floor.mjs` stages an unpublished replacement
+that gives the physical platform its own walkable receiver and preserves both
+existing material regions. Its boundary connections require matching placed
+heights. Stage `watermill-platform-floor-pOWroc` compiles Leicester into
+`saved-map-exports-GUqGef`, which passes native construction: 57 areas, 826 sight
+obstacles, 105 runtime doors and 23 jump pairs. All eight platform boundary
+joins remain independent in this scene; no watermill door or jump omission is
+reported. This is construction evidence only. Moved/copied terrain contacts,
+complete actor routes, jump execution and rendered contact remain unverified;
+the candidate has not been installed in the library.
+
 ## Dense receiving-boundary construction (2026-10-08)
 
 Captured Wychford inputs in `receiving-profile-DCBnzh` isolate the slow operation:

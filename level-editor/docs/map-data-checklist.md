@@ -30,6 +30,11 @@ pass for the captured failure. Wychford descriptor export now completes in
 retains 1,862 warnings, including the floating church approach and watermill
 receiver omission. The evidence document records the small union-rounding
 differences; browser bake and native checks of this full export remain separate.
+An unpublished watermill candidate now supplies an asset-local raised platform
+floor while retaining its two material regions. Its Leicester export passes
+native construction with 23 jump pairs and no watermill door/jump omission.
+It still needs moved/copied terrain-contact and actor-route tests; its sampled
+mesh leaves 3.431 square units of the authored footprint unsupported.
 
 Receiving-material unions now batch equivalent patches. A 1,024-island component
 benchmark improves from about 4 seconds to 0.1 seconds; full-map timing remains
