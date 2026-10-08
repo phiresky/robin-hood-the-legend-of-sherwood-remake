@@ -74,6 +74,11 @@ def solve_bands(bands,path,baseline,dt,max_speed=MAX_SPEED,max_acceleration=MAX_
 
 def main():
     assert not OUT.exists();source=json.loads(SOURCE.read_text());assert source['fit_sha256']==pinned.FIT_SHA
+    map_path=reader.LIB/'scenes/croisement02.rhlos-map.json'
+    assert reader.sha(map_path)==source['map_sha256'],'Receiver map changed after extraction'
+    document=json.loads(map_path.read_text());sources={a['id']:a for a in document['assetSources']};expected={p['id']:sources[p['assets'][0]]['model_sha256'] for p in document['placements']}
+    expected.update({a['id']:a['model_sha256'] for a in document['sceneAssets']})
+    assert all(expected[a['asset']]==a['model_sha256'] for a in source['assets']),'Receiver model differs from pinned map'
     records=source['records'];n=len(records);dt=99/n;assert all(abs(r['start']-i*dt)<1e-10 and abs(r['end']-(i+1)*dt)<1e-10 for i,r in enumerate(records))
     fit=json.loads(pinned.FIT.read_text());baseline=np.array([r['fixed_path_anchor_zup'][2]for r in fit['rows']]);times=np.arange(n)*dt;baseline=np.interp(times,np.arange(100),np.r_[baseline,baseline[0]])
     bands=[free_bands(r['forbidden_height_bands'])for r in records];paths=band_paths(bands,baseline);trials=[]
