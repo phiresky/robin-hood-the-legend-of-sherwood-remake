@@ -15,8 +15,12 @@ export interface AssetWalkableSurface {
   navigationHeight?: number | number[];
   /** Transition blockers may follow terrain within these finite vertical offsets from their plane. */
   terrainReach?: { below: number; above: number };
-  /** Generate reusable long-jump ledges and landing bands from this surface after placement. */
+  /** Generate reusable jump ledges and landing bands from this surface after placement. */
   jump?: NonNullable<AssetJumpSegment["attachment"]> & {
+    /** Force long flight by default; false allows native height-dependent climbing. */
+    long?: boolean;
+    /** Require assistance for sufficiently high arrivals on the generated connection. */
+    helperNeeded?: boolean;
     /** Selected polygon edge indices; omit to consider every outer edge. */
     edges?: number[];
     /** Minimum distance from the boundary to the takeoff line; walking clearance may increase it. */
@@ -1183,6 +1187,8 @@ export function validateAssetGameplay(
         jump.maxRise < 0 ||
         jump.maxDrop < 0 ||
         jump.minOverlap <= 0 ||
+        (jump.long !== undefined && typeof jump.long !== "boolean") ||
+        (jump.helperNeeded !== undefined && typeof jump.helperNeeded !== "boolean") ||
         (jump.maxLevelAdjustment !== undefined &&
           (!Number.isFinite(jump.maxLevelAdjustment) || jump.maxLevelAdjustment < 0)) ||
         (jump.edges !== undefined &&

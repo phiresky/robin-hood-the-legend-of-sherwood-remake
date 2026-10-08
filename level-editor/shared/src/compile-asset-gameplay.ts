@@ -2420,7 +2420,7 @@ function compileAssetGameplayAttempt(
   }
   warnings.push(...assembledJumps.warnings);
   for (const segment of assembledJumps.unmatched.filter(
-    (segment) => !generatedLandings.has(segment.edge.zone),
+    (segment) => !segment.long || !generatedLandings.has(segment.edge.zone),
   ))
     warnings.push(
       `Jump ${segment.id}: no matching edge after placement; connection is unavailable.`,

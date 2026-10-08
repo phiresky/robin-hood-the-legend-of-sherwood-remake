@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Surface-derived climbing connections (2026-10-08)
+
+Asset-local walkable surfaces can now declare `jump.long: false` and
+`jump.helperNeeded: true`. The compiler derives climbing ledges and receiving bands,
+matches currently placed neighbours, checks flight and walking clearance, and
+emits native helper rules. Both fields are validated as booleans; existing surface
+rules retain forced-long/no-helper defaults. Missing generated climbing neighbours
+now produce explicit warnings instead of silently dropping the connection.
+
+`node refinement/check-vertical-jump-placements.mjs --automatic --reposition --surfaces`
+removes all authored jump pairs, segments and zones from the compiled asset
+definitions. Batch `work/map-compile/prepared-vertical-jumps-8MzStM` derives both
+independent connections at four rotations and two elevations. All eight editor
+documents reopen and recompile identically; 32 moved/excess-rise controls disconnect
+only the changed copy and warn. **160 isolated traversals and 160 player-click routes
+pass** using complete native sprites, including helper-required ascent, helper
+recovery and upright descent. Clearance covers all **7,840 recorded positions**.
+
+The 247 selected compiler/export tests pass, including helper flags, non-forced-long
+pairs, malformed-field rejection and disconnected-neighbour warnings. App typechecking
+and scoped lint pass. No production engine changes are
+required. This closes the surface-metadata authoring gap; sloped receiving planes,
+broader library authoring, rendering and full gameplay interaction remain open.
+
 ## Repositioned automatic vertical connections (2026-10-08)
 
 The previously omitted rotated fixture placements were not a matrix mismatch.

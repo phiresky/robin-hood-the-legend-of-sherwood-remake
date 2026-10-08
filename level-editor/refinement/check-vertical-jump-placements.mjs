@@ -14,7 +14,12 @@ console.log(output);
 const results = [];
 const automatic = process.argv.includes("--automatic");
 const reposition = process.argv.includes("--reposition");
+const surfaces = process.argv.includes("--surfaces");
 assert.ok(!reposition || automatic, "Repositioning requires geometric attachment rules");
+assert.ok(
+  !surfaces || (automatic && reposition),
+  "Surface testing requires automatic repositioning",
+);
 for (const height of [0, 40]) {
   const { document, assets, upper, hut } = crossAssetJumpCompilerFixture();
   // Align the landing in map space; asset coordinates include elevation in Y.
@@ -40,6 +45,29 @@ for (const height of [0, 40]) {
         delete segment.join;
         segment.attachment = { maxGap: 80, maxRise: 110, maxDrop: 110, minOverlap: 10 };
       }
+    }
+  }
+  const compiledAssets = structuredClone(assets);
+  if (surfaces) {
+    for (const [id, edge] of [
+      [hut.id, 1],
+      [upper.id, 3],
+    ]) {
+      const gameplay = compiledAssets.get(id).gameplay;
+      gameplay.jumpZones = [];
+      gameplay.jumpSegments = [];
+      gameplay.jumpPairs = [];
+      gameplay.surfaces[0].jump = {
+        long: false,
+        helperNeeded: true,
+        edges: [edge],
+        inset: 10,
+        landingDepth: 4,
+        maxGap: 80,
+        maxRise: 110,
+        maxDrop: 110,
+        minOverlap: 10,
+      };
     }
   }
   for (const rotation of [0, 37, 90, 180]) {
@@ -69,11 +97,11 @@ for (const height of [0, 40]) {
         group.transform.dy += (a[1] + b[1] - c[1] - d[1]) / 2 + (40 * dx) / length;
       }
     }
-    const compiled = compileMap(placed, [0, 0, 4000, 4000], assets);
+    const compiled = compileMap(placed, [0, 0, 4000, 4000], compiledAssets);
     const scene = JSON.stringify(placed);
     const reopened = parseLevel3D(JSON.parse(scene));
     assert.deepEqual(
-      compileMap(reopened, [0, 0, 4000, 4000], assets).descriptor,
+      compileMap(reopened, [0, 0, 4000, 4000], compiledAssets).descriptor,
       compiled.descriptor,
     );
     if (
@@ -90,7 +118,7 @@ for (const height of [0, 40]) {
           const separated = structuredClone(placed);
           const group = separated.groups.find((group) => group.id === `${copy}/jump-upper`);
           for (const [axis, amount] of Object.entries(change)) group.transform[axis] += amount;
-          const rejected = compileMap(separated, [0, 0, 4000, 4000], assets);
+          const rejected = compileMap(separated, [0, 0, 4000, 4000], compiledAssets);
           assert.equal(
             rejected.descriptor.asset_geometry?.jump_line_pairs?.length,
             1,
@@ -110,6 +138,7 @@ for (const height of [0, 40]) {
       height,
       automatic,
       reposition,
+      surfaces,
       rejected_placements: rejectedPlacements,
       editor_roundtrip: true,
       approach_depth: 4,

@@ -18,6 +18,28 @@ const polygon: Point[] = [
 ];
 const rules = { maxGap: 100, maxRise: 40, maxDrop: 40, minOverlap: 10, inset: 5, landingDepth: 10 };
 
+test("surface-authored climbing rules survive ledge and receiving-band generation", () => {
+  for (const helperNeeded of [false, true]) {
+    const generated = generateJumpLedges("climb", polygon, [], [0, 0, 100], {
+      ...rules,
+      long: false,
+      helperNeeded,
+    });
+    assert.equal(generated.segments.length, 4);
+    for (const segment of generated.segments) {
+      assert.equal(segment.long, false);
+      assert.equal(
+        jumpLandingBand(segment.id, segment.edge, generated.landings.get(segment.edge.zone)!)
+          .helper,
+        helperNeeded,
+      );
+    }
+  }
+  assert.ok(
+    generateJumpLedges("roof", polygon, [], [0, 0, 100], rules).segments.every((s) => s.long),
+  );
+});
+
 test("surface ledges face outward, with receiving bands entirely inside the surface", () => {
   const generated = generateJumpLedges("roof", polygon, [], [0, 0, 20], rules);
   assert.equal(generated.segments.length, 4);

@@ -10,6 +10,7 @@ import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
 export interface JumpLandingBand {
   plane: HeightPlane;
   depth: number;
+  helperNeeded?: boolean;
 }
 
 /** Build ledges from this placement's surface, independently of other assets or saved neighbours. */
@@ -93,12 +94,12 @@ export function generateJumpLedges(
         const zone = `${id}/ledge-${index}-${serial++}`;
         segments.push({
           id: zone,
-          long: true,
+          long: rules.long ?? true,
           attachment: rules,
           surfaceInset: inset,
           edge: { zone, a: toWorld(at(start, inset)), b: toWorld(at(low, inset)) },
         });
-        landings.set(zone, { plane, depth: rules.landingDepth });
+        landings.set(zone, { plane, depth: rules.landingDepth, helperNeeded: rules.helperNeeded });
       }
       start = Math.max(start, high);
     }
@@ -120,7 +121,7 @@ export function jumpLandingBand(id: string, edge: JumpEdge, band: JumpLandingBan
   const z = planeHeight(band.plane, anchor);
   return {
     id,
-    helper: false,
+    helper: band.helperNeeded ?? false,
     anchor: [anchor[0], anchor[1] + z, z] as Vec3,
     polygon: [
       a,

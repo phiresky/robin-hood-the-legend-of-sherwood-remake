@@ -89,7 +89,7 @@ nor a connection across a height gap. Spline deformation does not yet support
 separate clearance heights: strict export rejects them and best-effort export
 warns, retains collision and omits that clearance.
 
-A walkable surface may opt into generated long-jump connections with a `jump`
+A walkable surface may opt into generated jump connections with a `jump`
 property, for example:
 
 ```json
@@ -112,8 +112,20 @@ neighbours within both assets' limits. No neighbour IDs, original placements or
 saved jump zones are needed. One edge can connect to multiple destinations.
 Touching surface boundaries do not create unnecessary jumps. Flight checks cover
 takeoff, both travel directions and the configured body envelope; blocked spans
-are removed with warnings. Missing neighbours are normal for generated ledges.
+are removed with warnings. Missing neighbours are normal for generated long-jump ledges.
 Explicit jump pairs and exact sockets remain available for authored special cases.
+
+For climbing surfaces, add `"long": false` to both surfaces' rules and set
+`maxRise`/`maxDrop` to the intended height limits. The engine selects climbing or
+long flight from the actual height difference and actor posture. Add
+`"helperNeeded": true` when sufficiently high ascents should require a helper;
+export carries this into the generated landing zones. Both fields are optional:
+existing rules default to forced long flight without a helper requirement.
+Climbing edges use the same overlap, footprint, body-clearance and current-neighbour
+checks. An unmatched climbing edge emits a warning. Automatic climbing clearance
+currently requires horizontal receiving planes. All ledges, landing bands and
+pair indices are generated after placement; no authored jump zones or pairs are
+needed. These fields can be installed through `pipeline/src/configure-surface-jumps.ts`.
 
 Separate assets can attach ordinary walking surfaces through `navigationRegion`
 and 3D outer-edge `navigationJoins`. Sockets match exact endpoints by default.

@@ -1782,6 +1782,33 @@ test("surface rules construct jump edges and landing zones without recovered jum
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /invalid surface jump rules/);
 });
 
+test("surface climb rules export helper requirements and warn when a neighbour is removed", () => {
+  const { document, assets, hut, upper } = surfaceJumpCompilerFixture();
+  for (const asset of [hut, upper]) {
+    const surface = asset.gameplay!.surfaces.find((surface) => surface.jump)!;
+    surface.jump = { ...surface.jump!, long: false, helperNeeded: true };
+  }
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.equal(compiled.jump_line_pairs!.length, 1);
+  assert.equal(compiled.jump_line_pairs![0]!.jump_long, false);
+  assert.ok(compiled.jump_zones!.every((zone) => zone.helper_needed));
+  const gameplay = hut.gameplay!;
+  for (const invalid of [{ long: "false" }, { helperNeeded: 1 }]) {
+    const surfaces = gameplay.surfaces.map((surface) => ({
+      ...surface,
+      jump: surface.jump ? { ...surface.jump, ...invalid } : undefined,
+    }));
+    assert.throws(
+      () => validateAssetGameplay({ ...gameplay, surfaces }, hut),
+      /invalid surface jump rules/,
+    );
+  }
+  document.groups.find((group) => group.id === "jump-upper")!.transform.dx += 500;
+  const detached = compileAssetGameplay(document, assets, bounds);
+  assert.equal(detached.jump_line_pairs, undefined);
+  assert.ok(detached.warnings!.some((warning) => warning.includes("no matching edge")));
+});
+
 test("one generated ledge connects to multiple separately placed roofs", () => {
   const { document, assets } = multiDestinationJumpCompilerFixture();
   const geometry = compileAssetGameplay(document, assets, bounds);
