@@ -65,10 +65,17 @@ def main():
     parser.add_argument('--smooth-rim', action='store_true')
     parser.add_argument('--local-rim-weight', type=float)
     parser.add_argument('--collar-tangent-mode', choices=['up-projection','boundary-cross'], default='up-projection')
+    parser.add_argument('--depth-scale', type=float, default=1.)
+    parser.add_argument('--lower-cut', type=float)
+    parser.add_argument('--upper-cut', type=float)
     parser.add_argument('--tree', type=int, choices=[32,38])
     args = parser.parse_args()
     if args.local_rim_weight is not None and (not args.smooth_rim or args.local_rim_weight <= 0):
         raise ValueError('Local rim weight requires smooth rim and a positive weight')
+    if (args.lower_cut is not None or args.upper_cut is not None) and args.tree is None:
+        raise ValueError('Scoped cut overrides require one explicit tree')
+    if args.depth_scale != 1. and not args.smooth_rim:
+        raise ValueError('Depth inference requires the continuous rim construction')
     if args.output.exists():
         raise FileExistsError(args.output)
     retained_path = STUDY / 'retained-collars-v1.json'
@@ -81,6 +88,8 @@ def main():
     records = []
     for index, (lower_z, upper_z, box) in CONFIG.items():
         if args.tree is not None and args.tree != index:continue
+        lower_z = args.lower_cut if args.lower_cut is not None else lower_z
+        upper_z = args.upper_cut if args.upper_cut is not None else upper_z
         old = next(r for r in retained['records'] if r['tree'] == index)
         model = Path(old['worker']) / 'model.blend'
         if sha(model) != old['model_sha256']:
@@ -91,7 +100,7 @@ def main():
         rim_report = None
         if args.smooth_rim:
             from smooth_wood_field import smooth_shell
-            vertices, faces, rim_report = smooth_shell(body, thickness, box[:2], ground[index], local_rim_weight=args.local_rim_weight)
+            vertices, faces, rim_report = smooth_shell(body, thickness, box[:2], ground[index], local_rim_weight=args.local_rim_weight, depth_scale=args.depth_scale)
         else:
             vertices, faces = shell(body, thickness, box[:2], ground[index])
         vertices, faces, loops = cut_shell_below(vertices, faces, lower_z)

@@ -40,13 +40,15 @@ def constrained_rim(body, weight=32., padding=8):
                        model_validated=False)
 
 
-def smooth_shell(body, thickness, origin, ground, sigma=.8, step=.5, local_rim_weight=None):
+def smooth_shell(body, thickness, origin, ground, sigma=.8, step=.5, local_rim_weight=None, depth_scale=1.):
     """Clip triangles against a continuous positive thickness field.
 
 The threshold retains all observed body pixel centers. Front and back meet on
 the interpolated zero contour, rather than following each binary pixel edge.
 This function does not read or modify the retained trunk.
 """
+    if not np.isfinite(depth_scale) or depth_scale <= 0:
+        raise ValueError('Inferred depth scale must be positive and finite')
     padding = 8 if local_rim_weight is not None else 4
     potential = gaussian_filter(np.pad(thickness**2/2, padding), sigma)
     padded_body = np.pad(body, padding)
@@ -71,7 +73,7 @@ This function does not read or modify the retained trunk.
     coordinates = np.column_stack((xx.ravel()+origin[0]+.5, yy.ravel()+origin[1]+.5))
     scalar = values.ravel()
     sampled_potential = map_coordinates(potential,[yy+padding,xx+padding],order=3,mode='constant',cval=0).ravel()
-    radii = np.sqrt(2*np.maximum(0,sampled_potential)*(-np.expm1(-np.maximum(0,scalar)/.7)))
+    radii = depth_scale*np.sqrt(2*np.maximum(0,sampled_potential)*(-np.expm1(-np.maximum(0,scalar)/.7)))
     source_ids = {}; intersections = {}; points2 = []; offsets = []; faces2 = []
 
     def original(i):
@@ -114,4 +116,5 @@ This function does not read or modify the retained trunk.
     if constrained_report is not None:
         report['method'] = 'Locally constrained curvature rim with independent Poisson thickness'
         report['constrained_rim'] = constrained_report
+    report['inferred_depth_scale'] = depth_scale
     return np.asarray(vertices),np.asarray(faces,int),report
