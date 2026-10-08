@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createJumpClearance,
+  integratedJumpTrajectory,
   integratedLongJumpTrajectory,
   longJumpTrajectory,
   type JumpEdge,
@@ -13,6 +14,24 @@ const edges: [JumpEdge, JumpEdge] = [
   { zone: "left", a: [0, 100, 0], b: [0, 0, 0] },
   { zone: "right", a: [60, 0, 0], b: [60, 100, 0] },
 ];
+
+test("vertical airborne integration uses native speeds and final snapping", () => {
+  assert.deepEqual(integratedJumpTrajectory([0, 0, 0], [[100, 0, 0]], "up"), [
+    [0, 0, 0],
+    [75.00000762939453, 0, 0],
+    [100, 0, 0],
+  ]);
+  assert.deepEqual(integratedJumpTrajectory([0, 0, 0], [[100, 0, 0]], "down"), [
+    [0, 0, 0],
+    [80, 0, 0],
+    [100, 0, 0],
+  ]);
+  assert.deepEqual(integratedJumpTrajectory([0, 0, 0], [[5, 0, 0]], "up"), [
+    [0, 0, 0],
+    [15, 0, 0],
+    [5, 0, 0],
+  ]);
+});
 function wall(
   x: number,
   y: number,
@@ -45,6 +64,72 @@ function segments(): PlacedJumpSegment[] {
     attachment: { maxGap: 80, maxRise: 20, maxDrop: 20, minOverlap: 10 },
   }));
 }
+
+test("vertical clearance covers airborne steps, receiver binding and the landing lift", () => {
+  const climbing: [JumpEdge, JumpEdge] = [
+    edges[0],
+    { zone: "upper", a: [36, 100, 100], b: [36, 200, 100] },
+  ];
+  assert.deepEqual(createJumpClearance([])(climbing, false), []);
+  // Complete-profile native samples at the midpoint, relative to the lower ledge.
+  for (const [x, y, z] of [
+    [3.082763671875, 64.6798095703125, 40],
+    [12.3310546875, 108.71923828125, 40],
+    [21, 210, 100],
+    [21, 210, 160],
+    [36, 150, 100],
+    [36, 150, 50],
+    [29.87005615234375, 132.972412109375, 41.48619842529297],
+  ]) {
+    const blocked = createJumpClearance([
+      wall(x! - 0.02, y! - 0.02, 0.04, 0.04, z! - 0.02, z! + 0.02),
+    ])(climbing, false);
+    assert.ok(
+      blocked.some(([a, b]) => a <= 0.5 && b >= 0.5),
+      `uncovered native position ${x},${y},${z}`,
+    );
+  }
+  assert.deepEqual(createJumpClearance([wall(20, 210, 2, 2, 170, 180)])(climbing, false), []);
+});
+
+test("geometric vertical connections trim blockers and retain independent usable spans", () => {
+  const placed = segments();
+  placed[1]!.edge = { zone: "upper", a: [36, 100, 100], b: [36, 200, 100] };
+  for (const segment of placed) {
+    segment.long = false;
+    segment.attachment = { maxGap: 80, maxRise: 110, maxDrop: 110, minOverlap: 10 };
+  }
+  assert.equal(assembleJumpSegments(placed, createJumpClearance([])).pairs.length, 1);
+  const blocker = wall(20, 200, 2, 10, 150, 165);
+  const result = assembleJumpSegments(placed, createJumpClearance([blocker]));
+  assert.equal(result.pairs.length, 2);
+  for (const pair of result.pairs)
+    assert.deepEqual(createJumpClearance([blocker])(pair.edges as [JumpEdge, JumpEdge], false), []);
+});
+
+test("automatic vertical clearance reports sloped receiving planes instead of assuming a flat landing", () => {
+  const climbing: [JumpEdge, JumpEdge] = [
+    edges[0],
+    {
+      zone: "upper",
+      a: [36, 100, 100],
+      b: [36, 200, 100],
+    },
+  ];
+  const receiver = wall(30, 90, 20, 120);
+  receiver.solid = false;
+  receiver.projection_area = [1, 1];
+  receiver.projection_plane = [
+    [36, 100, 100],
+    [46, 101, 101],
+    [36, 200, 100],
+  ];
+  assert.throws(
+    () => createJumpClearance([receiver])(climbing, false),
+    /horizontal receiving planes/,
+  );
+  assert.doesNotThrow(() => createJumpClearance([receiver])(climbing, true));
+});
 
 test("flight clearance intersects the whole span, including thin off-centre obstacles", () => {
   const blocked = createJumpClearance([wall(30, 21, 0.1, 0.2)])(edges, true);

@@ -57,15 +57,26 @@ function clip(vertices: Vertex[], plane: (point: Vertex) => number): Vertex[] {
 
 /** Airborne orders retain their actual endpoint until the final landing snap. */
 export function integratedLongJumpTrajectory(start: Vec3, targets: Vec3[]): Vec3[] {
+  return integratedJumpTrajectory(start, targets, "long");
+}
+
+/** Fixed native airborne increments; the final order snaps to its destination. */
+export function integratedJumpTrajectory(
+  start: Vec3,
+  targets: Vec3[],
+  kind: "long" | "up" | "down",
+): Vec3[] {
   const f = Math.fround;
+  const speed = kind === "long" ? 8 : kind === "up" ? 15 : 20;
+  const rate = f(kind === "long" ? 0.125 : kind === "up" ? 0.06666666666666667 : 0.05);
   let position = start.map(f) as Vec3;
   const path = [position];
   for (const target of targets) {
     const delta = target.map((n, axis) => f(n - position[axis]!));
     const distance = f(Math.sqrt(f(f(f(delta[0]! ** 2) + f(delta[1]! ** 2)) + f(delta[2]! ** 2))));
     if (!(distance > 0)) throw new Error("Jump flight has a zero-length airborne order");
-    const increment = delta.map((n) => f(n * f(8 / distance)));
-    const frames = Math.trunc(Math.max(1, f(f(distance * 0.125) - 1)));
+    const increment = delta.map((n) => f(n * f(speed / distance)));
+    const frames = Math.trunc(Math.max(1, f(f(distance * rate) - 1)));
     for (let frame = 0; frame < frames; frame++)
       position = position.map((n, axis) => f(n + increment[axis]!)) as Vec3;
     path.push(position);
@@ -86,6 +97,23 @@ export function mergeIntervals(intervals: Interval[]): Interval[] {
 
 /** Precompute solid prisms once, then intersect the full flight ribbon, not sampled rays. */
 export function createJumpClearance(obstacles: SightObstacle[]) {
+  const slopedReceivers = obstacles
+    .filter((shape) => shape.projection_area)
+    .flatMap((shape) => {
+      const anchors =
+        shape.projection_plane ?? shape.points.slice(0, 3).map((p): Vec3 => [p.x, p.y, p.z_top]);
+      const plane = heightPlane(anchors.map(([x, y, z]) => [x, y - z, z]));
+      if (Math.abs(plane[0]) + Math.abs(plane[1]) < EPSILON) return [];
+      return [
+        {
+          plane,
+          minX: Math.min(...shape.points.map((p) => p.x)),
+          maxX: Math.max(...shape.points.map((p) => p.x)),
+          minY: Math.min(...shape.points.map((p) => p.y - p.z_top)),
+          maxY: Math.max(...shape.points.map((p) => p.y - p.z_top)),
+        },
+      ];
+    });
   const prisms = obstacles
     .filter((shape) => shape.solid && shape.initial_active !== false)
     .flatMap((shape) => {
@@ -144,10 +172,23 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
       throw new Error(
         "Sloped jump edges need an authored connection; automatic flight clearance requires level ledges",
       );
-    if (!long && Math.abs(edges[0].a[2] - edges[1].a[2]) >= 60)
-      throw new Error(
-        "Climbing jumps need an authored connection; automatic flight clearance supports long jumps",
-      );
+    if (!long && Math.abs(edges[0].a[2] - edges[1].a[2]) >= 60) {
+      for (const edge of edges) {
+        const x = (edge.a[0] + edge.b[0]) / 2;
+        const y = (edge.a[1] + edge.b[1] - edge.a[2] - edge.b[2]) / 2;
+        if (
+          slopedReceivers.some(
+            (r) =>
+              x >= r.minX &&
+              x <= r.maxX &&
+              y >= r.minY &&
+              y <= r.maxY &&
+              Math.abs(planeHeight(r.plane, [x, y]) - edge.a[2]) <= 1 + EPSILON,
+          )
+        )
+          throw new Error("Automatic climbing clearance needs horizontal receiving planes");
+      }
+    }
     const blocked: Interval[] = [];
     for (const [source, destination, reverse] of [
       [edges[0], edges[1], false],
@@ -169,21 +210,51 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
         source.a[1] + (15 * dx) / length,
         source.a[2],
       ];
-      const targets = longJumpTrajectory(start, destination.b).slice(1);
-      // Assisted takeoff plays in place, then raises Z without changing world Y.
-      const shoulders: Vec3 = [source.a[0], source.a[1], source.a[2] + 40];
-      const paths = [
-        [source.a, start, ...targets],
-        integratedLongJumpTrajectory(start, targets),
-        integratedLongJumpTrajectory(start, [destination.b]),
-        [source.a, ...integratedLongJumpTrajectory(shoulders, targets)],
-      ];
-      // Sword-fighting jumps use one direct airborne target instead of the arc's waypoints.
-      const flights: [Vec3, Vec3][] = paths.flatMap((path) =>
-        path.slice(1).map((point, i): [Vec3, Vec3] => [path[i]!, point]),
-      );
-      flights.push([start, destination.b]);
-      for (const [a, b] of flights) {
+      const rise = destination.b[2] - source.a[2];
+      const flights: [Vec3, Vec3, number][] = [];
+      const addPath = (path: Vec3[], extraHeight = 0) => {
+        for (let i = 1; i < path.length; i++) flights.push([path[i - 1]!, path[i]!, extraHeight]);
+      };
+      // At intermediate heights, an upright actor climbs while an assisted actor
+      // still uses the long-flight branch. Reserve both possible paths.
+      if (long || Math.abs(rise) < 100) {
+        const targets = longJumpTrajectory(start, destination.b).slice(1);
+        const shoulders: Vec3 = [source.a[0], source.a[1], source.a[2] + 40];
+        for (const path of [
+          [source.a, start, ...targets],
+          integratedLongJumpTrajectory(start, targets),
+          integratedLongJumpTrajectory(start, [destination.b]),
+          [source.a, ...integratedLongJumpTrajectory(shoulders, targets)],
+        ])
+          addPath(path);
+        flights.push([start, destination.b, 0]);
+      }
+      if (!long && Math.abs(rise) >= 60) {
+        if (rise > 0) {
+          const target: Vec3 = [
+            destination.b[0] + (15 * dy) / length,
+            destination.b[1] - (15 * dx) / length,
+            destination.b[2] - 60,
+          ];
+          for (const lift of [0, 40]) {
+            const departure: Vec3 = [source.a[0], source.a[1], source.a[2] + lift];
+            addPath([source.a, ...integratedJumpTrajectory(departure, [target], "up")]);
+          }
+          // Binding the destination plane keeps the target's map point, raising
+          // world Y and Z by sixty. The landing action can lift Z another sixty
+          // before its remaining sprite motion settles onto the receiving plane.
+          const receiver: Vec3 = [target[0], target[1] + 60, target[2] + 60];
+          addPath([target, receiver]);
+          // Sprite-specific action timing selects where on this segment the lift
+          // happens. Reserve its full height envelope without reading sprites.
+          addPath([receiver, destination.b], 60);
+        } else {
+          // Downward takeoff plays in place; its action point changes only Z.
+          const departure: Vec3 = [source.a[0], source.a[1], source.a[2] - 50];
+          addPath([source.a, ...integratedJumpTrajectory(departure, [destination.b], "down")]);
+        }
+      }
+      for (const [a, b, extraHeight] of flights) {
         const ribbon: Vertex[] = [
           [...a, 0],
           [...b, 0],
@@ -204,7 +275,9 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
             continue;
           let intersection = ribbon;
           for (const plane of prism.planes) {
-            intersection = clip(intersection, (point) => plane(point, body));
+            intersection = clip(intersection, (point) =>
+              plane(point, { ...body, height: body.height + extraHeight }),
+            );
             if (!intersection.length) break;
           }
           if (intersection.length) {

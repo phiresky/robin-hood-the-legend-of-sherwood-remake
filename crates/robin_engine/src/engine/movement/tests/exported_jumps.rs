@@ -20,6 +20,8 @@ struct JumpArrival {
     final_distance: f32,
     completed_turning_startup: bool,
     turning_distance_loss: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trajectory: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Default)]
@@ -757,6 +759,7 @@ fn dispatch_jump(
     };
     let mut vertical_flew = false;
     let mut startup = StartupWalkAudit::default();
+    let mut trajectory = std::env::var_os("ROBIN_TRACE_JUMP").map(|_| Vec::new());
     for _ in 0..1000 {
         engine.control.frame_counter += 1;
         if approach || carrier.is_some() {
@@ -766,6 +769,14 @@ fn dispatch_jump(
         let before = engine.ent(owner).element_data().position_map();
         engine.t_tick_actor_owner_envelopes(&assets);
         let element = engine.ent(owner).element_data();
+        if let Some(trajectory) = &mut trajectory {
+            let position = element.position();
+            trajectory.push(serde_json::json!({
+                "action": format!("{:?}", element.sprite.last_action),
+                "motion": format!("{:?}", element.sprite.last_motion_state),
+                "position": [position.x, position.y, position.z],
+            }));
+        }
         if approach && flew {
             startup.observe(before, &element.sprite);
         }
@@ -879,6 +890,7 @@ fn dispatch_jump(
                 final_distance,
                 completed_turning_startup,
                 turning_distance_loss: startup.turning_loss,
+                trajectory,
             });
         }
     }

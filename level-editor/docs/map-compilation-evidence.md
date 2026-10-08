@@ -4,9 +4,43 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Export-time vertical-jump clearance (2026-10-08)
+
+Geometrically matched `long: false` asset edges no longer reject every climb of
+60 units or more. The compiler checks native up/down flight increments, assisted
+takeoff, the downward 50-unit action-point drop, receiver binding and the upward
+60-unit landing lift. Heights between 60 and 100 reserve both the upright climb
+and the assisted long-flight path. Landing sprite timing is not read at export;
+the clearance check conservatively reserves the entire landing segment plus its
+60-unit lift envelope. This can omit a tight passage rather than invent clearance.
+
+Obstructions trim continuous span intervals using the existing prism intersection
+and walking-approach checks. A sloped receiving plane still emits an explicit
+unsupported warning; its plane-dependent landing displacement is not modeled yet.
+Surface-derived ledges still default to long jumps. This change supports asset-local
+climbing edges with geometric attachment rules, not automatic discovery of every
+climbable surface.
+
+Reproduce with `node refinement/check-vertical-jump-placements.mjs --automatic`.
+Batch `work/map-compile/prepared-vertical-jumps-jBQu9I` passes editor document
+reopen/recompile equality for all eight attempted placements. The two unrotated
+placements retain independent copies: **40 isolated native traversals and 40
+player-click routes pass**. The six rotated placements have no geometrically
+matching edges and emit explicit warnings; this remains a placement/authoring
+investigation, not proof of complete automatic rotated-climb support.
+
+Set `ROBIN_TRACE_JUMP=1` on the native vertical audit to include per-tick positions,
+then run `node refinement/check-native-jump-clearance.mjs <batch-directory>`.
+All **1,920 recorded positions** are covered by export-time clearance: a tiny
+physical obstruction at each observed foot position blocks that span parameter.
+Unit tests also check elevated obstructions, usable span splitting, integer flight
+timing and the sloped-receiver warning. The selected compiler/export suites pass
+**245 tests**; app typechecking and scoped lint pass. Production runtime behavior
+is unchanged; only the native test harness gains optional trajectory recording.
+
 ## Vertical-jump export investigation (2026-10-08)
 
-Automatic matching of independently placed edges with `long: false` and a
+Before the extension above, automatic matching of independently placed edges with `long: false` and a
 100-unit elevation difference emits no pair. The export warning explicitly says
 that climbing jumps require an authored connection: the clearance implementation
 only models long flights. This is an authoring/export limitation, not evidence
@@ -44,7 +78,7 @@ the new batch. Reports are `actor-jump-vertical-report.json` and
 `actor-jump-vertical-click-report.json`. Roof-only audits now need
 `--skip exported_vertical_jumps` when using the broader `exported_jumps` filter;
 their six tests still pass all 720 cases. The three always-on jump audit regressions
-also pass. Automatic vertical-clearance generation, multi-PC formations, broader
+also pass. Broader automatic vertical-clearance coverage, multi-PC formations, broader
 asset authoring and rendered contact remain open.
 
 ## Assisted roof jumps and carrier recovery (2026-10-08)
