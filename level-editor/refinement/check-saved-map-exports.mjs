@@ -40,6 +40,14 @@ for (const file of files) {
   const map = file.replace(".rhlos-map.json", "");
   if (selectedMaps.length && !selectedMaps.includes(map)) continue;
   const start = performance.now();
+  const timings = {};
+  let phase = "load";
+  let phaseStart = start;
+  const finished = () => {
+    timings[phase] = performance.now() - phaseStart;
+    console.log(`${map}: ${phase} complete (${Math.round(timings[phase])} ms)`);
+    phaseStart = performance.now();
+  };
   try {
     const document = await readStoredMap(`library/scenes/${file}`, "library");
     const assets = await pinnedDescriptors(
@@ -51,23 +59,39 @@ for (const file of files) {
       const asset = assets.get(edit.asset);
       if (asset) asset.gameplay = edit.gameplay;
     }
-    console.log(`${map}: loaded`);
+    finished();
+    phase = "bounds";
     const bounds = await savedMapBakeBounds(document);
+    finished();
+    phase = "wall calibration";
     const prepared = await savedMapWallCalibration(document, assets);
+    finished();
+    phase = "compile";
     const compiled = compileMap(document, bounds, prepared.assets, {
       bestEffort: true,
     });
+    finished();
+    phase = "write";
     await fs.writeFile(`${output}/${map}.level.json`, JSON.stringify(compiled.descriptor));
+    finished();
     results.push({
       map,
       file: `${map}.level.json`,
       warnings: [...prepared.warnings, ...compiled.warnings],
       bounds,
+      timings,
       elapsedMs: performance.now() - start,
     });
     console.log(`${map}: compiled`);
   } catch (error) {
-    results.push({ map, error: String(error), stack: error.stack, cause: error.cause });
+    results.push({
+      map,
+      phase,
+      timings,
+      error: String(error),
+      stack: error.stack,
+      cause: error.cause,
+    });
     console.error(`${map}: ${error}`);
   }
   await report(false);

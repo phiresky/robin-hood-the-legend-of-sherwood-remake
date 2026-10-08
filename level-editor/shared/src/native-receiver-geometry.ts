@@ -22,19 +22,34 @@ function needsSplit(points: Point[]): boolean {
       (previous[0] - a[0]) * (b[0] - a[0]) + (previous[1] - a[1]) * (b[1] - a[1]) > 0
     )
       return true;
-    for (let j = i + 2; j < points.length; j++) {
-      if (i === 0 && j === points.length - 1) continue;
-      const c = points[j]!,
-        d = points[(j + 1) % points.length]!;
-      if (
-        Math.max(a[0], b[0]) < Math.min(c[0], d[0]) ||
-        Math.max(c[0], d[0]) < Math.min(a[0], b[0]) ||
-        Math.max(a[1], b[1]) < Math.min(c[1], d[1]) ||
-        Math.max(c[1], d[1]) < Math.min(a[1], b[1])
-      )
-        continue;
+  }
+  const edges = points
+    .map((a, index) => {
+      const b = points[(index + 1) % points.length]!;
+      return {
+        a,
+        b,
+        index,
+        minX: Math.min(a[0], b[0]),
+        maxX: Math.max(a[0], b[0]),
+        minY: Math.min(a[1], b[1]),
+        maxY: Math.max(a[1], b[1]),
+      };
+    })
+    .sort((a, b) => a.minX - b.minX || a.index - b.index);
+  let active: typeof edges = [];
+  for (const edge of edges) {
+    // Retain touching bounds: a non-adjacent endpoint contact also pinches a ring.
+    active = active.filter((other) => other.maxX >= edge.minX);
+    const { a, b } = edge;
+    for (const other of active) {
+      const distance = Math.abs(edge.index - other.index);
+      if (distance === 1 || distance === points.length - 1) continue;
+      if (edge.maxY < other.minY || other.maxY < edge.minY) continue;
+      const { a: c, b: d } = other;
       if (cross(a, b, c) * cross(a, b, d) <= 0 && cross(c, d, a) * cross(c, d, b) <= 0) return true;
     }
+    active.push(edge);
   }
   return false;
 }

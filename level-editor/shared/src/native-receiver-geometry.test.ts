@@ -5,6 +5,19 @@ import type { Point } from "./level.ts";
 
 const surface = (points: Point[]) => points.map(([x, y]) => ({ x, y, z_top: 7, z_bottom: 7 }));
 
+test("a large simple terrain outline retains its original vertices", () => {
+  const points = surface(
+    Array.from({ length: 10000 }, (_, i): Point => [
+      12000 + 10000 * Math.cos((i / 10000) * 2 * Math.PI),
+      12000 + 10000 * Math.sin((i / 10000) * 2 * Math.PI),
+    ]),
+  );
+  const warnings: string[] = [];
+  const result = nativeReceiverGeometry(points, "large outline", warnings);
+  assert.deepEqual(result, [points]);
+  assert.deepEqual(warnings, []);
+});
+
 test("native receiving geometry retains representable subpixel floors and concave boundaries", () => {
   for (const polygon of [
     [

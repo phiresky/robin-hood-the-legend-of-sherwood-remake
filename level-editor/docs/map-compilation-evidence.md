@@ -22,13 +22,20 @@ two triangulation warnings and three zero-area omission warnings. Explicit ring
 closures remain intact. Local export `grid-terrain-review-2YQRkk` records the
 final descriptor.
 
-All 164 focused compiler/material/terrain/wall checks pass, including preservation of
+All 165 focused compiler/material/terrain/wall checks pass, including preservation of
 representable subpixel floors and both sides of a pinched notch. The native
 `asset_map_compilation` suite passes 67 tests, with five data-dependent audits
 ignored. It validates all receiver polygons after native decoding, hill heights,
 ford/river/crop restrictions and collision-connected route samples. The test
 which intentionally changes receiver heights now removes stale explicit anchors
 before deriving its baseline. No engine implementation change was needed.
+
+Receiver self-intersection checks now sweep overlapping edge bounds instead of
+comparing every edge pair. A local 10,000-vertex circle check dropped from about
+500 ms to 9 ms while preserving its original polygon and all export fixtures.
+This is a component benchmark, not a full-map export timing. The saved-map audit
+now logs and records separate load, bounds, wall-calibration, compile and write
+durations, and identifies the failing phase when an export raises an error.
 
 ## Split spline mask application boundaries (2026-10-08)
 
