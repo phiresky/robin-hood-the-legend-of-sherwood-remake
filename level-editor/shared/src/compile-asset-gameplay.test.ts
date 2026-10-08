@@ -2336,6 +2336,31 @@ test("jump pairs rebuild crossed destination links and preserve height after dup
     20,
   );
 });
+test("parallel authored jump spans stay aligned after fractional placement and rotation", () => {
+  for (const angle of [0, 37, 83, 143]) {
+    const { document, assets } = jumpAssetCompilerFixture();
+    document.groups.find((group) => group.id === "hut-a")!.transform = {
+      ...IDENTITY_TRANSFORM,
+      dx: 700.23,
+      dy: 700.79,
+      rot_deg: angle,
+    };
+    const geometry = compileAssetGameplay(document, assets, bounds);
+    const { line1, line2 } = geometry.jump_line_pairs![0]!;
+    for (const axis of [0, 1])
+      assert.equal(
+        line1.point_b[axis]! - line1.point_a[axis]!,
+        line2.point_a[axis]! - line2.point_b[axis]!,
+        `rotation ${angle}, axis ${axis}`,
+      );
+    assert.deepEqual(
+      [line1.point_a[2], line1.point_b[2], line2.point_a[2], line2.point_b[2]],
+      [0, 0, 100, 100],
+    );
+    assert.ok(!geometry.warnings?.some((warning) => warning.includes("opposing edges differ")));
+  }
+});
+
 test("jump metadata rejects orphan zones, missing links and collapsed edges", () => {
   const { hut, document, assets } = jumpAssetCompilerFixture();
   const pair = hut.gameplay!.jumpPairs![0]!;

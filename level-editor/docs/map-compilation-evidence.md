@@ -6,6 +6,21 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Exported jump diagnostics (2026-10-08)
 
+Parallel authored jump spans now round as a pair. The second edge's A endpoint
+is derived from its rounded B endpoint and the first edge's rounded vector;
+authored heights are unchanged. Only spans already parallel and opposite before
+quantization take this path. Nonparallel authored pairs still report their
+alignment problem. Fractional placement checks at 0, 37, 83 and 143 degrees
+verify vector equality and unchanged endpoint heights.
+
+Three diagnostic-only inset probes of the watermill export isolate the remaining
+walking/flight tradeoff. Moving the upper line inward by another 3, 5 or 7 map
+units produces 88, 116 and 116 walk–jump–walk passes respectively. These are
+descriptor experiments, not asset-derived publication candidates. The five-unit
+probe (`watermill-inset-5-probe-cdzj_iex`) fails native solid clearance on the
+straight sword-fight return path. Increasing the inset alone is not a complete
+fix, and neither geometry nor collision checks have been relaxed to hide it.
+
 The failed walk-away recovery now has a standalone geometric regression. A
 fractional diagonal platform rejects the direct recovery sweep because it adds
 a triangular overhang outside the actor's initial footprint. The same supported

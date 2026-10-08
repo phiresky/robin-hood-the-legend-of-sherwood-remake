@@ -2468,6 +2468,21 @@ function compileAssetGameplayAttempt(
         throw new Error(`${pair.id}: jump edge collapses on the movement grid`);
       return { point_a: a, point_b: b, jump_zone_index: indices[1 - i]! };
     });
+    const [first, second] = pair.edges;
+    const vector = (edge: (typeof pair.edges)[number]): Point => [
+      edge.b[0] - edge.a[0],
+      edge.b[1] - edge.b[2] - edge.a[1] + edge.a[2],
+    ];
+    const u = vector(first!),
+      v = vector(second!);
+    if (u.every((value, axis) => Math.abs(value + v[axis]!) < 1e-7)) {
+      // Runtime landing translation uses the source edge's vector in either
+      // direction. Round paired parallel spans together, preserving heights.
+      for (const axis of [0, 1])
+        lines[1]!.point_a[axis] = quantize(
+          lines[1]!.point_b[axis]! + lines[0]!.point_b[axis]! - lines[0]!.point_a[axis]!,
+        );
+    }
     return { line1: lines[0]!, line2: lines[1]!, jump_long: pair.long };
   });
   for (const [index, pair] of compiledJumpPairs.entries())

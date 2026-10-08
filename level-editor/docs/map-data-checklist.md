@@ -51,6 +51,10 @@ The compiler now audits final integer jump pairs, including authored connections
 and warns about mismatched opposing edges, solid flight/takeoff intersections,
 or unsupported clearance checks. Best-effort exports retain those connections;
 warnings identify review work and do not certify playable jumps.
+Parallel authored spans now share one integer vector after placement, preserving
+their authored heights. Fractional translation and rotation no longer introduce
+unequal opposing vectors solely through independent endpoint rounding; genuinely
+nonparallel authored edges retain their diagnostic.
 A further unpublished boundary-ledged watermill candidate passes 480 native
 airborne-path checks across the eight placements, with all 64 exported endpoints
 inside their home jump zones. The upper zone is derived from the physical floor.
