@@ -1,5 +1,137 @@
 use super::*;
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct JumpArrival {
+    final_distance: f32,
+    completed_turning_startup: bool,
+    turning_distance_loss: f32,
+}
+
+#[derive(Debug, Default)]
+struct StartupWalkAudit {
+    start: Option<MapPoint>,
+    raw_distance: f32,
+    turning_loss: f32,
+    invalid_step: bool,
+    finished: bool,
+}
+
+impl StartupWalkAudit {
+    // A short move can consist solely of its finite startup animation. Turning
+    // reduces travel without extending that animation. Accept only its measured
+    // distance loss, never a general near-goal tolerance or a collision shortfall.
+    fn observe(&mut self, before: MapPoint, sprite: &crate::sprite::Sprite) {
+        if self.finished || sprite.last_action != OrderType::TransitionWaitingUprightWalkingUpright
+        {
+            return;
+        }
+        self.start.get_or_insert(before);
+        let raw = sprite.current_frame_distance();
+        let position = &sprite.position_iface;
+        let effective = if raw > 0. && position.get_direction() != position.get_direction_goal() {
+            (raw * 0.6).max(0.7)
+        } else {
+            raw
+        };
+        self.raw_distance += raw;
+        self.turning_loss += raw - effective;
+        self.invalid_step |= ((position.map_position() - before).length() - effective).abs()
+            > 0.001
+            || position.is_deviated()
+            || position.blocked_count != 0;
+        self.finished = sprite.last_motion_state == Some(crate::sprite::MotionState::Terminated);
+    }
+
+    fn completed_while_turning(&self, sprite: &crate::sprite::Sprite, goal: MapPoint) -> bool {
+        let Some(start) = self.start else {
+            return false;
+        };
+        let delta = goal - start;
+        let distance = delta.length();
+        let moved = self.raw_distance - self.turning_loss;
+        if !self.finished
+            || self.invalid_step
+            || self.turning_loss <= 0.
+            || distance <= 0.
+            || self.raw_distance + 0.001 < distance
+            || moved >= distance
+        {
+            return false;
+        }
+        let expected = MapPoint::new(
+            start.x + delta.x * moved / distance,
+            start.y + delta.y * moved / distance,
+        );
+        (sprite.position_iface.map_position() - expected).length() < 0.001
+    }
+}
+
+#[test]
+fn short_startup_finishes_its_animation_with_only_the_turning_distance_loss() {
+    for (turn, expected_distance) in [(0, 4.), (1, 3.2), (4, 2.4)] {
+        let (mut engine, mut assets) = compiled_walkway(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/asset-navigation-copies.level.json"
+        )));
+        let sector = crate::position_interface::SectorHandle::from_number(
+            engine.world.fast_grid.level.sectors[0].sector_number,
+        )
+        .with_arena_index(crate::fast_find_grid::SectorIndex::new(0).unwrap());
+        let start = MapPoint::new(400., 300.);
+        let goal = MapPoint::new(404., 300.);
+        let owner = walking_pc(&mut engine, &mut assets, start, 0, sector);
+        let action = OrderType::TransitionWaitingUprightWalkingUpright;
+        let script = crate::sprite_script::SpriteScript {
+            action_id: action as u16,
+            action_done: 1,
+            average_speed: 2.,
+            hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+            sum_distance: 4,
+            frame_ids: vec![1, 2],
+            delays: vec![0; 2],
+            distances: vec![2; 2],
+            offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 2],
+            sound_ids: vec![0; 2],
+        };
+        let mut conversion = crate::engine::test_support::unmapped_conversion();
+        conversion[action as usize] = 0;
+        let element = engine.ent_mut(owner).element_data_mut();
+        let position = element.sprite.position_iface.clone();
+        element.sprite =
+            crate::sprite::Sprite::new(Arc::new(vec![script; 16]), Arc::new(conversion));
+        element.sprite.position_iface = position;
+        element.set_direction_instantly((vector_to_sector_0_to_15(1., 0.) + turn) & 15);
+        element.sprite.position_iface.set_anti_collision_on(false);
+        let mut movement = SequenceElement::new_movement(
+            1,
+            Command::MoveOk,
+            Some(owner),
+            OrderType::WalkingUpright,
+        );
+        let mut order =
+            crate::order::Order::new(action, goal.x, goal.y, engine.orders.allocate_order_id());
+        order.compute_direction = true;
+        movement.orders.push_back(order);
+        let sequence = engine.t_launch_in_progress(&assets, movement);
+        engine.select_sequence_element(owner, Some((sequence, 0)));
+        let mut audit = StartupWalkAudit::default();
+        for _ in 0..2 {
+            let before = engine.ent(owner).element_data().position_map();
+            engine.t_tick_actor_owner_envelopes(&assets);
+            audit.observe(before, &engine.ent(owner).element_data().sprite);
+        }
+        let sprite = &engine.ent(owner).element_data().sprite;
+        assert_eq!(
+            sprite.last_motion_state,
+            Some(crate::sprite::MotionState::Terminated)
+        );
+        assert!(
+            (sprite.position_iface.map_position().x - start.x - expected_distance).abs() < 0.001
+        );
+        assert_eq!(audit.completed_while_turning(sprite, goal), turn != 0);
+    }
+}
+
 #[test]
 #[ignore = "requires exported jump pairs and ROBIN_CLIMB_RHS"]
 fn exported_jumps_complete_sprite_dispatch_and_land_on_receivers() {
@@ -48,7 +180,8 @@ fn audit_jump_dispatch(approach: bool) {
                 results.push(serde_json::json!({
                     "file": file, "line": index, "t": t,
                     "approach_depth": approach_depth,
-                    "passed": outcome.is_ok(), "error": outcome.err(),
+                    "passed": outcome.is_ok(), "error": outcome.as_ref().err(),
+                    "arrival": outcome.as_ref().ok(),
                 }));
             }
         }
@@ -85,7 +218,7 @@ fn dispatch_jump(
     t: f32,
     approach: bool,
     approach_depth: f32,
-) -> Result<(), String> {
+) -> Result<JumpArrival, String> {
     let source = engine.world.fast_grid.level.jump_lines[index].clone();
     let destination_index = source.associated_line_index.unwrap();
     let destination = engine.world.fast_grid.level.jump_lines[destination_index as usize].clone();
@@ -205,24 +338,42 @@ fn dispatch_jump(
         sequence
     };
     let mut flew = false;
+    let mut startup = StartupWalkAudit::default();
     for _ in 0..1000 {
         engine.control.frame_counter += 1;
         if approach {
             engine.t_hourglass_phase_sequences(&assets);
             engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
         }
+        let before = engine.ent(owner).element_data().position_map();
         engine.t_tick_actor_owner_envelopes(&assets);
         let element = engine.ent(owner).element_data();
+        if approach && flew {
+            startup.observe(before, &element.sprite);
+        }
         flew |= element.posture() == Posture::Flying;
         let finished = engine
             .orders
             .sequence_manager
             .get_element(sequence, 0)
             .is_none_or(|element| element.orders.is_empty());
+        let finished_selection = engine
+            .entities()
+            .current_element_for_actor(owner)
+            .and_then(|(id, index)| engine.seq().get_element(id, index))
+            .is_none_or(|selected| selected.orders.is_empty() || selected.command == Command::Wait);
+        let completed_turning_startup = approach
+            && finished_selection
+            && startup.completed_while_turning(&element.sprite, goal);
+        let final_distance = (element.position_map() - goal).length();
         if flew
-            && (finished || approach)
+            && if approach {
+                finished_selection
+            } else {
+                finished
+            }
             && element.posture() == Posture::Upright
-            && (element.position_map() - goal).length() < 0.1
+            && (final_distance < 0.1 || completed_turning_startup)
         {
             if element.sector() != Some(destination_sector) || element.layer() != destination.layer
             {
@@ -232,14 +383,19 @@ fn dispatch_jump(
                     element.layer()
                 ));
             }
-            return actor_receiver_result(
+            actor_receiver_result(
                 &engine,
                 &assets,
                 owner,
                 destination_sector,
                 destination.layer,
                 element.position_map(),
-            );
+            )?;
+            return Ok(JumpArrival {
+                final_distance,
+                completed_turning_startup,
+                turning_distance_loss: startup.turning_loss,
+            });
         }
     }
     let selected = engine
@@ -247,7 +403,7 @@ fn dispatch_jump(
         .current_element_for_actor(owner)
         .and_then(|(id, index)| engine.seq().get_element(id, index));
     Err(format!(
-        "jump stalled: flew={flew}, position={:?}, posture={:?}, goal={goal:?}, selected={selected:?}",
+        "jump stalled: flew={flew}, position={:?}, posture={:?}, goal={goal:?}, startup={startup:?}, selected={selected:?}",
         engine.ent(owner).element_data().position(),
         engine.ent(owner).element_data().posture()
     ))

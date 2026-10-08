@@ -33,10 +33,25 @@ tests (5 ignored)** and scoped type-aware lint pass.
 The animation audit now accepts an explicit per-map `approach_depth`; its default
 remains eight units. This fixture specifies its authored four-unit landing depth.
 It first checks both swept approaches using the native actor footprint. All 120
-cases pass that geometric check, but **112/120 complete walk–jump–walk sequences
-still fail the 0.1-unit final-position assertion**, stopping 0.8 or 1.6 units short
-after the jump. This short-move animation/arrival discrepancy remains unresolved;
-the assertion has not been relaxed. The earlier eight-unit audit additionally
+cases pass that geometric check. Initially **112/120 complete walk–jump–walk
+sequences failed the 0.1-unit final-position assertion**, stopping 0.8 or 1.6 units
+short after the jump. Tracing established that these moves consist solely of the
+finite walking-start animation: turning reduces each step to 60% of its distance,
+and the command ends when that animation finishes if no subsequent movement order
+exists. This matches the reference behavior. A controlled native test checks four
+units of requested travel with no turn, one turning step and two turning steps:
+the resulting distances are 4.0, 3.2 and 2.4, respectively.
+
+The audit now distinguishes exact arrival from that completed turning startup.
+It verifies every observed startup displacement against its frame distance,
+checks that the unscaled animation could reach the goal, rejects blocking and
+deviation, requires animation and command completion, and checks the calculated
+final point within 0.001 unit. This is not a blanket near-goal tolerance. Reports
+retain the actual final offset and measured turning loss. **All 120 complete
+walk–jump–walk cases now pass**: 8 exact arrivals and 112 native turning completions.
+The 120 isolated jumps still land exactly. No production engine behavior changed.
+The full engine suite passes **4,345 tests, 0 failed, 35 ignored**.
+The earlier eight-unit audit additionally
 requested points outside this fixture's guaranteed landing band and is not proof
 that the authored four-unit approach is obstructed.
 
