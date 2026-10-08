@@ -3,6 +3,24 @@ import assert from "node:assert/strict";
 import { clipSplineBoundary } from "./clip-spline-boundary.ts";
 import type { Vec3 } from "./scene.ts";
 
+test("cropping retains spatial bends hidden by the clipping projection", () => {
+  const points: Vec3[] = [
+    [0, 0, 0],
+    [10, 0, 4],
+    [20, 0, 0],
+    [30, 0, 0],
+    [30, 20, 0],
+    [0, 20, 0],
+  ];
+  for (const input of [points, [...points].reverse()]) {
+    const result = clipSplineBoundary(input, 0, 5, 25, [15]);
+    assert.equal(result.length, 1);
+    assert.ok(result[0]!.some((p) => p[0] === 10 && p[1] === 0 && p[2] === 4));
+    assert.ok(result[0]!.some((p) => p[0] === 15 && p[1] === 0 && p[2] === 2));
+    assert.ok(result[0]!.some((p) => p[0] === 20 && p[1] === 0 && p[2] === 0));
+  }
+});
+
 test("closed contour crops preserve separate islands and interpolated heights", () => {
   const xy = [
     [0, 0],

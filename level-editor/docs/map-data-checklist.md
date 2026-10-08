@@ -16,6 +16,11 @@ applications, including sloped and vertical boundaries. Moved, bent and rising
 compiler checks match separately authored islands; native character/projectile
 queries and an editor export/reopen round trip pass. This is application-rule
 evidence, not rendered mask certification.
+Cropping also preserves height bends at vertices that appear collinear in 2D.
+The final Wychford descriptor remains identical to its native-tested publication;
+the synthetic browser bake passes PNG and ZIP round-tripping.
+The freshly baked ZIP also passes native mounting, image decoding and live
+navigation/sight construction without a base datadir.
 
 Export reports gameplay phases from its worker while keeping compilation pending
 and cancellable. The saved-map audit records per-phase durations, including

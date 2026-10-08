@@ -270,6 +270,18 @@ This test discovers and mounts the real browser-produced archive, expands the
 descriptor into runtime sight/motion data and reads the map, minimap and depth
 through the engine's terrain loaders.
 
+To test a fresh browser archive without replacing the checked-in fixture, set
+`TEST_BAKE_ZIP=work/map-compile/browser-bake-contract.zip` on the browser command.
+Then, from the repository root:
+
+```sh
+ROBIN_EDITOR_BAKE_CONTRACT_ZIP="$PWD/level-editor/work/map-compile/browser-bake-contract.zip" RUST_MIN_STACK=33554432 cargo test -p robin_rs -j 1 --test editor_mod_export fresh_browser_bake_contract_loads_without_base_datadir -- --ignored
+```
+
+Both contract paths construct live navigation geometry in addition to decoding
+the archive images. This small synthetic bake does not certify a full library
+map, rendered character occlusion or mission gameplay.
+
 The asset compiler is also tested independently of the renderer:
 
 ```sh

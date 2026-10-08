@@ -65,7 +65,28 @@ export function clipSplineBoundary(
   };
   return polygons.flatMap((polygon) => {
     if (polygon.length !== 1) throw new Error("Cropped mask boundary contains unsupported holes");
-    const closed = polygon[0]!.map(restore);
+    const ring = polygon[0]!;
+    const closed = ring.slice(0, -1).flatMap((a, index) => {
+      const b = ring[index + 1]!;
+      const dx = b[0] - a[0],
+        dy = b[1] - a[1];
+      const lengthSquared = dx * dx + dy * dy;
+      // Boolean clipping removes vertices collinear in its 2D projection.
+      // They can still carry a bend in the third coordinate; restore those
+      // source vertices before interpolating the spline's deformation stations.
+      const intermediate = points
+        .flatMap((point) => {
+          const x = point[axis]!,
+            y = point[other]!;
+          const t = ((x - a[0]) * dx + (y - a[1]) * dy) / lengthSquared;
+          return t > 1e-8 && t < 1 - 1e-8 && Math.hypot(a[0] + t * dx - x, a[1] + t * dy - y) < 1e-7
+            ? [{ t, point }]
+            : [];
+        })
+        .sort((a, b) => a.t - b.t);
+      return [restore(a), ...intermediate.map(({ point }) => point)];
+    });
+    closed.push(closed[0]!);
     return clipSplinePolyline(closed, axis, min, max, stations)
       .filter((fragment) => fragment.length >= 4)
       .map((fragment) => fragment.slice(0, -1));

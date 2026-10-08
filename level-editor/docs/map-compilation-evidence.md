@@ -6,6 +6,30 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Closed spline mask contours (2026-10-08)
 
+Follow-up regression catches vertices that boolean clipping removes as collinear
+in its 2D projection even though they carry bends in the third coordinate. The
+compiler restores surviving source vertices before inserting spline stations.
+Forward and reversed contours retain both the four-unit peak and the two-unit
+interpolated midpoint. All 33 focused compiler/editor checks pass, including
+native-fixture equality and editor reopening; typecheck, changed-file lint and
+the production build pass.
+
+Fresh Wychford descriptor `saved-map-exports-ROPd6Z` is exactly equal to the
+native-tested published descriptor `saved-map-exports-WcPgWR`, including warning
+text. Export takes 137.72 seconds and retains 1,869 warnings. The Chromium
+`map-bake.html` contract passes crop alignment, tile seams, hidden geometry,
+color/depth encoding, state apply/reset, automatic appearance regions, bounded
+sun shadows, resource restoration and ZIP/PNG round-tripping. Its fresh archive
+is `work/map-compile/closed-mask-bake-contract.zip`; this is the generic synthetic
+bake fixture, not a rendered closed-mask-island scene or full Wychford bake.
+The native browser contract now accepts a fresh archive through
+`ROBIN_EDITOR_BAKE_CONTRACT_ZIP`, preserving the checked-in archive as a separate
+regression. Both archives pass discovery, mounting, color/depth/minimap decoding
+and live engine navigation/sight construction without a base datadir. The fresh
+archive uses `spawn_points: []`; the older fixture retains `spawn_player: false`.
+Only that descriptor field differs between their unpacked contents. No runtime
+behavior was changed for this acceptance check.
+
 Closed concave application contours previously used single-ring strip clipping,
 which could connect surviving islands along the trimmed edge. The compiler now
 clips in a spatial projection that includes the crop axis, retains separate

@@ -243,13 +243,20 @@ fn full_editor_archive_constructs_native_map_without_base_datadir() {
 
 #[test]
 fn browser_compiled_map_loads_geometry_without_mission_spawns() {
+    check_browser_bake_contract(include_bytes!("fixtures/editor-bake-contract.zip"));
+}
+
+#[test]
+#[ignore = "requires ROBIN_EDITOR_BAKE_CONTRACT_ZIP from the browser bake contract"]
+fn fresh_browser_bake_contract_loads_without_base_datadir() {
+    let path = std::env::var("ROBIN_EDITOR_BAKE_CONTRACT_ZIP").unwrap();
+    check_browser_bake_contract(&std::fs::read(path).unwrap());
+}
+
+fn check_browser_bake_contract(bytes: &[u8]) {
     let directory = tempfile::tempdir().unwrap();
     let archive = directory.path().join("editor-bake-contract.zip");
-    std::fs::write(
-        &archive,
-        include_bytes!("fixtures/editor-bake-contract.zip"),
-    )
-    .unwrap();
+    std::fs::write(&archive, bytes).unwrap();
     let mods = scan_mods_dir(directory.path());
     assert_eq!(mods.len(), 1);
     assert_eq!(mods[0].details.hackable_missions, ["editor-bake-contract"]);
@@ -299,4 +306,41 @@ fn browser_compiled_map_loads_geometry_without_mission_spawns() {
     )
     .unwrap();
     assert_eq!((minimap.width, minimap.height), (79, 9));
+
+    use robin_engine::engine::{Engine, EngineArgs, LevelAssets, LevelLoadArgs, SimConfig};
+    let mut assets = LevelAssets::new();
+    let mut profiles = robin_engine::profiles::ProfileManager::new();
+    let mut campaign = robin_engine::campaign::Campaign::new();
+    let index = campaign
+        .force_next_mission_by_name(
+            &mut profiles,
+            "editor-bake-contract",
+            "editor-bake-contract",
+            true,
+        )
+        .unwrap();
+    campaign.current_mission_idx = Some(index);
+    assets.profile_manager = Arc::new(profiles);
+    let engine = Engine::new(EngineArgs {
+        campaign,
+        level: LevelLoadArgs {
+            assets: &mut assets,
+            level_directory: "",
+            progress: &mut |_| {},
+            loaded: level,
+            bg_pixel_dims: (1100., 128.),
+        },
+        ground_mark_sprite: None,
+        titbit_row_frame_counts: vec![],
+        rng_seed: 0,
+        original_rng_replay: None,
+        sim_config: SimConfig {
+            script_enabled: false,
+            ..Default::default()
+        },
+    })
+    .expect("browser bake must construct live map geometry without a base datadir");
+    assert!(!engine.fast_grid().level.blocks.is_empty());
+    assert!(!engine.fast_grid().level.sectors.is_empty());
+    assert_eq!(assets.environment.static_sight_obstacles.len(), 1);
 }
