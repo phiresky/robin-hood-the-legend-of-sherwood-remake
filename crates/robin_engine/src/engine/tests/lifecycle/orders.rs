@@ -149,7 +149,7 @@ fn pending_sequence_animation_starts_after_entity_hourglass_boundary() {
         .get();
     assert_eq!(
         engine.elem(soldier_id).sprite.last_processed_order_id,
-        u32::MAX,
+        u16::MAX as u32 + 1,
         "an order dispatched by the sequence manager after the entity loop must not animate in that same frame"
     );
 
@@ -706,12 +706,12 @@ fn ordered_ability_dispatch_does_not_advance_a_later_actor() {
 
     assert_ne!(
         engine.elem(first).sprite.last_processed_order_id,
-        u32::MAX,
+        u16::MAX as u32 + 1,
         "the actor at the current creation slot must advance"
     );
     assert_eq!(
         engine.elem(second).sprite.last_processed_order_id,
-        u32::MAX,
+        u16::MAX as u32 + 1,
         "a later actor's ability cannot advance from an earlier actor's update"
     );
 }

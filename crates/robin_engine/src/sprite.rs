@@ -678,7 +678,9 @@ impl Default for Sprite {
             current_width: 0,
             current_height: 0,
             last_action: OrderType::NonanimationEnd,
-            last_processed_order_id: u32::MAX,
+            // Fresh sprites carry the 16-bit no-order marker, translated
+            // into the nonzero order-ID namespace used by the engine.
+            last_processed_order_id: u16::MAX as u32 + 1,
             masked: false,
             use_alternate_profile: false,
             action_done_frame: 0xFFFF,

@@ -985,7 +985,7 @@ fn execution_frozen_selected_bow_does_not_advance_or_fire() {
     );
     assert_eq!(
         engine.ent(shooter).sprite().last_processed_order_id,
-        u32::MAX
+        u16::MAX as u32 + 1
     );
 }
 

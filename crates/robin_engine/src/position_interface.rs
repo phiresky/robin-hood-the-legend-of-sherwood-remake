@@ -886,8 +886,10 @@ impl PositionInterface {
             direction_goal: Direction::NORTH,
             slow_turn_count: 2,
             direction_count: 0,
-            saved_posture: crate::element::Posture::Undefined,
-            saved_old_posture: crate::element::Posture::Undefined,
+            // Construction initializes both slots; this is not a transition
+            // from Undefined. Save adoption can subsequently restore either.
+            saved_posture: crate::element::Posture::Upright,
+            saved_old_posture: crate::element::Posture::Upright,
 
             layer: Some(Layer::ZERO),
             sector: None,
@@ -2431,6 +2433,19 @@ pub fn vector_normal_iso(x: f32, y: f32, direct: bool) -> [f32; 2] {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn constructor_posture_precedes_the_first_transition() {
+        use crate::element::Posture;
+        let mut position = super::PositionInterface::new();
+        let initial = position.v48_serialized_state();
+        assert_eq!(initial.posture, Posture::Upright);
+        assert_eq!(initial.old_posture, Posture::Upright);
+        position.set_posture(Posture::Crouched);
+        let changed = position.v48_serialized_state();
+        assert_eq!(changed.posture, Posture::Crouched);
+        assert_eq!(changed.old_posture, Posture::Upright);
+    }
+
     use super::*;
 
     #[test]

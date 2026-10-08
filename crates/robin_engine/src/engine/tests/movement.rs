@@ -2596,7 +2596,7 @@ fn rider_charge_frozen_all_real_victim_is_damaged_once_across_multiple_ticks() {
     assert!(observations[0].life_points_after > 0, "victim is nonlethal");
     let entity = engine.ent(rider);
     assert_eq!(entity.sprite().current_frame, 0);
-    assert_eq!(entity.sprite().last_processed_order_id, u32::MAX);
+    assert_eq!(entity.sprite().last_processed_order_id, u16::MAX as u32 + 1);
     assert_eq!(
         entity
             .actor_data()
@@ -2631,7 +2631,10 @@ fn rider_charge_frozen_all_fresh_id_same_action_reinitializes_candidates() {
         engine.actor(rider).last_executed_rider_charge_order_id,
         Some(old_order_id)
     );
-    assert_eq!(engine.ent(rider).sprite().last_processed_order_id, u32::MAX);
+    assert_eq!(
+        engine.ent(rider).sprite().last_processed_order_id,
+        u16::MAX as u32 + 1
+    );
     assert_eq!(engine.human(rider).sword_sweep.victims, vec![stale]);
 
     engine.place_map(stale, MapPoint::new(900.0, 900.0));
@@ -2650,7 +2653,7 @@ fn rider_charge_frozen_all_fresh_id_same_action_reinitializes_candidates() {
     engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
 
     let entity = engine.ent(rider);
-    assert_eq!(entity.sprite().last_processed_order_id, u32::MAX);
+    assert_eq!(entity.sprite().last_processed_order_id, u16::MAX as u32 + 1);
     assert_eq!(
         entity
             .actor_data()
@@ -2682,7 +2685,7 @@ fn rider_charge_frozen_then_unfrozen_initializes_sprite_motion_on_first_live_tic
     engine.t_tick_actor_owner_envelopes_with(&sim, &assets);
     {
         let entity = engine.ent(rider);
-        assert_eq!(entity.sprite().last_processed_order_id, u32::MAX);
+        assert_eq!(entity.sprite().last_processed_order_id, u16::MAX as u32 + 1);
         assert_eq!(
             entity
                 .actor_data()

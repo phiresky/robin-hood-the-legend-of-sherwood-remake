@@ -2310,15 +2310,32 @@ impl EngineInner {
             tracing::warn!("mission script binding skipped because no mission script is loaded");
         }
 
-        for (handle, _) in &per_actor_scripts {
-            if let Err(error) = self.call_script_vm(
-                tcx,
-                ScriptVmKey::Actor(*handle),
-                "Initialize",
-                &[],
-                crate::natives::ScriptCallFrame::actor(*handle),
-            ) {
-                tracing::warn!("Actor Initialize (handle {handle}): {error}");
+        // PC loading installs Wait immediately after its actor Initialize,
+        // before the global startup script or NPC AI can allocate orders.
+        let actors: Vec<_> = self
+            .world
+            .entities
+            .actors()
+            .map(|(id, entity)| (id, entity.is_pc()))
+            .collect();
+        for (id, is_pc) in actors {
+            let handle = crate::natives::ScriptHandleCodec::actor_handle(id);
+            if per_actor_scripts
+                .iter()
+                .any(|(script_handle, _)| *script_handle == handle)
+            {
+                if let Err(error) = self.call_script_vm(
+                    tcx,
+                    ScriptVmKey::Actor(handle),
+                    "Initialize",
+                    &[],
+                    crate::natives::ScriptCallFrame::actor(handle),
+                ) {
+                    tracing::warn!("Actor Initialize (handle {handle}): {error}");
+                }
+            }
+            if is_pc {
+                self.actor_wait(tcx, id.into());
             }
         }
         for (handle, _) in &per_target_scripts {

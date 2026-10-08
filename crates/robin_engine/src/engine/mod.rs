@@ -780,6 +780,16 @@ impl EngineInner {
                 0,
                 &assets.navigation.hiking_paths,
             );
+        } else {
+            let pcs: Vec<_> = self
+                .world
+                .entities
+                .actors()
+                .filter_map(|(id, entity)| entity.is_pc().then_some(id))
+                .collect();
+            for id in pcs {
+                self.actor_wait(TickCtx::new(sim, assets), id.into());
+            }
         }
 
         tracing::debug!(

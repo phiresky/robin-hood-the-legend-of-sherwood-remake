@@ -3614,7 +3614,7 @@ fn frozen_all_runs_weak_sword_actor_initialisation_before_sprite_start() {
     assert!(opponent_human.received_smalltalk_initiative);
     assert_eq!(
         engine.ent(weak).sprite().last_processed_order_id,
-        u32::MAX,
+        u16::MAX as u32 + 1,
         "weak/stunned initialization is actor-owned and precedes the frozen sprite boundary"
     );
 }
