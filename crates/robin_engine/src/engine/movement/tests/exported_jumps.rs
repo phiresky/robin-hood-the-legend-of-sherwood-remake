@@ -12,6 +12,7 @@ enum JumpStance {
     Upright,
     Sword,
     Shoulders,
+    Vertical,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -364,13 +365,29 @@ fn exported_jump_clicks_route_the_carrier_then_land_the_rider() {
     audit_jump_dispatch(JumpDispatch::Click, JumpStance::Shoulders);
 }
 
+#[test]
+#[ignore = "requires exported vertical jump pairs and complete rider/helper sprites"]
+fn exported_vertical_jumps_climb_with_help_and_descend_upright() {
+    audit_jump_dispatch(JumpDispatch::Isolated, JumpStance::Vertical);
+}
+
+#[test]
+#[ignore = "requires exported vertical jump pairs and complete rider/helper sprites"]
+fn exported_vertical_jumps_resolve_clicks_and_complete_the_route() {
+    audit_jump_dispatch(JumpDispatch::Click, JumpStance::Vertical);
+}
+
 fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
     let sprite = super::exported_stairs::complete_climb_sprite();
-    let carrier_sprite = (stance == JumpStance::Shoulders).then(|| {
-        let path =
-            std::env::var("ROBIN_CARRIER_RHS").expect("path to a complete LittleJohn RHS sprite");
-        super::exported_stairs::complete_character_sprite(std::path::Path::new(&path), "Petit Jean")
-    });
+    let carrier_sprite =
+        matches!(stance, JumpStance::Shoulders | JumpStance::Vertical).then(|| {
+            let path = std::env::var("ROBIN_CARRIER_RHS")
+                .expect("path to a complete LittleJohn RHS sprite");
+            super::exported_stairs::complete_character_sprite(
+                std::path::Path::new(&path),
+                "Petit Jean",
+            )
+        });
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
@@ -399,11 +416,71 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
             ),
         );
         for index in 0..engine.world.fast_grid.level.jump_lines.len() {
+            let line = &engine.world.fast_grid.level.jump_lines[index];
+            let destination = &engine.world.fast_grid.level.jump_lines
+                [line.associated_line_index.unwrap() as usize];
+            let climbing = destination.z_a > line.z_a;
+            let case_stance = if stance == JumpStance::Vertical {
+                assert!(!line.long_jump_forced);
+                assert!((destination.z_a - line.z_a).abs() >= 100.);
+                assert_eq!(destination.helper_needed, climbing);
+                if climbing {
+                    JumpStance::Shoulders
+                } else {
+                    JumpStance::Upright
+                }
+            } else {
+                stance
+            };
             for t in if mode == JumpDispatch::Click {
                 [0.05, 0.25, 0.5, 0.75, 0.95]
             } else {
                 [0., 0.25, 0.5, 0.75, 1.]
             } {
+                if stance == JumpStance::Vertical && mode == JumpDispatch::Click && !climbing {
+                    let vector = line.vector();
+                    let inset = crate::coordinates::MapVec::new(
+                        -vector.y * approach_depth / vector.length(),
+                        vector.x * approach_depth / vector.length(),
+                    );
+                    let offset = crate::coordinates::MapVec::new(vector.x * t, vector.y * t);
+                    let start = line.point_a + offset - inset;
+                    let goal = destination.point_b + offset + inset;
+                    let hit = engine.world.fast_grid.get_sector_screen(goal, start);
+                    if hit.sector_idx == line.sector_index && line.layer > destination.layer {
+                        let lower =
+                            engine
+                                .world
+                                .fast_grid
+                                .get_sector(goal, start, destination.layer);
+                        let crate::fast_find_grid::SectorHit::Found { sector_idx, .. } = lower
+                        else {
+                            panic!("occluded lower landing must still have a jump overlay");
+                        };
+                        assert!(
+                            engine.world.fast_grid.level.sectors[usize::from(sector_idx)]
+                                .sector_type
+                                .is_jump()
+                        );
+                        let upper_sector = line.sector_index.unwrap();
+                        let upper_handle = crate::position_interface::SectorHandle::from_number(
+                            engine.world.fast_grid.level.sectors[usize::from(upper_sector)]
+                                .sector_number,
+                        )
+                        .with_arena_index(upper_sector);
+                        assert!(
+                            engine
+                                .get_projection_area_index(&assets, upper_handle, line.layer, goal)
+                                .is_some()
+                        );
+                        results.push(serde_json::json!({
+                            "file": file, "line": index, "t": t, "passed": true,
+                            "outcome": "source-platform-occludes-lower-click",
+                            "arrival": null, "error": null,
+                        }));
+                        continue;
+                    }
+                }
                 let outcome = dispatch_jump(
                     engine.clone(),
                     assets.clone(),
@@ -412,11 +489,14 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
                     t,
                     mode,
                     approach_depth,
-                    stance,
-                    carrier_sprite.as_ref(),
+                    case_stance,
+                    carrier_sprite
+                        .as_ref()
+                        .filter(|_| case_stance == JumpStance::Shoulders),
                 );
                 results.push(serde_json::json!({
                     "file": file, "line": index, "t": t,
+                    "outcome": "traversal",
                     "approach_depth": approach_depth,
                     "passed": outcome.is_ok(), "error": outcome.as_ref().err(),
                     "arrival": outcome.as_ref().ok(),
@@ -428,17 +508,27 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
         .iter()
         .filter(|result| result["passed"] != true)
         .count();
+    let traversals = results
+        .iter()
+        .filter(|result| result["outcome"] == "traversal")
+        .count();
+    let occlusions = results.len() - traversals;
     let report = serde_json::json!({
-        "stance": match stance { JumpStance::Sword => "sword", JumpStance::Shoulders => "shoulders", JumpStance::Upright => "upright" },
+        "stance": match stance { JumpStance::Sword => "sword", JumpStance::Shoulders => "shoulders", JumpStance::Upright => "upright", JumpStance::Vertical => "assisted-ascent-upright-descent" },
         "scope": match mode {
             JumpDispatch::Click => "player-click-resolution-and-walk-jump-walk-not-rendering",
             JumpDispatch::Approach => "walk-jump-walk-sequence-not-click-authorization-or-rendering",
             JumpDispatch::Isolated => "sprite-dispatch-and-landing-not-click-approach-or-rendering",
         },
-        "complete": !results.is_empty() && failed == 0, "results": results,
+        "complete": traversals > 0 && failed == 0,
+        "traversal_cases": traversals, "occlusion_cases": occlusions, "results": results,
     });
     let path = directory.join(
-        if stance == JumpStance::Shoulders && mode == JumpDispatch::Click {
+        if stance == JumpStance::Vertical && mode == JumpDispatch::Click {
+            "actor-jump-vertical-click-report.json"
+        } else if stance == JumpStance::Vertical {
+            "actor-jump-vertical-report.json"
+        } else if stance == JumpStance::Shoulders && mode == JumpDispatch::Click {
             "actor-jump-shoulders-click-report.json"
         } else if stance == JumpStance::Shoulders {
             "actor-jump-shoulders-report.json"
@@ -453,7 +543,7 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
         },
     );
     std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
-    assert!(!results.is_empty());
+    assert!(traversals > 0);
     assert_eq!(
         failed,
         0,
@@ -523,12 +613,15 @@ fn dispatch_jump(
             }
         }
     }
-    engine
-        .get_projection_area_index(&assets, destination_sector, destination.layer, goal)
-        .ok_or_else(|| format!("landing point has no receiver: {goal:?}"))?;
-    let receiver = engine
-        .get_projection_area_index(&assets, source_sector, source.layer, start)
-        .ok_or_else(|| format!("launch point has no receiver: {start:?}"))?;
+    let landing_receiver =
+        engine.get_projection_area_index(&assets, destination_sector, destination.layer, goal);
+    if landing_receiver.is_none() && (destination.z_a != 0. || destination.z_b != 0.) {
+        return Err(format!("elevated landing point has no receiver: {goal:?}"));
+    }
+    let receiver = engine.get_projection_area_index(&assets, source_sector, source.layer, start);
+    if receiver.is_none() && (source.z_a != 0. || source.z_b != 0.) {
+        return Err(format!("elevated launch point has no receiver: {start:?}"));
+    }
     let owner = walking_pc(&mut engine, &mut assets, start, source.layer, source_sector);
     engine.ent_mut(owner).pc_data_mut().unwrap().has_jump = true;
     let opponent = (stance == JumpStance::Sword).then(|| {
@@ -549,14 +642,17 @@ fn dispatch_jump(
     let position = element.sprite.position_iface.clone();
     element.sprite = sprite.clone();
     element.sprite.position_iface = position;
-    engine.set_obstacle_and_material(&assets, owner, Some(receiver));
+    engine.set_obstacle_and_material(&assets, owner, receiver);
+    if destination.helper_needed && engine.is_jumpable(index as u32, owner, true) {
+        return Err("helper-required destination accepted an unassisted actor".into());
+    }
     let carrier = carrier_sprite.map(|sprite| {
         let carrier = walking_pc(&mut engine, &mut assets, start, source.layer, source_sector);
         let element = engine.ent_mut(carrier).element_data_mut();
         let position = element.sprite.position_iface.clone();
         element.sprite = sprite.clone();
         element.sprite.position_iface = position;
-        engine.set_obstacle_and_material(&assets, carrier, Some(receiver));
+        engine.set_obstacle_and_material(&assets, carrier, receiver);
         engine.set_entity_posture(carrier, Posture::CarryingOnShoulders);
         engine.set_entity_posture(owner, Posture::OnShoulders);
         engine
@@ -571,6 +667,9 @@ fn dispatch_jump(
         engine.human_mut(owner).carrier = Some(carrier);
         carrier
     });
+    if !engine.is_jumpable(index as u32, owner, true) {
+        return Err("prepared connection rejects its required actor posture".into());
+    }
     let mut jump = SequenceElement::new_generic(1, Command::JumpCmd, Some(owner));
     jump.set_property(
         crate::sequence::Field::JumplineSource,
@@ -649,6 +748,14 @@ fn dispatch_jump(
     let mut flew = false;
     let mut sword_flew = false;
     let mut shoulder_launched = false;
+    let vertical = !source.long_jump_forced
+        && (destination.z_a - source.z_a).abs() >= if carrier.is_some() { 100. } else { 60. };
+    let expected_flight = if destination.z_a > source.z_a {
+        OrderType::JumpingUp
+    } else {
+        OrderType::JumpingDown
+    };
+    let mut vertical_flew = false;
     let mut startup = StartupWalkAudit::default();
     for _ in 0..1000 {
         engine.control.frame_counter += 1;
@@ -664,8 +771,13 @@ fn dispatch_jump(
         }
         flew |= element.posture() == Posture::Flying;
         sword_flew |= element.sprite.last_action == OrderType::JumpingLongSword;
-        shoulder_launched |=
-            element.sprite.last_action == OrderType::TransitionWaitingOnShouldersJumpingLong;
+        shoulder_launched |= element.sprite.last_action
+            == if vertical {
+                OrderType::TransitionWaitingOnShouldersJumpingUp
+            } else {
+                OrderType::TransitionWaitingOnShouldersJumpingLong
+            };
+        vertical_flew |= element.sprite.last_action == expected_flight;
         let finished = sequence.is_some_and(|sequence| {
             engine
                 .orders
@@ -707,6 +819,9 @@ fn dispatch_jump(
                 destination.layer,
                 element.position_map(),
             )?;
+            if vertical && !vertical_flew {
+                return Err(format!("vertical jump did not execute {expected_flight:?}"));
+            }
             if let Some(carrier) = carrier {
                 if !shoulder_launched
                     || engine.ent(owner).human_data().unwrap().carrier.is_some()

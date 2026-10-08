@@ -12,19 +12,40 @@ that climbing jumps require an authored connection: the clearance implementation
 only models long flights. This is an authoring/export limitation, not evidence
 that vertical jumps work automatically.
 
-`node refinement/check-vertical-jump-placements.mjs` exports two separate assets
-with an authored matching connection, at base elevations 0 and 40. Both exports
-contain one pair and preserve the non-forced-long flag. The generated documents
-and descriptors are saved together for native investigation. The first batch is
-`work/map-compile/prepared-vertical-jumps-Bricsi`.
+`node refinement/check-vertical-jump-placements.mjs` now exports two separate
+assets with an authored matching connection, then rotates/copies their assembly
+at 0/37/90/180 degrees and base elevations 0/40. Each export contains two independent
+100-unit climbing pairs. Every saved editor document reopens through validation
+and recompiles to the identical descriptor. The current batch is
+`work/map-compile/prepared-vertical-jumps-RWOwxr`.
 
-Running the existing shoulder long-jump audit against that batch does **not**
-certify traversal: the ground-level fixture has no launch receiver at the tested
-points; the elevated upward cases reach the long-jump-only animation assertion;
-the shoulder descent cases do not complete in that harness. A dedicated audit
-must distinguish upward climbing, downward dismount and long-flight animation
-requirements, and use valid receivers in both placements. No runtime change is
-justified by these preliminary fixture/harness results alone.
+Dedicated native audits pass **160 isolated traversals, 140 player-click routes
+and 20 occlusion checks** using complete RobinTown/LittleJohn sprites. Ascent
+requires a helper and executes the shoulder-to-upward-flight animation; descent
+starts upright and executes downward flight. Unassisted ascent is rejected.
+Both directions verify final receiver/layer/sector and altitude; assisted ascent
+also verifies release of both links and completed helper recovery. Isolated
+landings are exact; click routes finish within 0.0001 unit.
+
+At 37 degrees, the upper platform covers the lower click target. Top-down layer
+selection correctly picks that upper motion area. The audit verifies its receiver
+contains the target and that the lower layer still contains its jump overlay.
+These twenty cases are reported separately as occlusion checks, not successful
+click traversals. Isolated descent still passes in those placements.
+
+The initial `prepared-vertical-jumps-Bricsi` probe exposed fixture/harness mistakes:
+flat ground legitimately has no projection receiver, vertical descent cannot start
+on shoulders, and authored edges need enough inset for the native actor footprint.
+Correcting those conditions required **no production engine changes**.
+
+Run `exported_vertical_jumps --ignored --nocapture` with the same three sprite/data
+environment variables as the assisted roof audit below, pointing diagnostics to
+the new batch. Reports are `actor-jump-vertical-report.json` and
+`actor-jump-vertical-click-report.json`. Roof-only audits now need
+`--skip exported_vertical_jumps` when using the broader `exported_jumps` filter;
+their six tests still pass all 720 cases. The three always-on jump audit regressions
+also pass. Automatic vertical-clearance generation, multi-PC formations, broader
+asset authoring and rendered contact remain open.
 
 ## Assisted roof jumps and carrier recovery (2026-10-08)
 
@@ -52,7 +73,7 @@ DONE retains the carrying posture/action; TERMINATED restores upright/waiting
 and installs Wait. Four selected/unselected action cases verify that only a newer
 selected action survives the help-action deselection.
 
-Reproduce with the existing `exported_jumps` ignored-test filter and set
+Reproduce with the `exported_jumps --skip exported_vertical_jumps` ignored-test filter and set
 `ROBIN_CARRIER_RHS` to the installed complete `LittleJohn.rhs`, in addition to
 `ROBIN_CLIMB_RHS` and `ROBIN_ASSET_MAP_DIAGNOSTICS` described below. Reports are
 `actor-jump-shoulders-report.json` and `actor-jump-shoulders-click-report.json`.
