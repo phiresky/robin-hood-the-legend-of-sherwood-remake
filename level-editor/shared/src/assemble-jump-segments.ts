@@ -109,7 +109,13 @@ export function assembleJumpSegments(
     if (segment.attachment) {
       for (const { other, edges } of candidates) {
         if (segments.indexOf(other) <= index) continue;
-        const key = JSON.stringify([segment.long, edges]);
+        // A jump is bidirectional; reversed discovery must share its identity.
+        const key = JSON.stringify([
+          segment.long,
+          edges
+            .map((edge, side) => JSON.stringify([edge, (side === 0 ? segment : other).attachment]))
+            .sort(),
+        ]);
         if (emitted.has(key)) continue;
         emitted.add(key);
         candidatesToCompile.push({ segment, other, edges });

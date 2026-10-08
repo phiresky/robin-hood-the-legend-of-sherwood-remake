@@ -1412,6 +1412,12 @@ this does not repair Wychford's already-elevated approach automatically.
 | Resource banks and references | Package baked images and pinned asset resources; resolve shared installed resources. | Independent scenery ZIP loading tested. Unpinned sprite/audio references still require the base installation. |
 | Reopenable editor document | Include the original editable level JSON and pinned asset references in the ZIP. | Save/reopen/export regressions pass. |
 
+Automatic jump matching now deduplicates identical bidirectional connections
+regardless of ledge discovery order. Regression coverage checks all six orders
+of two edges plus a duplicate, while preserving separate landing-zone identities
+and different clearance policies. The focused compiler/jump suite passes 163
+tests; this addresses duplicate connections, not the remaining actor-flight gaps.
+
 Mission content remains separate from reusable map definitions:
 
 | Mission information | Current construction / status |

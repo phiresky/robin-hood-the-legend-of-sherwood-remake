@@ -95,3 +95,44 @@ test("jump socket matching rejects ambiguity and conflicting traversal rules", (
   assert.throws(() => assembleJumpSegments([a, { ...b, long: false }]), /rules disagree/);
   assert.throws(() => assembleJumpSegments([a, { ...b, edge: a.edge }]), /same landing zone/);
 });
+
+test("duplicate jump ledges produce one connection regardless of placement order", () => {
+  const attachment = { maxGap: 30, maxRise: 20, maxDrop: 20, minOverlap: 5 };
+  const left: PlacedJumpSegment = {
+    id: "left",
+    long: true,
+    attachment,
+    edge: { zone: "left-zone", a: [0, 40, 0], b: [0, 0, 0] },
+  };
+  const right: PlacedJumpSegment = {
+    id: "right",
+    long: true,
+    attachment,
+    edge: { zone: "right-zone", a: [10, 0, 0], b: [10, 40, 0] },
+  };
+  const duplicate = { ...left, id: "left-other-fragment" };
+  for (const order of [
+    [left, right, duplicate],
+    [right, left, duplicate],
+    [left, duplicate, right],
+    [duplicate, right, left],
+    [right, duplicate, left],
+    [duplicate, left, right],
+  ])
+    assert.equal(assembleJumpSegments(order).pairs.length, 1);
+  const independent = { ...duplicate, edge: { ...duplicate.edge, zone: "independent-zone" } };
+  assert.equal(
+    assembleJumpSegments([left, right, independent]).pairs.length,
+    2,
+    "Coincident but independently owned landing zones must remain distinct",
+  );
+  const guarded = {
+    ...duplicate,
+    attachment: { ...attachment, clearance: { radius: 5, height: 70 } },
+  };
+  assert.equal(
+    assembleJumpSegments([left, right, guarded]).pairs.length,
+    2,
+    "Different clearance policies must reach their own clearance checks",
+  );
+});
