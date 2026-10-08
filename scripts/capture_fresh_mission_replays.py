@@ -78,8 +78,9 @@ def validate_extent(path, frames):
     with path.open('rb') as stream:
         stream.seek(-FOOTER.size, 2)
         magic, version, count, final = FOOTER.unpack(stream.read())
-    if magic != b'RHPRTRACEFOOTER!' or version != 68 or count != frames or final != frames:
-        raise ValueError(f'incomplete native trace: version={version}, frames={count}, final={final}')
+    if magic != b'RHPRTRACEFOOTER!' or version != 68 or count > frames or final != count:
+        raise ValueError(f'invalid native trace: version={version}, frames={count}, final={final}')
+    return count
 
 
 def main():
@@ -168,6 +169,7 @@ def main():
                 with trace.open() as stream:
                     header = json.loads(stream.readline())
                 validate_header(header, run)
+                write_json(attempt / 'header.json', header)
                 # Conversion audits every JSONL record and its terminal suffix,
                 # then removes JSONL only after verifying the native encoding.
                 with slots, (attempt / 'convert.log').open('w') as log:
@@ -176,12 +178,14 @@ def main():
                 artifacts = list(attempt.glob('*.parity.bitcode.zst'))
                 if len(artifacts) != 1:
                     raise ValueError('conversion produced no unique native artifact')
-                validate_extent(artifacts[0], 1500)
+                actual_frames = validate_extent(artifacts[0], 1500)
                 checksum = digest(artifacts[0])
                 artifacts[0].replace(native)
                 write_json(marker, dict(run=run, native_sha256=checksum,
                                        campaign=header['campaign'], producer_sha256=manifest['producer_sha256'],
-                                       frames=1500, attempt=str(attempt)))
+                                       frames=actual_frames, frame_limit=1500,
+                                       termination='frame_limit' if actual_frames == 1500 else 'early_game_exit',
+                                       attempt=str(attempt)))
                 return name, 'captured'
             except Exception as error:
                 write_json(attempt / 'failure.json', dict(error=str(error)))

@@ -807,11 +807,12 @@ Use `--plan-only` to inspect the manifest; `--limit` or `--mission` selects an
 initial batch without changing the full plan. The manifest binds profile and
 binary hashes. Resume validates completed artifact checksums and frame extents.
 A changed manifest requires a new corpus directory. Incomplete attempts remain
-outside `traces/`; short sessions never count as full 60-second captures.
+outside `traces/`; natural early endings are retained with their actual frame counts.
 
 Publication requires a fresh-start header, matching seeds/difficulty, no saved
-world payload, lossless conversion, and exactly 1,500 complete frames with the
-matching terminal frame. Completion markers preserve the pre-initialization
+world payload, lossless conversion, and at most 1,500 complete frames with the
+matching terminal frame. Zero-frame game exits are explicitly recorded, not
+counted as input coverage. Completion markers preserve the pre-initialization
 campaign snapshot. Run `python3 scripts/test_capture_fresh_mission_replays.py`
 for inventory/admission regressions. Register completed captures with
 `replay_state_db.py register-corpus`; capture completion alone is not evidence

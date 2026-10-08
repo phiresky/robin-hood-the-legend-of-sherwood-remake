@@ -24,13 +24,16 @@ class CaptureGates(unittest.TestCase):
         for change in [dict(start_state='loaded_save'),dict(initial_save={}),dict(rng_seed=2),dict(sim_config={'difficulty':'hard'}),dict(campaign=None),dict(initial_frame=1)]:
             with self.subTest(change=change),self.assertRaises(ValueError): validate_header(dict(header,**change),run)
 
-    def test_short_or_invalid_native_trace_cannot_publish(self):
+    def test_early_exit_is_valid_but_invalid_extent_cannot_publish(self):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/'trace'
-            for count,final in [(1499,1499),(1500,1501),(1501,1501)]:
+            for count,final in [(1499,1500),(1500,1501),(1501,1501)]:
                 path.write_bytes(FOOTER.pack(b'RHPRTRACEFOOTER!',68,count,final))
                 with self.assertRaises(ValueError): validate_extent(path,1500)
             path.write_bytes(FOOTER.pack(b'RHPRTRACEFOOTER!',68,1500,1500))
             validate_extent(path,1500)
+            for count in [0,1499]:
+                path.write_bytes(FOOTER.pack(b'RHPRTRACEFOOTER!',68,count,count))
+                self.assertEqual(validate_extent(path,1500),count)
 
 if __name__=='__main__': unittest.main()
