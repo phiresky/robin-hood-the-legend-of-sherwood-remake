@@ -1057,6 +1057,13 @@ exposed a receiver mismatch also present without a hole. That mismatch is now
 fixed: ladder exit animations retain the physical seam instead of snapping back
 to its integer waypoint, and all eight rotated fixture routes pass. Neither
 complex Sherwood candidate is published, and its traversal remains unresolved.
+The 2026-10-08 recheck (`local-stair-placements-Vxn5ch`) still passes only 36/48
+complete-sprite routes; all twelve 90-degree routes fail. All eight placements
+retain three doors but lack physical navigation at the left upper landing, and
+eight raised-ground cases reject. The pinned-model audit finds only 2/28 rung
+parts crossing the current climbing plane, with a maximum center-plane distance
+of 12.012175 units. This remains an asset geometry/contact review, not evidence
+that an engine extension is needed.
 All 84 climb routes in the ten saved-scene exports now pass, as do all 71 control
 apply/reset checks and Derby's 28/28 stair routes. The published tower matches
 its native-tested candidate; Leicester retains 22/22 climb and 16/16 stair

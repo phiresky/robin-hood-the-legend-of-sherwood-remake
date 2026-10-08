@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Current three-entrance ladder recheck (2026-10-08)
+
+The unpublished mesh-platform candidate `three-door-oak-7osA0K` still matches
+the current `sherwood-ladder-oak-platform` descriptor hash. Fresh compilation
+`local-stair-placements-Vxn5ch` retains all three doors at 0, 37, 90 and 180
+degrees and elevations 0/40, and all eight raised-ground negative cases reject.
+Every placement reports physical navigation unavailable because the left upper
+landing does not reach its ladder door; projected navigation is retained.
+
+The freshly built native complete-sprite audit passes 36/48 directed routes.
+All twelve failures occur at 90 degrees, at both elevations, and stall after
+entering the lift. This reproduces the unresolved failure with the current
+compiler and runtime; the candidate remains unpublished.
+
+Pinned-model audit `climb-mesh-audit-IR3yV4` selects 28 rung parts. Only two cross
+the authored infinite climbing plane; the maximum bounding-box-center distance
+to that plane is 12.012175 game units. These are mesh-plane measurements, not
+actor foot-contact measurements. They do not justify enlarging a navigation
+surface across the platform opening. The next authoring work must reconcile the
+climbing surface and all three landing contacts with the asset mesh. No engine
+extension or library publication was made during this recheck.
+
 ## Batched receiving-material unions (2026-10-08)
 
 Receiving-material partitioning previously unioned each equivalent patch into an
