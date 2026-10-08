@@ -131,13 +131,105 @@
         ],
         "points": [
           {
-            "x": 400,
+            "x": 300,
+            "y": 300,
+            "z_bottom": 20,
+            "z_top": 20
+          },
+          {
+            "x": 320,
+            "y": 320,
+            "z_bottom": 20,
+            "z_top": 20
+          },
+          {
+            "x": 320,
+            "y": 380,
+            "z_bottom": 20,
+            "z_top": 20
+          }
+        ],
+        "projection_area": [
+          1,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "material_indices": []
+      },
+      {
+        "projection_plane": [
+          [
+            400,
+            300,
+            20
+          ],
+          [
+            400,
+            400.00000000000006,
+            20
+          ],
+          [
+            300,
+            300,
+            20
+          ]
+        ],
+        "points": [
+          {
+            "x": 380,
+            "y": 320,
+            "z_bottom": 20,
+            "z_top": 20
+          },
+          {
+            "x": 320,
             "y": 320,
             "z_bottom": 20,
             "z_top": 20
           },
           {
             "x": 300,
+            "y": 300,
+            "z_bottom": 20,
+            "z_top": 20
+          }
+        ],
+        "projection_area": [
+          1,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "material_indices": []
+      },
+      {
+        "projection_plane": [
+          [
+            400,
+            300,
+            20
+          ],
+          [
+            400,
+            400.00000000000006,
+            20
+          ],
+          [
+            300,
+            300,
+            20
+          ]
+        ],
+        "points": [
+          {
+            "x": 380,
             "y": 320,
             "z_bottom": 20,
             "z_top": 20
@@ -186,11 +278,54 @@
         ],
         "points": [
           {
+            "x": 380,
+            "y": 320,
+            "z_bottom": 20,
+            "z_top": 20
+          },
+          {
+            "x": 400,
+            "y": 300,
+            "z_bottom": 20,
+            "z_top": 20
+          },
+          {
             "x": 400,
             "y": 400,
             "z_bottom": 20,
             "z_top": 20
-          },
+          }
+        ],
+        "projection_area": [
+          1,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "material_indices": []
+      },
+      {
+        "projection_plane": [
+          [
+            400,
+            300,
+            20
+          ],
+          [
+            400,
+            400.00000000000006,
+            20
+          ],
+          [
+            300,
+            300,
+            20
+          ]
+        ],
+        "points": [
           {
             "x": 300,
             "y": 400,
@@ -199,12 +334,12 @@
           },
           {
             "x": 300,
-            "y": 380,
+            "y": 300,
             "z_bottom": 20,
             "z_top": 20
           },
           {
-            "x": 400,
+            "x": 320,
             "y": 380,
             "z_bottom": 20,
             "z_top": 20
@@ -241,26 +376,20 @@
         ],
         "points": [
           {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 20,
+            "z_top": 20
+          },
+          {
             "x": 320,
             "y": 380,
             "z_bottom": 20,
             "z_top": 20
           },
           {
-            "x": 300,
+            "x": 380,
             "y": 380,
-            "z_bottom": 20,
-            "z_top": 20
-          },
-          {
-            "x": 300,
-            "y": 320,
-            "z_bottom": 20,
-            "z_top": 20
-          },
-          {
-            "x": 320,
-            "y": 320,
             "z_bottom": 20,
             "z_top": 20
           }
@@ -296,12 +425,6 @@
         ],
         "points": [
           {
-            "x": 400,
-            "y": 380,
-            "z_bottom": 20,
-            "z_top": 20
-          },
-          {
             "x": 380,
             "y": 380,
             "z_bottom": 20,
@@ -315,7 +438,56 @@
           },
           {
             "x": 400,
-            "y": 320,
+            "y": 400,
+            "z_bottom": 20,
+            "z_top": 20
+          }
+        ],
+        "projection_area": [
+          1,
+          1
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 2,
+        "material_indices": []
+      },
+      {
+        "projection_plane": [
+          [
+            400,
+            300,
+            20
+          ],
+          [
+            400,
+            400.00000000000006,
+            20
+          ],
+          [
+            300,
+            300,
+            20
+          ]
+        ],
+        "points": [
+          {
+            "x": 380,
+            "y": 380,
+            "z_bottom": 20,
+            "z_top": 20
+          },
+          {
+            "x": 400,
+            "y": 400,
+            "z_bottom": 20,
+            "z_top": 20
+          },
+          {
+            "x": 300,
+            "y": 400,
             "z_bottom": 20,
             "z_top": 20
           }
