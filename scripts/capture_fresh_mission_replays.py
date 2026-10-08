@@ -83,6 +83,29 @@ def validate_extent(path, frames):
     return count
 
 
+def resumable_conversion(attempt_root, run):
+    # A terminal suffix distinguishes complete recordings from interrupted
+    # producers. Conversion rechecks the whole timeline and lossless encoding.
+    # Never recapture just because conversion or controller shutdown interrupted.
+    for attempt in sorted(attempt_root.glob('*'), reverse=True):
+        traces = list(attempt.glob('replay-session-*.jsonl'))
+        if len(traces) != 1 or json.loads((attempt / 'command.json').read_text())['run'] != run:
+            continue
+        with traces[0].open('rb') as stream:
+            stream.seek(max(0, traces[0].stat().st_size - 65536))
+            tail = stream.read().splitlines()
+        try:
+            terminal = json.loads(tail[-1])
+        except (ValueError, IndexError):
+            continue
+        if terminal.get('type') != 'rng_suffix':
+            continue
+        with traces[0].open() as stream:
+            validate_header(json.loads(stream.readline()), run)
+        return attempt
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--profile', type=Path, required=True)
@@ -146,8 +169,9 @@ def main():
                 if digest(native) != evidence['native_sha256']:
                     raise ValueError(f'{name}: published trace checksum changed')
                 return name, 'skipped'
-            attempt = out / '.attempts' / name / str(time.time_ns())
-            attempt.mkdir(parents=True)
+            resume = resumable_conversion(out / '.attempts' / name, run)
+            attempt = resume or out / '.attempts' / name / str(time.time_ns())
+            attempt.mkdir(parents=True, exist_ok=True)
             command = [str(args.binary), '-PARITYMISSION', run['mission'], run['proto'],
                        '-DIFFICULTY', run['difficulty'], '-PARITYSEED', str(run['seed']),
                        '-PARITYFRAMES', '1500', '-PARITYRANDOMINPUT', str(run['input_seed']),
@@ -157,11 +181,14 @@ def main():
             try:
                 if shutil.disk_usage(out).free < 20 * 1024**3:
                     raise RuntimeError('capture admission needs 20 GiB free; retry after freeing space')
-                write_json(attempt / 'command.json', dict(command=command, run=run))
-                print(f'capture {name}', flush=True)
-                with (attempt / 'capture.log').open('w') as log:
-                    subprocess.run(command, cwd=attempt, env=env, stdout=log, stderr=subprocess.STDOUT,
-                                   timeout=args.timeout, check=True)
+                if resume:
+                    print(f'resume conversion {name}', flush=True)
+                else:
+                    write_json(attempt / 'command.json', dict(command=command, run=run))
+                    print(f'capture {name}', flush=True)
+                    with (attempt / 'capture.log').open('w') as log:
+                        subprocess.run(command, cwd=attempt, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                       timeout=args.timeout, check=True)
                 traces = list(attempt.glob('replay-session-*.jsonl'))
                 if len(traces) != 1:
                     raise ValueError(f'expected one fresh session, got {len(traces)}')
@@ -172,7 +199,7 @@ def main():
                 write_json(attempt / 'header.json', header)
                 # Conversion audits every JSONL record and its terminal suffix,
                 # then removes JSONL only after verifying the native encoding.
-                with slots, (attempt / 'convert.log').open('w') as log:
+                with slots, (attempt / 'convert.log').open('a') as log:
                     subprocess.run([str(args.converter), '--convert', str(trace)], cwd=attempt,
                                    stdout=log, stderr=subprocess.STDOUT, timeout=args.timeout, check=True)
                 artifacts = list(attempt.glob('*.parity.bitcode.zst'))
