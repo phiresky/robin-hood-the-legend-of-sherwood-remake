@@ -2949,14 +2949,13 @@ impl EngineInner {
             "engine construction: proto pathfinder graph parsing"
         );
         if motion_data.graph_bytes.is_empty() {
-            // Hackable descriptors omit the legacy precomputed graph. Keep
-            // its hierarchy/state topology faithful to the authored motion
-            // areas so PathFinder can apply obstacle state and use its
-            // deterministic visibility-graph fallback for routing.
+            // Keep state topology for empty navigation data. No routing graph
+            // is synthesized here or during path requests; compiled maps must
+            // supply the nodes and links needed for indirect movement.
             let graph = std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph);
             // Graph-free levels use the stock human footprint (slot 0),
             // normally supplied by the legacy graph's half-diagonal table.
-            // Both actor spawning and visibility-graph routing need it.
+            // Actor spawning and direct collision queries use this footprint.
             // TODO: expose authored footprints for custom profiles that use
             // additional pathfinder slots; keep invalid indices strict.
             let half_diagonal = crate::coordinates::MoveBoxHalfDiagonal::new(6.0, 3.0);

@@ -6,6 +6,15 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
+**Navigation architecture correction (2026-10-08):** the graph-less runtime
+visibility fallback has been removed, with no compatibility replacement. Export
+currently emits empty `graph_bytes`; it must generate prepared navigation before
+indirect exported-map routing is restored. Earlier route results below predate
+this removal. The separate per-tick physical-floor solver also remains a blocking
+performance regression for stock Silver Arrow. See the
+[runtime inventory](map-runtime-inventory.md) for the full scope and correction
+requirements. Neither issue is resolved by the earlier parity evidence.
+
 **Full parity is not yet verified.** “Tested” below describes specific evidence,
 not certification of every library asset or gameplay case. Best-effort exports
 warn about omissions and preserve initial states where possible; warnings are

@@ -14,9 +14,13 @@ are not attributed to map compilation merely because they touched the same files
 Commit references below identify introduction and subsequent changes, rather than
 implying that every line in each commit changes production behavior.
 
-The audit is a description and disposition of the current implementation. The
-relocations described below **have not been implemented**. No new runtime code
-was changed during this audit. Performance findings other than the supplied freeze
+The table records the implementation at the audit baseline. The relocations
+described below **have not been implemented**. Following the audit, the graph-less
+visibility fallback and its dispatch branch were deleted outright at the user's
+request. No compatibility replacement was added. Export still needs to generate
+the graph: its current empty `graph_bytes` no longer supports fallback detours.
+The separate physical per-tick solver is still outstanding.
+Performance findings other than the supplied freeze
 are based on call sites and algorithms, not new timing measurements.
 
 ## Required division of work
@@ -26,7 +30,7 @@ are based on call sites and algorithms, not new timing measurements.
   collision indices, elevation seams and artwork variants from assets and scene.
 * **Mission start:** validate/decode those products, bind runtime indices, select
   character/profile configurations, initialize spatial indices and mission actors.
-  Any compatibility preparation for older map formats must finish here.
+  Missing compiled navigation must not select a compatibility routing algorithm.
 * **Path request:** connect the current source/goal to prepared navigation and
   search it with deterministic, bounded scheduling. Retain the resulting route.
 * **Movement tick:** advance the retained route, evaluate the current plane,
@@ -53,7 +57,7 @@ Paths in this table are relative to `crates/robin_engine/src/` unless prefixed.
 | Physical stair/wall/ladder routing | `commit_physical_stair_step` calls `route_with_obstacles` before each step. It clones static shapes, rebuilds landing support and recomputes routing. Explicit physical navigation enables this branch. | Same prepared-data and retained-route correction as ordinary walking. Do not fix just the stock-mission caller. | `engine/movement/physical_stair.rs`; `stair_navigation.rs::BoundPhysicalStair::route_with_obstacles`; `7ad10c85e`, `91230136d`, `7f2b7946b`, `ae85a6144` |
 | Configuration-space support/visibility solver | Per route: clips support, unions landings, buffers roundoff, expands solids, erodes floor support, selects a region, buffers it, enumerates boundary vertices, then repeatedly performs polygon/line relations during visibility search. | Export/load clearance regions and indexed visibility/connectivity. Query work should attach endpoints and search prepared links. Endpoint rounding must not force rebuilding a whole buffered region. | `stair_navigation/landing_support.rs::route_on_surface`, `clearance_centers`; `5db666c93`, `d8c2f4c56`, `4cee092eb`, `e55d957b4` |
 | Separate stair solver without landing support | `StairRouteGeometry::route` constructs a new `FastFindGrid`, registers all boundaries/obstacles, creates a `PathGraph` and initializes a `PathFinder` for each query. It is selected for a non-climbing stair without bound landings. | Remove per-query static grid/graph construction. Use prepared local navigation or the compiled map graph. | `stair_navigation.rs::StairRouteGeometry::route`; `219244367` |
-| Graph-less projected routing fallback | At path-query time, generates offset corner candidates, authorizes them and discovers visibility while searching. Introduced for editable JSON maps that omitted the precomputed graph; assumed only tens of corner candidates. Predates map-export work, but was expanded for concave boundaries, narrow walkways and A* ordering. | Export the missing graph. Retain compatibility support only with preparation at mission start, rather than treating graph omission as normal export output. | `pathfinder.rs::find_path_visibility_fallback`; introduced in `2e0379d3a` (2026-08-19), recovered from archived Git history; expanded in `3575ba3ed`, `137c1108c`, `1b3b83275` |
+| Graph-less projected routing fallback | At path-query time, generated offset corner candidates, authorized them and discovered visibility while searching. Introduced for editable JSON maps that omitted the precomputed graph; assumed only tens of corner candidates. Predated map-export work, but was expanded for concave boundaries, narrow walkways and A* ordering. | Deleted after this audit; no compatibility path. Export must generate the missing graph. | Former `pathfinder.rs::find_path_visibility_fallback`; introduced in `2e0379d3a` (2026-08-19), recovered from archived Git history; expanded in `3575ba3ed`, `137c1108c`, `1b3b83275` |
 | Walking source recovery | On movement-command extraction, unions support, erodes full/recovery footprints, subtracts solids and tests candidate recovery sweeps. Can also be reached through movement extraction after state changes. | Prepare allowable support/clearance; retain bounded current-position recovery as a query. Do not repeatedly construct static recovery regions. | `engine/movement/elevation.rs::extract_move_instruction_owner`; `stair_navigation/walking_surface.rs::recover_source`; `e55d957b4`, `9920d51a5`, `b3691f9ff` |
 | Stair source authorization | Command/approach checks call the full route solver with identical source and goal merely to establish footprint support. | Prepared point/footprint authorization query. No graph building for a stationary support check. | `engine/movement/elevation.rs`; `engine/movement.rs`; `18cce7dcf`, `38f3a1a05` |
 | Physical dynamic actor avoidance | Every physical step gathers actor/object neighbours, using an entity scan followed by filters. Walking converts accepted neighbours to 16-sided polygons and feeds them into whole-floor routing. | Keep live avoidance, but use local spatial candidates and a local swept-step/corridor test. Do not combine each moving actor with a fresh global Boolean/visibility solve. | `engine/anti_collision.rs::gather_physical_stair_neighbours`, `gather_physical_walking_neighbours`; physical movement modules; `7f2b7946b`, `9920d51a5` |
@@ -78,7 +82,7 @@ These are runtime additions too, although they do not run on every movement tick
 | Added or extended behavior | Current execution | Required disposition | Implementation / commits |
 | --- | --- | --- | --- |
 | Compiled descriptor and native record conversion | Reads `asset_geometry`, validates topology/references and constructs motion, sight, material, door/lift/building, jump, lighting, sound, mask, scenery and control records. | Keep decode/validation and native binding. Export should supply finished static products, rather than asking the loader to repair authored geometry. | `robin_level_data/src/level_data.rs`; `16146c067`, `4a206e09f`, `1bee3ee80`, `cc95b8016`, `35683e261`, `21f0c532f`, `a288b0b97` |
-| Receiving-boundary derivation | When `elevation_lines` is empty, computes boundary intersections, ownership and lift connections on JSON load; later added spatial indexing. | Prefer export-time generation. Keep explicit compatibility load-time derivation if needed; distinguish an intentionally empty result from a missing result. | `robin_level_data/src/compiled_elevation.rs`; `2988b81dd`, `62ccb364d` |
+| Receiving-boundary derivation | When `elevation_lines` is empty, computes boundary intersections, ownership and lift connections on JSON load; later added spatial indexing. | Move to export-time generation; distinguish an intentionally empty result from missing compiled data. | `robin_level_data/src/compiled_elevation.rs`; `2988b81dd`, `62ccb364d` |
 | Lift/ladder/wall approach repair | JSON loading calls `compiled_approaches::derive`, searches nearby authorized approaches and can change door points. Explicit physical-navigation lifts skip this repair. | Move authoring correction to export and report it there. Loader should validate finished endpoints, not silently redesign the approach. | `robin_level_data/src/compiled_approaches.rs`; `cf5847fb6`, `be4d0c2c8`, `4151993ae`, `8d352340e`, `902a8432b` |
 | Ordinary receiving-floor binding | Groups receivers by plane/area, unions footprints, intersects motion coverage, unprojects obstacles and computes compatible neighbours. Runs during motion initialization, including stock maps. | Export prepared physical floors/adjacency where required; load-time adaptation only for formats that actually need it. Preserve stock precomputed navigation behavior. | `engine/level_loading.rs::bind_physical_walking`; `stair_navigation/walking_binding.rs`, `walking_binding/neighbours.rs`; `f006c2dce`, `2a20eede6` |
 | Physical flight/landing binding | Validates definitions, binds obstacle states and door receivers, clips landing support/holes/collision and handles shared-edge rounding. | Most is static export work. Keep load-time ID binding and validation; reuse the prepared result in queries. | `engine/level_loading.rs::bind_physical_stairs`; `stair_navigation/landing_binding.rs`; `robin_level_data/src/physical_stair.rs`; `efdb2a502`, `91230136d`, `ca6e13cbf`, `ae85a6144` |
@@ -129,10 +133,10 @@ actor-sized clearance probes did not change runtime movement behavior.
 Historical rationale: `2e0379d3a` explicitly introduced the visibility fallback
 alongside the first hackable JSON level descriptors because those descriptors
 contained no precomputed graph. It enabled small unscripted sandbox maps. That
-is a compatibility requirement for the input format, not a reason to keep
-reconstructing static navigation during path requests. Load-time preparation can
-preserve those inputs; new exports should supply the prepared graph. This fallback
-is separate from the later physical routing solver implicated in the frame-5 freeze.
+explains its introduction, not a requirement to retain it. The user explicitly
+rejected compatibility support: remove the fallback entirely and make exports
+supply the prepared graph. This fallback is separate from the later physical
+routing solver implicated in the frame-5 freeze.
 
 1. **Stop the regression in existing missions.** Preserve their prepared routing
    and avoid diverting them into a per-step physical visibility solver. Prove the

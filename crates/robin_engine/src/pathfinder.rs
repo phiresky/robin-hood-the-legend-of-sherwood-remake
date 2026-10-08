@@ -1448,16 +1448,6 @@ impl PathSearch<'_> {
                 )
             });
 
-        let has_authored_graph_nodes = self
-            .partition
-            .layers
-            .get(layer as usize)
-            .and_then(|areas| areas.get(right_area))
-            .is_some_and(|obstacles| obstacles.iter().any(|nodes| !nodes.is_empty()));
-        if !has_authored_graph_nodes {
-            return self.find_path_visibility_fallback(grid, source, goal, use_first_point);
-        }
-
         self.reset_graph();
 
         // Check if goal position is valid
@@ -1548,165 +1538,6 @@ impl PathSearch<'_> {
         } else {
             None
         }
-    }
-
-    /// Route graph-less hackable levels around their authored motion
-    /// obstacles using a deterministic visibility graph.
-    ///
-    /// Original levels carry a precomputed corner graph in their movement data. Editable
-    /// JSON overlays intentionally do not encode that legacy binary slab, so
-    /// derive a visibility graph from active obstacle corners at query
-    /// time. This is also a useful non-fake failure mode for incomplete custom
-    /// levels: an unreachable goal returns `None` instead of walking through a
-    /// wall or pretending no route exists merely because bytes were omitted.
-    fn find_path_visibility_fallback(
-        &self,
-        grid: &FastFindGrid,
-        source: MapPoint,
-        goal: MapPoint,
-        use_first_point: bool,
-    ) -> Option<Vec<MapPoint>> {
-        if !self.object_position_authorized(grid, goal) {
-            return None;
-        }
-        if self.is_reachable_fast(source, goal) && self.is_reachable_grid(grid, source, goal) {
-            return Some(if use_first_point {
-                vec![goal]
-            } else {
-                vec![source, goal]
-            });
-        }
-
-        let (layer, area) = self.scratch.current_motion_area;
-        let motion_area = self
-            .graph
-            .static_data
-            .move_layers
-            .get(layer)
-            .and_then(|areas| areas.get(area))
-            .unwrap_or_else(|| panic!("visibility fallback has no motion area {layer}:{area}"));
-        let clearance = self
-            .scratch
-            .current_half_diagonal
-            .x
-            .max(self.scratch.current_half_diagonal.y)
-            + 6.0;
-        let mut points = vec![source, goal];
-        let boundaries = std::iter::once(motion_area.polygon.as_slice()).chain(
-            self.partition.motion[layer][area]
-                .iter()
-                .map(|&index| motion_area.motion_obstacles[index].polygon.as_slice()),
-        );
-        for (boundary_index, boundary) in boundaries.enumerate() {
-            let winding: f32 = boundary
-                .iter()
-                .enumerate()
-                .map(|(i, a)| {
-                    let b = boundary[(i + 1) % boundary.len()];
-                    a.x * b.y - b.x * a.y
-                })
-                .sum();
-            for (index, &corner) in boundary.iter().enumerate() {
-                if boundary_index == 0 {
-                    let previous = boundary[(index + boundary.len() - 1) % boundary.len()];
-                    let next = boundary[(index + 1) % boundary.len()];
-                    let turn = (corner.x - previous.x) * (next.y - corner.y)
-                        - (corner.y - previous.y) * (next.x - corner.x);
-                    // Only inward corners of the area's boundary obstruct a
-                    // route between positions already inside the area.
-                    if turn * winding >= 0.0 {
-                        continue;
-                    }
-                }
-                // Keep close docking points for narrow walkways as well as the
-                // wider candidates used around ordinary architectural obstacles.
-                for (x, y) in [
-                    (
-                        self.scratch.current_half_diagonal.x + 0.5,
-                        self.scratch.current_half_diagonal.y + 0.5,
-                    ),
-                    (clearance, clearance),
-                ] {
-                    for (dx, dy) in [(-x, -y), (x, -y), (x, y), (-x, y)] {
-                        let candidate = MapPoint::new(corner.x + dx, corner.y + dy);
-                        if self.object_position_authorized(grid, candidate)
-                            && !points.iter().any(|point| {
-                                (point.x - candidate.x).abs() < 0.5
-                                    && (point.y - candidate.y).abs() < 0.5
-                            })
-                        {
-                            points.push(candidate);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Euclidean distance is a lower bound on remaining route length. Use it
-        // to focus the visibility search even when a whole town shares one area;
-        // stable index-order ties keep rollback/replay behavior deterministic.
-        let heuristic: Vec<f32> = points
-            .iter()
-            .map(|point| MapVec::new(goal.x - point.x, goal.y - point.y).length())
-            .collect();
-        let mut distance = vec![f32::INFINITY; points.len()];
-        let mut previous = vec![None; points.len()];
-        let mut visited = vec![false; points.len()];
-        distance[0] = 0.0;
-        for _ in 0..points.len() {
-            let Some(current) =
-                (0..points.len())
-                    .filter(|&index| !visited[index])
-                    .min_by(|&a, &b| {
-                        (distance[a] + heuristic[a])
-                            .total_cmp(&(distance[b] + heuristic[b]))
-                            .then(a.cmp(&b))
-                    })
-            else {
-                break;
-            };
-            if !distance[current].is_finite() {
-                break;
-            }
-            if current == 1 {
-                break;
-            }
-            visited[current] = true;
-            for next in 0..points.len() {
-                if next == current || visited[next] {
-                    continue;
-                }
-                let edge = MapVec::new(
-                    points[next].x - points[current].x,
-                    points[next].y - points[current].y,
-                )
-                .length();
-                let candidate = distance[current] + edge;
-                if candidate >= distance[next]
-                    || !self.is_reachable_fast(points[current], points[next])
-                    || !self.is_reachable_grid(grid, points[current], points[next])
-                {
-                    continue;
-                }
-                distance[next] = candidate;
-                previous[next] = Some(current);
-            }
-        }
-        if !distance[1].is_finite() {
-            return None;
-        }
-        let mut indices = vec![1usize];
-        let mut current = 1usize;
-        while current != 0 {
-            current = previous[current]?;
-            indices.push(current);
-        }
-        indices.reverse();
-        let mut path: Vec<MapPoint> = indices.into_iter().map(|index| points[index]).collect();
-        if use_first_point && path.first() == Some(&source) {
-            path.remove(0);
-        }
-        Some(path)
     }
 
     /// A* search on graph nodes. Returns the last node of the best path found.
@@ -3175,6 +3006,28 @@ mod tests {
         let path = path.unwrap();
         // Direct path: just source and goal
         assert_eq!(path.len(), 1); // Only goal (source is at front after reverse, but direct path returns just goal)
+    }
+
+    #[test]
+    fn empty_graph_does_not_substitute_a_geometry_routing_algorithm() {
+        let (mut graph, mut grid, source, goal) = node_routed_query_fixture();
+        graph.nodes.clear();
+        graph.layers[0][0][0].clear();
+        graph.static_mut().move_layers[0][0].skeleton.clear();
+        let mut finder = PathFinder::new();
+        finder.initialize_from_graph(&graph, &mut grid);
+
+        // A request requiring graph routing must not silently switch algorithms
+        // when the compiled nodes are absent. Explicit direct requests retain
+        // their ordinary collision-checked shortcut.
+        assert_eq!(
+            finder.find_path(&graph, &grid, 0, 0, 0, source, goal, false),
+            None
+        );
+        assert_eq!(
+            finder.find_path(&graph, &grid, 0, 0, 0, source, goal, true),
+            Some(vec![goal])
+        );
     }
 
     #[test]
