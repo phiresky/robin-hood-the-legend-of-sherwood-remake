@@ -420,13 +420,17 @@ Each uses its own collision footprint and local control, preserving the initial
 inactive state without copying the assembly's shared exclusion or remote waypoint.
 Eight copied/rotated/elevated maps pass native construction and 32 apply/reset
 checks, including 96 thin-route probes. Published export/reopen geometry matches
-the tested stage; all ten saved scenes still reopen. Rendered state appearance,
-mesh contact and complete actor routes remain unverified.
+the tested stage; all ten saved scenes still reopen. Mesh contact and complete
+actor routes remain unverified.
 Descriptor-owned part appearance rules now reach both editor and pipeline loaders.
 Insertion/save/reopen tests verify independent visibility for two copies through
 all four control combinations, and conflicting model rules are rejected. These
-loader tests do not certify the fragments' baked images or runtime rendering;
-their visual bindings still need publication and a rendered round trip.
+loader tests are supplemented by a real browser check of the published fragment
+bindings: independent copies (including a 37-degree rotation), save/reopen,
+apply/reset, changing color/depth states and ZIP packaging pass. Both archives
+load into Rust without a base datadir with two appearance controls each. This checks
+resource decoding and engine construction, not a complete rendered playthrough.
+The index publication path now retains these part rules in base and variant views.
 The timber bridge, both ferns, fallen log, upright fences 94/95 and supplemental
 wood 09/44 and Croisement01 tree 03 have published draft definitions. These counts
 reflect the current asset inventory, not gameplay certification.

@@ -88,6 +88,7 @@ class AssetIndexTest(unittest.TestCase):
 
     def test_gameplay_collision_and_join_metadata_survive_all_catalog_views(self):
         part = {'node': 'building-000', 'name': 'Visual shell', 'source_obstacle': 0,
+                'appearance': {'show': ['activate']},
                 'obstacle_local_game': {'points': []}, 'collision': 'none',
                 'sight_join_edges': [[[0, 0, 0], [10, 0, 0]]],
                 'sight_join_caps': ['top', 'bottom']}

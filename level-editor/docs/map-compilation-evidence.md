@@ -34,10 +34,29 @@ The regenerated index audit `gameplay-coverage-iQKmEx` reports 26 missing
 definitions, 22 with known state-owned parts, and zero missing placed definitions.
 
 Both definitions remain explicit drafts. Their initial state is unapplied;
-activation must be authored explicitly. Rendered state appearance, physical mesh
-contact and complete actor-route validation are still open. This publication
+activation must be authored explicitly. Physical mesh contact, complete actor-route
+validation and a rendered in-game playthrough are still open. This publication
 does not claim exact reproduction of the shared assembly's hand-authored movement
 contour or full gameplay parity. No engine changes were needed.
+
+The separate `croisement01-activated-fragments-appearance.json` catalog adds
+descriptor-owned `show` rules bound to each fragment's local activation control.
+The pinned dry-run backup is `activated-fragment-appearance-pinned-review`;
+descriptors are installed without mesh edits or saved-scene changes. Browser
+coverage uses `asset-endpoint-insertion.html?fragments=1`: actual library models,
+two copies per asset, one rotated 37 degrees, save/reopen, independent apply/reset,
+changed color and depth images, and packaged appearance resources. A real-loader
+failure exposed the index dropping `appearance`; index projection now retains it
+in base and variant parts, covered by the 36 index/publication tests.
+
+`activated-fragments-browser.zip` contains the 084 case. The existing native
+`full_editor_archive_constructs_native_map_without_base_datadir` check loads its
+2000×2000 color/depth/minimap and editable scene, then constructs three sight
+obstacles, 3,456 grid blocks and two appearance regions for two controls without
+base game data. This does not assert final renderer composition or actor behavior.
+`activated-fragment-083-browser.zip` passes the same native check and counts;
+its browser run also verifies all four independent preview control combinations.
+The three existing drawbridge browser insertion cases also still pass.
 
 ## Missing-definition ownership dependencies (2026-10-08)
 
