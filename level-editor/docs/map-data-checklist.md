@@ -47,6 +47,10 @@ cases omit unsupported lower entrances and jumps. The airborne-path audit still
 fails at a platform jump launch (exported height 12 versus platform top 12.001),
 so the candidate remains unpublished. Its sampled mesh leaves 3.431 square units
 of the authored footprint unsupported; rendered contact also remains unverified.
+The compiler now audits final integer jump pairs, including authored connections,
+and warns about mismatched opposing edges, solid flight/takeoff intersections,
+or unsupported clearance checks. Best-effort exports retain those connections;
+warnings identify review work and do not certify playable jumps.
 
 Receiving-material unions now batch equivalent patches. A 1,024-island component
 benchmark improves from about 4 seconds to 0.1 seconds; full-map timing remains

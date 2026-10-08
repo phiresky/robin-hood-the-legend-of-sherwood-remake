@@ -33,6 +33,7 @@ import {
 } from "./assemble-navigation-joins.ts";
 import { assembleJumpSegments, type PlacedJumpSegment } from "./assemble-jump-segments.ts";
 import { createJumpClearance, mergeIntervals } from "./jump-clearance.ts";
+import { auditCompiledJump } from "./audit-compiled-jump.ts";
 import { createJumpWalkingClearance, type JumpWalkArea } from "./jump-walking-clearance.ts";
 import {
   generateJumpLedges,
@@ -2376,15 +2377,16 @@ function compileAssetGameplayAttempt(
   const changingSight = new Set(
     transitions.flatMap((transition) => [...transition.initialSight, ...transition.appliedSight]),
   );
-  const flightClearance = jumpSegments.some((segment) => segment.attachment)
-    ? createJumpClearance(
-        sight.map((shape, index) =>
-          changingSight.has(index) && shape.initial_active === false
-            ? { ...shape, initial_active: true }
-            : shape,
-        ),
-      )
-    : undefined;
+  const flightClearance =
+    jumpPairs.length || jumpSegments.length
+      ? createJumpClearance(
+          sight.map((shape, index) =>
+            changingSight.has(index) && shape.initial_active === false
+              ? { ...shape, initial_active: true }
+              : shape,
+          ),
+        )
+      : undefined;
   const walkingClearance = createJumpWalkingClearance(jumpWalkAreas, generatedLandings);
   const assembledJumps = assembleJumpSegments(
     jumpSegments,
@@ -2468,6 +2470,9 @@ function compileAssetGameplayAttempt(
     });
     return { line1: lines[0]!, line2: lines[1]!, jump_long: pair.long };
   });
+  for (const [index, pair] of compiledJumpPairs.entries())
+    for (const issue of auditCompiledJump(pair, flightClearance!))
+      warnings.push(`Jump ${jumpPairs[index]!.id}: ${issue}.`);
   // Runtime construction order is motion, materials, projection planes, then buildings.
   // Motion adds an out-of-map sector; each door also consumes a constructor slot.
   // Physical endpoints reach the runtime unchanged. Rounding before binding

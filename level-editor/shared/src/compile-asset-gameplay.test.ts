@@ -1668,10 +1668,12 @@ test("duplicated sight transitions control only their own transformed obstacles"
 test("cross-asset jumps detach and reconnect with independently placed assets", () => {
   const { document, assets } = crossAssetJumpCompilerFixture();
   const whole = jumpAssetCompilerFixture();
-  assert.deepEqual(
-    compileAssetGameplay(document, assets, bounds),
-    compileAssetGameplay(whole.document, whole.assets, bounds),
+  const expected = compileAssetGameplay(whole.document, whole.assets, bounds);
+  // Identical geometry has different authoring identities in the two fixtures.
+  expected.warnings = expected.warnings?.map((warning) =>
+    warning.replace("/wall-jump:", "/lower-edge:"),
   );
+  assert.deepEqual(compileAssetGameplay(document, assets, bounds), expected);
   document.groups.find((g) => g.id === "jump-upper")!.transform.dx = 20;
   const detached = compileAssetGameplay(document, assets, bounds);
   assert.equal(detached.jump_line_pairs, undefined);
@@ -1682,10 +1684,7 @@ test("cross-asset jumps detach and reconnect with independently placed assets", 
   );
   assert.ok(detached.motion_data.layers.length > 0);
   document.groups.find((g) => g.id === "jump-upper")!.transform.dx = 0;
-  assert.deepEqual(
-    compileAssetGameplay(document, assets, bounds),
-    compileAssetGameplay(whole.document, whole.assets, bounds),
-  );
+  assert.deepEqual(compileAssetGameplay(document, assets, bounds), expected);
   for (const group of document.groups.slice())
     document.groups.push({
       id: `${group.id}-copy`,

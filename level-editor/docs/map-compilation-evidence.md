@@ -4,6 +4,24 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Exported jump diagnostics (2026-10-08)
+
+All compiled jump pairs now receive a diagnostic pass after integer conversion,
+including authored pairs and exact socket joins. Opposing map-space vectors must
+match for distance-along-source translation to cover the paired landing edge.
+Mismatches produce asset-identified warnings. Aligned pairs also run the existing
+flight/takeoff clearance calculation against solid geometry, including geometry
+that can become active after a state change. Unsupported sloped/climbing checks
+are explicitly reported as unverified. These diagnostics preserve the exported
+connections and do not substitute warnings for a future geometry correction.
+
+The watermill batch `watermill-platform-placements-G273sd` retains identical
+geometry in all eight maps compared with `watermill-platform-placements-A7VFwM`.
+Each now reports the two copied authored jump-vector mismatches. All placement
+and lower-terrain assertions pass. The focused compiler and clearance suites
+pass 158 tests, including fractional-solid takeoff collision, unequal vectors,
+and unsupported flight geometry; editor typechecking passes.
+
 ## Native receiving-floor loading cost (2026-10-08)
 
 The completed Wychford export `saved-map-exports-e13P3h` passes native construction
