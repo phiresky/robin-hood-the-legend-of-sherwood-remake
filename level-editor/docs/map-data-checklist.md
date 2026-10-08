@@ -29,18 +29,24 @@ pass for the captured failure. Wychford descriptor export now completes in
 126.2 seconds including one best-effort retry (`saved-map-exports-e13P3h`). It
 retains 1,862 warnings, including the floating church approach and watermill
 receiver omission. The evidence document records the small union-rounding
-differences. Native construction and all three controls pass, but each audit
-takes about 13 minutes; browser baking remains a separate check.
+differences. Native construction and all three controls pass; browser baking
+remains a separate check.
 Native floor binding repeats a costly boundary-validity test for each receiving
 plane. Pruning disjoint edge pairs before the unchanged intersection predicate
 reduces a four-case loading benchmark from 79.96 to 8.12 seconds. All 44
 stair-navigation, 55 enabled compiled-navigation and 67 enabled map-compilation
-tests pass. Full Wychford timing after this optimization is still being measured.
+tests pass. The same full Wychford export passes construction in 255.00 seconds
+and all three control apply/reset checks in 260.72 seconds, down from roughly
+13 minutes each. These are single-run debug audit timings.
 An unpublished watermill candidate now supplies an asset-local raised platform
 floor while retaining its two material regions. Its Leicester export passes
 native construction with 23 jump pairs and no watermill door/jump omission.
-It still needs moved/copied terrain-contact and actor-route tests; its sampled
-mesh leaves 3.431 square units of the authored footprint unsupported.
+With an asset-local upper-door contact correction, 48 complete-sprite round trips
+pass across copied, rotated and elevated placements. Eight lower-terrain negative
+cases omit unsupported lower entrances and jumps. The airborne-path audit still
+fails at a platform jump launch (exported height 12 versus platform top 12.001),
+so the candidate remains unpublished. Its sampled mesh leaves 3.431 square units
+of the authored footprint unsupported; rendered contact also remains unverified.
 
 Receiving-material unions now batch equivalent patches. A 1,024-island component
 benchmark improves from about 4 seconds to 0.1 seconds; full-map timing remains

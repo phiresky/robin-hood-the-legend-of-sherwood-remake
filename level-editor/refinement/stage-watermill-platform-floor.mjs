@@ -46,9 +46,41 @@ gameplay.surfaces.push({
   }),
 });
 gameplay.projectionReceivers = gameplay.projectionReceivers.filter((item) => item !== receiver);
+const upperDoors = gameplay.interiors
+  .flatMap((room) => room.doors)
+  .filter((door) => door.outside[2] === shape.points[0].z_top);
+assert.equal(upperDoors.length, 1);
+const door = upperDoors[0];
+const beforeMiddle = structuredClone(door.middle);
+const platform = gameplay.surfaces[0].polygon;
+const inside = ([x, y]) => {
+  let result = false;
+  for (let i = 0, j = platform.length - 1; i < platform.length; j = i++) {
+    const a = platform[i],
+      b = platform[j];
+    if (a[1] > y !== b[1] > y && x < ((b[0] - a[0]) * (y - a[1])) / (b[1] - a[1]) + a[0])
+      result = !result;
+  }
+  return result;
+};
+assert.ok(!inside(beforeMiddle) && inside(door.outside));
+const delta = door.outside.map((value, index) => value - beforeMiddle[index]);
+const at = (t) => beforeMiddle.map((value, index) => value + t * delta[index]);
+let lower = 0,
+  upper = 1;
+for (let i = 0; i < 50; i++) {
+  const t = (lower + upper) / 2;
+  if (inside(at(t))) upper = t;
+  else lower = t;
+}
+// The handoff must remain on the platform after integer waypoint rounding.
+door.middle = at(Math.min(1, upper + 1.5 / Math.hypot(delta[0], delta[1])));
 gameplay.draft ??= { issues: [] };
 gameplay.draft.issues.push(
   "Unpublished physical watermill platform candidate: moved terrain connections, actor routes, jumps and rendered contact require review. Near-horizontal top mesh within 0.1 game units leaves 3.431 square game units of the authored platform footprint unsupported.",
+);
+gameplay.draft.issues.push(
+  "Unpublished upper doorway contact moved onto the authored platform; rendered threshold alignment requires review.",
 );
 validateAssetGameplay(gameplay, descriptor);
 const output = await fs.mkdtemp("work/map-compile/watermill-platform-floor-");
@@ -62,6 +94,7 @@ await fs.writeFile(
     asset: id,
     replacedReceiver: receiver,
     surface: gameplay.surfaces[0],
+    threshold: { before: beforeMiddle, after: door.middle, inset: 1.5 },
     modelSha256,
   }),
 );

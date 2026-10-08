@@ -34,8 +34,10 @@ map-compilation tests pass. Eighteen compiled-navigation and five map-compilatio
 audits require external fixtures and remain ignored in those suites. Three
 movement tests now clear obsolete plane anchors when replacing fixture vertices,
 and clear obsolete precise boundaries when replacing the motion area; their
-behavioral assertions are unchanged. Full-map timing after optimization is
-still being measured, separately from the reduced benchmark.
+behavioral assertions are unchanged. The same full Wychford export passes
+construction in 255.00 seconds and all three control apply/reset checks in
+260.72 seconds after optimization. These are single-run debug audit timings,
+not release-game loading measurements.
 
 ## Watermill physical platform candidate (2026-10-08)
 
@@ -59,9 +61,34 @@ heights. Stage `watermill-platform-floor-pOWroc` compiles Leicester into
 `saved-map-exports-GUqGef`, which passes native construction: 57 areas, 826 sight
 obstacles, 105 runtime doors and 23 jump pairs. All eight platform boundary
 joins remain independent in this scene; no watermill door or jump omission is
-reported. This is construction evidence only. Moved/copied terrain contacts,
-complete actor routes, jump execution and rendered contact remain unverified;
-the candidate has not been installed in the library.
+reported. This is construction evidence only.
+
+The placement verifier `refinement/check-watermill-platform-placements.mjs`
+places two copies at rotations 0, 37, 90 and 180 degrees and elevations 0 and
+40. The initial candidate passes 32 of 48 complete-sprite entrance/exit routes;
+all 16 upper-door routes fail because the handoff point is outside the platform.
+The staging recipe now moves that asset-local point along its existing approach
+onto the platform, with a 1.5-unit inset for integer waypoint rounding. It changes
+no door heights or runtime behavior. Stage `watermill-platform-floor-LA5GzH`
+matches the tested candidate in `watermill-platform-placements-3EojSS`, where
+all 48 routes pass. Eight negative cases with terrain 20 units below the asset
+retain only the two supported upper entrances and omit the lower entrances and
+jump pairs (`watermill-platform-placements-scLf10`).
+All eight placement descriptors match the actor-tested batch exactly. The corrected
+full Leicester export `saved-map-exports-NFGMKR` also passes native construction
+with the same geometry counts as the initial candidate, in 0.56 seconds.
+
+The expanded native airborne-path audit fails on the first positive placement:
+a jump from map point (772, 921), height 12, intersects solid platform obstacle
+0, whose top is 12.001. The collision and quantized endpoint handling remain
+under investigation. An isolated diagnostic raising that upper endpoint to 13
+gets past the first collision but fails the landing correspondence assertion:
+the stored opposing edges have unequal integer vectors, whereas runtime landing
+translation uses distance along the source edge. This diagnostic is not an asset
+fix and has not been published. Authored pairs currently bypass the clearance
+checks used when assembling connection segments; that compiler gap needs review.
+Actor doorway success does not certify jump execution,
+rendered contact or complete gameplay parity. The candidate remains unpublished.
 
 ## Dense receiving-boundary construction (2026-10-08)
 
