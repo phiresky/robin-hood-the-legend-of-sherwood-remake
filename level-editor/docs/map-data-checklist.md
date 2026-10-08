@@ -47,6 +47,10 @@ rider/helper animations and carrier recovery. This exposed a missing helper
 recovery completion event, now restored without navigation changes. Full combat
 interaction, helper-required vertical jumps, multi-PC click formations and
 rendering remain open; see [assisted-jump evidence](map-compilation-evidence.md#assisted-roof-jumps-and-carrier-recovery-2026-10-08).
+Automatic cross-asset flight clearance currently omits vertical climbs of 60 units
+or more with an explicit warning. Authored paired connections export, but their
+vertical traversal still needs a dedicated native audit; the long-jump audit is
+not sufficient. See [vertical-jump investigation](map-compilation-evidence.md#vertical-jump-export-investigation-2026-10-08).
 The 246 focused editor/compiler tests pass. Ledges and graph preparation now use
 one footprint definition; an eight-unit-deep roof retains its usable ledge while
 six units still fails the rounding margin. See [current evidence](map-compilation-evidence.md#shared-native-footprint-for-jump-ledges-2026-10-08)

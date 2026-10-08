@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Vertical-jump export investigation (2026-10-08)
+
+Automatic matching of independently placed edges with `long: false` and a
+100-unit elevation difference emits no pair. The export warning explicitly says
+that climbing jumps require an authored connection: the clearance implementation
+only models long flights. This is an authoring/export limitation, not evidence
+that vertical jumps work automatically.
+
+`node refinement/check-vertical-jump-placements.mjs` exports two separate assets
+with an authored matching connection, at base elevations 0 and 40. Both exports
+contain one pair and preserve the non-forced-long flag. The generated documents
+and descriptors are saved together for native investigation. The first batch is
+`work/map-compile/prepared-vertical-jumps-Bricsi`.
+
+Running the existing shoulder long-jump audit against that batch does **not**
+certify traversal: the ground-level fixture has no launch receiver at the tested
+points; the elevated upward cases reach the long-jump-only animation assertion;
+the shoulder descent cases do not complete in that harness. A dedicated audit
+must distinguish upward climbing, downward dismount and long-flight animation
+requirements, and use valid receivers in both placements. No runtime change is
+justified by these preliminary fixture/harness results alone.
+
 ## Assisted roof jumps and carrier recovery (2026-10-08)
 
 The prepared roof batch `work/map-compile/prepared-roof-placements-oshhrm` now
