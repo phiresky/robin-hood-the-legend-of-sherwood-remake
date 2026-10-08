@@ -5,6 +5,20 @@ import { normalizeRoundedMotionRing, simplifyMotionRing } from "./motion-quantiz
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { restoreReceivingBoundary } from "./restore-receiving-boundary.ts";
 
+/** Limit coincident edges entering the fixed-point sweep at once. Terrain
+ * triangulation can otherwise make a single region's union prohibitively slow.
+ * Keep hole ownership within each polygon throughout the merge.
+ */
+function joinFloorContours(floors: MultiPolygon): MultiPolygon {
+  const batchSize = 32;
+  let joined: MultiPolygon = [];
+  for (let start = 0; start < floors.length; start += batchSize) {
+    const batch = fixedPolygonBoolean("union", floors.slice(start, start + batchSize));
+    joined = joined.length ? fixedPolygonBoolean("union", joined, [batch]) : batch;
+  }
+  return joined;
+}
+
 export function motionBoundsKey(points: Point[]): string {
   let minX = Infinity,
     minY = Infinity,
@@ -49,10 +63,7 @@ export function joinedReceivingBoundary(
 ): Point[] | undefined {
   // Motion regions merge outer contours before compiling holes as separate
   // obstacles. Subtracting those holes here would change the boundary identity.
-  const floors = fixedPolygonBoolean(
-    "union",
-    pieces.map((p) => [p.receivingPolygon ?? p.polygon]),
-  );
+  const floors = joinFloorContours(pieces.map((p) => [p.receivingPolygon ?? p.polygon]));
   const candidates = (
     indexPreciseBlockers(floors.map((p) => p[0]!)).get(motionBoundsKey(boundary)) ?? []
   ).filter(({ rounded }) => clipping.xor([rounded], [boundary]).length === 0);
@@ -72,5 +83,5 @@ function joinedFloorCoverage(pieces: NavigationPiece[]): MultiPolygon {
     });
     return fixedPolygonBoolean("difference", [piece.receivingPolygon ?? piece.polygon], holes);
   });
-  return fixedPolygonBoolean("union", floors);
+  return joinFloorContours(floors);
 }

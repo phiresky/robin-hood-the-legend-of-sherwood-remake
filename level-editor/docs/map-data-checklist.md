@@ -20,6 +20,16 @@ obstacles, and material batches of 64 pieces. Nine wall export checks retain the
 same native fixtures; typecheck, lint, formatting and the production build pass.
 This instrumentation narrows the remaining slow Wychford export; it is not
 evidence of a full-map speed improvement.
+The slow first Wychford boundary is now isolated to a union of 850 floor pieces.
+Batching their fixed-point union completes that boundary in about 3.1 seconds;
+a 504-triangle regression preserves the fractional perimeter and interior gap.
+Near-coincident obstacle reconstruction also retries a failing floating-point
+intersection at the source collision precision. Coverage and rounding checks
+pass for the captured failure. Wychford descriptor export now completes in
+126.2 seconds including one best-effort retry (`saved-map-exports-e13P3h`). It
+retains 1,862 warnings, including the floating church approach and watermill
+receiver omission. The evidence document records the small union-rounding
+differences; browser bake and native checks of this full export remain separate.
 
 Receiving-material unions now batch equivalent patches. A 1,024-island component
 benchmark improves from about 4 seconds to 0.1 seconds; full-map timing remains

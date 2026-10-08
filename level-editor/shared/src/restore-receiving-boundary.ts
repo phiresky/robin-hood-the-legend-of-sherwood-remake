@@ -151,7 +151,15 @@ function restoreBoundary(
         if (shared) candidate.push([...shared]);
         else candidate.push(edgePoint(incoming, vertex)!, edgePoint(outgoing, vertex)!);
       }
-      const clipped = clipping.intersection([candidate], obstacle ? coverage : [outer]);
+      const source = obstacle ? coverage : [outer];
+      let clipped: MultiPolygon;
+      try {
+        clipped = clipping.intersection([candidate], source);
+      } catch {
+        // Near-coincident authored edges can fail the floating-point sweep.
+        // Reuse the precision that constructed the source collision coverage.
+        clipped = fixedPolygonBoolean("intersection", [candidate], [source]);
+      }
       if (clipped.length !== 1 || clipped[0]!.length !== 1) continue;
       const rounded = quantizeGeneratedMotionPolygon(
         clipped[0]!,

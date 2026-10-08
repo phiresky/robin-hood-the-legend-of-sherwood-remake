@@ -4,6 +4,42 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Dense receiving-boundary construction (2026-10-08)
+
+Captured Wychford inputs in `receiving-profile-DCBnzh` isolate the slow operation:
+the first navigation region joins 850 floor pieces containing 4,449 vertices.
+Transition construction takes about 9 ms; the following fixed-point outer union
+is expensive. Prefixes of 64, 128 and 256 pieces take approximately 42, 736 and
+9,292 ms. Batching 32 pieces reduces those unions to 21, 87 and 157 ms, and
+the full 850-piece boundary operation completes in about 3.1 seconds.
+
+This is not bit-identical polygon arithmetic: the 128/256-piece unions differ
+from the single fixed-point union by 0.000001811 square game units. The complete
+850-piece batched union differs from a double-precision reference union by
+0.000806139 square units at the fixed-point comparison precision. A direct
+floating-point XOR of those complete unions fails in the clipping library;
+the fixed-point comparison succeeds. No complete baseline union was obtained.
+A 504-triangle regression verifies the fractional perimeter and preserved gap.
+
+The resumed export then exposed a floating-point intersection failure during
+obstacle recovery. Its captured five-vertex candidate and six-vertex source
+reproduce the exception. Recovery now retries that operation at the fixed-point
+precision used for source collision; a regression checks both source containment
+and identical rounded obstacle coverage. This does not change engine code.
+
+Broader export checks found two stale fixtures that also fail with the unchanged
+contour implementation. Refreshed platform-opening and rotated terrain-socket
+fixtures pass the native receiver-hole test and all ten directed actor crossings
+at five rotations. All 67 enabled native map-compilation checks pass; five
+data-dependent audits remain ignored. The targeted editor suites, typecheck,
+lint, formatting and production editor build pass.
+The game binary also builds and Rust formatting passes. Full Wychford descriptor
+export `saved-map-exports-e13P3h` completes in 126.2 seconds, including one
+best-effort retry for its disconnected church-tower approach. It has 1,862
+warnings, including one omitted watermill receiver, 25 door warnings and 13 mask
+warnings. Compilation success does not certify those missing connections or a
+browser ZIP bake.
+
 ## Published centered three-entrance ladder (2026-10-08)
 
 `refinement/catalogs/sherwood-ladder-oak-centered-gameplay.json` records the

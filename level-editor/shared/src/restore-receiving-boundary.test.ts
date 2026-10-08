@@ -7,6 +7,32 @@ import { restoreReceivingBoundary, restoreObstacleBoundary } from "./restore-rec
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 
+test("near-coincident terrain obstacle edges survive a floating sweep failure", () => {
+  const boundary: Point[] = [
+    [1639, 1439],
+    [1636, 1441],
+    [1634, 1442],
+  ];
+  const sources: MultiPolygon = [
+    [
+      [
+        [1637.125, 1440.125],
+        [1639, 1439],
+        [1636, 1441],
+        [1634, 1442],
+        [1639, 1438.666666984558],
+        [1637.125, 1440.125],
+      ],
+    ],
+  ];
+  const restored = restoreObstacleBoundary(boundary, sources);
+  assert.ok(restored);
+  const rounded = quantizeGeneratedMotionPolygon([restored], Math.round, "Obstacle", []);
+  assert.ok(rounded);
+  assert.deepEqual(fixedPolygonBoolean("xor", rounded, [[boundary]]), []);
+  assert.deepEqual(fixedPolygonBoolean("difference", [restored], [sources]), []);
+});
+
 test("a separate subpixel solid cannot erase an unambiguous landing edge", () => {
   const fixture: { points: Point[]; blockedCoverage: MultiPolygon } = JSON.parse(
     readFileSync(

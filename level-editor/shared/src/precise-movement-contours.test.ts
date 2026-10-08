@@ -25,6 +25,59 @@ const frame: Polygon = [
   ],
 ];
 
+test("dense triangulated floors retain their fractional perimeter and interior gap", () => {
+  const pieces: NavigationPiece[] = [];
+  for (let y = 0; y < 16; y++)
+    for (let x = 0; x < 16; x++) {
+      if (x >= 7 && x < 9 && y >= 7 && y < 9) continue;
+      const corners: Point[] = [
+        [x * 10 + 0.25, y * 10 + 0.25],
+        [x * 10 + 10.25, y * 10 + 0.25],
+        [x * 10 + 10.25, y * 10 + 10.25],
+        [x * 10 + 0.25, y * 10 + 10.25],
+      ];
+      for (const indices of [
+        [0, 1, 2],
+        [0, 2, 3],
+      ]) {
+        const receivingPolygon = indices.map((i) => corners[i]!);
+        pieces.push({
+          ...fixture.pieces[0]!,
+          polygon: receivingPolygon.map(([x, y]) => [Math.round(x), Math.round(y)]),
+          receivingPolygon,
+          blockers: [],
+          preciseBlockers: [],
+        });
+      }
+    }
+  const boundary: Point[] = [
+    [0, 0],
+    [160, 0],
+    [160, 160],
+    [0, 160],
+  ];
+  const outer = boundary.map(([x, y]): Point => [x + 0.25, y + 0.25]);
+  const restored = joinedReceivingBoundary(pieces, boundary);
+  assert.ok(restored);
+  assert.deepEqual(clipping.xor([restored], [outer]), []);
+  const gap: Point[] = [
+    [70.25, 70.25],
+    [90.25, 70.25],
+    [90.25, 90.25],
+    [70.25, 90.25],
+  ];
+  const bounds: Polygon = [
+    [
+      [-10, -10],
+      [180, -10],
+      [180, 180],
+      [-10, 180],
+    ],
+  ];
+  const blocked = joinedBlockedCoverage(pieces, bounds);
+  assert.deepEqual(clipping.xor(blocked, clipping.difference(bounds, [outer, gap])), []);
+});
+
 test("a rounded stair corner keeps its precise landing identity", () => {
   const captured: { polygon: { points: Point[] }; precise_polygon: Point[] } = JSON.parse(
     readFileSync(
