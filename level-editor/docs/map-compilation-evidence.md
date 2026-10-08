@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Batched receiving-material unions (2026-10-08)
+
+Receiving-material partitioning previously unioned each equivalent patch into an
+ever-growing region. For 128, 512 and 1,024 separated square patches, the local
+component benchmark took approximately 101, 1,003 and 4,043 ms. Unioning each
+equivalent run once reduced those measurements to 26, 45 and 102 ms. This is not
+a measured full-map export speedup. Priority ordering and physical-receiver
+boundaries remain separate; a 1,024-island regression checks coverage, gaps,
+material bindings and input preservation.
+
+The hill/river fixture now has 211 generated receivers instead of 214. All
+non-receiver descriptor fields are identical after JSON serialization. Local
+artifact `receiver-batch-review-uFKBKZ` retains both descriptors and the coverage
+review: grouping height-plane coefficients at 1e-6 finds the same 21 groups,
+with about 0.00001479 square units of footprint difference across two groups.
+This reflects fixed-point intersection rounding, not exact geometry equality.
+
+Native construction passes. All 166 focused editor/compiler checks and all 67
+enabled native map-compilation integration tests pass, including polygon validity,
+hill heights, river/ford restrictions and sampled actor routing. Five
+data-dependent audits remain ignored in that integration run. A separate paired
+native audit samples 194,481 positions, with zero coverage or material differences.
+Its strict exact-height assertion fails at 3,485 positions: the maximum height
+difference is 0.0000038146973 units. The paired report is retained; bit-identical
+floating-point heights are not claimed. Type checking, focused lint, formatting,
+the editor production build and the game build pass. No engine implementation
+changed.
+
 ## Gameplay compilation phase reporting (2026-10-08)
 
 The export worker now reports compilation phases to the editor without settling

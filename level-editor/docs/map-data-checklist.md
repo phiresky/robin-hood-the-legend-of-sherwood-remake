@@ -16,6 +16,14 @@ and cancellable. The saved-map audit records per-phase durations, including
 best-effort retries. Eleven focused wall/worker checks pass; phase reporting does
 not itself certify gameplay or browser interaction.
 
+Receiving-material unions now batch equivalent patches. A 1,024-island component
+benchmark improves from about 4 seconds to 0.1 seconds; full-map timing remains
+unverified. All 166 focused compiler checks and 67 enabled native map-compilation
+tests pass. The refreshed hill/river fixture has 211 receivers; 194,481 paired
+native queries retain coverage and materials, with height rounding differences
+up to 0.0000038146973 units. The exact-height comparison therefore does not pass;
+the detailed evidence records that limitation.
+
 The current ten-scene export batch (`saved-map-exports-EdJxua`) compiles and passes
 native construction plus all 71 control apply/reset checks. That batch exposed a
 verification-script gap: it omitted the editor's mesh-derived spline calibration.

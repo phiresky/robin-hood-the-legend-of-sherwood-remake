@@ -10,6 +10,40 @@ const square = (low: number, high: number): Point[] => [
   [high, high],
   [low, high],
 ];
+
+test("many equivalent material islands retain every patch and the gaps between them", () => {
+  const supports = Array.from({ length: 1024 }, (_, i) => {
+    const x = (i % 32) * 10,
+      y = Math.floor(i / 32) * 10;
+    const polygon: Point[] = [
+      [x, y],
+      [x + 4, y],
+      [x + 4, y + 4],
+      [x, y + 4],
+    ];
+    return {
+      polygon,
+      defaultMaterial: 2,
+      materialIndices: [7],
+      explicit: true,
+      owner: "terrain",
+    };
+  });
+  const before = structuredClone(supports);
+  const warnings: string[] = [];
+  const pieces = partitionProjectionMaterials(square(0, 320), supports, warnings);
+  assert.equal(pieces.length, supports.length);
+  assert.ok(pieces.every((piece) => piece.defaultMaterial === 2));
+  assert.ok(
+    pieces.every((piece) => piece.materialIndices.length === 1 && piece.materialIndices[0] === 7),
+  );
+  const actual = clipping.union(pieces.map((piece) => [piece.polygon]));
+  const expected = clipping.union(supports.map((support) => [support.polygon]));
+  assert.deepEqual(clipping.xor(actual, expected), []);
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(supports, before);
+});
+
 test("equivalent adjacent ground triangles produce no internal receiving seam", () => {
   const boundary: Point[] = [
     [0.25, 0.75],

@@ -2753,6 +2753,11 @@ export. Pinched contours are triangulated with their height planes and materials
 intact; zero-area pieces are omitted with explicit warnings. The editor/native
 terrain fixture verifies valid polygons, hill heights and routes across a ford.
 
+Equivalent receiving-material patches are now unioned in batches, avoiding
+repeated reconstruction of a growing terrain region. Material priority, physical
+receiver ownership and unsupported gaps remain distinct. The terrain regression
+checks the regenerated receiver polygons and native traversal.
+
 Spline lighting also preserves disconnected receiving-probe fragments after
 trimming, retaining valid light regions and their ambience filters.
 

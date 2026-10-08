@@ -123,10 +123,10 @@ export function partitionProjectionMaterials(
   // Adjacent equivalent generated supports have no material/height boundary.
   // Union them before subtracting coverage: cutting each terrain triangle in
   // turn can leave subpixel seams that become false elevation boundaries.
-  const partitions: typeof members = [];
+  const groups: { member: (typeof members)[number]; geometries: MultiPolygon[] }[] = [];
   for (const member of members) {
-    const previous = partitions.at(-1);
-    const a = previous?.support,
+    const previous = groups.at(-1);
+    const a = previous?.member.support,
       b = member.support;
     if (
       previous &&
@@ -142,10 +142,18 @@ export function partitionProjectionMaterials(
       (a.materialSignature ?? JSON.stringify(a.materialIndices)) ===
         (b.materialSignature ?? JSON.stringify(b.materialIndices))
     ) {
-      previous.geometry = clipping.union(previous.geometry, member.geometry);
-      previous.bounds = geometryBounds(previous.geometry);
-    } else partitions.push({ ...member });
+      previous.geometries.push(member.geometry);
+    } else groups.push({ member, geometries: [member.geometry] });
   }
+  // Union each equivalent run once; repeatedly rebuilding a growing region is
+  // quadratic for terrain with many disconnected material patches.
+  const partitions = groups.map(({ member, geometries }) => ({
+    ...member,
+    geometry:
+      geometries.length === 1
+        ? geometries[0]!
+        : clipping.union(geometries[0]!, ...geometries.slice(1)),
+  }));
   let remaining: MultiPolygon = [shape(boundary)];
   for (const member of partitions) {
     member.geometry = clipping.intersection(remaining, member.geometry);
