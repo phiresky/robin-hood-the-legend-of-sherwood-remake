@@ -88,7 +88,7 @@ try {
         prepared.additionalAssets.map((member) => member.reference),
       );
       check(adopted, "New family must register");
-      for (const x of [400, 1000])
+      for (const x of [400, parameters.has("overlap") ? 425 : 1000])
         current = insertProjectionAsset(
           current,
           prepared.descriptor,
@@ -187,6 +187,11 @@ try {
           new Set(baked.appearance.flatMap((region) => region.patches)).size === 2,
           "Both copied appearances must be rendered",
         );
+        if (parameters.has("overlap"))
+          check(
+            baked.appearance.length === 1 && baked.appearance[0]!.states.length === 4,
+            "Overlapping copies need one region with all four state combinations",
+          );
         for (const region of baked.appearance) {
           const initial = region.states[0]!;
           check(

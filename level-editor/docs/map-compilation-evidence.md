@@ -69,6 +69,15 @@ scene compositing. Vulkan cannot run here: adapter discovery reports no suitable
 adapter. No outside-sandbox request was made. The Rust library test build and
 both OpenGL runs pass; only test code changed.
 
+The `&overlap=1` browser variant places the second, rotated copy 25 units from
+the first. Both `activated-fragment-083-overlap.zip` and
+`activated-fragment-084-overlap.zip` contain one shared appearance region with
+four states for two controls. Browser insertion/save/reopen/preview/bake/package,
+native archive construction and OpenGL pixel checks pass. The GPU gate now probes
+a color/depth-changing pixel for every individual control, rather than one per
+region, and checks those pixels through all four combinations and reset. This
+tests overlapping authored assets without reproducing a saved game map.
+
 ## Missing-definition ownership dependencies (2026-10-08)
 
 Fresh inventory `gameplay-coverage-0U9BM2` validates all 1,279 indexed descriptor

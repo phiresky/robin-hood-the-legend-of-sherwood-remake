@@ -514,6 +514,9 @@ contains two independently controlled copies, one rotated 37 degrees. Like the
 state fixture above, it assigns patch flags directly; it does not exercise actor
 activation, full-scene compositing, or gameplay callbacks. Archives for this gate
 must have 1–8 controls and each appearance region must change both color and depth.
+Add `&overlap=1` to place the copies close enough to share one appearance region;
+the browser requires all four states in that region. GPU probes select a changing
+color/depth pixel for each control, including when several controls share a region.
 
 ## Host hardware queries
 

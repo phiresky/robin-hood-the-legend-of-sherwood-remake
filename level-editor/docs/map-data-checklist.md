@@ -434,6 +434,10 @@ color and character-occlusion pixel checks across all four independent control
 combinations, transition suppression and reset. Patch flags are assigned directly;
 actor activation, mesh contact and complete rendered playthroughs remain open.
 Vulkan verification is pending because this sandbox exposes no Vulkan adapter.
+Overlapping copies also pass browser export, native ZIP loading and OpenGL color/
+depth checks for both fragments: one region contains four states, with a separate
+changing-pixel probe for each control. These remain rendering checks with directly
+assigned patch flags, not actor-triggered gameplay tests.
 The index publication path now retains these part rules in base and variant views.
 The timber bridge, both ferns, fallen log, upright fences 94/95 and supplemental
 wood 09/44 and Croisement01 tree 03 have published draft definitions. These counts

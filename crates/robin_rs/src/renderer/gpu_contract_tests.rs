@@ -729,16 +729,19 @@ fn verify_asset_archive_appearance(gpu: GpuContext, archive: &std::path::Path) {
     let probes: Vec<_> = background
         .appearance_regions
         .iter()
-        .map(|region| {
+        .enumerate()
+        .flat_map(|(region_index, region)| {
             let initial = &region.states[0];
-            (0..initial.color.len())
-                .find(|&pixel| {
-                    region.states.iter().skip(1).any(|state| {
-                        state.color[pixel] != initial.color[pixel]
-                            && state.depth[pixel].abs_diff(initial.depth[pixel]) > 256
+            (0..region.patches.len()).map(move |bit| {
+                let applied = &region.states[1 << bit];
+                let pixel = (0..initial.color.len())
+                    .find(|&pixel| {
+                        applied.color[pixel] != initial.color[pixel]
+                            && applied.depth[pixel].abs_diff(initial.depth[pixel]) > 256
                     })
-                })
-                .expect("appearance fixture must change color and depth")
+                    .expect("each appearance control must change color and depth");
+                (region_index, pixel)
+            })
         })
         .collect();
     for bits in (0..1usize << count).chain([0]) {
@@ -750,7 +753,8 @@ fn verify_asset_archive_appearance(gpu: GpuContext, archive: &std::path::Path) {
                 patch.in_transition = transitioning;
             }
             renderer.sync_map_appearance(&patches);
-            for (region, &pixel) in background.appearance_regions.iter().zip(&probes) {
+            for &(region_index, pixel) in &probes {
+                let region = &background.appearance_regions[region_index];
                 let state_index =
                     region
                         .patches
@@ -807,7 +811,8 @@ fn verify_asset_archive_appearance(gpu: GpuContext, archive: &std::path::Path) {
         }
     }
     eprintln!(
-        "asset archive GPU appearance: {count} controls, {} regions, independent states/transition/reset color and depth passed",
+        "asset archive GPU appearance: {count} controls, {} regions, {} probes, independent states/transition/reset color and depth passed",
+        background.appearance_regions.len(),
         probes.len()
     );
 }
