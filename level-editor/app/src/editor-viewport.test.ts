@@ -1407,11 +1407,11 @@ test("native artwork mode requires a loaded mounted preview and retires on missi
   assert.throws(() => viewport.setStatePresentationMode("native-art"), /not ready/);
   let retired = 0;
   const internal = viewport as unknown as {
-    nativeSurface: { dispose(): void } | undefined;
+    nativeSurface: { dispose(): void; setActorPreview(): void } | undefined;
     nativeControlState: { orbit: boolean; gizmo: boolean } | undefined;
     orbit: { enabled: boolean };
   };
-  internal.nativeSurface = { dispose: () => retired++ };
+  internal.nativeSurface = { dispose: () => retired++, setActorPreview() {} };
   internal.nativeControlState = { orbit: true, gizmo: false };
   internal.orbit = { enabled: false };
   assert.equal(viewport.statePresentationMode, "native-art");
@@ -1569,6 +1569,23 @@ test("delivered endpoints suppress legacy targets only after load and only in ph
   assert.equal(f.disposals(), 1);
   f.viewport.dispose();
   assert.equal(f.disposals(), 1);
+});
+
+test("delivered status retires the previous family when a different contract loads", async () => {
+  const f = await deliveredFixture();
+  const absent = { ready: false, tick: undefined, playing: false };
+  assert.deepEqual(f.viewport.deliveredStateStatus("trap"), absent);
+  await f.viewport.setStateDelivery(f.contract, f.library, f.source);
+  assert.equal(f.viewport.deliveredStateStatus("trap").ready, true);
+  const replacement = structuredClone(f.contract);
+  replacement.families[0]!.id = "replacement";
+  await f.viewport.setStateDelivery(replacement, f.library, f.source);
+  assert.deepEqual(f.viewport.deliveredStateStatus("trap"), absent);
+  assert.equal(f.viewport.deliveredStateStatus("replacement").ready, true);
+  assert.throws(() => f.delivery.familyTick("trap"), /missing family/);
+  f.viewport.clearStateDelivery();
+  assert.deepEqual(f.viewport.deliveredStateStatus("replacement"), absent);
+  f.viewport.dispose();
 });
 
 test("mission replacement retires an in-flight delivered state and its late error", async () => {

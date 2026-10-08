@@ -36,6 +36,9 @@ export class StateDelivery {
   get ready() {
     return !!this.contract;
   }
+  hasFamily(id: string) {
+    return !!this.contract?.families.some((family) => family.id === id);
+  }
   get mode() {
     return this.currentMode;
   }

@@ -977,10 +977,11 @@ export class EditorViewport {
     this.stateDelivery.setPlaying(playing);
   }
   deliveredStateStatus(family: string) {
+    const ready = this.stateDelivery.hasFamily(family);
     return {
-      ready: this.stateDelivery.ready,
-      tick: this.stateDelivery.ready ? this.stateDelivery.familyTick(family) : undefined,
-      playing: this.stateDelivery.ready && this.stateDelivery.native.isPlaying,
+      ready,
+      tick: ready ? this.stateDelivery.familyTick(family) : undefined,
+      playing: ready && this.stateDelivery.native.isPlaying,
     };
   }
   private readonly loopClocks = new SourceContractClockBinding();
