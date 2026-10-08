@@ -4,6 +4,48 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Prepared roof jumps and continuous receivers (2026-10-08)
+
+`node refinement/check-roof-jump-placements.mjs` (from `level-editor/`) exports
+two independent copies of a complete two-house assembly at 0/37/90/180 degrees
+and heights 0/40. It reads the editor/asset fixture only and records omitted
+connections and warnings in its manifest. It does not certify gameplay itself.
+Six placements retain two pairs each. At 90 degrees the projected sloping roof
+has no generated character-sized receiving span, so both height cases omit the
+connections with warnings; those omissions remain outside traversal coverage.
+
+The native sprite audit initially found four landing-receiver mismatches in
+120 directed edge-position cases. A pair of consecutive vertices collapsed to
+one binary32 vertex, unnecessarily triangulating the otherwise simple receiving
+floor. Jump landing uses the receiver at the edge midpoint, so that split left
+an actor with a different receiver at an endpoint. Export now removes consecutive
+vertices only when all four stored coordinates become identical in binary32.
+It retains genuine pinches and their triangulation, exact native vertices,
+receiving planes and materials. No production engine code changes.
+
+Fresh batch `work/map-compile/prepared-roof-placements-FzNuR1` passes all **120
+isolated sprite jumps/landings**. The checked-in rotated-roof descriptor matches
+editor output and passes **84 native receiver queries** along its four directed
+edges. Native actor-sized approach/pathfinder checks include that descriptor.
+Validation: **101 focused editor/compiler tests**, **71 native map integration
+tests (5 ignored)** and scoped type-aware lint pass.
+
+The animation audit now accepts an explicit per-map `approach_depth`; its default
+remains eight units. This fixture specifies its authored four-unit landing depth.
+It first checks both swept approaches using the native actor footprint. All 120
+cases pass that geometric check, but **112/120 complete walk–jump–walk sequences
+still fail the 0.1-unit final-position assertion**, stopping 0.8 or 1.6 units short
+after the jump. This short-move animation/arrival discrepancy remains unresolved;
+the assertion has not been relaxed. The earlier eight-unit audit additionally
+requested points outside this fixture's guaranteed landing band and is not proof
+that the authored four-unit approach is obstructed.
+
+Reproduce the two external sprite audits using `cargo test -p robin_engine --lib
+exported_jumps -j 1 -- --ignored --nocapture`, with `RUST_MIN_STACK=33554432`,
+`ROBIN_ASSET_MAP_DIAGNOSTICS` set to the generated directory, and
+`ROBIN_CLIMB_RHS` pointing to the installed complete `RobinTown.rhs`. These checks
+do not certify combat/assisted dispatch, click authorization or rendered contact.
+
 ## Spline clearance navigation planes (2026-10-08)
 
 `refinement/check-spline-clearance-planes.mjs` builds eight maps entirely from a

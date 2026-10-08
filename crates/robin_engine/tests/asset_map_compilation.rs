@@ -1673,6 +1673,7 @@ fn generated_roof_jump_edges_have_character_sized_walkable_approaches() {
         include_bytes!("fixtures/asset-jump-courtyard.level.json").as_slice(),
         include_bytes!("fixtures/asset-jump-level-contours.level.json").as_slice(),
         include_bytes!("fixtures/asset-jump-complete-roofs.level.json").as_slice(),
+        include_bytes!("fixtures/asset-jump-rotated-roofs.level.json").as_slice(),
     ] {
         let mut assets = LevelAssets::new();
         let engine = construct(bytes, &mut assets);
@@ -1716,6 +1717,41 @@ fn generated_roof_jump_edges_have_character_sized_walkable_approaches() {
                     }
                 }
             }
+        }
+    }
+}
+
+#[test]
+fn rotated_roof_jumps_keep_the_midpoint_receiver_over_the_entire_landing() {
+    use robin_engine::coordinates::MapPoint;
+    use robin_engine::position_interface::SectorHandle;
+
+    let mut assets = LevelAssets::new();
+    let engine = construct(
+        include_bytes!("fixtures/asset-jump-rotated-roofs.level.json"),
+        &mut assets,
+    );
+    let grid = engine.fast_grid();
+    assert_eq!(grid.level.jump_lines.len(), 4);
+    for line in &grid.level.jump_lines {
+        let index = line.sector_index.unwrap();
+        let sector =
+            SectorHandle::from_number(grid.level.sectors[usize::from(index)].sector_number)
+                .with_arena_index(index);
+        let midpoint =
+            engine.get_projection_area_index(&assets, sector, line.layer, line.get_middle_point());
+        assert!(midpoint.is_some());
+        for step in 0..=20 {
+            let t = step as f32 / 20.;
+            let position = MapPoint::new(
+                line.point_a.x + (line.point_b.x - line.point_a.x) * t,
+                line.point_a.y + (line.point_b.y - line.point_a.y) * t,
+            );
+            assert_eq!(
+                engine.get_projection_area_index(&assets, sector, line.layer, position),
+                midpoint,
+                "landing at {position:?} must share the midpoint's prepared receiver"
+            );
         }
     }
 }

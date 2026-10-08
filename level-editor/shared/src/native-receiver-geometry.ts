@@ -61,6 +61,19 @@ export function nativeReceiverGeometry(
   label: string,
   warnings: string[],
 ): SightObstacle["points"][] {
+  // Boolean intersections can introduce edges shorter than binary32 precision.
+  // Remove consecutive identical native vertices before considering a split:
+  // splitting a simple floor would change its receiver identity along a jump.
+  points = points.filter((point, index) => {
+    const previous = points[index - 1];
+    return (
+      !previous ||
+      Math.fround(point.x) !== Math.fround(previous.x) ||
+      Math.fround(point.y) !== Math.fround(previous.y) ||
+      Math.fround(point.z_top) !== Math.fround(previous.z_top) ||
+      Math.fround(point.z_bottom) !== Math.fround(previous.z_bottom)
+    );
+  });
   const native = points.map(({ x, y }): Point => [Math.fround(x), Math.fround(y)]);
   if (!native.every((point) => point.every(Number.isFinite)))
     throw new Error(`${label}: receiving geometry exceeds native coordinate range`);

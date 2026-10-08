@@ -16,7 +16,7 @@ dispatch and per-step routing have also been removed. An optimized three-player
 stock-mission regression completes all 540 frames, including Silver Arrow frame 5;
 median ticks range from 0.18 to 0.87 ms in the latest run (before the sound-fragment
 extension). Current validation: 248 selected compiler/export/sound tests pass;
-native map integration is 70 passed, 5 ignored; the
+native map integration is 71 passed, 5 ignored; the
 engine suite is **4,343 passed, 0 failed, 35 ignored**. Passage approaches are now
 prepared at export, and the loader's approach search has been deleted. Exports
 omit obsolete physical navigation metadata. The four stair receiver/barrier
@@ -25,6 +25,16 @@ loads natively and passes 144 sampled ordinary routes (0.01 seconds pathfinding
 in the unoptimized harness). This does not certify all scene connections. See the
 [runtime inventory](map-runtime-inventory.md) for the full scope and correction
 requirements. Earlier physical traversal evidence does not certify this architecture.
+
+**Current roof-jump evidence:** removing consecutive vertices that collapse to
+the same native coordinates avoids unnecessary receiver splits during export.
+Moved/copied roof assemblies at three usable rotations and two elevations now
+pass 120 isolated sprite jumps and landing-receiver checks. The fourth rotation
+omits its connections because no character-sized receiving span is generated.
+All 120 authored four-unit approaches pass native footprint checks, but 112
+complete walk–jump–walk sequences stop 0.8 or 1.6 units short of the final goal.
+That short-move discrepancy remains open. The 101 focused editor/compiler tests
+pass; see [reproduction and scope](map-compilation-evidence.md#prepared-roof-jumps-and-continuous-receivers-2026-10-08).
 
 **Large-map progress and remaining gap:** Wychford now exports its graph using
 [32-bit link indices](navigation-graph-format.md), with no runtime search change.

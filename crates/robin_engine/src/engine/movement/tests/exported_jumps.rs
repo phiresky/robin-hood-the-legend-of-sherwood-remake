@@ -22,6 +22,8 @@ fn audit_jump_dispatch(approach: bool) {
     let mut results = vec![];
     for result in manifest["results"].as_array().unwrap() {
         let file = result["file"].as_str().unwrap();
+        let approach_depth = result["approach_depth"].as_f64().unwrap_or(8.) as f32;
+        assert!(approach_depth.is_finite() && approach_depth > 0.);
         let bytes = std::fs::read(directory.join(file)).unwrap();
         let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let dims = &descriptor["walkable_polygon"][2];
@@ -34,10 +36,18 @@ fn audit_jump_dispatch(approach: bool) {
         );
         for index in 0..engine.world.fast_grid.level.jump_lines.len() {
             for t in [0., 0.25, 0.5, 0.75, 1.] {
-                let outcome =
-                    dispatch_jump(engine.clone(), assets.clone(), &sprite, index, t, approach);
+                let outcome = dispatch_jump(
+                    engine.clone(),
+                    assets.clone(),
+                    &sprite,
+                    index,
+                    t,
+                    approach,
+                    approach_depth,
+                );
                 results.push(serde_json::json!({
                     "file": file, "line": index, "t": t,
+                    "approach_depth": approach_depth,
                     "passed": outcome.is_ok(), "error": outcome.err(),
                 }));
             }
@@ -74,6 +84,7 @@ fn dispatch_jump(
     index: usize,
     t: f32,
     approach: bool,
+    approach_depth: f32,
 ) -> Result<(), String> {
     let source = engine.world.fast_grid.level.jump_lines[index].clone();
     let destination_index = source.associated_line_index.unwrap();
@@ -90,13 +101,39 @@ fn dispatch_jump(
     let offset = crate::coordinates::MapVec::new(source.vector().x * t, source.vector().y * t);
     let normal = crate::coordinates::MapVec::new(-source.vector().y, source.vector().x);
     let distance = if approach {
-        8. / source.vector().length()
+        approach_depth / source.vector().length()
     } else {
         0.
     };
     let inset = crate::coordinates::MapVec::new(normal.x * distance, normal.y * distance);
     let start = source.point_a + offset - inset;
     let goal = destination.point_b + offset + inset;
+    if approach {
+        let footprint = engine
+            .world
+            .fast_grid
+            .try_move_box_half_diagonal(0)
+            .unwrap();
+        for (label, edge, interior, layer) in [
+            ("launch", source.point_a + offset, start, source.layer),
+            (
+                "landing",
+                destination.point_b + offset,
+                goal,
+                destination.layer,
+            ),
+        ] {
+            if !engine
+                .world
+                .fast_grid
+                .is_reachable_thick(edge, interior, layer, footprint)
+            {
+                return Err(format!(
+                    "{label} approach cannot fit the native actor: edge={edge:?}, interior={interior:?}, depth={approach_depth}"
+                ));
+            }
+        }
+    }
     engine
         .get_projection_area_index(&assets, destination_sector, destination.layer, goal)
         .ok_or_else(|| format!("landing point has no receiver: {goal:?}"))?;

@@ -3,6 +3,35 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { parseLevel3D, parseProjectionAssetDescriptor } from "../../shared/src/validation.ts";
 import { compileMap } from "./map-compile.ts";
+import { roofJumpPlacement } from "../../shared/test-fixtures/roof-jump-placements.ts";
+
+test("rotated copied roofs retain continuous native landing receivers", async () => {
+  const input = JSON.parse(
+    await readFile(
+      new URL("../../shared/test-fixtures/complete-roof-jumps.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const document = roofJumpPlacement(parseLevel3D(input.document), 180, 0);
+  const asset = parseProjectionAssetDescriptor(input.asset);
+  const compiled = compileMap(document, [0, 0, 2000, 2000], new Map([[asset.id, asset]]), {
+    bestEffort: true,
+  });
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-jump-rotated-roofs.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled.descriptor, expected);
+  assert.equal(compiled.descriptor.asset_geometry!.jump_line_pairs!.length, 2);
+  assert.ok(
+    !compiled.warnings.some((warning) => /triangulated|collapsed to zero area/.test(warning)),
+  );
+});
 
 test("complete relocated houses generate roof connections with all their collision intact", async () => {
   const input = JSON.parse(

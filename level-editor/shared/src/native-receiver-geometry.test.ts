@@ -47,6 +47,33 @@ test("native receiving geometry retains representable subpixel floors and concav
   }
 });
 
+test("duplicate native vertices retain one continuous roof receiver after rotation", () => {
+  const coordinates = [
+    [595.4296169281006, 860.0963896494826, 243.29275119123065],
+    [596, 859.8414146015464, 242.84141460154638],
+    [624.1391267776489, 881.1961031886772, 243.29275140492473],
+    [624.1391849517822, 881.1961464300267, 243.29275173093004],
+    [665.8215398788452, 912.8287430285409, 243.96131329526452],
+    [665.8215379714966, 912.8287429824807, 243.9613142028786],
+    [666, 912.964175475103, 243.96417547510305],
+    [654.024658203125, 918.1095716855464, 253.30094169592235],
+    [654.0245943069458, 918.1096004379376, 253.30099238282287],
+    [606, 938.7441362569997, 290.7441362569997],
+    [535, 887.1099426192023, 291.10994261920234],
+  ];
+  const points = coordinates.map(([x, y, z]) => ({ x: x!, y: y!, z_top: z!, z_bottom: z! }));
+  const before = structuredClone(points),
+    warnings: string[] = [];
+  const result = nativeReceiverGeometry(points, "rotated roof", warnings);
+  assert.equal(result.length, 1);
+  assert.equal(result[0]!.length, points.length - 1);
+  assert.deepEqual(warnings, []);
+  const nativeVertices = (values: typeof points) =>
+    new Set(values.map((p) => JSON.stringify([p.x, p.y, p.z_top, p.z_bottom].map(Math.fround))));
+  assert.deepEqual(nativeVertices(result[0]!), nativeVertices(points));
+  assert.deepEqual(points, before);
+});
+
 test("a receiving sliver which collapses natively is omitted with an explicit warning", () => {
   const warnings: string[] = [];
   const points = surface([

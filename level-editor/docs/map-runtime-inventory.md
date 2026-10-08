@@ -40,13 +40,19 @@ format extension does not change search or movement algorithms. Boundary checks 
 operations, and outward/collinear floor corners no longer produce detour nodes.
 
 Current validation: the game builds; 248 selected editor compiler/export/sound tests
-pass; native map integration reports **70 passed, 5 ignored**, and level-data
+pass; native map integration reports **71 passed, 5 ignored**, and level-data
 tests report **88 passed, 8 ignored**. The engine suite
 reports **4,343 passed, 0 failed, 35 ignored**. Stair receivers,
 overlapping/copied traversal and changing stair barriers now pass with prepared
 native endpoints. Earlier physical traversal results do not certify this
 architecture. Authorized direct-route probes now enable the native direct check;
 forcing graph-only search for an already clear segment is not the request contract.
+
+The [roof jump audit](map-compilation-evidence.md#prepared-roof-jumps-and-continuous-receivers-2026-10-08)
+now passes 120 isolated sprite jumps after removing unnecessary receiver splits
+at export. Native actor-sized approaches pass, but 112 short post-jump movements
+stop 0.8 or 1.6 units before the asserted final point. This remains unresolved;
+no runtime movement change or additional solver was introduced for it.
 
 The [sound shape extension](sound-source-format.md) carries export-prepared
 fragment indices for cropped emitters. Existing acoustic distance loops skip
