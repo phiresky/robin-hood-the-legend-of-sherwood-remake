@@ -6,6 +6,7 @@ import { gameToScene } from "../shared/src/scene.ts";
 import { sceneToGame, applyAffineMatrix } from "../shared/src/geometry.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 import { compileMap } from "../app/src/map-compile.ts";
+import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 
 const [stage] = process.argv.slice(2);
 assert.ok(stage, "Provide a reviewed watermill gameplay stage");
@@ -78,7 +79,11 @@ for (const height of [0, 40])
       6,
       compiled.warnings.filter((w) => /Door |Receiver |Jump /.test(w)).join("\n"),
     );
-    assert.equal(compiled.descriptor.asset_geometry.jump_line_pairs?.length, 2);
+    assert.equal(
+      compiled.descriptor.asset_geometry.jump_line_pairs?.length,
+      2,
+      compiled.warnings.filter((warning) => warning.startsWith("Jump ")).join("\n"),
+    );
     const probes = document.groups.flatMap((group) =>
       edit.gameplay.interiors[0].doors.map((door) => {
         const object = document.objects.find(
@@ -107,7 +112,27 @@ for (const height of [0, 40])
     const file = `watermill-${height}-${rotation}.level.json`;
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
-    results.push({ map: file, file, warnings: compiled.warnings, building_approaches: probes });
+    const geometry = compiled.descriptor.asset_geometry;
+    const jumpZoneMisses = geometry.jump_line_pairs.flatMap((pair, pairIndex) =>
+      [
+        [pair.line1, pair.line2],
+        [pair.line2, pair.line1],
+      ].flatMap(([line, other], side) => {
+        const zone = geometry.jump_zones[other.jump_zone_index];
+        return [line.point_a, line.point_b].flatMap((point, endpoint) =>
+          pointInGameplayPolygon(point.slice(0, 2), zone.polygon.points, true)
+            ? []
+            : [{ pair: pairIndex, side, endpoint, point, zone: other.jump_zone_index }],
+        );
+      }),
+    );
+    results.push({
+      map: file,
+      file,
+      warnings: compiled.warnings,
+      building_approaches: probes,
+      jumpZoneMisses,
+    });
     const separated = structuredClone(document);
     separated.terrain = createTerrainGrid([0, 0, ...document.size], 600, height - 20);
     const disconnected = compileMap(separated, [0, 0, ...document.size], assets, {

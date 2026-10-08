@@ -6,6 +6,25 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Exported jump diagnostics (2026-10-08)
 
+Follow-up authoring recipe `refinement/stage-watermill-boundary-jump.mjs` replaces
+the inset watermill pair with a geometric ledge on the platform's outward end
+and an asset-local ground counterpart. The ground ledge is wider so oblique
+placements retain a shared span after projection; matching remains bounded by
+100-unit gap and 20-unit rise/drop limits, with a two-unit minimum shared span.
+The compiler clips the match and tests clearance after grid conversion. The upper
+jump zone now uses the actual platform footprint, avoiding the old zone's roughly
+one-unit inset. This is a review candidate, not a published asset change.
+
+Stage `watermill-boundary-jump-p7GHo6` produces placement batch
+`watermill-platform-placements-k4wLaB`. All eight maps retain two jump pairs and
+six entrances; lower-terrain negative cases still omit both pairs and the four
+unsupported lower entrances. All 64 line endpoints lie in their home jump zones.
+The native flight audit passes 480 paths, covering both directions, five edge
+positions, upright/sword/assisted flight, two copies, four rotations and two
+elevations. Planned paths and frame-integrated paths clear active solid geometry.
+This does not exercise full sprite dispatch, ordinary approach or landing
+receiver publication; those and rendered contact remain required.
+
 All compiled jump pairs now receive a diagnostic pass after integer conversion,
 including authored pairs and exact socket joins. Opposing map-space vectors must
 match for distance-along-source translation to cover the paired landing edge.
