@@ -1022,7 +1022,10 @@ pub(super) fn run_replay(
             );
             std::panic::resume_unwind(payload);
         });
-        if has_dialogue_lifecycle {
+        // Both modal hosts refresh the game while capturing their background.
+        // Popup captures retain this event directly; dialogue captures retain
+        // the completed manager command instead.
+        if has_dialogue_lifecycle || popup_nested_refresh {
             engine
                 .parity_replay_setup()
                 .replay_modal_sprite_sound_refresh();

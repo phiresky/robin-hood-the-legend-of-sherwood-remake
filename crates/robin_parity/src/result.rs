@@ -81,6 +81,11 @@ impl TraceCapabilities {
             "All fresh-mission captures initialize dormant constructor storage deterministically",
         );
         register(
+            "modal-background-sound-refresh",
+            "A completed play_dialog manager command or an explicit popup nested_refresh_entry with remove_mouse restores sprite sound latches before the frame snapshot without advancing simulation",
+            "The ordinary headless presentation host executes recorded nested modal background refreshes",
+        );
+        register(
             "background-fx",
             "compare_frame excludes entire Fx entities from logical gameplay comparison; their recorded animation is retained for diagnostics, not renderer equivalence",
             "A separate renderer-parity comparator validates retained background FX against the Original draw lifecycle",
