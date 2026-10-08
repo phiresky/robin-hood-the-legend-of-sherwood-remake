@@ -70,7 +70,10 @@ import {
   projectionPlaneAnchors,
   type HeightPlane,
 } from "./gameplay-plane.ts";
-import { movementVolumeHeightSlice } from "./movement-volume-height-slice.ts";
+import {
+  movementVolumeHeightSlice,
+  MOVEMENT_CONTACT_TOLERANCE,
+} from "./movement-volume-height-slice.ts";
 import { quantizeGeneratedMotionPolygon, simplifyMotionRing } from "./motion-quantization.ts";
 import { restoreReceivingBoundary, restoreObstacleBoundary } from "./restore-receiving-boundary.ts";
 import {
@@ -1504,7 +1507,11 @@ function compileAssetGameplayAttempt(
         for (const clearance of movementClearances) {
           if (
             clearance.owner !== owner ||
-            !plane.every((n, i) => Math.abs(n - clearance.plane[i]!) < 1e-7)
+            !clearance.polygon.every(
+              (point) =>
+                Math.abs(planeHeight(plane, point) - planeHeight(clearance.plane, point)) <=
+                MOVEMENT_CONTACT_TOLERANCE,
+            )
           )
             continue;
           regions = fixedPolygonBoolean("difference", regions, [

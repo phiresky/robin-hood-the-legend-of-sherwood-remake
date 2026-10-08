@@ -4,6 +4,27 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Spline clearance navigation planes (2026-10-08)
+
+`refinement/check-spline-clearance-planes.mjs` builds eight maps entirely from a
+synthetic wall asset and authored terrain: flat/30-unit-rising paths, base heights
+0/40, and clearances disabled/enabled. Each wall repeats three times; each raised
+cutout retains a central solid pillar. Physical cutouts sit thirty units above
+their independently retained navigation plane. Twelve line probes per map check
+the two open sides, central pillar and adjacent wall.
+
+The first native batch exposed missing collision even with clearances disabled:
+independently rounded spline XY/Z coordinates left a sloped underside slightly
+above its matching terrain. Contact matching now recognizes a plane coincident
+over the full footprint within 1/1024 map unit; clearance matching compares actual
+height differences over its contour rather than raw coefficients. A unit check
+retains a genuine 0.01-unit underpass and excludes a supporting slab below a floor.
+
+Batch `spline-clearance-planes-i1SuhK` passes all eight native constructions and
+96 line probes; 173 focused compiler/spline/physical-region tests pass. This is
+native thin-path geometry coverage, not complete actor walking, curved-path
+native traversal, or rendered contact. No engine runtime change was required.
+
 ## Independent activated solid fragments (2026-10-08)
 
 Removable Croisement03 fragments 098/099 are authored by

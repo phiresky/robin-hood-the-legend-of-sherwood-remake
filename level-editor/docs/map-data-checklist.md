@@ -1422,8 +1422,13 @@ Spline clearances can now preserve distinct physical and navigation planes using
 per-vertex navigation heights. Tests cover rising curved spans, holes, frame
 translation, malformed heights and nonplanar rejection. Tilted source frames that
 separate the two footprints still warn/omit the clearance. The 183 focused compiler,
-spline, placement and translation tests pass; native traversal for this newly
-supported clearance case remains pending. Pipeline typechecking remains blocked
+spline, placement and translation tests pass. Native construction and 96 thin
+movement probes now pass across repeated openings on flat/rising terrain at two
+elevations, with clearances enabled/disabled and solid pillars preserved. This
+exposed and fixed a rounding gap under nominally touching sloped walls: contact
+and clearance-plane matching now tolerate 1/1024 map unit, while a tested real
+0.01-unit gap remains open. Full actor traversal remains pending.
+Pipeline typechecking remains blocked
 by existing errors in `state-delivery.test.ts`; touched files pass scoped lint and
 app typechecking/build.
 
