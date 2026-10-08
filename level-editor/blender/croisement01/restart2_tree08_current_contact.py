@@ -49,4 +49,11 @@ for a in json.loads((R/'tree08-topology-plan-v1/plan.json').read_text())['root_t
   surface=tree.ray_cast(Vector((hit.x,hit.y,2000)),Vector((0,0,-1)),4000)[0]
   if surface is not None:surfaces.append(dict(receiver=name,surface=list(surface),wood_z_minus_surface_z=hit.z-surface.z))
  contacts.append(dict(anchor=a,wood=list(hit),vertical_supports=surfaces))
+routes=[]
+for route in json.loads((R/'tree08-topology-plan-v1/plan.json').read_text())['structural_routes']:
+ if route['name'] not in ['left basal root','descending root']:continue
+ for x,y in route['source_path']:
+  if not 340<=y<=471:continue
+  origin=right*(x+.5)+down*(y+.5)+ray*2000;hit=woodtree.ray_cast(origin,-ray,4000)[0];hits=[tree.ray_cast(origin,-ray,4000)[0] for _,tree in trees];hits=[p for p in hits if p is not None];depth=max((p.dot(ray) for p in hits),default=None);routes.append(dict(native=[x,y],route=route['name'],wood_hit=None if hit is None else list(hit),ray_clearance=None if hit is None or depth is None else hit.dot(ray)-depth))
+(out/'root-route-visibility.json').write_text(json.dumps(dict(model_sha256=digest,scene_sha256=source_hash,samples=routes,missing=[v for v in routes if v['wood_hit'] is None],occluded=[v for v in routes if v['ray_clearance'] is not None and v['ray_clearance']<=0],scope='Independent traced lower-root routes, not upper bark core; no source texture ownership implied.'),indent=2)+'\n')
 assert sha(model)==digest and sha(scene_path)==source_hash;guard();(out/'receipt.json').write_text(json.dumps(dict(model_sha256=digest,scene_sha256=source_hash,bindings=bindings,target=list(target),ortho_scale=camdata.ortho_scale,contacts=contacts,scope='Exact live terrain/terrace000 exports, no receiver or wood changes. Native anchor surface rays only; not full contact clearance proof.'),indent=2)+'\n');print('CURRENT CONTACT DONE',flush=True)
