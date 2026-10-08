@@ -40,5 +40,8 @@ entrances. The loader validates addresses and state bits, stores requirements
 with immutable navigation assets and caches a blocked flag on the door at
 startup and after obstacle-state changes. Permission queries read that flag;
 they do not inspect geometry. Script activation and locks remain independent.
-Replay schema 69 includes the cached flag. Mid-animation closure still requires
-separate validation; initial-state rejection is not evidence for that case.
+Replay schema 69 includes the cached flag. An executing passage checks that flag
+before advancing its retained animation/order cursor. If blocked it pauses until
+the prepared conditions permit passage again. This is a boolean lookup, not a
+geometry query or route reconstruction. Thirty-six low-entry animation cases
+verify closure and reopening; other phases still need broader validation.

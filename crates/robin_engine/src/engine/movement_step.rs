@@ -200,6 +200,27 @@ impl EngineInner {
             return None;
         };
 
+        if selected_order.door_pass_anim.is_some()
+            && !tcx.assets.navigation.passage_states.is_empty()
+        {
+            let element = self
+                .orders
+                .sequence_manager
+                .get_element(selected_order.move_seq_id, selected_order.move_elem_idx)
+                .expect("selected passage element disappeared");
+            let crate::sequence::SequenceElementData::Movement {
+                gate_id: Some(gate),
+                ..
+            } = &element.data
+            else {
+                panic!("selected passage has no gate identity");
+            };
+            if self.script_domains.interactables.doors[usize::from(*gate)].passage_blocked {
+                // Keep the current animation/order cursor while a prepared
+                // connection is unavailable. Reopening resumes the same pass.
+                return Some(MotionState::InProgress);
+            }
+        }
         let mut order_compute_direction = selected_order.order_compute_direction;
         if let Some(motion) =
             self.execute_non_sprite_movement_action(tcx, entity_id, selected_order)

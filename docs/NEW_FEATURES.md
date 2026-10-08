@@ -10,6 +10,8 @@
   Gate availability is cached at startup and state changes, independently of
   scripted activation and lock permissions. Permanently obstructed entrances
   remain in best-effort exports with an explicit warning.
+  A barrier closing during an animated passage pauses its retained order and
+  animation cursor until reopening, using only the cached availability flag.
 
 - **Multiplayer desync recovery.** A client hash mismatch requests diagnostics,
   suspends gameplay and reconnects for a fresh host snapshot. Input resumes only

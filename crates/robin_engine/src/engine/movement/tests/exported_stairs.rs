@@ -886,6 +886,99 @@ fn changing_climb_barrier_near_entrance_blocks_actor_approach() {
     }
 }
 
+#[test]
+#[ignore = "requires ROBIN_CLIMB_RHS"]
+fn changing_climb_entry_barrier_closes_during_animation() {
+    let sprite = complete_climb_sprite();
+    let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-climb-entrance-barriers.levels.json"
+    )))
+    .unwrap();
+    for (placement, fixture) in fixtures.iter().enumerate() {
+        let (engine, assets) = compiled_walkway(&serde_json::to_vec(fixture).unwrap());
+        for reopen_after in [None, Some(20), Some(120)] {
+            let sim = crate::sim_rng::test_context();
+            let mut applied = false;
+            let mut reopened = false;
+            let mut held_ticks = 0;
+            let mut paused = None;
+            let result = walk_exported_lift_with_tick(
+                engine.clone(),
+                assets.clone(),
+                0,
+                1,
+                Some(&sprite),
+                |engine, assets, owner| {
+                    let element = engine.ent(owner).element_data();
+                    let cursor = (
+                        element.position_map(),
+                        element.sprite.current_row,
+                        element.sprite.current_frame,
+                        element.sprite.frame_count,
+                    );
+                    if reopened {
+                        return;
+                    }
+                    if applied {
+                        assert_eq!(
+                            Some(cursor),
+                            paused,
+                            "blocked entry must retain position and animation cursor"
+                        );
+                        held_ticks += 1;
+                        if reopen_after == Some(held_ticks) {
+                            engine.apply_patch(
+                                TickCtx::new(&sim, assets),
+                                crate::patch::PatchIndex::new(0).unwrap(),
+                            );
+                            reopened = true;
+                        }
+                        return;
+                    }
+                    if !matches!(
+                        element.sprite.last_action,
+                        OrderType::TransitionWaitingUprightClimbingLadderUp
+                            | OrderType::TransitionWaitingUprightClimbingWallUp
+                    ) {
+                        return;
+                    }
+                    assert!(crate::engine::ai::selected_actor_is_passing_door(
+                        &engine.entities(),
+                        &engine.seq(),
+                        owner
+                    ));
+                    engine.apply_patch(
+                        TickCtx::new(&sim, assets),
+                        crate::patch::PatchIndex::new(0).unwrap(),
+                    );
+                    applied = true;
+                    paused = Some(cursor);
+                },
+            );
+            assert!(
+                applied,
+                "entry animation never started at placement {placement}: {result:?}"
+            );
+            if reopen_after.is_some() {
+                assert!(reopened);
+                assert_eq!(
+                    result,
+                    Ok(true),
+                    "entry resumes at placement {placement}, hold {reopen_after:?}"
+                );
+            } else {
+                assert!(
+                    result
+                        .as_ref()
+                        .is_err_and(|error| error.starts_with("lift route stalled")),
+                    "entry barrier closed during animation at placement {placement}: {result:?}"
+                );
+            }
+        }
+    }
+}
+
 fn audit_changing_climbs(sprite: Option<&crate::sprite::Sprite>) {
     let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),

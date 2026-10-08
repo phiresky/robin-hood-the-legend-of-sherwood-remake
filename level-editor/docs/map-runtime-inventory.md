@@ -42,7 +42,7 @@ operations, and outward/collinear floor corners no longer produce detour nodes.
 Current validation: the game builds; 218 selected editor compiler/export tests
 pass; native map integration reports **69 passed, 5 ignored**, and level-data
 tests report **88 passed, 8 ignored**. The engine suite
-reports **4,341 passed, 0 failed, 34 ignored**. Stair receivers,
+reports **4,341 passed, 0 failed, 35 ignored**. Stair receivers,
 overlapping/copied traversal and changing stair barriers now pass with prepared
 native endpoints. Earlier physical traversal results do not certify this
 architecture. Authorized direct-route probes now enable the native direct check;
@@ -107,9 +107,12 @@ permanent blockers and the high state bit. Conditions are serialized on lift
 doors and retained with immutable navigation assets. Startup and obstacle-state
 changes update one blocked flag per constrained door; authorization reads it
 before special permissions. Invalid area/state references fail loading, and a
-state reset cannot reactivate a script-disabled door. No geometry work occurs
-in this runtime check. Closing a barrier during the entry animation, rather than
-before entry or during the interior climb, remains unverified.
+state reset cannot reactivate a script-disabled door. An already-running passage
+checks that same cached flag before advancing its order. Closing pauses its
+position and animation cursor; reopening resumes the retained order. No geometry
+work occurs in this runtime check. Thirty-six complete-sprite low-entry cases
+cover all twelve placements, permanent closure and reopening after 20/120 ticks.
+Closure at other animation phases and high entrances needs broader coverage.
 
 The pipeline-wide TypeScript check currently fails in `state-delivery.test.ts`
 (presentation-frame fields and assertion/narrowing types), outside these changes.
