@@ -630,6 +630,15 @@ impl EngineInner {
                 None
             };
 
+            // Rescue heroes need the same live inventory and action-slot state
+            // as party heroes, even before scripts make them playable.
+            let initial_pc = crate::element::PcData::from_spawn_status(
+                &self.mission_domain.campaign.characters[char_idx].status,
+                char_profile,
+                self.mission_domain
+                    .campaign
+                    .get_value(crate::campaign::CampaignValue::Ransom),
+            );
             let entity = Entity::Pc(crate::element::ActorPc {
                 element: {
                     let mut initial_element =
@@ -668,7 +677,7 @@ impl EngineInner {
                     mission_role: raw.mission_role,
                     combat_stance: raw.combat_stance,
                     ai: actor_ai,
-                    ..Default::default()
+                    ..initial_pc
                 },
             });
             let eid = self.add_entity(entity);

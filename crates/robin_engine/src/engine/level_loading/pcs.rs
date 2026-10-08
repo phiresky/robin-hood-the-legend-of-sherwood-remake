@@ -1198,55 +1198,14 @@ impl EngineInner {
             initial_action_state,
             list_index,
         } = spawn;
-        // Seed `disabled_actions` from per-slot ammo /
-        // purse-ransom checks so a slot whose counter is empty
-        // (or whose purse threshold isn't met) starts greyed out
-        // instead of waiting for the first runtime ammo update.
-        let disabled_actions: Vec<bool> = {
-            let pc_status = &self
-                .mission_domain
+        let pc_status = &self.mission_domain.campaign.characters[char_idx].status;
+        let initial_pc = crate::element::PcData::from_spawn_status(
+            pc_status,
+            profile,
+            self.mission_domain
                 .campaign
-                .characters
-                .get(char_idx)
-                .ok_or_else(|| EngineError::MissionLevelStage {
-                    stage: "beam-me PC spawn",
-                    reason: format!(
-                        "campaign character {char_idx} disappeared before entity creation"
-                    ),
-                })?
-                .status;
-            let ransom = self
-                .mission_domain
-                .campaign
-                .get_value(crate::campaign::CampaignValue::Ransom);
-            let purse_threshold =
-                crate::inventory::COINS_PER_PURSE as i32 * crate::inventory::COIN_VALUE as i32;
-            (0..crate::profiles::NUMBER_OF_PC_ACTIONS)
-                .map(|slot| {
-                    let action = profile.actions[slot];
-                    if action == crate::profiles::Action::NoAction {
-                        return false;
-                    }
-                    let ammo_empty = crate::inventory::action_uses_ammo(action)
-                        && pc_status.get_ammo(action) == 0;
-                    let purse_underfunded =
-                        action == crate::profiles::Action::Purse && ransom < purse_threshold;
-                    ammo_empty || purse_underfunded
-                })
-                .collect()
-        };
-        // The player actor keeps the campaign description's
-        // player status as its live status object. Seed the entity-owned
-        // mirror from that same description rather than PcData's
-        // full-health/empty-pocket defaults.
-        let pc_status = self
-            .mission_domain
-            .campaign
-            .characters
-            .get(char_idx)
-            .expect("beam-me campaign character disappeared after validation")
-            .status
-            .clone();
+                .get_value(crate::campaign::CampaignValue::Ransom),
+        );
         let entity = Entity::Pc(crate::element::ActorPc {
             element: {
                 let mut initial_element =
@@ -1272,7 +1231,6 @@ impl EngineInner {
                 ..Default::default()
             },
             pc: crate::element::PcData {
-                life_points: pc_status.life_points,
                 robin: is_robin,
                 profile_index: profile_idx,
                 list_index,
@@ -1283,22 +1241,9 @@ impl EngineInner {
                 has_jump,
                 immortal: self.control.sim_config.highlander,
                 beam_me_index: beam_me.index as i16,
-                disabled_actions,
-                disabled_actions_temp: vec![false; crate::profiles::NUMBER_OF_PC_ACTIONS],
-                ammo: crate::element::PcAmmoData {
-                    ales: pc_status.num_ales,
-                    arrows: pc_status.num_arrows,
-                    apples: pc_status.num_apples,
-                    rations: pc_status.num_rations,
-                    stones: pc_status.num_stones,
-                    wasp_nests: pc_status.num_wasp_nests,
-                    nets: pc_status.num_nets,
-                    plants: pc_status.num_plants,
-                    purses: pc_status.num_purses,
-                },
                 // Kept for save/restore parity.
                 initial_action: beam_me.action,
-                ..Default::default()
+                ..initial_pc
             },
         });
         let spawned_eid = self.add_entity(entity);

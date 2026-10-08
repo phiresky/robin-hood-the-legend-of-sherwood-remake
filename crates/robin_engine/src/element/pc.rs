@@ -1,6 +1,58 @@
 //! Player-character data and local behavior.
 use super::*;
 
+#[cfg(test)]
+mod spawn_status_tests {
+    use super::*;
+
+    #[test]
+    fn spawn_status_preserves_inventory_and_initializes_all_action_slots() {
+        let status = crate::pc_status::PcStatus {
+            life_points: 73,
+            num_ales: 1,
+            num_arrows: 9,
+            num_apples: 2,
+            num_rations: 3,
+            num_stones: 4,
+            num_wasp_nests: 5,
+            num_nets: 6,
+            num_plants: 9,
+            num_purses: 7,
+            ..Default::default()
+        };
+        let profile = CharacterProfile {
+            actions: [Action::Bow, Action::Purse, Action::NoAction],
+            ..Default::default()
+        };
+        let pc = PcData::from_spawn_status(&status, &profile, 0);
+        assert_eq!(pc.life_points, 73);
+        assert_eq!(
+            pc.ammo,
+            PcAmmoData {
+                ales: 1,
+                arrows: 9,
+                apples: 2,
+                rations: 3,
+                stones: 4,
+                wasp_nests: 5,
+                nets: 6,
+                plants: 9,
+                purses: 7,
+            }
+        );
+        assert_eq!(pc.disabled_actions, [false, true, false]);
+        assert_eq!(pc.disabled_actions_temp, [false; 3]);
+
+        let empty_bow = crate::pc_status::PcStatus {
+            num_arrows: 0,
+            ..status
+        };
+        let pc = PcData::from_spawn_status(&empty_bow, &profile, 100);
+        assert_eq!(pc.disabled_actions, [true, false, false]);
+        assert_eq!(pc.disabled_actions_temp, [false; 3]);
+    }
+}
+
 /// Ammo counters owned by a live PC entity.
 ///
 /// An original-game player actor always has a player-status reference, and
@@ -339,6 +391,40 @@ impl Default for PcData {
 }
 
 impl PcData {
+    /// Seed both party and rescue heroes from their campaign status at spawn.
+    pub(crate) fn from_spawn_status(
+        status: &crate::pc_status::PcStatus,
+        profile: &CharacterProfile,
+        ransom: i32,
+    ) -> Self {
+        let purse_threshold =
+            crate::inventory::COINS_PER_PURSE as i32 * crate::inventory::COIN_VALUE as i32;
+        Self {
+            life_points: status.life_points,
+            ammo: PcAmmoData {
+                ales: status.num_ales,
+                arrows: status.num_arrows,
+                apples: status.num_apples,
+                rations: status.num_rations,
+                stones: status.num_stones,
+                wasp_nests: status.num_wasp_nests,
+                nets: status.num_nets,
+                plants: status.num_plants,
+                purses: status.num_purses,
+            },
+            disabled_actions: profile
+                .actions
+                .iter()
+                .map(|&action| {
+                    (crate::inventory::action_uses_ammo(action) && status.get_ammo(action) == 0)
+                        || (action == Action::Purse && ransom < purse_threshold)
+                })
+                .collect(),
+            disabled_actions_temp: vec![false; crate::profiles::NUMBER_OF_PC_ACTIONS],
+            ..Self::default()
+        }
+    }
+
     /// Quick-action slots can be disabled permanently or for the current frame.
     /// Missing trailing slots are intentionally enabled (the authored arrays are sparse).
     pub fn action_slot_disabled(&self, index: usize) -> bool {
