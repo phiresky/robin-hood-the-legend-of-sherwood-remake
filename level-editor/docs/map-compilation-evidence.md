@@ -58,6 +58,17 @@ base game data. This does not assert final renderer composition or actor behavio
 its browser run also verifies all four independent preview control combinations.
 The three existing drawbridge browser insertion cases also still pass.
 
+The native GPU gate now accepts `ASSET_APPEARANCE_EXPORT_ZIP` directly. Both of
+these browser archives pass with `WGPU_BACKEND=gl`: two regions/two independent
+controls, all four state combinations, transition suppression and reset. At a
+pixel in each region where both baked color and depth change, actual GPU color
+matches decoded RGB565 and a sprite probe is correctly hidden/shown on opposite
+sides of that state's occlusion depth. The gate mounts only the ZIP and assigns
+patch flags directly; it does not test actor-triggered callbacks or complete
+scene compositing. Vulkan cannot run here: adapter discovery reports no suitable
+adapter. No outside-sandbox request was made. The Rust library test build and
+both OpenGL runs pass; only test code changed.
+
 ## Missing-definition ownership dependencies (2026-10-08)
 
 Fresh inventory `gameplay-coverage-0U9BM2` validates all 1,279 indexed descriptor

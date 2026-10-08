@@ -504,6 +504,17 @@ pixel checks verify initial, applied, transitioning and reset color/depth on bot
 sides of a bake tile seam. This assigns patch flags directly to isolate exported
 image binding and rendering; gameplay patch callbacks are tested separately.
 
+For published asset parts, run `tests/asset-endpoint-insertion.html` with
+`TEST_QUERY='?fragments=1&asset=croisement01-group-083'` (or `084`) and
+`TEST_BAKE_ZIP` set. Pass the resulting absolute ZIP path as
+`ASSET_APPEARANCE_EXPORT_ZIP` to the GPU gate. This mounts the archive without a
+base datadir, decodes its state images, and samples changing color/depth pixels
+through every control combination, transition suppression and reset. The fixture
+contains two independently controlled copies, one rotated 37 degrees. Like the
+state fixture above, it assigns patch flags directly; it does not exercise actor
+activation, full-scene compositing, or gameplay callbacks. Archives for this gate
+must have 1–8 controls and each appearance region must change both color and depth.
+
 ## Host hardware queries
 
 ```sh

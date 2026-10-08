@@ -429,7 +429,11 @@ loader tests are supplemented by a real browser check of the published fragment
 bindings: independent copies (including a 37-degree rotation), save/reopen,
 apply/reset, changing color/depth states and ZIP packaging pass. Both archives
 load into Rust without a base datadir with two appearance controls each. This checks
-resource decoding and engine construction, not a complete rendered playthrough.
+resource decoding and engine construction. Both archives also pass OpenGL GPU
+color and character-occlusion pixel checks across all four independent control
+combinations, transition suppression and reset. Patch flags are assigned directly;
+actor activation, mesh contact and complete rendered playthroughs remain open.
+Vulkan verification is pending because this sandbox exposes no Vulkan adapter.
 The index publication path now retains these part rules in base and variant views.
 The timber bridge, both ferns, fallen log, upright fences 94/95 and supplemental
 wood 09/44 and Croisement01 tree 03 have published draft definitions. These counts

@@ -193,6 +193,9 @@ fn verify_map_patch_camera_alignment(gpu: GpuContext, oversized_atlas: bool) {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
+    if let Ok(archive) = std::env::var("ASSET_APPEARANCE_EXPORT_ZIP") {
+        verify_asset_archive_appearance(gpu.clone(), std::path::Path::new(&archive));
+    }
     if let Ok(root) = std::env::var("SCENERY_LIBRARY_EXPORT_DIR") {
         verify_library_scenery_pixels(gpu.clone(), std::path::Path::new(&root));
     }
@@ -668,6 +671,145 @@ fn verify_browser_baked_depth_pixels(gpu: GpuContext, root: &std::path::Path) {
             );
         }
     }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+fn verify_asset_archive_appearance(gpu: GpuContext, archive: &std::path::Path) {
+    let files = robin_engine::sbfile::SbFileSystem::new(std::sync::Arc::new(
+        robin_util::asset_fs::AssetVfs::new(),
+    ));
+    crate::mod_pack::mount_mod_overlay(&files, archive).unwrap();
+    let details: serde_json::Value =
+        serde_json::from_slice(&files.read_shared("details.json").unwrap()).unwrap();
+    let name = details["map"].as_str().unwrap();
+    let loaded = robin_engine::level_data::LoadedLevel::hackable_from_json(
+        &files
+            .read_shared(&format!("Data/Levels/{name}.level.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let background = crate::level_loading_host::pre_decode_background_map_with_files(
+        name,
+        "Day",
+        "Data/Levels",
+        None,
+        &mut |_| {},
+        &files,
+    )
+    .unwrap()
+    .unwrap();
+    let count = loaded.proto.patches.len();
+    assert!(
+        (1..=8).contains(&count),
+        "GPU archive fixture needs 1–8 controls"
+    );
+    assert!(!background.appearance_regions.is_empty());
+    let mut renderer =
+        Renderer::with_optional_surface(gpu, None, None, 1, 1, TextureScaleMode::Nearest);
+    renderer.upload_background_texture(
+        u32::from(background.width),
+        u32::from(background.height),
+        &background.pixels,
+    );
+    renderer
+        .upload_occlusion_depth(
+            background.occlusion_depth.as_ref().unwrap(),
+            background.width,
+            background.height,
+        )
+        .unwrap();
+    renderer.install_map_appearance(&background, count).unwrap();
+    let sprite = renderer
+        .create_rgba_gpu_image(1, 1, &[255; 4], "asset state depth probe")
+        .unwrap();
+    let mut patches: Vec<_> = (0..count)
+        .map(|_| robin_engine::patch::Patch::default())
+        .collect();
+    // Sample where both color and depth change, so a static render cannot pass.
+    let probes: Vec<_> = background
+        .appearance_regions
+        .iter()
+        .map(|region| {
+            let initial = &region.states[0];
+            (0..initial.color.len())
+                .find(|&pixel| {
+                    region.states.iter().skip(1).any(|state| {
+                        state.color[pixel] != initial.color[pixel]
+                            && state.depth[pixel].abs_diff(initial.depth[pixel]) > 256
+                    })
+                })
+                .expect("appearance fixture must change color and depth")
+        })
+        .collect();
+    for bits in (0..1usize << count).chain([0]) {
+        for (i, patch) in patches.iter_mut().enumerate() {
+            patch.applied = bits & (1 << i) != 0;
+        }
+        for transitioning in [false, true, false] {
+            for patch in &mut patches {
+                patch.in_transition = transitioning;
+            }
+            renderer.sync_map_appearance(&patches);
+            for (region, &pixel) in background.appearance_regions.iter().zip(&probes) {
+                let state_index =
+                    region
+                        .patches
+                        .iter()
+                        .enumerate()
+                        .fold(0, |state, (i, &patch)| {
+                            state
+                                | (usize::from(
+                                    patches[usize::from(patch)].applied && !transitioning,
+                                ) << i)
+                        });
+                let state = &region.states[state_index];
+                let x =
+                    f32::from(region.bounds[0]) + (pixel % usize::from(region.bounds[2])) as f32;
+                let y =
+                    f32::from(region.bounds[1]) + (pixel / usize::from(region.bounds[2])) as f32;
+                renderer.begin_gpu_frame_clear();
+                renderer.render_background_texture(
+                    Some(&BBox::from_coords(x, y, x + 1., y + 1.)),
+                    Some(&BBox::from_coords(0., 0., 1., 1.)),
+                );
+                let (r, g, b) = robin_util::color::rgb565_to_rgb8(state.color[pixel]);
+                assert_eq!(
+                    renderer.try_capture_frame_rgba().unwrap().2,
+                    [r, g, b, 255],
+                    "archive color bits={bits} transitioning={transitioning}"
+                );
+                let surface = f32::from(state.depth[pixel]) / 65535. * f32::from(background.height);
+                for (actor_y, hidden) in [(surface - 8., true), (surface + 8., false)] {
+                    renderer.begin_gpu_frame_clear();
+                    renderer.render_gpu_rect(0, 0, 1, 1, [0, 0, 0, 255]);
+                    let checkpoint = renderer.draw_queue_checkpoint();
+                    renderer.render_gpu_image(&sprite, None, None, BlendMode::None);
+                    renderer.mask_queued_draws_with_depth(
+                        checkpoint,
+                        &[],
+                        Rect::new(0, 0, 1, 1),
+                        x,
+                        y,
+                        1.,
+                        actor_y,
+                    );
+                    assert_eq!(
+                        renderer.try_capture_frame_rgba().unwrap().2,
+                        if hidden {
+                            vec![0, 0, 0, 255]
+                        } else {
+                            vec![255; 4]
+                        },
+                        "archive depth bits={bits} transitioning={transitioning}"
+                    );
+                }
+            }
+        }
+    }
+    eprintln!(
+        "asset archive GPU appearance: {count} controls, {} regions, independent states/transition/reset color and depth passed",
+        probes.len()
+    );
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
