@@ -2964,10 +2964,6 @@ fn compiled_lift_rejects_dangling_and_incomplete_definitions() {
     let mut flat = missing.clone();
     flat["asset_geometry"]["lifts"][0]["doors"][1]["point_out"][1] =
         flat["asset_geometry"]["lifts"][0]["doors"][0]["point_out"][1].clone();
-    // Keep the precise endpoint consistent with the deliberately flattened
-    // projection. This case tests endpoint selection, not coordinate mismatch.
-    flat["asset_geometry"]["lifts"][0]["physical_navigation"]["doors"][1]["outside"][1] =
-        serde_json::json!(450.0);
     LoadedLevel::hackable_from_json(&serde_json::to_vec(&flat).unwrap()).unwrap();
     flat["asset_geometry"]["lifts"][0]["endpoint_doors"] = serde_json::Value::Null;
     assert!(LoadedLevel::hackable_from_json(&serde_json::to_vec(&flat).unwrap()).is_err());

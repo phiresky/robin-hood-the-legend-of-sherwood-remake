@@ -3086,7 +3086,6 @@ impl LoadedLevel {
                         .ok_or("too many asset sectors")?;
                 }
             }
-            crate::compiled_approaches::derive(&mut geometry);
             if geometry.elevation_lines.is_empty() {
                 geometry.elevation_lines = crate::compiled_elevation::derive(&geometry)?;
             }

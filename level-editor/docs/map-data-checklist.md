@@ -14,14 +14,23 @@ this prepared stream through the existing graph parser. The separate physical-fl
 solver, load-time bindings, movement
 dispatch and per-step routing have also been removed. An optimized three-player
 stock-mission regression completes all 540 frames, including Silver Arrow frame 5;
-median ticks range from 0.93 to 2.83 ms. Current graph validation: 211 selected
+median ticks range from 0.93 to 2.83 ms. Current graph validation: 213 selected
 compiler/export tests pass; native map integration is 69 passed, 5 ignored; the
-engine suite is 4,331 passed, 4 failed, 33 ignored. The remaining failures cover
-stair receivers and changing/copied stair traversal. Derby's saved-scene export
+engine suite is 4,335 passed, 0 failed, 33 ignored. Passage approaches are now
+prepared at export, and the loader's approach search has been deleted. Exports
+omit obsolete physical navigation metadata. The four stair receiver/barrier
+failures now pass using the native endpoints. Derby's saved-scene export
 loads natively and passes 144 sampled ordinary routes (0.01 seconds pathfinding
 in the unoptimized harness). This does not certify all scene connections. See the
 [runtime inventory](map-runtime-inventory.md) for the full scope and correction
 requirements. Earlier physical traversal evidence does not certify this architecture.
+
+**Large-map gap:** Wychford's saved scene reached the native 65,535-link limit
+after about 5.6 minutes of graph preparation (9.5 minutes overall). Its best-effort
+descriptor has an empty graph and an explicit warning; indirect routes are not
+usable. Evidence: `work/map-compile/saved-map-exports-EPZ3ds`. Reduce unnecessary
+links and evaluate a prepared-graph format extension if needed. This supersedes
+earlier Wychford navigation claims below.
 
 **Full parity is not yet verified.** “Tested” below describes specific evidence,
 not certification of every library asset or gameplay case. Best-effort exports

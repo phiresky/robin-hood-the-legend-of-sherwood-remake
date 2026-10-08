@@ -8,6 +8,7 @@ import {
 import type { ProjectionAssetDescriptor } from "@rle/shared";
 import { packageAppearanceRegions, type BakedAppearanceRegion } from "./map-appearance.ts";
 import { compileMission } from "./compile-mission.ts";
+import { compileLiftApproaches } from "../../shared/src/compile-lift-approaches.ts";
 import type { SceneryResources } from "./scenery-resources.ts";
 
 export type BakeBounds = [number, number, number, number];
@@ -109,12 +110,13 @@ export function compileMap(
           },
         })
       : undefined;
+  if (assetGeometry) compileLiftApproaches(assetGeometry);
   const volumes = assetGeometry ? [] : compileVolumes(document, bounds);
   const mission = compileMission(document, bounds, assetGeometry, options.bestEffort, volumes);
   const warnings = assetGeometry
     ? [
         ...(assetGeometry.warnings ?? []),
-        "Compiled from asset-local surfaces, sight geometry and doors. Navigation grids and route graphs are constructed by the engine. Only explicitly authored Mission spawns and soldiers are exported.",
+        "Compiled from asset-local surfaces, sight geometry and doors. Route graphs and passage approaches are prepared during export; the engine binds navigation grids at load. Only explicitly authored Mission spawns and soldiers are exported.",
         "Visual/depth state resources and mask recovery for existing assets remain incomplete. This export is not a full gameplay-parity certification.",
       ]
     : [

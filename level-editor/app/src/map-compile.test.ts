@@ -1185,7 +1185,7 @@ test("physical stair landings retain fractional receiving boundaries at zero hei
   document.groups[0]!.transform.dx += 0.25;
   const geometry = compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry!;
   const lift = geometry.lifts![0]!;
-  assert.ok(lift.physical_navigation);
+  assert.equal(lift.physical_navigation, undefined);
   const door = lift.doors[0]!;
   const receivers = geometry.sight_obstacles!.filter(
     (obstacle) =>
@@ -1196,7 +1196,7 @@ test("physical stair landings retain fractional receiving boundaries at zero hei
   const receiver = receivers[0]!;
   assert.ok(receiver.points.every((point) => point.z_top === 0));
   assert.ok(
-    receiver.points.some((point) => point.x === lift.physical_navigation!.doors[0]!.middle[0]),
+    receiver.points.some((point) => point.x === lift.doors[0]!.point_mid[0] + 0.25),
   );
   assert.ok(receiver.points.some((point) => point.x % 1 === 0.25));
   assert.notDeepEqual(receiver.points[0], receiver.points.at(-1));
@@ -1210,7 +1210,7 @@ test("preserved ground boundaries retain physical stair receiving precision", ()
   document.groups[0]!.transform.dx += 0.25;
   const geometry = compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry!;
   const lift = geometry.lifts![0]!;
-  assert.ok(lift.physical_navigation);
+  assert.equal(lift.physical_navigation, undefined);
   const door = lift.doors[0]!;
   const receivers = geometry.sight_obstacles!.filter(
     (obstacle) =>
@@ -1219,7 +1219,7 @@ test("preserved ground boundaries retain physical stair receiving precision", ()
   );
   assert.equal(receivers.length, 1);
   assert.ok(
-    receivers[0]!.points.some((point) => point.x === lift.physical_navigation!.doors[0]!.middle[0]),
+    receivers[0]!.points.some((point) => point.x === lift.doors[0]!.point_mid[0] + 0.25),
   );
   assert.ok(receivers[0]!.points.every((point) => point.z_top === 0));
 });

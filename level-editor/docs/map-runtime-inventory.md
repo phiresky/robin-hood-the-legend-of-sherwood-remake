@@ -36,23 +36,20 @@ contact. It currently supports the stock 6×3 half-diagonal and the existing
 65,535-link stream limit. Best-effort overflow is an explicit warning and omitted
 graph, not a compatibility solver.
 
-Current validation: the game builds; 211 selected editor compiler/export tests
+Current validation: the game builds; 213 selected editor compiler/export tests
 pass; native map integration reports **69 passed, 5 ignored**. The engine suite
-reports **4,331 passed, 4 failed, 33 ignored**. Remaining failures are stair
-receivers, overlapping/copied stair traversal and changing stair barriers. They
-remain failing tests. Earlier physical traversal results do not certify this
+reports **4,335 passed, 0 failed, 33 ignored**. Stair receivers,
+overlapping/copied traversal and changing stair barriers now pass with prepared
+native endpoints. Earlier physical traversal results do not certify this
 architecture. Authorized direct-route probes now enable the native direct check;
 forcing graph-only search for an already clear segment is not the request contract.
 
-Stair diagnosis: `compiled_approaches::derive` skips lifts carrying
-`physical_navigation`, although movement no longer consumes that metadata. Merely
-removing the skip violates its separate projected-endpoint identity validation.
-A temporary diagnostic that removed this metadata before loading let the existing
-startup approach preparation run: ordinary stair barrier traversal and copied
-stair barrier independence both passed. The diagnostic was removed, and these
-tests remain failures with the actual exports. Compile actor-clearance approach
-points into the descriptor and retire the obsolete endpoint dependency; do not
-restore movement-time repair. Overlapping stair receivers remain to be checked.
+Passage endpoint preparation now runs in `compile-lift-approaches.ts` before
+descriptor/ZIP creation. It respects permanent blockers, retains shared approaches
+for switchable barriers, and preserves climbing animation radii. Unavailable
+actor-sized approaches produce explicit warnings. Physical construction metadata
+is removed from exported lifts. The loader's approach search and its module were
+deleted; the native tests consume exported points without startup repair.
 
 The saved Derby scene compiles a **613,728-byte graph**, with no graph omission
 warning, in roughly 4.6 seconds of export-time graph preparation. Its descriptor
@@ -60,7 +57,14 @@ constructs 60 areas, 848 sight obstacles, 70 doors and 2 jump pairs. Native samp
 passes **144 ordinary routes**, spending 0.01 seconds in pathfinding in the
 unoptimized harness. Evidence: `work/map-compile/saved-map-exports-GEMe4m` under
 the editor directory. Its 268 other authoring warnings remain; this is not full
-gameplay parity. Other large saved scenes still need validation.
+gameplay parity.
+
+Wychford exposed the native graph capacity limit: export spent approximately
+337 seconds preparing the graph before exceeding 65,535 links, and 571 seconds
+overall. Best-effort output explicitly warns that its graph was omitted and
+indirect routes are unavailable. Evidence:
+`work/map-compile/saved-map-exports-EPZ3ds`. This is an unresolved compiler/format
+gap, not evidence of working Wychford navigation. Other large scenes remain open.
 
 The pipeline-wide TypeScript check currently fails in `state-delivery.test.ts`
 (presentation-frame fields and assertion/narrowing types), outside these changes.
