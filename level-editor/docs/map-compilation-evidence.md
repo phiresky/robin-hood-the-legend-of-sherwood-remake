@@ -6,6 +6,31 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Exported jump diagnostics (2026-10-08)
 
+The watermill is now published as a best-effort draft using
+`refinement/catalogs/leicester-watermill-walking-gameplay.json`; backup and
+reviewed before/after files are in `watermill-publication-MPjCH9`. The descriptor
+is `1698ac81ef7d101986e6809e0902538a4b02d15e19f4f57bcf98c9f60811138c`;
+the reviewed model remains unchanged. Leicester and Wychford scene pins are
+updated, the library index is rebuilt, and all ten saved scenes reopen.
+Published placement batch `watermill-platform-placements-0kbdpB` matches the
+eight native-tested `watermill-platform-placements-jF0VUC` descriptors exactly
+apart from draft warning text. Unsupported low-terrain cases still reject.
+The published batch also passes all 48 complete-sprite entrance round trips.
+
+Full saved-scene candidate batch `saved-map-exports-H9pASL` passes native
+construction (277.63 seconds for both maps) and all fifteen control apply/reset
+checks (286.13 seconds). Wychford has 154 motion areas, 16,185 sight obstacles,
+31 doors, no jump pairs, 62,244 grid blocks and 36,790 elevation boundaries.
+Leicester has 57 areas, 826 sight obstacles, 105 doors, 23 jump pairs, 65,170 grid
+blocks and 715 elevation boundaries. Wychford retains the mill's raised floor
+and upper entrance; two lower entrances and its jump remain omitted because
+the placed asset lacks ground contact. These are descriptor-level checks,
+not a browser ZIP bake, rendered review or full playthrough.
+Fresh exports from the published library (`saved-map-exports-WcPgWR`) match both
+native-tested descriptors exactly after excluding only warning text. Wychford
+exports in 141.42 seconds with 1,869 warnings; Leicester in 2.12 seconds with
+401 warnings. Updated draft wording accounts for the warning-count change.
+
 Authored pairs now use the same upward integer height rounding as generated
 ledges (including their 0.0001 near-integer tolerance and positive zero).
 This prevents ordinary nearest rounding from putting a flight endpoint below
@@ -25,7 +50,7 @@ asset definitions and assembled editor document.
 
 The full airborne audit still fails the straight combat return path against
 solid platform obstacle 0, starting at map point (812, 889). Compiler warnings
-retain this limitation. This is an unpublished best-effort authoring candidate,
+retain this limitation. This is a published best-effort draft,
 not proof of combat-animation or rendered-contact parity. The earlier boundary
 candidate's 480 clear airborne paths must not be attributed to this revision.
 

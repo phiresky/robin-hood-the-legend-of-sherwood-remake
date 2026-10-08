@@ -38,46 +38,30 @@ stair-navigation, 55 enabled compiled-navigation and 67 enabled map-compilation
 tests pass. The same full Wychford export passes construction in 255.00 seconds
 and all three control apply/reset checks in 260.72 seconds, down from roughly
 13 minutes each. These are single-run debug audit timings.
-An unpublished watermill candidate now supplies an asset-local raised platform
-floor while retaining its two material regions. Its Leicester export passes
-native construction with 23 jump pairs and no watermill door/jump omission.
-With an asset-local upper-door contact correction, 48 complete-sprite round trips
-pass across copied, rotated and elevated placements. Eight lower-terrain negative
-cases omit unsupported lower entrances and jumps. The airborne-path audit still
-fails at a platform jump launch (exported height 12 versus platform top 12.001),
-so the candidate remains unpublished. Its sampled mesh leaves 3.431 square units
-of the authored footprint unsupported; rendered contact also remains unverified.
-The compiler now audits final integer jump pairs, including authored connections,
-and warns about mismatched opposing edges, solid flight/takeoff intersections,
-or unsupported clearance checks. Best-effort exports retain those connections;
-warnings identify review work and do not certify playable jumps.
-Parallel authored spans now share one integer vector after placement. Fractional
-flight heights round upward using the same rule as generated ledges; integer
-heights and projected contacts are preserved. Fractional translation and rotation no longer introduce
-unequal opposing vectors solely through independent endpoint rounding; genuinely
-nonparallel authored edges retain their diagnostic.
-A further unpublished boundary-ledged watermill candidate passes 480 native
-airborne-path checks across the eight placements, with all 64 exported endpoints
-inside their home jump zones. The upper zone is derived from the physical floor.
-The stronger sprite audit found unsupported rounded boundary points in that first
-candidate. A one-unit ledge inset and two-unit corner trims now pass all 160
-upright sprite-dispatch/landing checks, including endpoints and closing animations,
-while retaining the 480 clear flight paths and all 64 endpoint-zone memberships.
-The subsequent walk–jump–walk audit initially passed only 12/160 cases: receiver
-lookup alone does not prove support for the actor's full walking footprint.
-A measured runtime recovery fix raises this to 56/160: a bounded two-leg inward
-recovery can stay inside the initial footprint and real floor where a direct
-sweep cannot. All 45 floor/navigation and 55 enabled compiled-navigation tests
-pass. Some approach endpoints still lack receivers and walking clearance remains
-unresolved. Click authorization,
-sword/assisted sprite dispatch and rendered contact remain unverified; the
-candidate is still unpublished.
-The newer authored walking-span candidate now passes all 160 upright
-walk–jump–walk routes, all 160 isolated sprite jumps and all 64 endpoint-zone
-checks across the eight placements. It shortens the ledge near the platform
-corners and uses a deeper standing inset without enlarging the floor. Its straight
-combat return flight still intersects the platform, so this candidate retains
-explicit clearance warnings and remains unpublished pending combat/render review.
+The published watermill draft supplies its own raised platform floor,
+retains both material regions, seats the upper doorway on that floor, and derives
+a shorter inset jump span. Across copied, rotated and elevated placements it
+passes 160 upright walk–jump–walk routes, 160 isolated sprite jumps and all 64
+endpoint-zone checks. The doorway correction passed 48 complete-sprite round
+trips. Eight lower-terrain negative cases omit unsupported lower entrances and
+jumps. Its straight combat return flight still intersects the platform, and
+3.431 square units of the floor footprint lie outside the sampled top mesh.
+Combat/assisted sprite dispatch, click authorization and rendered contact remain
+unverified. The library retains these explicit best-effort draft warnings;
+full parity is not claimed. All ten saved scenes reopen with refreshed pins.
+Full Leicester and Wychford construction passes, as do all fifteen control
+apply/reset checks. Wychford now retains the platform and upper entrance;
+its two lower entrances and jump remain omitted where the placed mill floats
+above terrain. This does not create a bridge across the missing ground contact.
+
+The compiler checks final integer jump pairs and warns about alignment,
+flight-clearance and unsupported checks. Parallel authored spans share an integer
+vector after placement; heights round upward like generated ledges while integer
+heights and projected contacts stay unchanged. A measured engine recovery fix
+allows bounded two-leg inward recovery within the initial footprint and real
+floor. All 45 floor/navigation and 55 enabled compiled-navigation tests pass.
+Earlier watermill candidates and their differing flight results are recorded in
+the [evidence history](map-compilation-evidence.md#exported-jump-diagnostics-2026-10-08).
 
 Receiving-material unions now batch equivalent patches. A 1,024-island component
 benchmark improves from about 4 seconds to 0.1 seconds; full-map timing remains
@@ -1310,8 +1294,10 @@ The woodland bank now publishes a bounded terrain attachment. Leicester's compil
 geometry is unchanged; both Wychford copies bind, with 74 sampled actor crossings
 across 37 affected receiver pairs passing. Twelve new placements bind and four
 out-of-reach cases reject. Following the footbridge and edge-bank publications
-below, the watermill is the only remaining omitted physical receiver in the
-uncalibrated Wychford descriptor. The latest baked ZIP predates these changes.
+below, the watermill was the only remaining omitted physical receiver in the
+uncalibrated Wychford descriptor. The subsequent watermill draft supplies that
+floor directly; its lower ground connections still lack terrain contact.
+The latest baked ZIP predates these changes.
 
 The edge bank now publishes bounded receiver and mask attachments based on its
 own height range. Leicester compiles unchanged; Wychford gains one receiver and
