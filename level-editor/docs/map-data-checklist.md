@@ -403,18 +403,25 @@ Fresh published York and Sherwood exports (`saved-map-exports-vDlOcb`) pass all
 the runtime corrections, including the final contact-separation geometry.
 Their rendered integration remains unverified.
 
-The current library-wide audit (`gameplay-coverage-0U9BM2`) finds 28 of 1,279
+The current library-wide audit (`gameplay-coverage-iQKmEx`) finds 26 of 1,279
 indexed assets without gameplay definitions. None is referenced by placements,
 scene assets or wall-spline sources/corner assets in the ten saved scenes. The
 audit now includes spline references: Wychford uses 84 distinct assets rather
 than the 82 counted from placements and scene assets alone.
-Twenty-four missing definitions contain parts explicitly owned by initial/applied
+Twenty-two missing definitions contain parts explicitly owned by initial/applied
 sight states in existing assemblies. The audit now records those owner and
 transition memberships per part. They cannot safely become static definitions
 by copying all visible volumes: some contain both state endpoints. The remaining
 four are two background-art assets, the composite Derby keep and the Nottingham
 watchtower fragment; absence of a recorded sight-state dependency does not prove
 their other gameplay dependencies are complete.
+Croisement01 fragments 083 and 084 now have independent activated-solid drafts.
+Each uses its own collision footprint and local control, preserving the initial
+inactive state without copying the assembly's shared exclusion or remote waypoint.
+Eight copied/rotated/elevated maps pass native construction and 32 apply/reset
+checks, including 96 thin-route probes. Published export/reopen geometry matches
+the tested stage; all ten saved scenes still reopen. Rendered state appearance,
+mesh contact and complete actor routes remain unverified.
 The timber bridge, both ferns, fallen log, upright fences 94/95 and supplemental
 wood 09/44 and Croisement01 tree 03 have published draft definitions. These counts
 reflect the current asset inventory, not gameplay certification.

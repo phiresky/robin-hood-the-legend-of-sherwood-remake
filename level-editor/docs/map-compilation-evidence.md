@@ -4,6 +4,41 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Independent activated solid fragments (2026-10-08)
+
+`refinement/stage-croisement-activated-fragments.mjs` authors standalone gameplay
+for `croisement01-group-083` and `croisement01-group-084`. The reviewed assembly
+has no initial sight or movement geometry and activates both parts together.
+Each new definition instead owns a single control with only its own sight volume
+and a ground exclusion derived from that volume's local footprint. Its waypoint
+is the local footprint center. The shared assembly contour and remote waypoint
+are not copied. Compilation reads only the resulting descriptors and editor
+document; no level records or assembly lookup are needed at runtime.
+
+Stage `activated-fragments-mtvhIM` places two copies of each fragment at fractional
+translations, rotations 0/37/90/180 and terrain elevations 0/40. All eight maps
+construct natively with four independent controls, five sight obstacles including
+the terrain receiver and 960 grid blocks. All 32 control apply/reset checks pass.
+For each control, a thin route crossing its footprint is reachable initially,
+blocked when applied and reachable after reset: 96 native route probes in total.
+The audit also checks state restoration and the other controls' unchanged sight
+and navigation state. These are native grid probes, not complete actor walks.
+
+Published catalog `refinement/catalogs/croisement01-activated-fragments-gameplay.json`
+pins both descriptors and models. Backup is `activated-fragments-publication-mtvhIM`;
+no saved scene pins or models change. Fresh published batch
+`activated-fragments-published-OEiZ2O` reproduces all eight tested descriptors
+exactly, writes editor documents with current pins, reopens them through the
+library loader and recompiles identically. All ten saved scenes also reopen.
+The regenerated index audit `gameplay-coverage-iQKmEx` reports 26 missing
+definitions, 22 with known state-owned parts, and zero missing placed definitions.
+
+Both definitions remain explicit drafts. Their initial state is unapplied;
+activation must be authored explicitly. Rendered state appearance, physical mesh
+contact and complete actor-route validation are still open. This publication
+does not claim exact reproduction of the shared assembly's hand-authored movement
+contour or full gameplay parity. No engine changes were needed.
+
 ## Missing-definition ownership dependencies (2026-10-08)
 
 Fresh inventory `gameplay-coverage-0U9BM2` validates all 1,279 indexed descriptor
