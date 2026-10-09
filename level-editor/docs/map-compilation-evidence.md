@@ -4,6 +4,49 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Expanded stair rotation and placement coverage (2026-10-09)
+
+`work/map-compile/grounded-stair-placements-bO6Dnx` passes **128/128 native
+complete-sprite routes** across rotations 0/37/90/137/180/217/270/317, terrain
+elevations 0/40 and two independent copies. All sixteen documents are inserted,
+serialized, reopened and compiled through editor APIs; both masks bind terrain
+with independent obstacle ownership in every export. The verifier's new
+`--padding=500` moves the placements into a 3000-by-3000 frame, keeping receivers
+away from its edge. Reproduce with `--require-masks --padding=500
+--rotations=0,37,90,137,180,217,270,317`.
+
+`grounded-stair-placements-Oasf9e` independently passes all **64 routes** at the
+four additional angles with the original coordinates and frame. The 270-degree
+mask omissions there are crop-dependent: moving the same assets fully inside
+the larger frame retains both masks. This does not add support for receiving
+probes outside the export frame; those omissions remain warnings.
+
+At 217/270 degrees, valid full-box space already existed, but inside endpoints
+were left beyond its boundary. Direct stair preparation can now recover the
+nearest full-box positions when ordinary approach preparation fails, and can
+turn toward valid space within the same unobstructed convex area. Established
+approaches keep their prior preparation. At 137 degrees, the only prepared
+positions share a horizontal row; the native sweep reserves an extra unit on
+its left. Preparation checks every endpoint pair with the shared corridor
+verifier and, when necessary, uses that asymmetric horizontal footprint to
+select positions. All endpoints are committed together; blocked, concave and
+incomplete cases retain their data. No runtime or map-format changes are
+introduced by this follow-up.
+
+The earlier `grounded-stair-placements-zeEUPj` diagnostic fixed 217/270 but
+retained eight 137-degree failures before handling the horizontal margin.
+`grounded-stair-placements-1759OY` first passed the padded matrix; the final
+batch also preserves established native fixture endpoints. All 74 focused
+compiler/approach tests pass without modifying fixtures. The successful native
+audits supply gate sequences; normal player-click and AI route discovery still
+require separate coverage for these newly supported placements.
+
+Final verification: the full editor suite reports 1,069 passed, two skipped and
+one unrelated failure: the locally edited Croisement02 preset has `size: null`.
+Log: `work/map-compile/stair-rotations-editor-final-20261009.log`. Scoped lint,
+app typechecking, game build and Rust formatting checks pass. No production
+Rust files change in this endpoint-preparation follow-up.
+
 ## Direct narrow stair approaches and receiving-piece handoffs (2026-10-09)
 
 The fresh tower exports in `work/map-compile/grounded-stair-placements-tWfmuj`

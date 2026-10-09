@@ -81,8 +81,12 @@ test("narrow route preparation excludes blockers, concavity and partial endpoint
       });
     if (kind === "concave") area.polygon.points.splice(2, 0, [8, 50]);
     if (kind === "remote") lift.doors[1]!.point_in = [500, 500];
-    if (kind === "wide")
+    if (kind === "wide") {
       area.polygon.points = area.polygon.points.map(([x, y]): Point => [x * 3, y]);
+      lift.doors.forEach((door) => {
+        door.point_in[0] = 12;
+      });
+    }
     if (kind === "no-space")
       area.polygon.points = area.polygon.points.map(([x, y]): Point => [x * 0.5, y]);
     if (kind === "ladder") lift.lift_type = 2;
@@ -90,4 +94,55 @@ test("narrow route preparation excludes blockers, concavity and partial endpoint
     assert.equal(prepareDirectStairApproaches(geometry).size, 0, kind);
     assert.deepEqual(geometry, before, kind);
   }
+});
+
+test("convex stairs recover external endpoints using full-box clearance when available", () => {
+  const { geometry, lift, area } = fixture();
+  area.polygon.points = area.polygon.points.map(([x, y]): Point => [x * 3, y]);
+  lift.doors[0]!.point_in = [-2, 5];
+  lift.doors[1]!.point_in = [38, 95];
+  const motion = structuredClone(geometry.motion_data);
+  const compiled = structuredClone(geometry);
+  assert.equal(
+    prepareDirectStairApproaches(geometry).size,
+    0,
+    "full-box routes need no inset exception",
+  );
+  assert.deepEqual(
+    lift.doors.map((door) => door.point_in),
+    [
+      [7, 5],
+      [29, 95],
+    ],
+  );
+  assert.deepEqual(geometry.motion_data, motion);
+  compileLiftApproaches(compiled);
+  assert.deepEqual(
+    compiled.lifts![0]!.doors.map((door) => door.point_in),
+    [
+      [7, 5],
+      [29, 95],
+    ],
+  );
+  assert.ok(!compiled.warnings?.some((warning) => /no actor-sized in approach/.test(warning)));
+  assert.ok(compiled.warnings?.some((warning) => /no actor-sized out approach/.test(warning)));
+});
+
+test("a narrow projected entrance can turn inward instead of extending past its floor", () => {
+  const { geometry, lift, area } = fixture();
+  area.polygon.points = [
+    [470, 368],
+    [524, 366],
+    [485, 372],
+    [399, 379],
+  ];
+  lift.doors[0]!.point_mid = [461, 371];
+  lift.doors[0]!.point_in = [464, 371];
+  lift.doors[1]!.point_mid = [483, 371];
+  lift.doors[1]!.point_in = [484, 370];
+  assert.equal(prepareDirectStairApproaches(geometry).size, 2);
+  const allowed = prepareCorridorStates([], area.polygon.points);
+  for (const a of lift.doors)
+    for (const b of lift.doors) assert.deepEqual(allowed(a.point_in, b.point_in), [0]);
+  assert.ok(lift.doors[1]!.point_in[0] < lift.doors[1]!.point_mid[0]);
 });

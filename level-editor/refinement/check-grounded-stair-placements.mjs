@@ -24,6 +24,15 @@ const overrides = process.argv.slice(2).filter((argument) => argument.startsWith
 assert.ok(overrides.length <= 1, "Provide at most one staged descriptor");
 const stagedDescriptor = overrides[0]?.slice("--descriptor=".length);
 const requireMasks = process.argv.includes("--require-masks");
+const paddingOptions = process.argv
+  .slice(2)
+  .filter((argument) => argument.startsWith("--padding="));
+assert.ok(paddingOptions.length <= 1, "Provide at most one padding value");
+const padding = paddingOptions.length ? Number(paddingOptions[0].slice("--padding=".length)) : 0;
+assert.ok(
+  Number.isInteger(padding) && padding >= 0 && padding <= 4096,
+  "Padding must be an integer from 0 to 4096",
+);
 const rotationOptions = process.argv
   .slice(2)
   .filter((argument) => argument.startsWith("--rotations="));
@@ -43,6 +52,7 @@ assert.ok(
     .every(
       (argument) =>
         argument.startsWith("--descriptor=") ||
+        argument.startsWith("--padding=") ||
         argument.startsWith("--rotations=") ||
         argument === "--require-masks",
     ),
@@ -62,7 +72,7 @@ if (!stagedDescriptor) assert.equal(reference.descriptor_sha256, entry.descripto
 assert.equal(descriptor.id, id);
 assert.ok(descriptor.gameplay.placementGroundHeight > 0);
 const assets = new Map([[id, descriptor]]);
-const bounds = [0, 0, 2000, 2000];
+const bounds = [0, 0, 2000 + padding * 2, 2000 + padding * 2];
 const output = await fs.mkdtemp("work/map-compile/grounded-stair-placements-");
 console.log(output);
 const results = [];
@@ -74,6 +84,7 @@ const report = async () =>
       complete: results.length === rotations.length * 2,
       expected_directed_routes: rotations.length * 16,
       rotations,
+      padding,
       expected_masks_per_map: requireMasks ? 2 : undefined,
       snapshot_notes: `Fresh editor drops, two independent copies, ${rotations.length} rotations and two terrain elevations. All ${rotations.length * 16} directed stair routes need verification; forbidden routes are not passes.`,
       asset: reference,
@@ -87,7 +98,7 @@ for (const elevation of [0, 40])
     let document = {
       version: 1,
       map: "Grounded stair placement",
-      size: [2000, 2000],
+      size: [bounds[2], bounds[3]],
       camera: { kind: "oblique-orthographic", elevation_deg: 35 },
       sceneAssets: [],
       groups: [],
@@ -95,8 +106,8 @@ for (const elevation of [0, 40])
       terrain: createTerrainGrid(bounds, 500, elevation),
     };
     for (const [x, y] of [
-      [500, 500],
-      [1450, 1400],
+      [500 + padding, 500 + padding],
+      [1450 + padding, 1400 + padding],
     ]) {
       document = insertProjectionAsset(document, descriptor, reference, [x, y, elevation]).document;
       assert.ok(

@@ -46,7 +46,14 @@ function crosses(polygon: Point[], source: Point, goal: Point): boolean {
 
 /** Prepare native passage endpoints once, before writing the map descriptor. */
 export function compileLiftApproaches(geometry: CompiledAssetGeometry): void {
-  const directStairs = prepareDirectStairApproaches(geometry);
+  const directStairs = prepareDirectStairApproaches(geometry, false);
+  type Lift = NonNullable<CompiledAssetGeometry["lifts"]>[number];
+  const unresolved: {
+    lift: Lift;
+    door: Lift["doors"][number];
+    fits: (point: Point) => boolean;
+    warning: string;
+  }[] = [];
   const areas = new Map<string, Area>();
   let sector = 0;
   geometry.motion_data.layers.forEach((entries, layer) => {
@@ -165,11 +172,24 @@ export function compileLiftApproaches(geometry: CompiledAssetGeometry): void {
           }
         }
         if (adjusted) door[`point_${side}`] = adjusted;
-        else
-          (geometry.warnings ??= []).push(
-            `Lift ${liftIndex} door ${doorIndex}: no actor-sized ${side} approach near the authored passage; traversal may be unavailable.`,
-          );
+        else {
+          const warning = `Lift ${liftIndex} door ${doorIndex}: no actor-sized ${side} approach near the authored passage; traversal may be unavailable.`;
+          (geometry.warnings ??= []).push(warning);
+          if (side === "in" && lift.lift_type === 1) unresolved.push({ lift, door, fits, warning });
+        }
       }
     }
+  }
+  if (unresolved.length) {
+    const direct = prepareDirectStairApproaches({
+      ...geometry,
+      lifts: [...new Set(unresolved.map((entry) => entry.lift))],
+    });
+    const recovered = new Set(
+      unresolved
+        .filter((entry) => direct.has(entry.door) || entry.fits(entry.door.point_in))
+        .map((entry) => entry.warning),
+    );
+    geometry.warnings = geometry.warnings?.filter((warning) => !recovered.has(warning));
   }
 }

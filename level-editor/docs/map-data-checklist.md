@@ -18,10 +18,11 @@ remains open.
 **Fresh stair placement regression (2026-10-09):**
 `refinement/check-grounded-stair-placements.mjs` inserts the reusable church-side
 tower through the editor's asset insertion API onto new flat terrain, serializes
-and reopens each document, then exports two independent copies at four rotations
+and reopens each document, then exports two independent copies at eight rotations
 and two elevations. Grounding retains both stairs and all four entrances per
-copy. The complete-sprite native stair audit now passes all 64 directed routes
-at 0, 37, 90 and 180 degrees, including completed-passage receiver checks. No
+copy. The expanded complete-sprite native stair audit now passes all 128 directed
+routes at 0/37/90/137/180/217/270/317 degrees, including completed-passage receiver
+checks. Its 500-pixel padding keeps asset receivers inside the export frame. No
 routes are skipped as forbidden. Stair passage preparation can move a blocked sector handoff toward
 the landing along its existing approach, bounded by one native actor radius.
 Both animation segments must clear their floors' permanent obstacles; endpoints
@@ -39,29 +40,32 @@ footprint overlaps the landing's stairwell hole before handoff preparation.
 The 90-degree corridor has no full-box center region. The exporter now recovers
 a conservative inner kernel only when the original concave projection has no
 space for a full actor box. On an unobstructed convex stair, it can prepare all
-inner endpoints together for the native direct-movement inset, proving every
-endpoint pair has a clear straight sweep. It leaves wide floors, obstacles,
-holes and incomplete endpoint recovery unchanged. Receiving-boundary construction
+inner endpoints together, preferring full-box clearance when available and
+otherwise using the native direct-movement inset. Every endpoint pair is checked,
+including the extra left margin on horizontal sweeps. Approaches may turn toward
+valid space instead of extending beyond the stair. Valid full-box approaches,
+obstacles, holes and incomplete endpoint recovery remain unchanged. Receiving-boundary construction
 at load time now binds the handoff to the first receiver reached along its
 approach, preserving subsequent transitions between receiver pieces.
 Grounded copies now retain their projectile masks: the published asset contains
 a finite receiver probe between its old local mask anchor and its authored
-insertion ground height. All eight exports retain two terrain-bound masks with
+insertion ground height. All sixteen padded exports retain two terrain-bound masks with
 independent obstacle ownership and load natively. Saved Leicester also exports
 without a tower-mask warning; saved Wychford retains its previous missing-receiver
 warning for the existing placement. No receiver outside the finite probe is
-invented. Expanding to 137/217/270/317 degrees finds 24 additional stalls at
-137/217/270 degrees and a mask omission at 270 degrees requiring placement/frame
-inspection. Combined coverage is 104 passing routes out of 128; the asset is
-not certified for arbitrary placement yet.
+invented. The additional four angles also pass 64 routes at the original
+coordinates. At those coordinates, 270-degree mask probes reach the frame edge
+or lie outside it; omitted masks remain explicit crop warnings. Cropped receiving
+probes remain a separate limit.
 The native audit enforces the
 manifest's expected directed-route count and reports incomplete coverage when
-any required route is forbidden. The original 64-route matrix now passes;
-additional angles and broader actor/posture interactions remain separate gates.
+any required route is forbidden. This audit supplies the gate sequence explicitly;
+normal player-click/AI route selection, further angles and broader actor/posture
+interactions remain separate gates.
 No runtime routing solver is required
 or reintroduced by this audit.
 
-**Broader verification (2026-10-09):** the full editor suite now reports 1,067
+**Broader verification (2026-10-09):** the full editor suite now reports 1,069
 passed, two skipped and one failure: the named-size preset test reads a locally
 edited Croisement02 scene with `size: null`. That scene was left untouched.
 The export-related failures were resolved: the final jump audit now retains
