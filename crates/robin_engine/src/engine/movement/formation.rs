@@ -232,14 +232,67 @@ impl EngineInner {
                 let sector = &self.world.fast_grid.level.sectors[usize::from(index)];
                 recorded_qa_move_route(sector.sector_number, index, plan.effective_layer)
             } else {
-                recorded_qa_move_route(
-                    plan.goal_sector.expect("recorded group move has no resolved goal sector"),
-                    plan.route_goal_sector_index.expect("recorded group move has no exact goal-sector identity"),
-                    plan.effective_layer,
-                )
+                let Some(route) = self.recorded_group_destination_route(
+                    actor, destination, plan.goal_sector, plan.route_goal_sector_index, plan.effective_layer,
+                ) else {
+                    return PlannedRecordedGroupMoveOutcome::Unauthorized { actor };
+                };
+                route
             };
             PlannedRecordedGroupMoveOutcome::Resolved(PlannedRecordedGroupMove { actor, destination, route })
         }).collect()
+    }
+
+    /// Preserve an explicit click route, or resolve an authorized snapped slot
+    /// when the raw click was outside all sectors. Recording cannot retain a
+    /// destination with no actual route identity.
+    fn recorded_group_destination_route(
+        &self,
+        actor: EntityId,
+        destination: MapPoint,
+        sector: Option<crate::sector::SectorNumber>,
+        index: Option<crate::fast_find_grid::SectorIndex>,
+        layer: u16,
+    ) -> Option<crate::macro_store::RecordedQaMoveRoute> {
+        match (sector, index) {
+            (Some(sector), Some(index)) => Some(recorded_qa_move_route(sector, index, layer)),
+            (None, None) => {
+                let reference = self
+                    .expect_entity(actor, "recorded group-move actor")
+                    .element_data()
+                    .position_map();
+                match self
+                    .world
+                    .fast_grid
+                    .get_sector(destination, reference, layer)
+                {
+                    crate::fast_find_grid::SectorHit::Found {
+                        sector_idx,
+                        sector_number,
+                    } => Some(recorded_qa_move_route(sector_number, sector_idx, layer)),
+                    _ => {
+                        tracing::warn!(
+                            ?actor,
+                            ?destination,
+                            layer,
+                            "Cannot record group move outside a walkable sector"
+                        );
+                        None
+                    }
+                }
+            }
+            _ => {
+                tracing::warn!(
+                    ?actor,
+                    ?destination,
+                    ?sector,
+                    ?index,
+                    layer,
+                    "Cannot record group move with incomplete route identity"
+                );
+                None
+            }
+        }
     }
 
     /// Issue movement orders for a group of selected PCs around a single
@@ -1104,25 +1157,21 @@ impl EngineInner {
                 }
             };
             if self.players.qa_recording_for.contains(pc_id) {
-                self.record_resolved_group_move_step(
-                        *pc_id,
-                        snapped,
-                        run,
-                        recorded_qa_move_route(
-                            pc_goal_sector.unwrap_or_else(|| {
-                                panic!(
-                                    "recorded group move for {pc_id:?} has no resolved goal sector"
-                                )
-                            }),
-                            pc_goal_sector_index.unwrap_or_else(|| {
-                                panic!(
-                                    "recorded group move for {pc_id:?} has no exact goal-sector identity"
-                                )
-                            }),
-                            pc_effective_layer,
-                        ),
+                if let Some(route) = self.recorded_group_destination_route(
+                    *pc_id,
+                    snapped,
+                    pc_goal_sector,
+                    pc_goal_sector_index,
+                    pc_effective_layer,
+                ) {
+                    self.record_resolved_group_move_step(*pc_id, snapped, run, route, tcx.assets);
+                } else {
+                    self.hero_speaking(
                         tcx.assets,
+                        *pc_id,
+                        crate::engine::melee::HERO_UNABLE_TO_DO_SOMETHING,
                     );
+                }
                 return std::ops::ControlFlow::Break(());
             }
             // Launch a Move sequence element.  Going through the
@@ -1723,6 +1772,98 @@ impl EngineInner {
 #[cfg(test)]
 mod shared_resolution_tests {
     use super::*;
+
+    #[test]
+    fn recorded_group_destination_resolves_snapped_slot_and_rejects_unmapped_space() {
+        use crate::element::Posture;
+        use crate::engine::test_support::actors::TestActor;
+        use crate::sector::SectorType;
+        let mut engine = EngineInner::new();
+        engine.world.fast_grid_mut().size_map(16, 16);
+        engine.world.fast_grid_mut().allocate_layers(1);
+        let sector = crate::fast_find_grid::GridSector {
+            points: vec![
+                MapPoint::new(100.0, 100.0),
+                MapPoint::new(300.0, 100.0),
+                MapPoint::new(300.0, 300.0),
+                MapPoint::new(100.0, 300.0),
+            ],
+            bounding_box: MapBBox::from_corners(
+                MapPoint::new(100.0, 100.0),
+                MapPoint::new(300.0, 300.0),
+            ),
+            sector_type: SectorType::MOUSE | SectorType::MOTION | SectorType::AREA,
+            layer: 0,
+            sector_number: crate::sector::SectorNumber::new(7),
+            door_index: None,
+            lift_type: None,
+            lift_direction: 0,
+            force_crouched: false,
+            building_index: None,
+            low_exit_point: None,
+            high_exit_point: None,
+            highest_door_index: None,
+            lowest_door_index: None,
+            jump_line_indices: Vec::new(),
+            gate_indices: Vec::new(),
+            underlying_sector: None,
+        };
+        engine.world.fast_grid_mut().add_sector(sector, 0);
+        let mut actor = TestActor::pc(Posture::Upright).build();
+        actor
+            .element_data_mut()
+            .set_position_map(MapPoint::new(150.0, 150.0));
+        actor
+            .element_data_mut()
+            .set_sector(crate::position_interface::SectorHandle::new(7));
+        actor
+            .position_iface_mut()
+            .set_move_box(crate::coordinates::MoveBox::from_coords(
+                -2.0, -2.0, 2.0, 2.0,
+            ));
+        actor
+            .position_iface_mut()
+            .set_map_position(MapPoint::new(150.0, 150.0));
+        let actor = engine.add_test_entity(actor);
+        let route = engine
+            .recorded_group_destination_route(actor, MapPoint::new(200.0, 200.0), None, None, 0)
+            .unwrap();
+        assert_eq!(route.goal_sector, crate::sector::SectorNumber::new(7));
+        assert_eq!(
+            engine.world.fast_grid.level.sectors[usize::from(route.goal_sector_index)]
+                .sector_number,
+            route.goal_sector
+        );
+        assert!(
+            engine
+                .recorded_group_destination_route(actor, MapPoint::new(700.0, 700.0), None, None, 0)
+                .is_none()
+        );
+        let retained = engine
+            .recorded_group_destination_route(
+                actor,
+                MapPoint::new(700.0, 700.0),
+                Some(route.goal_sector),
+                Some(route.goal_sector_index),
+                0,
+            )
+            .unwrap();
+        assert_eq!(retained, route);
+        // A raw click without a sector can still pass formation-box
+        // authorization. Automatic queue capture must reject it safely.
+        let planned = engine.plan_recorded_group_move(
+            &LevelAssets::new(),
+            &[actor],
+            MapPoint::new(700.0, 700.0),
+            None,
+            None,
+            None,
+        );
+        assert!(matches!(
+            planned.as_slice(),
+            [PlannedRecordedGroupMoveOutcome::Unauthorized { actor: rejected }] if *rejected == actor
+        ));
+    }
 
     #[test]
     fn rejected_circular_slots_speak_in_selection_order_without_launching_moves() {
