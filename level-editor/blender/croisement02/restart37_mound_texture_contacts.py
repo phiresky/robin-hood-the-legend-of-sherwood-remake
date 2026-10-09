@@ -13,6 +13,7 @@ sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def load_receivers(model,validation):
  # Load only the three required receiver families; never duplicate the full static scene.
  assert shutil.disk_usage(model).free>25*1024**3,'Disk reserve reached before scene load'
+ assert int(next(line.split()[1] for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:')))*1024>=6*1024**3,'Memory reserve reached before scene load'
  bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene
  retained={}
  for obj in list(scene.objects):
@@ -40,10 +41,10 @@ def load_receivers(model,validation):
   pins.append(dict(group='croisement02-southeast-stone-wall-and-gate',model=source,sha256=chosen[0]['model_sha256'],objects=chosen,authority_sha256=sha(authority)))
  bpy.context.view_layer.update();base=OUT/'restart2-textures/batch10-linked-static-v1/scene.blend';assert sha(base)==validation['static_base_sha256'];return scene,objects,pins,base,retained
 
-def main():
- worker=OUT/'restart25-approved-state-materialization-v1/mound-filled-all-sites-v1';r=json.loads((OUT/'restart15-hiding-mounds/all-placements-v1/validation.json').read_text());model=worker/'worker.blend';proof=json.loads((worker/'preservation.json').read_text());assert sha(model)==proof['model_sha256'];out=worker/'contacts-v2';out.mkdir(exist_ok=False);scene,static,pins,base,mapped=load_receivers(model,r);ground=[o for o in static if o.name.startswith('Croisement02 Terrain')or o.get('asset_group')=='croisement02-north-woodland-bank'];wall=[o for o in static if o.get('asset_group')=='croisement02-southeast-stone-wall-and-gate'];names=[n for row in r['records']for n in row['objects']]
+def main(worker=None, output_name='contacts-v2', samples=16):
+ worker=Path(worker) if worker else OUT/'restart25-approved-state-materialization-v1/mound-filled-all-sites-v1';r=json.loads((OUT/'restart15-hiding-mounds/all-placements-v1/validation.json').read_text());model=worker/'worker.blend';proof=json.loads((worker/'preservation.json').read_text());assert sha(model)==proof['model_sha256'];out=worker/output_name;out.mkdir(exist_ok=False);scene,static,pins,base,mapped=load_receivers(model,r);ground=[o for o in static if o.name.startswith('Croisement02 Terrain')or o.get('asset_group')=='croisement02-north-woodland-bank'];wall=[o for o in static if o.get('asset_group')=='croisement02-southeast-stone-wall-and-gate'];names=[n for row in r['records']for n in row['objects']]
  for name in names:scene.collection.objects.link(mapped[name])
- bpy.context.view_layer.update();scene.cycles.samples=16;scene.cycles.transparent_max_bounces=512;scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.view_settings.view_transform='Standard';scene.view_settings.look='None';images=[]
+ bpy.context.view_layer.update();scene.cycles.samples=int(samples);scene.cycles.transparent_max_bounces=512;scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.view_settings.view_transform='Standard';scene.view_settings.look='None';images=[]
  for row in r['records']:
   own=[mapped[n]for n in row['objects']];receivers=ground+wall
   for obj in scene.objects:
@@ -52,8 +53,8 @@ def main():
   for view,direction in [('native',RAY),('side',Vector((COS,0,SIN))),('low-side',Vector((math.cos(math.radians(12)),0,math.sin(math.radians(12)))))]:
    camera=frame(scene,own,direction,480,1.5);file=out/f'{row["tag"]}-{view}.png';scene.render.filepath=str(file);assert shutil.disk_usage(out).free>25*1024**3,'Disk reserve reached before render';bpy.ops.render.render(write_still=True);paths.append(file);images.append(dict(tag=row['tag'],view=view,path=file.name,sha256=sha(file),camera_matrix=[list(v)for v in camera.matrix_world],receivers=[o.name for o in receivers]))
   sheet(paths,out/f'{row["tag"]}-contact-three.png')
- sheet([out/r['path']for r in images],out/'all-contact-views.png');(out/'report.json').write_text(json.dumps(dict(model_sha256=sha(model),static_base_sha256=sha(base),substitutions=pins,images=images,scope='Ground/bank and relevant wall only. Canopy omitted to expose contact. Native camera first, two oblique support views. No full-scene occlusion claim.'),indent=2)+'\n')
+ sheet([out/r['path']for r in images],out/'all-contact-views.png');(out/'report.json').write_text(json.dumps(dict(model_sha256=sha(model),static_base_sha256=sha(base),substitutions=pins,images=images,samples=int(samples),scope='Ground/bank and relevant wall only. Canopy omitted to expose contact. Native camera first, two oblique support views. No full-scene occlusion claim.'),indent=2)+'\n')
 if __name__=='__main__':
  acquire()
- try:main()
+ try:main(*sys.argv[sys.argv.index('--')+1:]) if '--' in sys.argv else main()
  finally:release()
