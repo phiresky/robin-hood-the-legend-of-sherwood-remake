@@ -5,8 +5,11 @@ import type { Vec3 } from "./scene.ts";
 import { pointInGameplayPolygon } from "./navigation-anchor.ts";
 import { physicalCollisionPieces } from "./physical-collision-pieces.ts";
 import { physicalStairFloor } from "./physical-stair-floor.ts";
+import { projectStairClearance } from "./project-stair-clearance.ts";
 
 export interface PhysicalStairInput {
+  /** Prepare native walking clearance for stair lifts, excluding ladders and walls. */
+  prepareWalkingClearance?: boolean;
   surfaces: { polygon: Vec3[]; holes: Vec3[][] }[];
   /** Collision pieces already bound to the emitted motion area's obstacle IDs. */
   obstacles: { motionObstacle: number; polygon: Vec3[] }[];
@@ -52,6 +55,10 @@ export function compilePhysicalStairArea(input: PhysicalStairAreaInput): {
     polygon: obstacle.polygon,
   }));
   const floor = physicalStairFloor(input.surfaces);
+  const clearanceBoundary =
+    input.prepareWalkingClearance && !floor.patches && collision.length === 0
+      ? projectStairClearance(navigation.boundary, floor.plane)
+      : undefined;
   const project = (point: Point): Point => {
     const result: Point = [Math.round(point[0]), Math.round(point[1] - floor.heightAt(point))];
     if (result.some((value) => !Number.isFinite(value) || value < -32768 || value > 32767))
@@ -67,7 +74,7 @@ export function compilePhysicalStairArea(input: PhysicalStairAreaInput): {
       skeleton_segments: [],
       // A valid physical floor can project to a line. Preserve its ordered
       // vertices; simplifying that line would lose the physical surface identity.
-      polygon: { points: floor.splitRing(navigation.boundary).map(project) },
+      polygon: { points: clearanceBoundary ?? floor.splitRing(navigation.boundary).map(project) },
       obstacles: collision.map((obstacle) => ({
         state_id: obstacle.stateId,
         polygon: { points: floor.splitRing(obstacle.polygon).map(project) },

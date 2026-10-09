@@ -1683,6 +1683,7 @@ function compileAssetGameplayAttempt(
     const worldRing = (points: Point[], plane: HeightPlane): Vec3[] =>
       points.map(([x, y]) => [x, y, planeHeight(plane, [x, y])]);
     const compiled = compilePhysicalStairRegion({
+      prepareWalkingClearance: lift.type === 1,
       frame: [0, 0, bounds[2], bounds[3]],
       surfaces: floor.map((surface) => ({
         polygon: worldRing(surface.worldPolygon, surface.worldPlane),

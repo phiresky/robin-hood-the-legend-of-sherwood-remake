@@ -11,19 +11,26 @@ Connections and runtime indices are rebuilt after placement, rotation and copyin
 tower through the editor's asset insertion API onto new flat terrain, serializes
 and reopens each document, then exports two independent copies at four rotations
 and two elevations. Grounding retains both stairs and all four entrances per
-copy. The complete-sprite native stair audit currently passes only 40 of 64
-directed routes: eight stall inside the lower stair at 180 degrees, and sixteen
-are forbidden by upper-entrance collision checks at 0/90 degrees. Both elevations
-and copies reproduce the failures. At 180 degrees the exported lower corridor
-is too narrow for the native 12-by-6 actor footprint; retaining its entrance
-records does not make it traversable. Both copies also warn that their projectile
+copy. The complete-sprite native stair audit now passes 48 of 64 directed routes;
+sixteen remain forbidden by upper-entrance collision checks at 0/90 degrees.
+The eight lower-stair stalls at 180 degrees are fixed at export: when a convex,
+unobstructed floor projects too narrowly to fit a native actor, the compiler
+adjusts its collision boundaries to preserve physically supported movement
+footprints after projection. Quantization includes an inward safety margin.
+Already traversable floors retain their boundaries and prepared entrances;
+ladders, walls, holes, obstacles, bent and singular floors are excluded from this
+correction. Physical receiving surfaces remain unchanged. Placement checks pass
+at both elevations and for both independent copies. At the blocked upper
+entrance, the outside passage footprint overlaps the landing's stairwell hole;
+the exporter still needs to establish supported crossing clearance there.
+Both copies still warn that their projectile
 mask cannot bind a receiving layer on the new terrain. These are open reusable
 asset/export defects, separate from the saved Wychford placement mismatch below.
 The regression must pass all 64 routes without counting forbidden routes as
 success before this asset is certified. No runtime routing solver is required
 or reintroduced by this audit.
 
-**Broader verification (2026-10-09):** the full editor suite now reports 1,058
+**Broader verification (2026-10-09):** the full editor suite now reports 1,061
 passed, two skipped and one failure: the named-size preset test reads a locally
 edited Croisement02 scene with `size: null`. That scene was left untouched.
 The export-related failures were resolved: the final jump audit now retains
