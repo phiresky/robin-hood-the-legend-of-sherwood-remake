@@ -22,7 +22,7 @@
       "engine_commit": "bb5fb2a90929",
       "description": "Failed to fetch",
       "status": "under_investigation",
-      "finding": "Browser bootstrap reaches wasm module instantiation and then reports Failed to fetch. Neither report includes an attachment, failed URL, HTTP status, or further stack evidence; specific network/deployment cause cannot be established from these payloads."
+      "finding": "Recovered production game-B59Njv-f.js identifies the reported stack as an individual runtime asset preload fetch rejection. The payload does not identify the asset URL or underlying network failure. Preload diagnostics now retain the URL and original cause for manifest, fetch and response-body errors, while cancellation remains unchanged. This improves diagnosis but does not establish or fix the historical network cause."
     },
     {
       "id_prefix": "3bccb3668d60",
@@ -83,7 +83,7 @@
       "engine_commit": "bb5fb2a90929",
       "description": "Failed to fetch",
       "status": "under_investigation",
-      "finding": "Browser bootstrap reaches wasm module instantiation and then reports Failed to fetch. Neither report includes an attachment, failed URL, HTTP status, or further stack evidence; specific network/deployment cause cannot be established from these payloads."
+      "finding": "Recovered production game-B59Njv-f.js identifies the reported stack as an individual runtime asset preload fetch rejection. The payload does not identify the asset URL or underlying network failure. Preload diagnostics now retain the URL and original cause for manifest, fetch and response-body errors, while cancellation remains unchanged. This improves diagnosis but does not establish or fix the historical network cause."
     },
     {
       "id_prefix": "c82ed48921e0",
@@ -146,7 +146,8 @@
     "terminal_regression_after_fix": "passed for recent and sparse history; native snapshot retains LevelSucceeded",
     "native_build_after_terminal_fix": "cargo build -p robin_rs --bin robin passed",
     "protocol_after_schema_update": "22 passed",
-    "engine_after_group_move_fix": "4350 passed, 44 ignored"
+    "engine_after_group_move_fix": "4350 passed, 44 ignored",
+    "browser_preload_diagnostics": "10 tests passed, including network failures at manifest, asset fetch and body read; TypeScript typecheck passed."
   },
   "verified_fixes_merge": "620bc35a7"
 }
