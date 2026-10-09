@@ -18,6 +18,9 @@ const surfaces = process.argv.includes("--surfaces");
 const slopeArgument = process.argv.find((argument) => argument.startsWith("--slope="));
 const slope = slopeArgument ? Number(slopeArgument.slice("--slope=".length)) : 0;
 assert.ok(Number.isFinite(slope), "Slope must be finite");
+const riseArgument = process.argv.find((argument) => argument.startsWith("--rise="));
+const rise = riseArgument ? Number(riseArgument.slice("--rise=".length)) : 100;
+assert.ok(Number.isFinite(rise) && rise >= 60 && rise <= 100, "Rise must be between 60 and 100");
 assert.ok(!reposition || automatic, "Repositioning requires geometric attachment rules");
 assert.ok(
   !surfaces || (automatic && reposition),
@@ -26,15 +29,23 @@ assert.ok(
 for (const height of [0, 40]) {
   const { document, assets, upper, hut } = crossAssetJumpCompilerFixture();
   // Align the landing in map space; asset coordinates include elevation in Y.
-  for (const surface of upper.gameplay.surfaces)
-    for (const point of surface.polygon) point[1] += 100;
+  for (const surface of upper.gameplay.surfaces) {
+    surface.height = rise;
+    for (const point of surface.polygon) point[1] += rise;
+  }
   for (const zone of upper.gameplay.jumpZones) {
-    zone.anchor[1] += 100;
-    for (const point of zone.polygon) point[1] += 100;
+    zone.anchor[1] += rise;
+    zone.anchor[2] += rise - 100;
+    for (const point of zone.polygon) {
+      point[1] += rise;
+      point[2] += rise - 100;
+    }
   }
   for (const segment of upper.gameplay.jumpSegments) {
-    segment.edge.a[1] += 100;
-    segment.edge.b[1] += 100;
+    segment.edge.a[1] += rise;
+    segment.edge.b[1] += rise;
+    segment.edge.a[2] += rise - 100;
+    segment.edge.b[2] += rise - 100;
   }
   for (const asset of assets.values()) {
     for (const segment of asset.gameplay?.jumpSegments ?? []) {
@@ -52,7 +63,7 @@ for (const height of [0, 40]) {
   }
   if (slope) {
     const edgeX = upper.gameplay.jumpSegments[0].edge.a[0];
-    const heightAt = (x) => 100 + (x - edgeX) * slope;
+    const heightAt = (x) => rise + (x - edgeX) * slope;
     for (const surface of upper.gameplay.surfaces)
       surface.height = surface.polygon.map(([x]) => heightAt(x));
     for (const zone of upper.gameplay.jumpZones) {
@@ -127,7 +138,7 @@ for (const height of [0, 40]) {
     let rejectedPlacements = 0;
     if (reposition) {
       for (const copy of [0, 1]) {
-        for (const change of [{ dx: 1000 }, { dz: 20 }]) {
+        for (const change of [{ dx: 1000 }, { dz: 120 - rise }]) {
           const separated = structuredClone(placed);
           const group = separated.groups.find((group) => group.id === `${copy}/jump-upper`);
           for (const [axis, amount] of Object.entries(change)) group.transform[axis] += amount;
@@ -153,6 +164,7 @@ for (const height of [0, 40]) {
       reposition,
       surfaces,
       slope,
+      rise,
       rejected_placements: rejectedPlacements,
       editor_roundtrip: true,
       approach_depth: 4,

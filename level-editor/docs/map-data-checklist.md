@@ -66,6 +66,10 @@ clearance, including surface-derived connections. Sloped climbs in the mixed
 receiving planes still warn and omit their connections. See
 [sloped-climb evidence](map-compilation-evidence.md#sloped-climbing-clearance-2026-10-08) and
 [surface-climb evidence](map-compilation-evidence.md#surface-derived-climbing-connections-2026-10-08).
+Flat-receiver rises of 60/80/99 units additionally pass 1,280 native traversal/click
+checks, including surface-generated connections. The audit verifies assisted long
+flight versus upright vertical descent and covers 25,460 recorded positions with
+export-time clearance. See [threshold evidence](map-compilation-evidence.md#posture-dependent-climbing-threshold-checks-2026-10-09).
 See [placement evidence](map-compilation-evidence.md#repositioned-automatic-vertical-connections-2026-10-08).
 Authored paired connections pass 160 isolated
 vertical traversals and 140 player-click routes across four rotations, two elevations

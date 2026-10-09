@@ -424,7 +424,7 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
             let climbing = destination.z_a > line.z_a;
             let case_stance = if stance == JumpStance::Vertical {
                 assert!(!line.long_jump_forced);
-                assert!((destination.z_a - line.z_a).abs() >= 100.);
+                assert!((destination.z_a - line.z_a).abs() >= 60.);
                 assert_eq!(destination.helper_needed, climbing);
                 if climbing {
                     JumpStance::Shoulders
@@ -752,12 +752,18 @@ fn dispatch_jump(
     let mut shoulder_launched = false;
     let vertical = !source.long_jump_forced
         && (destination.z_a - source.z_a).abs() >= if carrier.is_some() { 100. } else { 60. };
-    let expected_flight = if destination.z_a > source.z_a {
+    let expected_flight = if !vertical {
+        if stance == JumpStance::Sword {
+            OrderType::JumpingLongSword
+        } else {
+            OrderType::JumpingLong
+        }
+    } else if destination.z_a > source.z_a {
         OrderType::JumpingUp
     } else {
         OrderType::JumpingDown
     };
-    let mut vertical_flew = false;
+    let mut expected_flight_seen = false;
     let mut startup = StartupWalkAudit::default();
     let mut trajectory = std::env::var_os("ROBIN_TRACE_JUMP").map(|_| Vec::new());
     for _ in 0..1000 {
@@ -788,7 +794,7 @@ fn dispatch_jump(
             } else {
                 OrderType::TransitionWaitingOnShouldersJumpingLong
             };
-        vertical_flew |= element.sprite.last_action == expected_flight;
+        expected_flight_seen |= element.sprite.last_action == expected_flight;
         let finished = sequence.is_some_and(|sequence| {
             engine
                 .orders
@@ -830,8 +836,8 @@ fn dispatch_jump(
                 destination.layer,
                 element.position_map(),
             )?;
-            if vertical && !vertical_flew {
-                return Err(format!("vertical jump did not execute {expected_flight:?}"));
+            if !expected_flight_seen {
+                return Err(format!("jump did not execute {expected_flight:?}"));
             }
             if let Some(carrier) = carrier {
                 if !shoulder_launched

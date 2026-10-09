@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Posture-dependent climbing threshold checks (2026-10-09)
+
+The vertical-placement generator accepts `--rise=60` through `--rise=100`.
+This changes asset-local surface, zone and ledge heights before placement and
+compilation; no compiled geometry is patched. Excess-rise negative controls adjust
+their placement to remain beyond the same authored attachment limit.
+
+At heights below 100 but at least 60, an assisted actor uses long flight while
+an upright actor uses the vertical branch. The native audit now permits this
+range and requires the actual expected airborne animation for every posture,
+in addition to successful dispatch, receiver ownership, arrival and helper recovery.
+No production runtime or compiler behavior changed in this step.
+
+Automatic repositioned batches at rises 60/80/99
+(`prepared-vertical-jumps-zQ9A0d`, `prepared-vertical-jumps-g2fnFm`,
+`prepared-vertical-jumps-Xv79J9`) and a surface-derived rise-80 batch
+(`prepared-vertical-jumps-kFj3sr`) pass **640 isolated traversals and 640
+player-click routes**. Each covers independent copies, four rotations, two base
+elevations, eight editor reopen/recompile checks and 32 disconnected-copy controls.
+Clearance covers all **25,460 recorded positions** across the four batches.
+The six existing roof audits also pass with the stricter animation check
+(720 cases), and all 29 focused jump compiler tests pass. The game build passes.
+
+These are flat receiving surfaces. Sloped receivers in this mixed-posture range
+still warn and omit the connection pending plane-aware long-flight preparation;
+this does not close that gap or establish full gameplay parity.
+
 ## Sloped climbing clearance (2026-10-08)
 
 Automatic climbing clearance now accounts for the receiving plane during airborne
