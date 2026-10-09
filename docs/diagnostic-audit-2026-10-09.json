@@ -1,0 +1,152 @@
+{
+  "database_total": 273,
+  "new_since_previous_audit": 14,
+  "performance_fix": {
+    "commit": "48034748c",
+    "finding": "Physical runtime navigation removed; prepared-graph movement restored. Verified stock_three_player_navigation_tick_cost: Silver Arrow, Robin Godfather and Rescue Stuteley each complete 180 real mission ticks with three-player teams; 16.06 seconds total including asset loading on fullgame_gog."
+  },
+  "reports": [
+    {
+      "id_prefix": "1a7096aa2e4e",
+      "kind": "bug",
+      "engine_commit": "1466391921a5efcb732e3a74363edb31b44887c3",
+      "description": "multiplayer DESYNC: frame=15725 local=891eb36a083a7e04 host=a531fa8d95209293 local_seat=PlayerId(1) local_frame=15726 host_schedule_frame=Some(15726) pending_input_frames=2 last_rollback_path=recent-timeline-history last_rollback_earliest=15700 last_rollback_target=15701 last_rollback_replayed=1 last_rollback_total_us=8981",
+      "status": "fixed_in_main",
+      "finding": "All three logs enter LevelSucceeded and open debriefing immediately before desync. A regression reproduces unequal host/client hashes when a late QuitMissionRequested is replayed across predicted hourglasses: character speech timers continue aging after the host freezes them. The engine now retains the completed terminal outcome through snapshots, suppresses repeated terminal/presentation work, and continues admitting commands. Regression covers recent and sparse rollback and native snapshot retention.",
+      "validation": "Regression fails before the fix and passes after it for recent and sparse history; native snapshots retain terminal outcome. Full audio/multiplayer client suite: 2359 passed, 27 ignored. Native binary build passed; all 22 protocol tests passed.",
+      "fix_commit": "af7b052de"
+    },
+    {
+      "id_prefix": "2862df0300d0",
+      "kind": "fatal_error",
+      "engine_commit": "bb5fb2a90929",
+      "description": "Failed to fetch",
+      "status": "under_investigation",
+      "finding": "Browser bootstrap reaches wasm module instantiation and then reports Failed to fetch. Neither report includes an attachment, failed URL, HTTP status, or further stack evidence; specific network/deployment cause cannot be established from these payloads."
+    },
+    {
+      "id_prefix": "3bccb3668d60",
+      "kind": "bug",
+      "engine_commit": "1466391921a5efcb732e3a74363edb31b44887c3",
+      "description": "multiplayer DESYNC: frame=7850 local=0e31fc2250065f81 host=751d37c302e44a69 local_seat=PlayerId(1) local_frame=7850 host_schedule_frame=Some(7851) pending_input_frames=2 last_rollback_path=recent-timeline-history last_rollback_earliest=7825 last_rollback_target=7826 last_rollback_replayed=1 last_rollback_total_us=24119",
+      "status": "fixed_in_main",
+      "finding": "All three logs enter LevelSucceeded and open debriefing immediately before desync. A regression reproduces unequal host/client hashes when a late QuitMissionRequested is replayed across predicted hourglasses: character speech timers continue aging after the host freezes them. The engine now retains the completed terminal outcome through snapshots, suppresses repeated terminal/presentation work, and continues admitting commands. Regression covers recent and sparse rollback and native snapshot retention.",
+      "validation": "Regression fails before the fix and passes after it for recent and sparse history; native snapshots retain terminal outcome. Full audio/multiplayer client suite: 2359 passed, 27 ignored. Native binary build passed; all 22 protocol tests passed.",
+      "fix_commit": "af7b052de"
+    },
+    {
+      "id_prefix": "67a68c1defac",
+      "kind": "panic",
+      "engine_commit": "7c505639fd6b5047e4ab2eac354fa0b4d23bd8a4",
+      "description": "panicked at crates/robin_engine/src/engine/ai/friend_check_execution.rs:232:17:\nfriend-check partner's post is not visible",
+      "status": "under_investigation",
+      "finding": "Exploratory input-only reconstruction against current prepared-navigation code and fullgame_gog completed all 289 recorded input ordinals plus 20 additional ticks without the reported frame-286 panic. Old state hashes were deliberately omitted and the header normalized locally; this is not an exact old-build replay verification or proof for the affected Steam assets. Current guard visibility implementation was checked against reference behavior and not weakened."
+    },
+    {
+      "id_prefix": "6d9faca2c4e6",
+      "kind": "panic",
+      "engine_commit": "1466391921a5efcb732e3a74363edb31b44887c3",
+      "description": "panicked at crates/robin_engine/src/engine/movement/formation.rs:236:38:\nrecorded group move has no resolved goal sector",
+      "status": "fixed",
+      "finding": "Host and client crash at frame 18112 in S01_Not_VL with matching final recorded inputs. Route recording now preserves explicit sector identity, resolves an authorized snapped destination if needed, and rejects an unmapped destination.",
+      "fix_commit": "d1a71518e",
+      "validation": "Regression covers snapped destination resolution, invalid destination rejection, explicit route preservation and group quick-action planning. Full engine suite: 4350 passed, 44 ignored."
+    },
+    {
+      "id_prefix": "87049971cc8d",
+      "kind": "bug",
+      "engine_commit": "7c505639fd6b5047e4ab2eac354fa0b4d23bd8a4",
+      "description": "Mission launch failed: The saved game could not be loaded.\n\nsnapshot fast-grid sectors runtime length 216 does not match loaded level length 189",
+      "status": "under_investigation"
+    },
+    {
+      "id_prefix": "95cee566db9f",
+      "kind": "fatal_error",
+      "engine_commit": "1466391921a5efcb732e3a74363edb31b44887c3",
+      "description": "core overlay startup validation failed for assets/core-datadir: core overlay physical inventory mismatch (missing: [\"Data/Interface/UI/allied_formation_box.png\", \"Data/Interface/UI/allied_formation_flank.png\", \"Data/Interface/UI/allied_formation_line.png\", \"Data/Interface/UI/allied_formation_staggered.png\", \"Data/Interface/UI/allied_patrol_off.png\", \"Data/Interface/UI/allied_patrol_on.png\", \"Data/Interface/UI/allied_pin_pinned.png\", \"Data/Interface/UI/allied_pin_unpinned.png\", \"Data/Interface/UI/allied_portrait_background.png\", \"Data/Interface/UI/allied_portrait_foreground.png\", \"Data/Interface/UI/allied_portrait_generic.png\", \"Data/Interface/UI/allied_portrait_guisbourne.png\", \"Data/Interface/UI/allied_portrait_longchamp.png\", \"Data/Interface/UI/allied_portrait_prince_john.png\", \"Data/Interface/UI/allied_portrait_scathlock.png\", \"Data/Interface/UI/allied_portrait_sheriff.png\", \"Data/Interface/UI/allied_stance_aggressive.png\", \"Data/Interface/UI/allied_stance_defensive.png\", \"Data/Interface/UI/allied_stance_hold.png\"]; unexpected: [])",
+      "status": "under_investigation",
+      "finding": "Nineteen allied UI PNGs absent from installed core overlay. All are tracked in the reported build and the packaging staging script copies the entire overlay. Need distinguish incomplete installation from wrong overlay selection; do not bypass integrity validation."
+    },
+    {
+      "id_prefix": "a2a18c60075f",
+      "kind": "panic",
+      "engine_commit": "1466391921a5efcb732e3a74363edb31b44887c3",
+      "description": "panicked at crates/robin_rs/src/main_menu/multiplayer_menu.rs:2613:14:\nprofile checkpoint mission must exist in campaign catalogue",
+      "status": "fixed_in_main",
+      "finding": "Campaign menu asserted that checkpoint metadata mission IDs exist in the current campaign catalogue. Continue now uses the decoded checkpoint mission descriptor and co-op rules, matching explicit Load Save. Invalid payloads leave the recovery picker accessible.",
+      "validation": "Authored fullgame_gog campaign menu regression passed, including absent mission catalogue entry and corrupt save. Client suite: 2359 passed, 27 ignored.",
+      "fix_commit": "46bd58cb0"
+    },
+    {
+      "id_prefix": "a731d82709d8",
+      "kind": "fatal_error",
+      "engine_commit": "bb5fb2a90929",
+      "description": "Failed to fetch",
+      "status": "under_investigation",
+      "finding": "Browser bootstrap reaches wasm module instantiation and then reports Failed to fetch. Neither report includes an attachment, failed URL, HTTP status, or further stack evidence; specific network/deployment cause cannot be established from these payloads."
+    },
+    {
+      "id_prefix": "c82ed48921e0",
+      "kind": "bug",
+      "engine_commit": "1466391921a5efcb732e3a74363edb31b44887c3",
+      "description": "multiplayer DESYNC: frame=11675 local=1dfb8711147e7d7a host=bc2438cf35e0e053 local_seat=PlayerId(1) local_frame=11675 host_schedule_frame=Some(11676) pending_input_frames=2 last_rollback_path=recent-timeline-history last_rollback_earliest=11649 last_rollback_target=11651 last_rollback_replayed=2 last_rollback_total_us=31725",
+      "status": "fixed_in_main",
+      "finding": "All three logs enter LevelSucceeded and open debriefing immediately before desync. A regression reproduces unequal host/client hashes when a late QuitMissionRequested is replayed across predicted hourglasses: character speech timers continue aging after the host freezes them. The engine now retains the completed terminal outcome through snapshots, suppresses repeated terminal/presentation work, and continues admitting commands. Regression covers recent and sparse rollback and native snapshot retention.",
+      "validation": "Regression fails before the fix and passes after it for recent and sparse history; native snapshots retain terminal outcome. Full audio/multiplayer client suite: 2359 passed, 27 ignored. Native binary build passed; all 22 protocol tests passed.",
+      "fix_commit": "af7b052de"
+    },
+    {
+      "id_prefix": "cadd74b909a5",
+      "kind": "panic",
+      "engine_commit": "1466391921a5efcb732e3a74363edb31b44887c3",
+      "description": "panicked at crates/robin_rs/src/main_menu/multiplayer_menu.rs:2613:14:\nprofile checkpoint mission must exist in campaign catalogue",
+      "status": "fixed_in_main",
+      "finding": "Campaign menu asserted that checkpoint metadata mission IDs exist in the current campaign catalogue. Continue now uses the decoded checkpoint mission descriptor and co-op rules, matching explicit Load Save. Invalid payloads leave the recovery picker accessible.",
+      "validation": "Authored fullgame_gog campaign menu regression passed, including absent mission catalogue entry and corrupt save. Client suite: 2359 passed, 27 ignored.",
+      "fix_commit": "46bd58cb0"
+    },
+    {
+      "id_prefix": "d8dbdd57d79b",
+      "kind": "fatal_error",
+      "engine_commit": "f7f69c83b9b1d1714592fe66716e9df494041051",
+      "description": "failed to load replay: local JSONL replay decode failed: invalid assembled replay: unsupported replay schema version 57; expected 67",
+      "status": "expected_incompatible_replay_rejection",
+      "finding": "Schema 57 recordings are explicitly incompatible with schema 67. Replay contract intentionally rejects older native layouts; this is not a new engine crash. Diagnostic is from a local development launch."
+    },
+    {
+      "id_prefix": "e0817e1f5acd",
+      "kind": "panic",
+      "engine_commit": "7c505639fd6b5047e4ab2eac354fa0b4d23bd8a4",
+      "description": "panicked at crates/robin_engine/src/engine/ai/friend_check_execution.rs:232:17:\nfriend-check partner's post is not visible",
+      "status": "under_investigation",
+      "finding": "Exploratory input-only reconstruction against current prepared-navigation code and fullgame_gog completed all 302 recorded input ordinals plus 20 additional ticks without the reported frame-299 panic. Old state hashes were deliberately omitted and the header normalized locally; this is not an exact old-build replay verification or proof for the affected Steam assets. Current guard visibility implementation was checked against reference behavior and not weakened."
+    },
+    {
+      "id_prefix": "f2f3b71c6e03",
+      "kind": "panic",
+      "engine_commit": "1466391921a5efcb732e3a74363edb31b44887c3",
+      "description": "panicked at crates/robin_engine/src/engine/movement/formation.rs:236:38:\nrecorded group move has no resolved goal sector",
+      "status": "fixed",
+      "finding": "Host and client crash at frame 18112 in S01_Not_VL with matching final recorded inputs. Route recording now preserves explicit sector identity, resolves an authorized snapped destination if needed, and rejects an unmapped destination.",
+      "fix_commit": "d1a71518e",
+      "validation": "Regression covers snapped destination resolution, invalid destination rejection, explicit route preservation and group quick-action planning. Full engine suite: 4350 passed, 44 ignored."
+    }
+  ],
+  "compatibility": {
+    "native_snapshot": 11,
+    "replay_schema": 71,
+    "disk_save_format": 97,
+    "note": "Completed terminal outcome is a defaulted JSON field; disk save compatibility remains unchanged. Native codecs version their changed layout."
+  },
+  "validation": {
+    "client_before_terminal_fix": "2359 passed, 27 ignored",
+    "native_build_before_terminal_fix": "passed",
+    "terminal_regression_before_fix": "fails with different host/client state hashes when a speech timer is present",
+    "client_after_terminal_fix": "2359 passed, 27 ignored; 39.34 seconds with audio/multiplayer test binary and configured 32 MiB stacks",
+    "terminal_regression_after_fix": "passed for recent and sparse history; native snapshot retains LevelSucceeded",
+    "native_build_after_terminal_fix": "cargo build -p robin_rs --bin robin passed",
+    "protocol_after_schema_update": "22 passed",
+    "engine_after_group_move_fix": "4350 passed, 44 ignored"
+  },
+  "verified_fixes_merge": "620bc35a7"
+}
