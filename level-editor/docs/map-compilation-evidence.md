@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Opposing traffic on exported ladders (2026-10-09)
+
+`exported_ladder_serializes_opposing_actor_routes` exercises the native occupancy
+rules through exported ladder routes with complete character sprites. Two PCs
+start from opposite endpoints at each of four rotations, with either endpoint's
+actor created first. Two additional cases run four PCs on two copied ladders.
+All **10 scenarios / 24 actor traversals pass**.
+
+The audit requires actual occupied-ladder waiting, excludes simultaneous opposing
+reservations on each ladder, and checks that every actor acquires and releases its
+reservation before reaching the exported destination on the expected layer and
+receiver. The copied cases additionally require simultaneous reservations on the
+independent ladders, ruling out an accidentally shared occupancy identity.
+
+Fresh compiler equality tests regenerate both the rotated and copied fixtures
+from editor documents and reusable asset definitions. No production engine or
+compiler changes were required. These are directly dispatched gate routes, not
+group-click formation tests. Combat, same-direction crowds, interrupted occupancy,
+actor overlap/crushing and rendered interaction remain broader coverage gaps.
+
 ## Passage barriers during climb exit animations (2026-10-09)
 
 The native passage audit now closes the prepared barrier during exit animations

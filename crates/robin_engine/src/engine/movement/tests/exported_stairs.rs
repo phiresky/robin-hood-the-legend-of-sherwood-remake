@@ -905,6 +905,175 @@ fn changing_climb_exit_barrier_closes_during_animation() {
     audit_climb_barrier_animation(true);
 }
 
+#[test]
+#[ignore = "requires ROBIN_CLIMB_RHS"]
+fn exported_ladder_serializes_opposing_actor_routes() {
+    let sprite = complete_climb_sprite();
+    let mut fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-changing-climbs.levels.json"
+    )))
+    .unwrap();
+    fixtures.extend(
+        serde_json::from_slice::<Vec<serde_json::Value>>(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/asset-changing-climbs-copied.levels.json"
+        )))
+        .unwrap(),
+    );
+    let mut checked = 0;
+    for (placement, fixture) in fixtures.iter().enumerate() {
+        if fixture["asset_geometry"]["lifts"][0]["lift_type"] != 2 {
+            continue;
+        }
+        for first_entrance in [0, 1] {
+            let (mut engine, mut assets) = compiled_walkway(&serde_json::to_vec(fixture).unwrap());
+            let sim = crate::sim_rng::test_context();
+            let mut actors = Vec::new();
+            let lift_count = fixture["asset_geometry"]["lifts"].as_array().unwrap().len();
+            for entrance in (0..lift_count)
+                .flat_map(|copy| [copy * 2 + first_entrance, copy * 2 + 1 - first_entrance])
+            {
+                let exit = entrance ^ 1;
+                let enter = engine.script_domains.interactables.doors[entrance].clone();
+                let leave = engine.script_domains.interactables.doors[exit].clone();
+                let source = crate::position_interface::SectorHandle::from_number(enter.sector_out)
+                    .with_arena_index(enter.sector_out_index.unwrap());
+                let destination =
+                    crate::position_interface::SectorHandle::from_number(leave.sector_out)
+                        .with_arena_index(leave.sector_out_index.unwrap());
+                let owner = walking_pc(
+                    &mut engine,
+                    &mut assets,
+                    enter.point_out,
+                    enter.layer_out,
+                    source,
+                );
+                engine.ent_mut(owner).pc_data_mut().unwrap().has_climb = true;
+                let element = engine.ent_mut(owner).element_data_mut();
+                let position = element.sprite.position_iface.clone();
+                element.sprite = sprite.clone();
+                element.sprite.position_iface = position;
+                let receiver = engine.get_projection_area_index(
+                    &assets,
+                    source,
+                    enter.layer_out,
+                    enter.point_out,
+                );
+                engine.set_obstacle_and_material(&assets, owner, receiver);
+                let path = vec![
+                    crate::gate::GatePathStep {
+                        door_index: crate::gate::DoorIndex::new(entrance as u32).unwrap(),
+                        direct: true,
+                    },
+                    crate::gate::GatePathStep {
+                        door_index: crate::gate::DoorIndex::new(exit as u32).unwrap(),
+                        direct: false,
+                    },
+                ];
+                engine
+                    .launch_gate_movement_sequence(
+                        TickCtx::new(&sim, &assets),
+                        &mut vec![],
+                        crate::engine::movement::GateRouteRequest {
+                            entity_id: owner,
+                            source_sector: Some(source),
+                            gate_path: path,
+                            goal: crate::engine::movement::GoalShape::Point {
+                                point: leave.point_out,
+                                tolerance: 0.,
+                            },
+                            goal_layer: leave.layer_out,
+                            base_action: OrderType::WalkingUpright,
+                            move_after_last_door: true,
+                            speed_factor: 1.,
+                            initial_flags: crate::sequence::MoveFlags::empty(),
+                            prefix_elements: vec![],
+                            tail_elements: vec![],
+                            append_arrival_speech: false,
+                            append_recovery: false,
+                        },
+                    )
+                    .expect("exported ladder must build an actor route");
+                actors.push((owner, leave, destination));
+            }
+            let mut arrived = vec![false; actors.len()];
+            let mut reserved = vec![false; actors.len()];
+            let mut waited_for_opponent = vec![false; lift_count];
+            let mut copies_active_together = false;
+            for _ in 0..2000 {
+                engine.control.frame_counter += 1;
+                engine.t_hourglass_phase_sequences(&assets);
+                engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
+                engine.t_tick_actor_owner_envelopes(&assets);
+                let active = actors
+                    .iter()
+                    .map(|(owner, _, _)| engine.ent(*owner).actor_data().unwrap().active_lift)
+                    .collect::<Vec<_>>();
+                for pair in active.chunks_exact(2) {
+                    assert!(
+                        !(pair[0].is_some() && pair[1].is_some()),
+                        "opposing reservations overlap at placement {placement}"
+                    );
+                }
+                copies_active_together |= active
+                    .iter()
+                    .filter(|reservation| reservation.is_some())
+                    .count()
+                    > 1;
+                for (index, (owner, leave, destination)) in actors.iter().enumerate() {
+                    reserved[index] |= active[index].is_some();
+                    let command = engine
+                        .entities()
+                        .current_element_for_actor(*owner)
+                        .and_then(|(sequence, element)| engine.seq().get_element(sequence, element))
+                        .map(|element| element.command);
+                    waited_for_opponent[index / 2] |=
+                        command == Some(Command::WaitFreeLift) && active[index ^ 1].is_some();
+                    let element = engine.ent(*owner).element_data();
+                    if reserved[index]
+                        && active[index].is_none()
+                        && element.sector() == Some(*destination)
+                        && element.layer() == leave.layer_out
+                        && (element.position_map() - leave.point_out).length() < 0.01
+                    {
+                        actor_receiver_result(
+                            &engine,
+                            &assets,
+                            *owner,
+                            *destination,
+                            leave.layer_out,
+                            element.position_map(),
+                        )
+                        .unwrap();
+                        arrived[index] = true;
+                    }
+                }
+                if arrived.iter().all(|done| *done) {
+                    break;
+                }
+            }
+            assert!(
+                waited_for_opponent.iter().all(|waited| *waited),
+                "placement {placement} must exercise occupied-ladder waiting"
+            );
+            assert_eq!(
+                arrived,
+                vec![true; actors.len()],
+                "placement {placement}, first entrance {first_entrance}"
+            );
+            if lift_count > 1 {
+                assert!(
+                    copies_active_together,
+                    "copied ladders must admit independent traffic"
+                );
+            }
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 10);
+}
+
 fn audit_climb_barrier_animation(exit_phase: bool) {
     let sprite = complete_climb_sprite();
     let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
