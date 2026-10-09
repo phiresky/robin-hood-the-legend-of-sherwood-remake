@@ -6,6 +6,15 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
+**Fresh keep mask placement (2026-10-09):** the great keep's west-view mask now
+has a finite asset-local ground receiver probe. Two independent copies at four
+rotations and two terrain elevations retain all twelve masks, versus ten before
+the repair. The five raised masks per copy and all other gameplay remain
+unchanged, including correctly remapped mask-control indices. Saved Leicester
+and Wychford compile and load native geometry without keep-mask warnings.
+This verifies receiver binding and data preservation; rendered compositing
+remains open.
+
 **Fresh stair placement regression (2026-10-09):**
 `refinement/check-grounded-stair-placements.mjs` inserts the reusable church-side
 tower through the editor's asset insertion API onto new flat terrain, serializes

@@ -1,0 +1,9 @@
+{
+  "asset": "leicester-great-keep",
+  "mask": "keep-west-view-occlusion",
+  "receiverSegment": [
+    [-404.0673828125, -50.47261056317403, -0.00008286845132099367],
+    [-404.0673828125, -50.47261056317403, 50.000920131548675]
+  ],
+  "review": "Finite ground receiver probe verified with two independent fresh copies at four rotations and two terrain elevations. All six masks per copy bind; the five raised masks and other gameplay remain unchanged, with state-control indices remapped. Saved Leicester and Wychford compile and load native geometry without keep-mask warnings. Only the west-view ground mask receives this probe; rendered compositing remains a separate verification requirement."
+}

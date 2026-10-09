@@ -4,12 +4,43 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published keep ground mask receiving probe (2026-10-09)
+
+The great keep's west-view mask now has a finite local receiver segment from its
+existing anchor to its authored insertion-ground height. Its five raised masks
+retain their existing receivers. The catalog is
+`refinement/catalogs/leicester-keep-mask-receiver.json`; stage it with
+`node refinement/stage-ground-mask-receiver.mjs refinement/catalogs/leicester-keep-mask-receiver.json`.
+The shared staging helper replaces the tower-specific helper and checks the
+descriptor hash, anchor, ground height and schema before preparing an edit.
+
+`refinement/check-grounded-mask-placements.mjs` inserts two copies on new terrain,
+serializes and reopens the document, then exports four rotations at two terrain
+elevations. Baseline `work/map-compile/grounded-mask-placements-2HvhH0` retains
+10 of 12 masks in every case. Candidate `grounded-mask-placements-RCDDxe` retains
+all 12 and loads all eight exports natively. The comparative run
+`grounded-mask-placements-V2Nyq1` additionally checks that every previous mask
+survives unchanged, the two added masks bind ground with disjoint coverage, and
+all other gameplay is identical after remapping mask-control indices.
+
+Saved exports `work/map-compile/saved-map-exports-txqpee` compile and load native
+geometry for both Leicester and Wychford, without keep-mask warnings. Wychford
+retains its separate existing tower receiver warning. Publication snapshots in
+`work/map-compile/ground-mask-receiver-UTfXbT/publication` show only one added
+receiver segment and refreshed descriptor hashes in the two saved scenes.
+Both scenes reopen through the normal pinned-asset loader after publication.
+The installed-library check in `work/map-compile/grounded-mask-placements-4aeYUA`
+passes all eight cases and produces descriptors exactly equal to the staged
+comparative run. Focused script lint, the game build and Rust formatting pass.
+These checks establish receiver binding and data preservation, not complete
+rendered compositing or overall gameplay parity.
+
 ## Published tower mask receiving probe (2026-10-09)
 
 The church-side tower now carries a finite local mask receiver segment from its
 existing anchor to its authored insertion-ground height. The catalog is
 `refinement/catalogs/leicester-church-mask-receiver.json`; reproduce a reviewed
-candidate with `node refinement/stage-church-mask-receiver.mjs`. The staging tool
+candidate with `node refinement/stage-ground-mask-receiver.mjs refinement/catalogs/leicester-church-mask-receiver.json`. The staging tool
 checks the current descriptor hash, anchor, ground height and mask schema, and
 writes a gameplay edit for the existing publication pipeline.
 

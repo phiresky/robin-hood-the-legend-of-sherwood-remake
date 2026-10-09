@@ -5,12 +5,12 @@ import { parseProjectionAssetDescriptor } from "../shared/src/index.ts";
 
 // Author receiver selection from existing asset-local mask and ground metadata.
 // This stages a reviewable edit; configure-surface-jumps performs publication.
-const catalog = JSON.parse(
-  await fs.readFile("refinement/catalogs/leicester-church-mask-receiver.json", "utf8"),
-);
+const [catalogPath, ...extra] = process.argv.slice(2);
+assert.ok(catalogPath && !extra.length, "Provide one reviewed mask receiver catalog");
+const catalog = JSON.parse(await fs.readFile(catalogPath, "utf8"));
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8"));
 const entry = index.assets.find((asset) => asset.id === catalog.asset);
-assert.ok(entry, "Missing tower asset");
+assert.ok(entry, `Missing asset ${catalog.asset}`);
 const bytes = await fs.readFile(`library/3d-assets/${entry.descriptor}`, "utf8");
 const digest = createHash("sha256").update(bytes).digest("hex");
 assert.equal(digest, entry.descriptor_sha256, "Asset index is stale");
@@ -24,7 +24,7 @@ assert.ok(!mask.receiverPoints && !mask.receiverPolyline && !mask.receiverPolyli
 if (mask.receiverSegment) assert.deepEqual(mask.receiverSegment, catalog.receiverSegment);
 mask.receiverSegment = catalog.receiverSegment;
 parseProjectionAssetDescriptor(descriptor);
-const output = await fs.mkdtemp("work/map-compile/church-mask-receiver-");
+const output = await fs.mkdtemp("work/map-compile/ground-mask-receiver-");
 await fs.writeFile(`${output}/asset.json`, JSON.stringify(descriptor) + "\n");
 await fs.writeFile(
   `${output}/edits.json`,
