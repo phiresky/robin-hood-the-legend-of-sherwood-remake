@@ -6,6 +6,23 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
+**Fresh stair placement regression (2026-10-09):**
+`refinement/check-grounded-stair-placements.mjs` inserts the reusable church-side
+tower through the editor's asset insertion API onto new flat terrain, serializes
+and reopens each document, then exports two independent copies at four rotations
+and two elevations. Grounding retains both stairs and all four entrances per
+copy. The complete-sprite native stair audit currently passes only 40 of 64
+directed routes: eight stall inside the lower stair at 180 degrees, and sixteen
+are forbidden by upper-entrance collision checks at 0/90 degrees. Both elevations
+and copies reproduce the failures. At 180 degrees the exported lower corridor
+is too narrow for the native 12-by-6 actor footprint; retaining its entrance
+records does not make it traversable. Both copies also warn that their projectile
+mask cannot bind a receiving layer on the new terrain. These are open reusable
+asset/export defects, separate from the saved Wychford placement mismatch below.
+The regression must pass all 64 routes without counting forbidden routes as
+success before this asset is certified. No runtime routing solver is required
+or reintroduced by this audit.
+
 **Broader verification (2026-10-09):** the full editor suite now reports 1,058
 passed, two skipped and one failure: the named-size preset test reads a locally
 edited Croisement02 scene with `size: null`. That scene was left untouched.
