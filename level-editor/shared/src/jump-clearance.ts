@@ -100,6 +100,36 @@ export function mergeIntervals(intervals: Interval[]): Interval[] {
   return result;
 }
 
+/** Bound changes in fixed-step integration caused by a varying launch height. */
+export function boundedLongJumpTrajectory(start: Vec3, targets: Vec3[], error: number) {
+  const positions = integratedLongJumpTrajectory(start, targets);
+  const result: { a: Vec3; b: Vec3; padding: number }[] = [];
+  const rounding = Math.max(1, ...[start, ...targets].flat().map(Math.abs)) * 2 ** -20;
+  let previous = start;
+  for (const [index, target] of targets.entries()) {
+    const distance = Math.hypot(...target.map((value, axis) => value - previous[axis]!));
+    const minimum = distance - error - rounding;
+    if (minimum <= EPSILON) throw new Error("Long-flight uncertainty reaches a zero-length order");
+    const frames = (length: number) =>
+      Math.trunc(Math.max(1, Math.fround(Math.fround(length * 0.125) - 1)));
+    const count = frames(distance);
+    const differingFrames = Math.max(
+      count - frames(minimum),
+      frames(distance + error + rounding) - count,
+    );
+    // For a fixed frame count, radial motion preserves radial error and scales
+    // tangential error by |1 - travelled/distance|. A frame-count change adds
+    // at most one eight-unit step per differing frame.
+    const scale = Math.max(1, Math.abs(1 - (count * 8) / minimum));
+    error = scale * error + differingFrames * 8 + rounding;
+    const next = positions[index + 1]!;
+    result.push({ a: previous, b: next, padding: error });
+    previous = next;
+  }
+  if (targets.length) result.push({ a: previous, b: targets.at(-1)!, padding: error });
+  return result;
+}
+
 /** Precompute solid prisms once, then intersect the full flight ribbon, not sampled rays. */
 export function createJumpClearance(obstacles: SightObstacle[]) {
   const receivers = obstacles
@@ -230,10 +260,6 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
     const planes =
       !long && Math.abs(edges[0].a[2] - edges[1].a[2]) >= 60 ? edges.map(receiverPlane) : undefined;
     const sloped = planes?.some((plane) => Math.abs(plane[0]) + Math.abs(plane[1]) >= EPSILON);
-    if (sloped && Math.abs(edges[0].a[2] - edges[1].a[2]) < 100)
-      throw new Error(
-        "Sloped climbs below the assisted vertical threshold need authored connections",
-      );
     const blocked: Interval[] = [];
     for (const [source, destination, reverse] of [
       [edges[0], edges[1], false],
@@ -264,7 +290,7 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
             planes![reverse ? 0 : 1]!,
           )
         : [];
-      const flights: [Vec3, Vec3, number][] = [];
+      const flights: [Vec3, Vec3, number, number?][] = [];
       const addPath = (path: Vec3[], extraHeight = 0) => {
         for (let i = 1; i < path.length; i++) flights.push([path[i - 1]!, path[i]!, extraHeight]);
       };
@@ -281,6 +307,34 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
         ])
           addPath(path);
         flights.push([start, destination.b, 0]);
+        if (sloped) {
+          const bind = (point: Vec3, plane: HeightPlane): Vec3 => {
+            const y = point[1] - point[2];
+            const z = planeHeight(plane, [point[0], y]);
+            return [point[0], y + z, z];
+          };
+          const sourcePlane = planes![reverse ? 1 : 0]!;
+          const boundSource = bind(source.a, sourcePlane);
+          const boundStart = bind(start, sourcePlane);
+          const boundShoulders: Vec3 = [boundSource[0], boundSource[1], boundSource[2] + 40];
+          const endHeight = planeHeight(sourcePlane, [source.b[0], source.b[1] - source.b[2]]);
+          const error = Math.SQRT2 * Math.abs(endHeight - boundSource[2]);
+          // Takeoff stays bound to the source plane. Flight targets still use
+          // the stored ledge height; only the actual integration start changes.
+          // Bound the small receiver-height variation across rounded ledges.
+          flights.push(
+            [boundSource, boundStart, 0, error],
+            [boundSource, boundShoulders, 0, error],
+          );
+          for (const [launch, goals] of [
+            [boundStart, targets],
+            [boundStart, [destination.b]],
+            [boundShoulders, targets],
+          ] satisfies [Vec3, Vec3[]][])
+            for (const step of boundedLongJumpTrajectory(launch, goals, error))
+              flights.push([step.a, step.b, 0, step.padding]);
+          addPath([destination.b, bind(destination.b, planes![reverse ? 0 : 1]!)]);
+        }
       }
       if (!sloped && !long && Math.abs(rise) >= 60) {
         if (rise > 0) {
@@ -309,21 +363,34 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
       }
       const ribbons: VerticalFlightRibbon[] = [
         ...slopedRibbons,
-        ...flights.map(([a, b, extraHeight]): VerticalFlightRibbon => ({
+        ...flights.map(([a, b, extraHeight, padding]): VerticalFlightRibbon => ({
           points: [a, b, [b[0] + dx, b[1] + dy, b[2]], [a[0] + dx, a[1] + dy, a[2]]],
           extraHeight,
+          padding,
         })),
       ];
-      for (const { points, extraHeight, shift } of ribbons) {
+      for (const { points, extraHeight, shift, padding = 0 } of ribbons) {
         const ribbon: Vertex[] = points.map((point, i) => [...point, i < 2 ? 0 : 1]);
         const minX =
-          Math.min(...ribbon.map((p) => p[0])) - body.radius + Math.min(0, shift?.[0] ?? 0);
+          Math.min(...ribbon.map((p) => p[0])) -
+          body.radius -
+          padding +
+          Math.min(0, shift?.[0] ?? 0);
         const maxX =
-          Math.max(...ribbon.map((p) => p[0])) + body.radius + Math.max(0, shift?.[0] ?? 0);
+          Math.max(...ribbon.map((p) => p[0])) +
+          body.radius +
+          padding +
+          Math.max(0, shift?.[0] ?? 0);
         const minY =
-          Math.min(...ribbon.map((p) => p[1])) - body.radius + Math.min(0, shift?.[1] ?? 0);
+          Math.min(...ribbon.map((p) => p[1])) -
+          body.radius -
+          padding +
+          Math.min(0, shift?.[1] ?? 0);
         const maxY =
-          Math.max(...ribbon.map((p) => p[1])) + body.radius + Math.max(0, shift?.[1] ?? 0);
+          Math.max(...ribbon.map((p) => p[1])) +
+          body.radius +
+          padding +
+          Math.max(0, shift?.[1] ?? 0);
         for (const prism of prisms) {
           if (
             maxX < prism.bounds[0] ||
@@ -333,16 +400,24 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
           )
             continue;
           if (sloped) {
-            const envelope = { ...body, height: body.height + extraHeight };
+            const envelope = {
+              radius: body.radius + padding,
+              height: body.height + extraHeight + 2 * padding,
+            };
             const range = ribbonParameterRange(
               points,
               prism.planes.map((plane) => (point) => {
-                const value = plane([...point, 0], envelope);
+                const value = plane([point[0], point[1], point[2] - padding, 0], envelope);
                 return shift
                   ? Math.max(
                       value,
                       plane(
-                        [point[0] + shift[0], point[1] + shift[1], point[2] + shift[2], 0],
+                        [
+                          point[0] + shift[0],
+                          point[1] + shift[1],
+                          point[2] + shift[2] - padding,
+                          0,
+                        ],
                         envelope,
                       ),
                     )

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   createJumpClearance,
+  boundedLongJumpTrajectory,
   integratedJumpTrajectory,
   integratedLongJumpTrajectory,
   longJumpTrajectory,
@@ -9,6 +10,41 @@ import {
 } from "./jump-clearance.ts";
 import { assembleJumpSegments, type PlacedJumpSegment } from "./assemble-jump-segments.ts";
 import type { SightObstacle } from "./level.ts";
+import type { Vec3 } from "./scene.ts";
+
+test("long-flight bounds cover launch variation across airborne frame thresholds", () => {
+  for (const distance of [7.99, 8, 15.99, 16, 16.01, 24, 40, 100]) {
+    const targets: Vec3[] = [
+      [distance, 0, 0],
+      [distance + 100, 20, 30],
+    ];
+    const bounds = boundedLongJumpTrajectory([0, 0, 0], targets, 0.04);
+    for (const direction of [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+      [0, Math.SQRT1_2, Math.SQRT1_2],
+    ])
+      for (const amount of [-0.04, -0.02, 0, 0.02, 0.04]) {
+        const start = direction.map((axis) => axis * amount) as Vec3;
+        const path = integratedLongJumpTrajectory(start, targets);
+        for (const [index, bound] of bounds.entries()) {
+          // Endpoint error bounds also enclose the straight fixed-step segment.
+          const error = Math.hypot(
+            ...path[index + 1]!.map((value, axis) => value - bound.b[axis]!),
+          );
+          assert.ok(
+            error <= bound.padding + 0.00001,
+            `${distance}/${amount}/${index}: ${error} > ${bound.padding}`,
+          );
+        }
+      }
+  }
+  assert.throws(
+    () => boundedLongJumpTrajectory([0, 0, 0], [[0.01, 0, 0]], 0.02),
+    /zero-length order/,
+  );
+});
 
 const edges: [JumpEdge, JumpEdge] = [
   { zone: "left", a: [0, 100, 0], b: [0, 0, 0] },
@@ -152,10 +188,7 @@ test("automatic vertical clearance follows the receiving plane during the landin
     point[1] -= 20;
     point[2] -= 20;
   }
-  assert.throws(
-    () => createJumpClearance([lowerReceiver])(shallow, false),
-    /assisted vertical threshold/,
-  );
+  assert.deepEqual(createJumpClearance([lowerReceiver])(shallow, false), []);
 });
 
 test("flight clearance intersects the whole span, including thin off-centre obstacles", () => {

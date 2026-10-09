@@ -6,6 +6,7 @@ export interface VerticalFlightRibbon {
   /** Start/end at parameter zero, then end/start at parameter one. */
   points: [Vec3, Vec3, Vec3, Vec3];
   extraHeight: number;
+  padding?: number;
   shift?: Vec3;
 }
 

@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Mixed-posture sloped climbing clearance (2026-10-09)
+
+The exporter now reserves both possible flights for sloped climbs between 60 and
+100 units: upright climbing and assisted long flight. Long-flight takeoff follows
+the source plane while its targets retain the stored ledge heights. Rounded
+coordinates can make receiver height vary slightly along an otherwise level
+ledge. Export propagates a conservative launch-error bound through each airborne
+order, including discrete frame-count changes. Clearance expands its flight
+envelopes by that bound; no per-tick or load-time solver is added.
+
+A unit regression varies launch position across frame-count thresholds and checks
+the resulting integration endpoints against their bounds. If a bound reaches a
+zero-length order, compilation warns and omits that connection rather than assuming
+a flight direction. Ambiguous/changing receiver planes retain their existing warnings.
+
+The automatic repositioned batches below each pass 160 isolated traversals and
+160 player-click routes, eight editor reopen/recompile checks and 32 independent-copy
+disconnection controls. All use four rotations and two base elevations.
+
+| Batch suffix (`prepared-vertical-jumps-`) | Rise | Receiver slope | Surface-derived | Clearance positions |
+|---|---:|---:|---|---:|
+| ApSPSL | 80 | 0.1 | No | 6,360 |
+| yFUFJa | 80 | -0.1 | No | 6,360 |
+| LxXJF5 | 60 | 0.1 | No | 6,020 |
+| bvrnbH | 99 | 0.1 | No | 6,700 |
+| dLKKXn | 80 | 0.1 | Yes | 6,420 |
+| PE8LWv | 80 | -0.1 | Yes | 6,380 |
+
+Totals: **1,920 native traversal/click checks and 38,240 covered native positions**.
+The 250 selected compiler/export tests pass. These results close the previous
+blanket rejection of mixed-posture sloped climbs. Broader library authoring,
+rendering, combat and multi-PC interactions remain open; full parity is not claimed.
+
 ## Posture-dependent climbing threshold checks (2026-10-09)
 
 The vertical-placement generator accepts `--rise=60` through `--rise=100`.
