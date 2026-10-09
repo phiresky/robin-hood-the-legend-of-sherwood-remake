@@ -316,11 +316,23 @@ fn walk_exported_lift(
 }
 
 fn walk_exported_lift_with_tick(
+    engine: EngineInner,
+    assets: LevelAssets,
+    entrance: usize,
+    exit: usize,
+    sprite: Option<&crate::sprite::Sprite>,
+    tick: impl FnMut(&mut EngineInner, &LevelAssets, crate::element::EntityId),
+) -> Result<bool, String> {
+    walk_exported_lift_route(engine, assets, entrance, exit, sprite, false, tick)
+}
+
+fn walk_exported_lift_route(
     mut engine: EngineInner,
     mut assets: LevelAssets,
     entrance: usize,
     exit: usize,
     sprite: Option<&crate::sprite::Sprite>,
+    discover_gates: bool,
     mut tick: impl FnMut(&mut EngineInner, &LevelAssets, crate::element::EntityId),
 ) -> Result<bool, String> {
     let doors = &engine.script_domains.interactables.doors;
@@ -365,7 +377,7 @@ fn walk_exported_lift_with_tick(
         engine.get_projection_area_index(&assets, source_sector, enter.layer_out, enter.point_out);
     engine.set_obstacle_and_material(&assets, owner, receiver);
     let sim = crate::sim_rng::test_context();
-    let path = vec![
+    let prepared_path = vec![
         crate::gate::GatePathStep {
             door_index: crate::gate::DoorIndex::new(entrance as u32).unwrap(),
             direct: true,
@@ -375,6 +387,43 @@ fn walk_exported_lift_with_tick(
             direct: false,
         },
     ];
+    let path = if discover_gates {
+        let path = crate::gate::find_path_gates_with_sector_indices(
+            &engine.script_domains.interactables.doors,
+            (enter.point_out.x, enter.point_out.y),
+            source_sector.get(),
+            source_sector.arena_index(),
+            (leave.point_out.x, leave.point_out.y),
+            destination_sector.get(),
+            destination_sector.arena_index(),
+            Some(&auth),
+            false,
+            &|_| true,
+            &|number| {
+                engine
+                    .world
+                    .fast_grid
+                    .level
+                    .sectors
+                    .iter()
+                    .find(|sector| sector.sector_number == number)
+                    .and_then(|sector| sector.lift_type)
+            },
+        )
+        .ok_or("native gate search found no stair route")?;
+        if path.len() != prepared_path.len()
+            || path.iter().zip(&prepared_path).any(|(actual, expected)| {
+                actual.door_index != expected.door_index || actual.direct != expected.direct
+            })
+        {
+            return Err(format!(
+                "native gate search selected a different route: {path:?}"
+            ));
+        }
+        path
+    } else {
+        prepared_path
+    };
     let route = engine
         .launch_gate_movement_sequence(
             TickCtx::new(&sim, &assets),
@@ -511,6 +560,42 @@ fn exported_stairs_support_complete_sprite_actor_routes() {
         Some(&sprite),
         "actor-stair-sprite-route-report.json",
     );
+}
+
+#[test]
+#[ignore = "requires ROBIN_ASSET_MAP_DIAGNOSTICS and ROBIN_CLIMB_RHS"]
+fn exported_stairs_discover_complete_sprite_actor_routes() {
+    let sprite = complete_climb_sprite();
+    audit_exported_lift_routes(
+        &[crate::sector::LiftType::Stairs],
+        Some(&sprite),
+        "actor-stair-discovered-route-report.json",
+        true,
+    );
+}
+
+#[test]
+fn compiled_stairs_discover_and_execute_gate_routes() {
+    let bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-lift.level.json"
+    ));
+    let (engine, assets) = compiled_walkway(bytes);
+    for (entrance, exit) in [(0, 1), (1, 0)] {
+        assert_eq!(
+            walk_exported_lift_route(
+                engine.clone(),
+                assets.clone(),
+                entrance,
+                exit,
+                None,
+                true,
+                |_, _, _| {},
+            ),
+            Ok(true),
+            "discovered stair route {entrance}->{exit}"
+        );
+    }
 }
 
 #[test]
@@ -1264,6 +1349,15 @@ fn audit_exported_lifts(
     sprite: Option<&crate::sprite::Sprite>,
     report_name: &str,
 ) {
+    audit_exported_lift_routes(types, sprite, report_name, false);
+}
+
+fn audit_exported_lift_routes(
+    types: &[crate::sector::LiftType],
+    sprite: Option<&crate::sprite::Sprite>,
+    report_name: &str,
+    discover_gates: bool,
+) {
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
@@ -1279,6 +1373,7 @@ fn audit_exported_lifts(
     let mut report = serde_json::json!({
         "scope": "initial-state-directed-lift-walks-between-every-entrance-pair",
         "lift_types": types, "complete_sprite": sprite.is_some(),
+        "gate_discovery": discover_gates,
         "input_snapshot_notes": manifest.get("snapshot_notes"),
         "expected_directed_routes": expected_routes,
         "map_filter": std::env::var("ROBIN_LIFT_AUDIT_MAP").ok(),
@@ -1323,8 +1418,15 @@ fn audit_exported_lifts(
                     if entrance == exit {
                         continue;
                     }
-                    let outcome =
-                        walk_exported_lift(engine.clone(), assets.clone(), entrance, exit, sprite);
+                    let outcome = walk_exported_lift_route(
+                        engine.clone(),
+                        assets.clone(),
+                        entrance,
+                        exit,
+                        sprite,
+                        discover_gates,
+                        |_, _, _| {},
+                    );
                     match outcome {
                         Ok(true) => checked += 1,
                         Ok(false) => skipped += 1,

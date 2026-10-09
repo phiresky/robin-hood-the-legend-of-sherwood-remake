@@ -319,6 +319,15 @@ To repeat stair traversal with a complete character animation profile, set
 the same complete routes with the supplied animation data. This still does not
 render the character or verify visual compositing.
 
+For isolated stair placement fixtures, run
+`exported_stairs_discover_complete_sprite_actor_routes` with the same variables.
+It searches the native gate graph using actor authorization and the source and
+destination sectors, checks that it selects the intended entrance/exit pair,
+then executes that discovered route. Its separate
+`actor-stair-discovered-route-report.json` records `gate_discovery: true`.
+This checks gate discovery and copy isolation, but still supplies endpoint
+sectors directly; it does not cover mouse picking or full player/AI dispatch.
+
 Climbing routes use a complete character animation profile instead of synthetic
 walking frames. Only that explicitly supplied RHS file is mounted; source-level
 files and mission scripts are unavailable. Navigation comes from the compiled

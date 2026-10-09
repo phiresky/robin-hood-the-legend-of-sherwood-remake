@@ -6,6 +6,18 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Expanded stair rotation and placement coverage (2026-10-09)
 
+Follow-up gate-discovery audit: `exported_stairs_discover_complete_sprite_actor_routes`
+passes all 128 routes on `grounded-stair-placements-bO6Dnx`. Report:
+`actor-stair-discovered-route-report.json`. It asks native gate search for an
+authorized path between each pair of endpoint sectors, checks that the path
+uses the intended copy's entrance and exit, then executes the returned path with
+the full sprite and existing arrival/receiver checks. No route is forbidden or
+missing. This closes gate-discovery coverage for this placement matrix; it does
+not exercise mouse picking, full player-command dispatch or AI decision-making.
+Only test code changes in the engine.
+The checked-in bidirectional discovery fixture passes, and the compiled actor
+navigation suite reports 26 passed and 30 opt-in audits ignored.
+
 `work/map-compile/grounded-stair-placements-bO6Dnx` passes **128/128 native
 complete-sprite routes** across rotations 0/37/90/137/180/217/270/317, terrain
 elevations 0/40 and two independent copies. All sixteen documents are inserted,
@@ -37,9 +49,10 @@ The earlier `grounded-stair-placements-zeEUPj` diagnostic fixed 217/270 but
 retained eight 137-degree failures before handling the horizontal margin.
 `grounded-stair-placements-1759OY` first passed the padded matrix; the final
 batch also preserves established native fixture endpoints. All 74 focused
-compiler/approach tests pass without modifying fixtures. The successful native
-audits supply gate sequences; normal player-click and AI route discovery still
-require separate coverage for these newly supported placements.
+compiler/approach tests pass without modifying fixtures. The initial native
+audits supplied gate sequences; the follow-up above also checks native gate
+discovery. Full player-click and AI dispatch still require separate coverage
+for these newly supported placements.
 
 Final verification: the full editor suite reports 1,069 passed, two skipped and
 one unrelated failure: the locally edited Croisement02 preset has `size: null`.
