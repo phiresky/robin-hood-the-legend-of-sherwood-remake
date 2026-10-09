@@ -8,7 +8,7 @@ from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'));sys.path.insert(0,str(Path(__file__).parent))
 from render_slots import acquire
 from restart2_tree08_union import topology
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';monotone='--monotone' in sys.argv;bank_hug='--bank-hug' in sys.argv;packet=R/('tree08-bank-hug-cpu-v2' if bank_hug else 'tree08-monotone-back-cpu-v4-stable' if monotone else 'tree08-root-ray-cpu-v4' if '--fit' in sys.argv else 'tree08-root-ray-cpu-v3');out=R/('tree08-wood-prototype-v16-bank-hug' if bank_hug else 'tree08-wood-prototype-v15-monotone-root-support' if monotone else 'tree08-wood-prototype-v14-root-ray' if '--fit' in sys.argv else 'tree08-wood-prototype-v13-root-ray');parent=R/('tree08-wood-prototype-v14-root-ray/model.blend' if monotone or bank_hug else 'tree08-wood-prototype-v12-local-junctions/model.blend');cap=32*1024**2
+R=ROOT/'level-editor/work/croisement01-refinement/restart2';monotone='--monotone' in sys.argv;bank_band='--bank-band' in sys.argv;bank_hug='--bank-hug' in sys.argv or bank_band;packet=R/('tree08-bank-hug-affine-cpu-v4' if bank_band else 'tree08-bank-hug-cpu-v2' if bank_hug else 'tree08-monotone-back-cpu-v4-stable' if monotone else 'tree08-root-ray-cpu-v4' if '--fit' in sys.argv else 'tree08-root-ray-cpu-v3');out=R/('tree08-wood-prototype-v17-bank-bands' if bank_band else 'tree08-wood-prototype-v16-bank-hug' if bank_hug else 'tree08-wood-prototype-v15-monotone-root-support' if monotone else 'tree08-wood-prototype-v14-root-ray' if '--fit' in sys.argv else 'tree08-wood-prototype-v13-root-ray');parent=R/('tree08-wood-prototype-v14-root-ray/model.blend' if monotone or bank_hug else 'tree08-wood-prototype-v12-local-junctions/model.blend');cap=32*1024**2
 assert not out.exists()
 def guard(reserve=1024**2):
  used=sum(p.stat().st_size for p in out.rglob('*') if p.is_file());assert used+reserve<=cap
@@ -29,10 +29,16 @@ mesh.uv_layers.new(name='Native source projection');bpy.data.meshes.remove(oldme
 mesh.update();bpy.context.view_layer.update();saved_topology=topology(obj);assert not any(saved_topology[k] for k in ['zero_area_triangles','nonmanifold_edges','inconsistent_edge_winding']);s,c=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-c,s));down=Vector((0,-s,-c));right=Vector((1,0,0));uv=mesh.uv_layers.active
 for loop in mesh.loops:
  point=obj.matrix_world@mesh.vertices[loop.vertex_index].co;uv.data[loop.index].uv=((point.x-331)/446,1-(-point.y*s-point.z*c-11)/461)
-if bank_hug:
+if bank_hug and not bank_band:
  for face in mesh.polygons:
   assert tuple(face.vertices) in reference_uv
   for i,value in zip(face.loop_indices,reference_uv[tuple(face.vertices)]):uv.data[i].uv=value
+if bank_band:
+ original_by_position={tuple(tuple(before[i]) for i in indices):value for indices,value in reference_uv.items()}
+ for face in mesh.polygons:
+  key=tuple(tuple(obj.matrix_world@mesh.vertices[i].co) for i in face.vertices)
+  if key in original_by_position:
+   for i,value in zip(face.loop_indices,original_by_position[key]):uv.data[i].uv=value
 guard(8*1024**2);bpy.ops.wm.save_as_mainfile(filepath=str(out/'model.blend'),compress=True);assert (out/'model.blend').stat().st_size<=8*1024**2;model_hash=hashlib.sha256((out/'model.blend').read_bytes()).hexdigest()
 bpy.ops.wm.open_mainfile(filepath=str(out/'model.blend'));scene=bpy.context.scene;obj=next(o for o in scene.objects if o.type=='MESH');mesh=obj.data
 bvh=BVHTree.FromPolygons([obj.matrix_world@v.co for v in mesh.vertices],[list(p.vertices) for p in mesh.polygons]);core=np.asarray(Image.open(R/'tree08-semantic-source-v1/bark-core-proposal.png'))>0;missing=[]
@@ -44,8 +50,13 @@ for yy,xx in np.argwhere(core):
 assert not missing,'Saved model lost source core after local junction reconstruction'
 if monotone or bank_hug:
  saved_faces={tuple(f.vertices):f for f in mesh.polygons};world=np.array([obj.matrix_world@v.co for v in mesh.vertices])
+ by_position={tuple(tuple(world[i]) for i in face.vertices):face for face in mesh.polygons} if bank_band else {}
  for indices in retained_core_faces:
-  assert indices in saved_faces and np.array_equal(world[list(indices)],before[list(indices)]);face=saved_faces[indices];assert reference_uv[indices]==[tuple(mesh.uv_layers.active.data[i].uv) for i in face.loop_indices]
+  if bank_band:
+   key=tuple(tuple(before[i]) for i in indices);assert key in by_position;face=by_position[key]
+  else:
+   assert indices in saved_faces and np.array_equal(world[list(indices)],before[list(indices)]);face=saved_faces[indices]
+  assert reference_uv[indices]==[tuple(mesh.uv_layers.active.data[i].uv) for i in face.loop_indices]
 reopened_topology=topology(obj);assert reopened_topology==saved_topology,'Saved topology changed'
 scene.render.threads_mode='FIXED';scene.render.threads=2;scene.render.image_settings.file_format='PNG';scene.render.resolution_percentage=100;scene.render.film_transparent=False
 scene.world=bpy.data.worlds.new('Neutral review background');scene.world.color=(.1,.1,.1)
@@ -64,4 +75,4 @@ for mode in ['actual','solid']:
  guard(2*1024**2);sheet.save(folder/'sheet.png');records.append(dict(mode=mode,sheet_sha256=hashlib.sha256((folder/'sheet.png').read_bytes()).hexdigest()))
 scene.render.engine='CYCLES';scene.render.resolution_x=446;scene.render.resolution_y=461;camdata.ortho_scale=461;native_target=right*554+down*241.5;cam.location=native_target+ray*1500;cam.rotation_euler=(-ray).to_track_quat('-Z','Y').to_euler();scene.render.filepath=str(out/'native.png');guard();bpy.ops.render.render(write_still=True)
 
-assert hashlib.sha256(parent.read_bytes()).hexdigest()==model_parent_hash;guard();(out/'receipt.json').write_text(json.dumps(dict(status='SAVED HYPOTHESIS; SELF REVIEW PENDING',model_sha256=model_hash,parent_model_sha256=model_parent_hash,cpu_report=report,cpu_intersection_guard_sha256=hashlib.sha256((packet/'intersection-guard.json').read_bytes()).hexdigest(),saved_source_core_pixels=int(core.sum()),source_core_face_geometry_and_uv_exact=True if monotone or bank_hug else None,retained_source_core_faces=len(retained_core_faces),all_uvs_preserved=bank_hug,lower_depth_inferred_refit=bank_hug,miss_native_pixels=missing,saved_topology=saved_topology,actual8_and_solid8=records),indent=2)+'\n');print('ROOT RAY MODEL COMPLETE',model_hash,flush=True)
+assert hashlib.sha256(parent.read_bytes()).hexdigest()==model_parent_hash;guard();(out/'receipt.json').write_text(json.dumps(dict(status='SAVED HYPOTHESIS; SELF REVIEW PENDING',model_sha256=model_hash,parent_model_sha256=model_parent_hash,cpu_report=report,cpu_intersection_guard_sha256=hashlib.sha256((packet/'intersection-guard.json').read_bytes()).hexdigest(),saved_source_core_pixels=int(core.sum()),source_core_face_geometry_and_uv_exact=True if monotone or bank_hug else None,retained_source_core_faces=len(retained_core_faces),all_uvs_preserved=bank_hug and not bank_band,lower_depth_inferred_refit=bank_hug,miss_native_pixels=missing,saved_topology=saved_topology,actual8_and_solid8=records),indent=2)+'\n');print('ROOT RAY MODEL COMPLETE',model_hash,flush=True)
