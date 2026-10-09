@@ -68,7 +68,10 @@
       "finding": "Downloaded published Windows full package for nightly-2026-10-08-1559-1466391921a5. All 19 reportedly missing allied UI PNGs are present. Every packaged core-overlay manifest file passes size and SHA256 validation. Package omission is ruled out; incomplete local extraction/installation or selection of an older working-directory overlay remains unproven. The report records only relative assets/core-datadir, with no executable or working directory.",
       "package_verification": {
         "archive_sha256": "fe8c168dd645a9708087857832bfa3f6cde1acfd63131ca5499644803cc7a118",
-        "validated_files": 36
+        "validated_files": 36,
+        "portable_archive_sha256": "f94073d8d42a1765e3b39083fc6e387b9fd2ebf70ba9e588af48e9208f0b4470",
+        "portable_validated_files": 36,
+        "portable_overlay_root": "current/assets/core-datadir/"
       }
     },
     {
@@ -151,7 +154,8 @@
     "native_build_after_terminal_fix": "cargo build -p robin_rs --bin robin passed",
     "protocol_after_schema_update": "22 passed",
     "engine_after_group_move_fix": "4350 passed, 44 ignored",
-    "browser_preload_diagnostics": "10 tests passed, including network failures at manifest, asset fetch and body read; TypeScript typecheck passed."
+    "browser_preload_diagnostics": "10 tests passed, including network failures at manifest, asset fetch and body read; TypeScript typecheck passed.",
+    "browser_runtime_contract": "Compiled export_runtime_contract rejected stale replay schema 70 before regeneration. Regenerated contract advertises schema 71 and passes --check against compiled engine constants."
   },
   "verified_fixes_merge": "620bc35a7"
 }
