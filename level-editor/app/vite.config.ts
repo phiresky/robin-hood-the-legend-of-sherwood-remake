@@ -5,7 +5,9 @@ import { createReadStream } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
-const library = path.resolve(fileURLToPath(new URL("../library/", import.meta.url)));
+const library = path.resolve(
+  process.env.EDITOR_LIBRARY ?? fileURLToPath(new URL("../library/", import.meta.url)),
+);
 const mime: Record<string, string> = {
   ".json": "application/json",
   ".glb": "model/gltf-binary",

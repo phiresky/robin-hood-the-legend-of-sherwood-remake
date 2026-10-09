@@ -2831,3 +2831,15 @@ both planes on rising and curved spans, including trimmed pieces and holes, and
 asset-frame translation preserves both. Tilted source frames that require distinct
 physical/navigation footprints still warn and omit that clearance in best-effort
 exports; ordinary collision remains.
+
+### Basic Desperados reconstruction
+
+Basic Desperados scene reconstruction is available through
+`python3 level-editor/scripts/import_desperados.py`. It reads the 25 DVD sight
+sections and RGB565 DVM backgrounds from the local Levels.pac, then uses the
+volume projection pipeline with procedural texture filling. Results go to the
+separate `level-editor/work/desperados/library` directory. Set `EDITOR_LIBRARY`
+to that absolute directory when launching the editor to browse these maps.
+These are geometry-only scenes: mission logic, navigation, dynamic patches, and
+material behavior are not imported, and no refinement or floating-part snapping
+is performed. Source game data and generated assets remain local.
