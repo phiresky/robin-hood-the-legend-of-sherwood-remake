@@ -31,6 +31,15 @@ export function resolvePreloadEntries(raw: unknown, manifestUrl: string, buildBa
     });
 }
 
+async function readPreloadResource<T>(signal: AbortSignal, url: string, read: () => Promise<T>): Promise<T> {
+    try {
+        return await withAbort(signal, read);
+    } catch (cause) {
+        signal.throwIfAborted();
+        throw new Error(`preload ${url}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    }
+}
+
 export async function preloadRuntimeAssets(
     wasm: RobinWasmModule,
     buildBase: string,
@@ -47,7 +56,7 @@ export async function preloadRuntimeAssets(
     // injected function detached, as the normal global fetch call would be.
     const fetchAsset = deps.fetch;
     const manifestUrl = `${buildBase}/preload-assets.json`;
-    const manifestResp = await withAbort(signal, () => fetchAsset(manifestUrl, {
+    const manifestResp = await readPreloadResource(signal, manifestUrl, () => fetchAsset(manifestUrl, {
         cache: noCache ? 'no-cache' : 'force-cache',
         signal,
     }));
@@ -57,7 +66,7 @@ export async function preloadRuntimeAssets(
     if (!manifestResp.ok) {
         throw new Error(`fetch ${manifestUrl}: HTTP ${manifestResp.status}`);
     }
-    const raw = await withAbort(signal, () => manifestResp.json()) as unknown;
+    const raw = await readPreloadResource(signal, manifestUrl, () => manifestResp.json()) as unknown;
     const entries = resolvePreloadEntries(raw, manifestUrl, buildBase);
 
     // Fetch and install in the same bounded worker. Keeping every completed
@@ -68,14 +77,14 @@ export async function preloadRuntimeAssets(
         entries,
         PRELOAD_FETCH_CONCURRENCY,
         async ({ path, assetUrl }) => {
-            const assetResp = await withAbort(signal, () => fetchAsset(assetUrl, {
+            const assetResp = await readPreloadResource(signal, assetUrl, () => fetchAsset(assetUrl, {
                 cache: noCache ? 'no-cache' : 'force-cache',
                 signal,
             }));
             if (!assetResp.ok) {
                 throw new Error(`fetch ${assetUrl}: HTTP ${assetResp.status}`);
             }
-            const bytes = new Uint8Array(await withAbort(signal, () => assetResp.arrayBuffer()));
+            const bytes = new Uint8Array(await readPreloadResource(signal, assetUrl, () => assetResp.arrayBuffer()));
             signal.throwIfAborted();
             preloadAsset(path, bytes);
             preloaded += 1;

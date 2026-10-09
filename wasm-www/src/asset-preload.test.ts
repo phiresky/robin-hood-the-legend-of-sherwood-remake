@@ -107,3 +107,28 @@ test('cancelled preload forwards the signal, stops dequeuing and never installs 
     assert.equal(installed, false);
     assert.ok(requested > 0 && requested <= 12);
 });
+
+for (const stage of ['manifest', 'asset', 'body'] as const) {
+    test(`preload ${stage} network failure retains the resource URL and cause`, async () => {
+        const failure = new TypeError('Failed to fetch');
+        const base = 'https://runtime.example/build';
+        await assert.rejects(preloadRuntimeAssets({ default: async () => {}, wasm_boot: () => {},
+            wasm_preload_asset: () => { assert.fail('failed asset must not be installed'); },
+        }, base, false, {
+            fetch: async input => {
+                if (String(input).endsWith('preload-assets.json')) {
+                    if (stage === 'manifest') throw failure;
+                    return Response.json(['broken.bin']);
+                }
+                if (stage === 'asset') throw failure;
+                return new Response(new ReadableStream({ start(controller) { controller.error(failure); } }));
+            },
+            log: () => {}, progress: () => {},
+        }), error => {
+            assert.ok(error instanceof Error);
+            assert.equal(error.cause, failure);
+            assert.equal(error.message, `preload ${base}/${stage === 'manifest' ? 'preload-assets.json' : 'broken.bin'}: Failed to fetch`);
+            return true;
+        });
+    });
+}
