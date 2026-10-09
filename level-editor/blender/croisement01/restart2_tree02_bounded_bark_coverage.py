@@ -7,6 +7,7 @@ from render_slots import acquire,release
 from render_texture_coverage import inspect
 R=ROOT/'level-editor/work/croisement01-refinement/restart2';O=R/'approved-tree02-fill-v1/croisement01-tree-02/baked-v4-bounded-bark-gaps'
 if '--residual' in sys.argv:O=O.with_name('baked-v5-filtered-bark-gaps')
+if '--filtered-leaf' in sys.argv:O=O.with_name('baked-v6-filtered-leaf-gaps')
 assert shutil.disk_usage(R).free>=10*1024**3+4*1024**2;assert next(int(s.split()[1]) for s in Path('/proc/meminfo').read_text().splitlines() if s.startswith('MemAvailable:'))>=6*1024**2
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();before=sha(O/'worker.blend');acquire()
 @bpy.app.handlers.persistent
