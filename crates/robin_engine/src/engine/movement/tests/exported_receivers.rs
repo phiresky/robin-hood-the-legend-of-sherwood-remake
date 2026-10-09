@@ -1,5 +1,160 @@
 use super::*;
 
+#[test]
+#[ignore = "requires exported route_probes and ROBIN_CLIMB_RHS"]
+fn exported_openings_support_complete_sprite_routes() {
+    let sprite = super::exported_stairs::complete_climb_sprite();
+    let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["complete"], true);
+    let mut results = vec![];
+    for result in manifest["results"].as_array().unwrap() {
+        let file = result["file"].as_str().unwrap();
+        let bytes = std::fs::read(directory.join(file)).unwrap();
+        let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let dims = &descriptor["walkable_polygon"][2];
+        for probe in result["route_probes"]
+            .as_array()
+            .expect("authored route probes")
+        {
+            let (mut engine, mut assets) = compiled_walkway_with_dimensions(
+                &bytes,
+                (
+                    dims[0].as_f64().unwrap() as f32 + 1.,
+                    dims[1].as_f64().unwrap() as f32 + 1.,
+                ),
+            );
+            let point = |name: &str| {
+                MapPoint::new(
+                    probe[name][0].as_f64().unwrap() as f32,
+                    probe[name][1].as_f64().unwrap() as f32,
+                )
+            };
+            let source = point("start");
+            let goal = point("end");
+            let layer = u16::try_from(probe["layer"].as_u64().unwrap()).unwrap();
+            let number = u16::try_from(probe["sector"].as_u64().unwrap()).unwrap();
+            let index = engine.world.fast_grid.level.sector_number_map
+                [&crate::sector::SectorNumber::new(number as i16)];
+            let handle = crate::position_interface::SectorHandle::new(number)
+                .unwrap()
+                .with_arena_index(crate::fast_find_grid::SectorIndex::new(index as u32).unwrap());
+            let owner = walking_pc(&mut engine, &mut assets, source, layer, handle);
+            let element = engine.ent_mut(owner).element_data_mut();
+            let position = element.sprite.position_iface.clone();
+            element.sprite = sprite.clone();
+            element.sprite.position_iface = position;
+            let receiver = engine.get_projection_area_index(&assets, handle, layer, source);
+            engine.set_obstacle_and_material(&assets, owner, receiver);
+            let action = OrderType::WalkingUpright;
+            let mut movement = SequenceElement::new_movement(1, Command::Move, Some(owner), action);
+            let crate::sequence::SequenceElementData::Movement {
+                destination,
+                layer: target_layer,
+                sector: target_sector,
+                ..
+            } = &mut movement.data
+            else {
+                unreachable!()
+            };
+            *destination = goal;
+            *target_layer = layer;
+            *target_sector = Some(handle);
+            let sequence = engine.t_launch_in_progress(&assets, movement);
+            let sim = crate::sim_rng::test_context();
+            engine.try_dispatch_move_path(
+                TickCtx::new(&sim, &assets),
+                owner,
+                crate::sequence::SequenceElementRef::new(sequence, 0),
+                goal,
+                action,
+            );
+            for _ in 0..2 {
+                engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
+            }
+            engine.select_sequence_element(owner, Some((sequence, 0)));
+            let half = engine
+                .world
+                .fast_grid
+                .try_move_box_half_diagonal(0)
+                .unwrap();
+            let mut previous = source;
+            let mut distance = 0.;
+            let mut moved_ticks = 0;
+            let mut last_action = None;
+            let mut arrived = false;
+            for _ in 0..1000 {
+                if let Some(order) = engine
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence, 0)
+                    .and_then(|element| element.orders.front())
+                {
+                    last_action = Some(order.order_type);
+                }
+                engine.t_tick_actor_owner_envelopes(&assets);
+                let position = engine.ent(owner).element_data().position_map();
+                assert!(
+                    engine
+                        .world
+                        .fast_grid
+                        .is_reachable_thick(previous, position, layer, half),
+                    "{file}: actor crossed a solid pillar: {previous:?} -> {position:?}"
+                );
+                assert_actor_receiver(&engine, &assets, owner, handle, layer, position);
+                let step = (position - previous).length();
+                distance += step;
+                moved_ticks += usize::from(step > 0.);
+                previous = position;
+                let stopped = engine
+                    .orders
+                    .sequence_manager
+                    .get_element(sequence, 0)
+                    .is_some_and(|element| element.orders.is_empty());
+                let stop = OrderType::TransitionWalkingUprightWaitingUpright;
+                // A zero-distance stopping animation consumes 0.01 map units
+                // when inserted. Accept that offset only after it completes.
+                let rounding = [position.x, position.y, goal.x, goal.y]
+                    .into_iter()
+                    .map(|value| (value.next_up() - value).abs())
+                    .fold(0.0_f32, f32::max);
+                let allowance = if last_action == Some(stop)
+                    && engine.ent(owner).sprite().distance_for_animation(stop) == 0
+                {
+                    0.01 + 4. * rounding
+                } else {
+                    0.01
+                };
+                if stopped && (position - goal).length() <= allowance {
+                    arrived = true;
+                    break;
+                }
+            }
+            assert!(
+                arrived,
+                "{file}: {source:?} -> {goal:?} stopped at {previous:?}"
+            );
+            assert!(
+                moved_ticks > 2,
+                "must traverse through real animation ticks"
+            );
+            assert!(
+                f64::from(distance) <= probe["max_length"].as_f64().unwrap(),
+                "{file}: {source:?} -> {goal:?} travelled {distance}, exceeding {}",
+                probe["max_length"]
+            );
+            results.push(serde_json::json!({"file":file,"start":probe["start"],"end":probe["end"],"distance":distance,"moving_ticks":moved_ticks}));
+        }
+    }
+    assert!(!results.is_empty());
+    eprintln!("{} complete sprite opening routes passed", results.len());
+    std::fs::write(directory.join("actor-opening-report.json"), serde_json::to_vec_pretty(
+        &serde_json::json!({"scope":"animated-opening-crossings-not-rendering", "complete":true,"results":results})
+    ).unwrap()).unwrap();
+}
+
 fn overlapping_receiving_floors() -> serde_json::Value {
     let cases: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),

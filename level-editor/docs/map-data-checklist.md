@@ -1567,7 +1567,23 @@ exposed and fixed a rounding gap under nominally touching sloped walls: contact
 and clearance-plane matching now tolerate 1/1024 map unit, while a tested real
 0.01-unit gap remains open. A widened-opening follow-up passes 48 directed
 actor-sized pathfinder routes in both directions, with a maximum route length
-that rejects detours around the wall. Full animated actor traversal remains pending.
+that rejects detours around the wall. Complete sprite traversal now passes 48
+directed opening routes across three repetitions, flat/rising terrain and two
+elevations. The audit dispatches native movement, checks collision and receiver
+height at every tick, bounds travelled distance, and waits for the stop animation
+and order queue to finish. A zero-distance stop's reserved 0.01-unit offset is
+accepted only after that specific animation completes.
+
+Rotated spline openings remain unresolved: the expanded `--rotated` batch from
+`refinement/check-spline-clearance-planes.mjs` tests 0/37/90/180 degrees. At 37
+degrees and a 30-unit terrain rise, the first failing animated crossing travels
+67.949 units for a 40-unit crossing (limit 45). A separate thin-ray audit also
+rejects an expected opening at 37 degrees on flat terrain. This is not certified
+rotated-opening parity; the next check must distinguish clearance placement from
+the probe's intended opening before changing either geometry or expectations.
+Use the ignored native `exported_openings_support_complete_sprite_routes` test
+with `ROBIN_ASSET_MAP_DIAGNOSTICS` set to the generated directory and
+`ROBIN_CLIMB_RHS` set to a complete character sprite to reproduce the actor audit.
 Pipeline typechecking remains blocked
 by existing errors in `state-delivery.test.ts`; touched files pass scoped lint and
 app typechecking/build.
