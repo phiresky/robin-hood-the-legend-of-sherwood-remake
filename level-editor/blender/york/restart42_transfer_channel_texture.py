@@ -17,7 +17,14 @@ bpy.context.view_layer.update();records=[]
 for r in authority['partition']:
  old=scene.objects[r['original_object']];new=scene.objects[r['derived_object']];assert len(new.data.polygons)==4;mapping=[]
  for face_id,record in zip(r['original_face_indices'],r['face_records']):
-  face=old.data.polygons[face_id];assert [list(old.matrix_world@old.data.vertices[i].co)for i in face.vertices]==record['xyz'];matches=[p for p in new.data.polygons if [list(new.matrix_world@new.data.vertices[i].co)for i in p.vertices]==record['xyz']];assert len(matches)==1;mapping.append((face,matches[0]))
+  face=old.data.polygons[face_id];assert [list(old.matrix_world@old.data.vertices[i].co)for i in face.vertices]==record['xyz'];candidates=[]
+  for donor_face in new.data.polygons:
+   points=[list(new.matrix_world@new.data.vertices[i].co)for i in donor_face.vertices]
+   if len(points)==len(record['xyz']):candidates.append((max(abs(a-b)for p,q in zip(points,record['xyz'])for a,b in zip(p,q)),donor_face.index))
+  candidates.sort();assert candidates and candidates[0][0]<.0005,(old.name,face_id,candidates)
+  assert len(candidates)==1 or candidates[1][0]>.01,(old.name,face_id,candidates)
+  mapping.append((face,new.data.polygons[candidates[0][1]]))
+  records.append({'original_face':face_id,'object':old.name,'donor_world_max_abs_roundoff':candidates[0][0]})
  material_map={}
  for face,donor in mapping:
   material=new.data.materials[donor.material_index];uvnodes=[n for n in material.node_tree.nodes if n.bl_idname=='ShaderNodeUVMap'];assert len(uvnodes)==1;source_layer=new.data.uv_layers[uvnodes[0].uv_map]
@@ -28,4 +35,4 @@ for r in authority['partition']:
  old.data.uv_layers.active_index=appearance[old.name]['active_uv'];after=appearance_state(old);before=appearance[old.name];assert after['materials'][:len(before['materials'])]==before['materials'];assert after['uv_layers'][:len(before['uv_layers'])]==before['uv_layers'];assert after['active_uv']==before['active_uv'];assert all(after['face_materials'][i]==v for i,v in enumerate(before['face_materials'])if i not in r['original_face_indices']);records.append({'object':old.name,'changed_faces':r['original_face_indices'],'old_materials_exact':True,'all_original_uv_layers_exact':True,'non_channel_face_bindings_exact':True})
 for ob in list(bpy.data.objects):
  if ob.name in names:bpy.data.objects.remove(ob,do_unlink=True)
-bpy.context.view_layer.update();assert geometry=={o.name:_geometry(o)for o in scene.objects};assert outside=={o.name:_geometry(o,protect_appearance=True)for o in scene.objects if o.name in outside};O.mkdir();bpy.context.preferences.filepaths.save_version=0;bpy.ops.wm.save_as_mainfile(filepath=str(O/'model.blend'),compress=True);(O/'validation.json').write_text(json.dumps({'status':'PRIVATE_EXACT_FACE_TRANSFER_SAVED_REVIEW_PENDING','approved_geometry_sha256':sha(source),'baked_receiver_sha256':sha(B/'model.blend'),'model_sha256':sha(O/'model.blend'),'changed_face_count':sum(len(r['changed_faces'])for r in records),'records':records,'all_geometry_exact':True,'outside_objects_exact':len(outside),'scope':'Appearance of exactly eight hidden channel-interior faces only. No new user texture approval or canonical publication.'},indent=2)+'\n');assert sha(source)==authority['approved_model_sha256'];print(O)
+bpy.context.view_layer.update();assert geometry=={o.name:_geometry(o)for o in scene.objects};assert outside=={o.name:_geometry(o,protect_appearance=True)for o in scene.objects if o.name in outside};O.mkdir();bpy.context.preferences.filepaths.save_version=0;bpy.ops.wm.save_as_mainfile(filepath=str(O/'model.blend'),compress=True);(O/'validation.json').write_text(json.dumps({'status':'PRIVATE_EXACT_FACE_TRANSFER_SAVED_REVIEW_PENDING','approved_geometry_sha256':sha(source),'baked_receiver_sha256':sha(B/'model.blend'),'model_sha256':sha(O/'model.blend'),'changed_face_count':sum(len(r.get('changed_faces',[]))for r in records),'records':records,'all_geometry_exact':True,'outside_objects_exact':len(outside),'scope':'Appearance of exactly eight hidden channel-interior faces only. No new user texture approval or canonical publication.'},indent=2)+'\n');assert sha(source)==authority['approved_model_sha256'];print(O)
