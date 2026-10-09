@@ -2,17 +2,34 @@ import type { Point } from "./level.ts";
 import type { HeightPlane } from "./gameplay-plane.ts";
 import { clipHeight } from "./gameplay-plane.ts";
 import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
+import clipping from "polygon-clipping";
+import { stairBoundaryPlanes, stairCenterRegion } from "./stair-center-region.ts";
 
 /**
- * Recover a convex floor whose projection cannot fit a native actor. Native
+ * Recover a floor whose projection cannot fit a native actor. Native
  * movement erodes the emitted polygon by its screen-space footprint; compensate
  * for the floor projection so this leaves only physically supported centers.
+ * A collapsed concave outline may use its conservative inner kernel.
  * Holes, obstacles and bent floors must be handled separately by the caller.
  */
 export function projectStairClearance(boundary: Point[], plane: HeightPlane): Point[] | undefined {
   const [a, b, c] = plane;
   if (Math.abs(1 - b) < 1e-6 || boundary.length < 3) return undefined;
-  const projected: Point[] = boundary.map(([x, y]) => [x, y - a * x - b * y - c]);
+  let projected: Point[] = boundary.map(([x, y]) => [x, y - a * x - b * y - c]);
+  const planes = stairBoundaryPlanes(projected);
+  if (planes.some(([x, y, c]) => projected.some((p) => x * p[0] + y * p[1] + c < -1e-6))) {
+    // Corner containment overestimates the space for a box in a concave floor.
+    // If even that region is empty, no existing full-box approach can be lost.
+    const shifted = [
+      [-half[0], -half[1]],
+      [-half[0], half[1]],
+      [half[0], -half[1]],
+      [half[0], half[1]],
+    ].map(([dx, dy]) => [projected.map(([x, y]): Point => [x + dx!, y + dy!])]);
+    if (clipping.intersection(shifted[0]!, ...shifted.slice(1)).length) return undefined;
+    projected = stairCenterRegion(projected, [0, 0]);
+    if (projected.length < 3) return undefined;
+  }
   const area = projected.reduce((sum, p, i) => {
     const q = projected[(i + 1) % projected.length]!;
     return sum + p[0] * q[1] - q[0] * p[1];

@@ -1,14 +1,15 @@
 import type { CompiledAssetGeometry } from "./asset-gameplay.ts";
 import type { Point } from "./level.ts";
 import { pointInGameplayPolygon } from "./navigation-anchor.ts";
+import { prepareDirectStairApproaches } from "./prepare-direct-stair-approaches.ts";
 
 type Area = CompiledAssetGeometry["motion_data"]["layers"][number][number];
 
-function edgeHitsBox(a: Point, b: Point, center: Point): boolean {
+function edgeHitsBox(a: Point, b: Point, center: Point, half: Readonly<Point>): boolean {
   let low = 0;
   let high = 1;
   for (const axis of [0, 1]) {
-    const radius = axis === 0 ? 6 : 3;
+    const radius = half[axis]!;
     const delta = b[axis]! - a[axis]!;
     const minimum = center[axis]! - radius - a[axis]!;
     const maximum = center[axis]! + radius - a[axis]!;
@@ -22,8 +23,10 @@ function edgeHitsBox(a: Point, b: Point, center: Point): boolean {
   return low <= high;
 }
 
-function touches(polygon: Point[], point: Point): boolean {
-  return polygon.some((a, index) => edgeHitsBox(a, polygon[(index + 1) % polygon.length]!, point));
+function touches(polygon: Point[], point: Point, half: Readonly<Point> = [6, 3]): boolean {
+  return polygon.some((a, index) =>
+    edgeHitsBox(a, polygon[(index + 1) % polygon.length]!, point, half),
+  );
 }
 
 function crosses(polygon: Point[], source: Point, goal: Point): boolean {
@@ -43,6 +46,7 @@ function crosses(polygon: Point[], source: Point, goal: Point): boolean {
 
 /** Prepare native passage endpoints once, before writing the map descriptor. */
 export function compileLiftApproaches(geometry: CompiledAssetGeometry): void {
+  const directStairs = prepareDirectStairApproaches(geometry);
   const areas = new Map<string, Area>();
   let sector = 0;
   geometry.motion_data.layers.forEach((entries, layer) => {
@@ -73,9 +77,10 @@ export function compileLiftApproaches(geometry: CompiledAssetGeometry): void {
         const area = areas.get(`${door[`sector_${side}`]}/${door[`layer_${side}`]}`);
         if (!area) throw new Error(`Lift ${liftIndex} door ${doorIndex}: missing ${side} area`);
         const blockers = area.obstacles.filter((obstacle) => obstacle.state_id === 0);
+        const half: Point = side === "in" && directStairs.has(door) ? [5, 2] : [6, 3];
         const fits = (point: Point) =>
           pointInGameplayPolygon(point, area.polygon.points) &&
-          !touches(area.polygon.points, point) &&
+          !touches(area.polygon.points, point, half) &&
           blockers.every(
             (obstacle) =>
               !pointInGameplayPolygon(point, obstacle.polygon.points) &&

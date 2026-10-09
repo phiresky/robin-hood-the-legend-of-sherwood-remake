@@ -4,6 +4,57 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Direct narrow stair approaches and receiving-piece handoffs (2026-10-09)
+
+The fresh tower exports in `work/map-compile/grounded-stair-placements-tWfmuj`
+pass all **64 complete-sprite native routes**, with no failures or forbidden
+routes, at rotations 0/37/90/180 and elevations 0/40 for two independent copies.
+The audit waits for the exit passage to finish before accepting arrival, while
+retaining ordinary receiver agreement checks outside passages. Both masks are
+retained per map. This is the tested placement matrix, not general asset parity.
+
+Two export preparations resolve the remaining 90-degree corridor stalls.
+`projectStairClearance` can recover a convex kernel inside a concave floor only
+after proving that even corner containment leaves no full-box center region in
+the existing projection. Its swept-footprint support and inward quantization
+margin remain. `prepareDirectStairApproaches` handles only convex stairs without
+obstacles, and only when no full-box center region exists. It selects all inner
+endpoints atomically within the native swept inset, with a finite 64-pixel search
+and forward approach constraint. Convexity proves direct reachability between
+every pair. Wide floors, blocked stairs, other lift types and incomplete searches
+keep their established preparation. No graphless runtime search is introduced.
+
+This exposed a separate static receiving-boundary defect: a long approach can
+cross multiple receiver pieces, while its handoff was bound directly to the
+endpoint's piece. `compiled_elevation` now partitions the approach at receiver
+edges and binds to its first receiving interval. Internal receiver boundaries
+remain active. This is compiled-map construction work, not per-tick geometry.
+The dedicated boundary test preserves the handoff and the later internal swap.
+Native map integration passes 71 tests (five ignored), actor navigation passes
+25 (29 opt-in audits ignored), and the elevation tests pass 15 (one ignored).
+
+Earlier diagnostics are `stair-full-body-diagnostic-JMhI2p` (changing the support
+constant alone leaves eight stalls) and `stair-inset-endpoints-diagnostic-GdQBSY`
+(prepared endpoints expose four receiving failures before the boundary fix).
+All are under `work/map-compile/`.
+
+The placement verifier now accepts `--rotations=` and derives its expected route
+count from that list. An additional strict-mask run for 137/217/270/317 degrees,
+`grounded-stair-placements-XL8oIu`, stops at 270 degrees with one mask instead of
+two. The subsequent traversal-only export batch `grounded-stair-placements-LN7OnH`
+completes all eight maps and reports 40 of 64 routes passing, 24 failing and no
+forbidden routes. The failures are four per map at 137/217/270 degrees at both
+elevations; all 317-degree routes pass. The 270-degree mask warnings distinguish
+a missing receiver at elevation zero from an anchor outside the frame at
+elevation 40, so placement/frame coverage still needs inspection. Combined with
+the original matrix, 104 of 128 routes pass. Broader placement remains open.
+
+The full editor suite in `work/map-compile/direct-stair-editor-suite-20261009.log`
+reports 1,067 passed, two skipped and the same unrelated Croisement02 preset
+failure (`size: null`). App TypeScript checking and focused lint pass.
+The full level-data suite passes 89 tests (eight opt-in tests ignored), and the
+game build and Rust formatting check pass. No production tick code changed.
+
 ## Prepared stair sector handoffs (2026-10-09)
 
 Native stair traversal uses an outside-to-midpoint movement, a sector handoff,

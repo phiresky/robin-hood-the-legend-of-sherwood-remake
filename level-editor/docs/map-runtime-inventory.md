@@ -27,6 +27,17 @@ by that deletion. A small compiled-data extension may be justified by a concrete
 export requirement; a second runtime solver is not the intended architecture.
 Static descriptor validation remains in the level-data crate.
 
+**2026-10-09 static boundary correction:** walking stair approaches can cross
+several receiving triangles before their inside endpoint. The compiled-level
+boundary builder now selects the first receiver reached from the handoff,
+instead of binding directly to the endpoint's receiver. This runs only while
+constructing compiled-map data; actor ticks and route dispatch are unchanged.
+The editor prepares narrow convex stair endpoints for the existing direct-move
+inset and constructs conservative floor clearance during export. No new runtime
+solver, route search, movement mode or graph format was added. The fresh tower
+matrix passes all 64 complete-sprite routes at its original four rotations;
+broader placement and rendering coverage remains open.
+
 Export now generates the native graph in
 `level-editor/shared/src/compile-navigation-graph.ts`. It constructs actor-clearance
 links and state constraints from placed motion polygons during export. The game

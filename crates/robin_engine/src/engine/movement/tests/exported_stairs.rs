@@ -442,6 +442,7 @@ fn walk_exported_lift_with_tick(
             actor_receiver_result(&engine, &assets, owner, sector, element.layer(), position)?;
         }
         if crossed
+            && !passing
             && (position - leave.point_out).length() < 0.01
             && element.layer() == leave.layer_out
             && sector == destination_sector

@@ -24,10 +24,28 @@ const overrides = process.argv.slice(2).filter((argument) => argument.startsWith
 assert.ok(overrides.length <= 1, "Provide at most one staged descriptor");
 const stagedDescriptor = overrides[0]?.slice("--descriptor=".length);
 const requireMasks = process.argv.includes("--require-masks");
+const rotationOptions = process.argv
+  .slice(2)
+  .filter((argument) => argument.startsWith("--rotations="));
+assert.ok(rotationOptions.length <= 1, "Provide at most one rotation list");
+const rotations = rotationOptions.length
+  ? rotationOptions[0].slice("--rotations=".length).split(",").map(Number)
+  : [0, 37, 90, 180];
+assert.ok(
+  rotations.length > 0 &&
+    new Set(rotations).size === rotations.length &&
+    rotations.every((value) => Number.isFinite(value) && value >= 0 && value < 360),
+  "Rotations must be distinct finite angles from 0 to less than 360",
+);
 assert.ok(
   process.argv
     .slice(2)
-    .every((argument) => argument.startsWith("--descriptor=") || argument === "--require-masks"),
+    .every(
+      (argument) =>
+        argument.startsWith("--descriptor=") ||
+        argument.startsWith("--rotations=") ||
+        argument === "--require-masks",
+    ),
   "Unknown verification option",
 );
 const descriptorBytes = await fs.readFile(stagedDescriptor ?? `library/${descriptorPath}`);
@@ -53,11 +71,11 @@ const report = async () =>
     `${output}/diagnostics.json`,
     JSON.stringify({
       scope: "static-geometry-only-not-gameplay-parity",
-      complete: results.length === 8,
-      expected_directed_routes: 64,
+      complete: results.length === rotations.length * 2,
+      expected_directed_routes: rotations.length * 16,
+      rotations,
       expected_masks_per_map: requireMasks ? 2 : undefined,
-      snapshot_notes:
-        "Fresh editor drops, two independent copies, four rotations and two terrain elevations. All 64 directed stair routes need verification; forbidden routes are not passes.",
+      snapshot_notes: `Fresh editor drops, two independent copies, ${rotations.length} rotations and two terrain elevations. All ${rotations.length * 16} directed stair routes need verification; forbidden routes are not passes.`,
       asset: reference,
       staged_descriptor: stagedDescriptor,
       results,
@@ -65,7 +83,7 @@ const report = async () =>
   );
 await report();
 for (const elevation of [0, 40])
-  for (const rotation of [0, 37, 90, 180]) {
+  for (const rotation of rotations) {
     let document = {
       version: 1,
       map: "Grounded stair placement",

@@ -569,20 +569,44 @@ fn derive_with_spatial_index(
     // and stair contours have a gap or overlap. Polygon contact alone cannot
     // establish this connection. Keep the bond local to the mandatory crossing
     // point so nearby ordinary movement does not acquire a different layer.
-    let receiver_at = |topology, point: (i16, i16)| {
+    let receiver_at_point = |topology, point: Point| {
         groups
             .get(&topology)
             .into_iter()
             .flatten()
-            .filter(|receiver| {
-                contains(&receiver.polygon, [f64::from(point.0), f64::from(point.1)])
-            })
+            .filter(|receiver| contains(&receiver.polygon, point))
             .max_by(|a, b| {
                 a.maximum_height
                     .total_cmp(&b.maximum_height)
                     .then_with(|| b.index.cmp(&a.index))
             })
             .map_or(u16::MAX, |receiver| receiver.index)
+    };
+    let receiver_at = |topology, point: (i16, i16)| {
+        receiver_at_point(topology, [f64::from(point.0), f64::from(point.1)])
+    };
+    // The approach may cross several receiving pieces before its endpoint.
+    // Bind the handoff to the first piece reached from the midpoint, leaving
+    // subsequent piece-to-piece boundaries to perform their ordinary swaps.
+    let receiver_toward = |topology, from: (i16, i16), to: (i16, i16)| {
+        let a = [f64::from(from.0), f64::from(from.1)];
+        let b = [f64::from(to.0), f64::from(to.1)];
+        let mut cuts = vec![0., 1.];
+        for receiver in groups.get(&topology).into_iter().flatten() {
+            for (i, point) in receiver.polygon.iter().enumerate() {
+                split_at(
+                    (a, b),
+                    (*point, receiver.polygon[(i + 1) % receiver.polygon.len()]),
+                    &mut cuts,
+                );
+            }
+        }
+        cuts.sort_by(f64::total_cmp);
+        cuts.dedup_by(|a, b| *a == *b);
+        cuts.windows(2)
+            .map(|pair| receiver_at_point(topology, interpolate(a, b, (pair[0] + pair[1]) * 0.5)))
+            .find(|index| *index != u16::MAX)
+            .unwrap_or_else(|| receiver_at(topology, to))
     };
     let mut passages = Vec::new();
     for lift in &geometry.lifts {
@@ -625,8 +649,16 @@ fn derive_with_spatial_index(
             continue;
         }
         for door in &lift.doors {
-            let outside = receiver_at((door.sector_out, door.layer_out), door.point_out);
-            let inside = receiver_at((door.sector_in, door.layer_in), door.point_in);
+            let outside = receiver_toward(
+                (door.sector_out, door.layer_out),
+                door.point_mid,
+                door.point_out,
+            );
+            let inside = receiver_toward(
+                (door.sector_in, door.layer_in),
+                door.point_mid,
+                door.point_in,
+            );
             if outside == inside {
                 continue;
             }
@@ -841,6 +873,62 @@ mod tests {
         );
         geometry.lifts.clear();
         assert!(derive(&geometry).unwrap().is_empty());
+    }
+
+    #[test]
+    fn stair_handoff_uses_first_receiver_before_internal_approach_boundaries() {
+        let document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../robin_engine/tests/fixtures/asset-lift.level.json"
+        )))
+        .unwrap();
+        let mut geometry: CompiledAssetGeometry =
+            serde_json::from_value(document["asset_geometry"].clone()).unwrap();
+        let mut receiver = geometry.sight_obstacles[2].clone();
+        receiver.projection_plane = None;
+        geometry.sight_obstacles = [(0., 20., (2, 1)), (20., 50., (3, 2)), (50., 100., (3, 2))]
+            .into_iter()
+            .map(|(left, right, topology)| {
+                let mut part = receiver.clone();
+                part.projection_area = Some(topology);
+                part.points = [(left, 0.), (right, 0.), (right, 100.), (left, 100.)]
+                    .into_iter()
+                    .map(|(x, y)| crate::level_data::RawObstaclePoint {
+                        x,
+                        y,
+                        z_bottom: 0.,
+                        z_top: 0.,
+                    })
+                    .collect();
+                part
+            })
+            .collect();
+        geometry.motion_data.layers[1][0].polygon.points =
+            vec![(0, 0), (20, 0), (20, 100), (0, 100)];
+        geometry.motion_data.layers[2][0].polygon.points =
+            vec![(0, 0), (100, 0), (100, 100), (0, 100)];
+        let mut door = geometry.lifts[0].doors[1].clone();
+        door.point_out = (5, 50);
+        door.point_mid = (10, 50);
+        door.point_in = (80, 50);
+        geometry.lifts[0].doors = vec![door];
+        let lines = derive(&geometry).unwrap();
+        let handoff = lines
+            .iter()
+            .find(|line| line.layer == 2 && line.map_endpoints().iter().all(|p| p[0] == 10.25))
+            .unwrap();
+        assert_eq!(
+            (handoff.left_obstacle_index, handoff.right_obstacle_index),
+            (0, 1)
+        );
+        let internal = lines
+            .iter()
+            .find(|line| line.layer == 2 && line.map_endpoints().iter().all(|p| p[0] == 50.))
+            .unwrap();
+        assert_eq!(
+            BTreeSet::from([internal.left_obstacle_index, internal.right_obstacle_index]),
+            BTreeSet::from([1, 2])
+        );
     }
 
     #[test]
