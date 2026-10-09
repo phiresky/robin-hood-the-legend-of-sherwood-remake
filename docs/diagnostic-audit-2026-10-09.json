@@ -65,7 +65,11 @@
       "engine_commit": "1466391921a5efcb732e3a74363edb31b44887c3",
       "description": "core overlay startup validation failed for assets/core-datadir: core overlay physical inventory mismatch (missing: [\"Data/Interface/UI/allied_formation_box.png\", \"Data/Interface/UI/allied_formation_flank.png\", \"Data/Interface/UI/allied_formation_line.png\", \"Data/Interface/UI/allied_formation_staggered.png\", \"Data/Interface/UI/allied_patrol_off.png\", \"Data/Interface/UI/allied_patrol_on.png\", \"Data/Interface/UI/allied_pin_pinned.png\", \"Data/Interface/UI/allied_pin_unpinned.png\", \"Data/Interface/UI/allied_portrait_background.png\", \"Data/Interface/UI/allied_portrait_foreground.png\", \"Data/Interface/UI/allied_portrait_generic.png\", \"Data/Interface/UI/allied_portrait_guisbourne.png\", \"Data/Interface/UI/allied_portrait_longchamp.png\", \"Data/Interface/UI/allied_portrait_prince_john.png\", \"Data/Interface/UI/allied_portrait_scathlock.png\", \"Data/Interface/UI/allied_portrait_sheriff.png\", \"Data/Interface/UI/allied_stance_aggressive.png\", \"Data/Interface/UI/allied_stance_defensive.png\", \"Data/Interface/UI/allied_stance_hold.png\"]; unexpected: [])",
       "status": "under_investigation",
-      "finding": "Nineteen allied UI PNGs absent from installed core overlay. All are tracked in the reported build and the packaging staging script copies the entire overlay. Need distinguish incomplete installation from wrong overlay selection; do not bypass integrity validation."
+      "finding": "Downloaded published Windows full package for nightly-2026-10-08-1559-1466391921a5. All 19 reportedly missing allied UI PNGs are present. Every packaged core-overlay manifest file passes size and SHA256 validation. Package omission is ruled out; incomplete local extraction/installation or selection of an older working-directory overlay remains unproven. The report records only relative assets/core-datadir, with no executable or working directory.",
+      "package_verification": {
+        "archive_sha256": "fe8c168dd645a9708087857832bfa3f6cde1acfd63131ca5499644803cc7a118",
+        "validated_files": 36
+      }
     },
     {
       "id_prefix": "a2a18c60075f",
