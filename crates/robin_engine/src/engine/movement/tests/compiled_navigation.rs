@@ -162,6 +162,8 @@ fn actor_steps_between_receiving_plane_and_uncovered_ground() {
         [(40, 20), (80, 20), (80, 80), (40, 80)]
             .map(|(x, y)| serde_json::json!({"x": x, "y": y + 16, "z_bottom": 16, "z_top": 16}))
     );
+    geometry["sight_obstacles"][0]["projection_plane"] =
+        serde_json::json!([[40, 36, 16], [80, 36, 16], [40, 96, 16]]);
     let bytes = serde_json::to_vec(&descriptor).unwrap();
     let a = MapPoint::new(28., 50.);
     let b = MapPoint::new(52., 50.);
@@ -679,6 +681,11 @@ fn actor_crosses_receivers_independently_of_switch_visibility() {
             let mut higher = geometry["sight_obstacles"][0].clone();
             for point in higher["points"].as_array_mut().unwrap() {
                 for axis in ["y", "z_top", "z_bottom"] {
+                    point[axis] = serde_json::json!(point[axis].as_f64().unwrap() + 10.);
+                }
+            }
+            for point in higher["projection_plane"].as_array_mut().unwrap() {
+                for axis in [1, 2] {
                     point[axis] = serde_json::json!(point[axis].as_f64().unwrap() + 10.);
                 }
             }

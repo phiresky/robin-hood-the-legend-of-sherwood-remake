@@ -48,6 +48,20 @@ test("integer jump audit checks fractional solids in world coordinates", () => {
   assert.deepEqual(auditCompiledJump(pair(), createJumpClearance([obstacle])), []);
 });
 
+test("integer flight audit resolves source receivers through the opposite destination references", () => {
+  const checked: string[][] = [];
+  const clearance: ReturnType<typeof createJumpClearance> = (edges) => {
+    checked.push(edges.map((edge) => edge.zone));
+    return [];
+  };
+  auditCompiledJump(pair(), clearance);
+  auditCompiledJump(pair(), clearance, ["placed-left", "placed-right"]);
+  assert.deepEqual(checked, [
+    ["0", "1"],
+    ["placed-left", "placed-right"],
+  ]);
+});
+
 test("unsupported flight geometry is reported without rejecting best-effort export", () => {
   const input = pair();
   input.line1.point_b[2] = 13;

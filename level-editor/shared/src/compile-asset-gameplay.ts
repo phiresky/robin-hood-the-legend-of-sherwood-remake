@@ -2482,6 +2482,11 @@ function compileAssetGameplayAttempt(
   const activeJumpZones = jumpZones.filter((zone) => usedJumpZones.has(zone.id));
   const compiledJumpZones = activeJumpZones.map((zone) => {
     const area = resolve(zone.anchor, `${zone.id} landing anchor`);
+    jumpReceivers.set(zone.id, {
+      ...jumpReceivers.get(zone.id),
+      topology: { sector: area.sector, layer: area.layer },
+      motionPolygon: area.polygon,
+    });
     return {
       polygon: { points: zone.polygon },
       sector: area.sector,
@@ -2522,7 +2527,10 @@ function compileAssetGameplayAttempt(
     return { line1: lines[0]!, line2: lines[1]!, jump_long: pair.long };
   });
   for (const [index, pair] of compiledJumpPairs.entries())
-    for (const issue of auditCompiledJump(pair, flightClearance!))
+    for (const issue of auditCompiledJump(pair, flightClearance!, [
+      jumpPairs[index]!.edges[0]!.zone,
+      jumpPairs[index]!.edges[1]!.zone,
+    ]))
       warnings.push(`Jump ${jumpPairs[index]!.id}: ${issue}.`);
   // Runtime construction order is motion, materials, projection planes, then buildings.
   // Motion adds an out-of-map sector; each door also consumes a constructor slot.

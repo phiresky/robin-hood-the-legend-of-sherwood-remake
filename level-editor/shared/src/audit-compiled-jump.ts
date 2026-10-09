@@ -6,6 +6,7 @@ import type { createJumpClearance, JumpEdge } from "./jump-clearance.ts";
 export function auditCompiledJump(
   pair: JumpLinePair,
   clearance: ReturnType<typeof createJumpClearance>,
+  zoneIds?: readonly [string, string],
 ): string[] {
   const { line1, line2 } = pair;
   // Landing translation uses distance along the source vector in both directions.
@@ -19,8 +20,10 @@ export function auditCompiledJump(
       "opposing edges differ after movement-grid rounding; runtime landings can miss the authored edge",
     ];
   const world = ([x, y, z]: Vec3): Vec3 => [x, y + z, z];
-  const edges: [JumpEdge, JumpEdge] = [line1, line2].map((line) => ({
-    zone: String(line.jump_zone_index),
+  const edges: [JumpEdge, JumpEdge] = [line1, line2].map((line, index) => ({
+    // Each line stores its destination zone; the opposite line identifies
+    // the receiver under this source edge.
+    zone: zoneIds?.[index] ?? String((index === 0 ? line2 : line1).jump_zone_index),
     a: world(line.point_a),
     b: world(line.point_b),
   })) as [JumpEdge, JumpEdge];

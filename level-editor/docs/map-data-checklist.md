@@ -6,6 +6,27 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
+**Broader verification (2026-10-09):** the full editor suite now reports 1,058
+passed, two skipped and one failure: the named-size preset test reads a locally
+edited Croisement02 scene with `size: null`. That scene was left untouched.
+The export-related failures were resolved: the final jump audit now retains
+placed receiver identities and uses the opposite line's destination reference
+to identify each source zone. Rotated roof fixtures match again without changing
+their expected output. Six terrain/navigation fixtures were refreshed to include
+explicit receiving-plane anchors and current native contour ordering; their
+navigation graphs are unchanged. Native map integration passes 71 tests (five
+ignored), and actor navigation passes 25 (29 opt-in audits ignored).
+
+Fresh saved-document exports after the clearance correction load natively:
+Wychford constructs 86 areas, 31 doors and no jump pairs; Derby constructs 60
+areas, 70 doors and two jump pairs. Ordinary initial-state route sampling passes
+98 Wychford routes and 144 Derby routes. Wychford takes about 467 seconds to
+compile, including best-effort retry; Derby takes about 2.7 seconds in the same
+run. These are geometry exports, not browser ZIP/rendering certification.
+Wychford still omits the church-side-tower traversal because its placed endpoint
+does not meet the receiving surface, and both maps retain explicit geometry
+warnings. Successful loading and sampled routes do not certify those omissions.
+
 **Takeoff clearance progress (2026-10-09):** long-jump clearance covers sprite
 takeoff positions between the ledge and the nominal fifteen-unit target, including
 receiver changes. The compiler catches stationary upright and intermediate sword

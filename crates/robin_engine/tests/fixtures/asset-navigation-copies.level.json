@@ -131,7 +131,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            400,
+            240,
+            40
+          ],
+          [
+            410,
+            300,
+            100
+          ],
+          [
+            400,
+            400,
+            40
+          ]
+        ]
       },
       {
         "points": [
@@ -169,7 +186,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            390,
+            260,
+            0
+          ],
+          [
+            400,
+            300,
+            40
+          ],
+          [
+            390,
+            400,
+            0
+          ]
+        ]
       },
       {
         "points": [
@@ -207,7 +241,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            426,
+            354.39296519775485,
+            100.39296519775485
+          ],
+          [
+            600,
+            354.39296519775485,
+            100.39296519775485
+          ],
+          [
+            426,
+            348.5794300711135,
+            39.57943007111351
+          ]
+        ]
       },
       {
         "points": [
@@ -245,7 +296,24 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": []
+        "material_indices": [],
+        "projection_plane": [
+          [
+            426,
+            348.5559625500899,
+            39.55596255008987
+          ],
+          [
+            600,
+            348.5559625500899,
+            39.55596255008987
+          ],
+          [
+            426,
+            342.8644307024723,
+            -0.1355692975276952
+          ]
+        ]
       }
     ],
     "doors": []
