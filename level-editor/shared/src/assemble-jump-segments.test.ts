@@ -2,6 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { assembleJumpSegments, type PlacedJumpSegment } from "./assemble-jump-segments.ts";
 
+test("clearance exposed by movement-grid snapping trims again instead of discarding the connection", () => {
+  const attachment = { maxGap: 50, maxRise: 20, maxDrop: 20, minOverlap: 8 };
+  const segments: PlacedJumpSegment[] = [
+    { id: "a", long: true, attachment, edge: { zone: "a", a: [0, 40, 0], b: [0, 0, 0] } },
+    { id: "b", long: true, attachment, edge: { zone: "b", a: [30, 0, 0], b: [30, 40, 0] } },
+  ];
+  // Successive shortened headings can reveal another blocked portion. The
+  // clearance contract applies to each snapped candidate, not just the first.
+  const result = assembleJumpSegments(segments, (edges) => (edges[0].a[1] > 24 ? [[0, 0.1]] : []));
+  assert.equal(result.pairs.length, 1);
+  const edge = result.pairs[0]!.edges[0];
+  assert.ok(edge.a[1] <= 24);
+  assert.equal(edge.b[1], 0, "an unobstructed far endpoint must not be trimmed");
+  assert.ok(Math.hypot(edge.b[0] - edge.a[0], edge.b[1] - edge.a[1]) >= attachment.minOverlap);
+  assert.equal(assembleJumpSegments(segments, () => [[0, 1]]).pairs.length, 0);
+});
+
 test("geometric edges connect new neighbours and trim to the overlapping span", () => {
   const rules = { maxGap: 30, maxRise: 20, maxDrop: 20, minOverlap: 5 };
   const a: PlacedJumpSegment = {

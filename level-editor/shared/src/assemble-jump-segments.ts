@@ -170,19 +170,44 @@ export function assembleJumpSegments(
     }
     const minimum = Math.max(segment.attachment.minOverlap, other.attachment!.minOverlap);
     const usable = spans.filter(([a, b]) => (b - a) * length >= minimum);
-    let retained = 0;
-    for (const [index, [a, b]] of usable.entries()) {
-      const finalEdges = snapJumpEdges(trimJumpEdges(snapped, a, b));
-      if (
-        Math.hypot(
-          finalEdges[0].b[0] - finalEdges[0].a[0],
-          finalEdges[0].b[1] - finalEdges[0].a[1],
-        ) < minimum
-      )
+    const pending = usable.map(([a, b]) => snapJumpEdges(trimJumpEdges(snapped, a, b)));
+    const cleared: typeof pending = [];
+    const seen = new Set<string>();
+    while (pending.length) {
+      const finalEdges = pending.shift()!;
+      const size = Math.hypot(
+        finalEdges[0].b[0] - finalEdges[0].a[0],
+        finalEdges[0].b[1] - finalEdges[0].a[1],
+      );
+      if (size < minimum) continue;
+      const key = JSON.stringify(finalEdges);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const conflicts = clearance(finalEdges, segment.long, body);
+      if (!conflicts.length) {
+        cleared.push(finalEdges);
         continue;
-      if (clearance(finalEdges, segment.long, body).length) continue;
+      }
+      // Snapping a shortened edge can change its direction and flight. Trim
+      // again while there is strict progress on the finite native grid.
+      let from = 0;
+      const expanded = conflicts.map(([a, b]): Interval => [
+        Math.max(0, a - 1 / size),
+        Math.min(1, b + 1 / size),
+      ]);
+      for (const [to, b] of [...expanded, [1, 1] as Interval]) {
+        if ((to - from) * size >= minimum) {
+          const next = snapJumpEdges(trimJumpEdges(finalEdges, from, to));
+          const nextSize = Math.hypot(next[0].b[0] - next[0].a[0], next[0].b[1] - next[0].a[1]);
+          if (nextSize < size - 1e-6) pending.push(next);
+        }
+        from = Math.max(from, b);
+      }
+    }
+    let retained = 0;
+    for (const [index, finalEdges] of cleared.entries()) {
       pairs.push({
-        id: usable.length === 1 ? id : `${id}/span-${index}`,
+        id: cleared.length === 1 ? id : `${id}/span-${index}`,
         long: segment.long,
         edges: finalEdges,
       });
