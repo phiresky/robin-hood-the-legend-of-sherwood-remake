@@ -57,7 +57,8 @@
       "kind": "bug",
       "engine_commit": "7c505639fd6b5047e4ab2eac354fa0b4d23bd8a4",
       "description": "Mission launch failed: The saved game could not be loaded.\n\nsnapshot fast-grid sectors runtime length 216 does not match loaded level length 189",
-      "status": "under_investigation"
+      "status": "under_investigation",
+      "finding": "The attached replay contains the recording header, frame-zero state verification and one empty non-ticking input; the failing save is not attached. Local construction reports 189 sectors while saved runtime data requires 216. The log filters 31 authored shadow sectors by ambience, but does not establish saved topology or explain the difference of 27. No safe topology migration can be inferred from counts alone. Exact saved state and its content provenance remain unavailable."
     },
     {
       "id_prefix": "95cee566db9f",
