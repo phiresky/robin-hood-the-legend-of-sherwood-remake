@@ -10,7 +10,7 @@ fn play_resumes_newer_mission_autosave_instead_of_stale_continue() {
     second.timestamp = "200".into();
     second.mission_id = 2;
     let mut restart = published_slot("Restart");
-    restart.timestamp = "300".into();
+    restart.timestamp = "50".into();
     for save in [first, second, restart] {
         manager.insert_test_slot(save, SlotState::Published);
     }
@@ -20,6 +20,45 @@ fn play_resumes_newer_mission_autosave_instead_of_stale_continue() {
     assert_eq!(manager.find_resume_target(), Some(0));
     manager.catalog[1].timestamp = "400".into();
     assert_eq!(manager.find_resume_target(), Some(0));
+}
+
+#[test]
+fn campaign_resume_uses_next_mission_restart_until_newer_progress_is_saved() {
+    let mut manager = SaveGameManager::new(String::new());
+    let mut continued = published_slot("Continue");
+    continued.timestamp = "100".into();
+    continued.mission_id = 1;
+    let mut restart = published_slot("Restart");
+    restart.timestamp = "200".into();
+    restart.mission_id = 2;
+    manager.insert_test_slot(continued, SlotState::Published);
+    manager.insert_test_slot(restart, SlotState::Published);
+    let resumed = manager.find_resume_target().unwrap();
+    assert_eq!(manager.slot_mission_id(resumed), Some(2));
+    assert_eq!(resumed, 1);
+
+    let mut autosave = published_slot("Autosave_300_0000");
+    autosave.timestamp = "300".into();
+    manager.insert_test_slot(autosave, SlotState::Published);
+    assert_eq!(manager.find_resume_target(), Some(2));
+    // An in-mission snapshot wins over Restart when timestamps share a second.
+    manager.catalog[1].timestamp = "300".into();
+    assert_eq!(manager.find_resume_target(), Some(2));
+    manager.catalog[0].timestamp = "300".into();
+    assert_eq!(manager.find_resume_target(), Some(0));
+    manager.catalog[0].timestamp = "400".into();
+    assert_eq!(manager.find_resume_target(), Some(0));
+}
+
+#[test]
+fn campaign_resume_accepts_restart_alone_and_rejects_incompatible_restart() {
+    let mut manager = SaveGameManager::new(String::new());
+    manager.insert_test_slot(published_slot("Restart"), SlotState::Published);
+    assert_eq!(manager.find_resume_target(), Some(0));
+    manager.catalog[0].version = save_file::SAVE_FORMAT_VERSION + 3;
+    assert_eq!(manager.find_resume_target(), None);
+    manager.insert_test_slot(published_slot("Continue"), SlotState::Published);
+    assert_eq!(manager.find_resume_target(), Some(1));
 }
 
 #[test]

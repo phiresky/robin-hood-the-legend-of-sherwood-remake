@@ -49,14 +49,15 @@ impl SaveGameManager {
             .filter(|&i| self.slot_file_exists(i))
     }
 
-    /// Play resumes the latest compatible published checkpoint. A lifecycle
-    /// autosave can be newer than Continue, particularly after advancing to
-    /// another mission. Incompatible checkpoints remain available for explicit
+    /// Play and Continue Campaign resume the latest compatible published
+    /// Continue, Restart, or autosave checkpoint. Restart preserves entry into
+    /// the next mission even when multiplayer disables autosaves.
+    /// Incompatible checkpoints remain available for explicit
     /// selection, where payload preflight reports the version error.
     pub fn find_resume_target(&self) -> Option<usize> {
         self.saves()
             .enumerate()
-            .filter(|(_, save)| save.is_continue() || save.is_autosave())
+            .filter(|(_, save)| save.is_continue() || save.is_restart() || save.is_autosave())
             .filter(|(_, save)| {
                 if save_file::is_supported_save_version(save.version) {
                     true
@@ -76,6 +77,7 @@ impl SaveGameManager {
                         .parse::<u64>()
                         .expect("published resume checkpoint has an invalid timestamp"),
                     save.is_continue(),
+                    save.is_autosave(),
                     save.filename.as_str(),
                 )
             })

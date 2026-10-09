@@ -479,7 +479,11 @@
 - **Cooperative campaigns.** The full-game Multiplayer mission list includes
   Start Campaign for a fresh profile, Continue Campaign using the same latest
   compatible checkpoint as the main-menu Play button, and Load Save for an
-  explicit save selection. Old multiplayer saves tagged as local diagnostic
+  explicit save selection. Both resume actions select the newest compatible
+  Continue, Restart, or autosave checkpoint, so reaching the next regular mission
+  preserves a resume point even without multiplayer autosaves. Equal timestamps
+  prefer Continue, then an autosave, then Restart.
+  Old multiplayer saves tagged as local diagnostic
   captures can start a fresh lobby, with new player seats and session authority.
   Failed loads stay in the picker with an acknowledged error message. Compatible
   single-player saves can be continued in
