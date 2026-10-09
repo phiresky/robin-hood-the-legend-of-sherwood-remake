@@ -8,6 +8,7 @@ from export_editor import export_editor
 from evidence_io import sha,write_json
 from restart2_adjacent_export_composite_v2 import flatten_normal_gate,finalize_document
 from restart2_export_approved_static_pair import crown
+from restart2_tree10_11_export_guard import validate
 B=ROOT/'level-editor/work/croisement03-refinement/restart2'
 def main(tree):
  assert tree in (10,11);planpath=B/'approved-tree10-11-integration-v1/plan.json';plan=json.loads(planpath.read_text());entry=next(r for r in plan['rows'] if r['asset_id']==f'croisement03-tree-{tree}');out=planpath.parent/f'full-export-v1/tree{tree}';assert not out.exists()
@@ -27,7 +28,7 @@ def main(tree):
   assert len([m for m in doc['materials'] if m.get('extras',{}).get('crown_source_role')=='dynamic-frame0-provenance'])==1
   assert not any(m.get('extras',{}).get('crown_source_role')=='static-native-samples' for m in doc['materials'])
   encoded=json.dumps(doc,separators=(',',':')).encode();encoded+=b' '*(-len(encoded)%4);tail=raw[20+length:];(out/'model.glb').write_bytes(struct.pack('<III',0x46546c67,2,20+len(encoded)+len(tail))+struct.pack('<II',len(encoded),kind)+encoded+tail)
-  assert sha(source)==entry['source_model_sha256'];assert (out/'model.glb').stat().st_size<=8*1024**2;assert sum(p.stat().st_size for p in out.rglob('*') if p.is_file())<=32*1024**2
-  write_json(out/'report.json',dict(status='PRIVATE conversion complete; independent packed-material, native, surface and visual proofs pending',source_sha256=sha(source),model_sha256=sha(out/'model.glb'),plan_sha256=sha(planpath),crowns=crowns,records=records,export=export,limits=['Full frame0 crown is a private provenance role, not a static animation replacement.','No canonical changes; current gameplay metadata must be preserved separately.','No source fidelity claim before independent exported content and first-hit proof.']))
+  proof=validate(out/'model.glb',crowns,records);assert sha(source)==entry['source_model_sha256'];assert (out/'model.glb').stat().st_size<=8*1024**2;assert sum(p.stat().st_size for p in out.rglob('*') if p.is_file())<=32*1024**2
+  write_json(out/'report.json',dict(status='PRIVATE conversion complete; independent packed-material, native, surface and visual proofs pending',source_sha256=sha(source),model_sha256=sha(out/'model.glb'),plan_sha256=sha(planpath),content_guard=proof,crowns=crowns,records=records,export=export,limits=['Full frame0 crown is a private provenance role, not a static animation replacement.','No canonical changes; current gameplay metadata must be preserved separately.','No source fidelity claim before independent exported content and first-hit proof.']))
  finally:release()
 if __name__=='__main__':main(int(sys.argv[sys.argv.index('--')+1]))
