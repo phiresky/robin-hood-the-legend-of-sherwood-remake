@@ -128,9 +128,11 @@ impl Validate for RankedSimulationPolicyV1 {
 pub enum BoardSimulationPolicyV1 {
     /// Exactly the `SimConfig` of one Standard or Original preset/difficulty.
     Fixed { policy: RankedSimulationPolicyV1 },
-    /// Any validated `SimConfig`, verified under a `Custom` policy whose
+    /// Any validated solo `SimConfig`, verified under a `Custom` policy whose
     /// difficulty is taken from the replayed configuration.
     AnyConfig,
+    /// Any validated co-op configuration, on a board separate from solo runs.
+    CoopAnyConfig,
 }
 
 impl Validate for BoardSimulationPolicyV1 {
@@ -145,7 +147,7 @@ impl Validate for BoardSimulationPolicyV1 {
                 }
                 Ok(())
             }
-            Self::AnyConfig => Ok(()),
+            Self::AnyConfig | Self::CoopAnyConfig => Ok(()),
         }
     }
 }
@@ -180,6 +182,14 @@ mod tests {
             }
             .validate()
             .is_err()
+        );
+        assert!(BoardSimulationPolicyV1::CoopAnyConfig.validate().is_ok());
+        assert_eq!(
+            serde_json::from_value::<BoardSimulationPolicyV1>(
+                serde_json::json!({"kind": "coop_any_config"})
+            )
+            .unwrap(),
+            BoardSimulationPolicyV1::CoopAnyConfig
         );
         assert_eq!(
             serde_json::to_value(BoardSimulationPolicyV1::AnyConfig).unwrap(),

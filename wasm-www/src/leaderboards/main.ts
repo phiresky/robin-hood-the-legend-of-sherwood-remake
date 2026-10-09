@@ -165,7 +165,8 @@ async function renderLeaderboard(
         const empty = statePanel(filtered ? title : 'Be the first to set a record', filtered
             ? 'Try broader filters, or submit a run with these settings.'
             : 'Win this mission, then choose “Submit this run” on the results screen.');
-        const allRules = metadata.boards.find(board => board.edition === filters.board.edition && board.presetId === 'any');
+        const allRules = filters.board.simulationPolicy.kind === 'coop_any_config' ? filters.board
+            : metadata.boards.find(board => board.edition === filters.board.edition && board.presetId === 'any');
         if (filters.maxConcurrentPlayers !== null || (allRules !== undefined && allRules.boardId !== filters.boardId)) {
             const reset = element('button', { className: 'button secondary', text: allRules === undefined ? 'Show all player counts' : 'Show all runs', attrs: { type: 'button' } });
             reset.addEventListener('click', () => navigateFilters({
@@ -319,6 +320,7 @@ function maxConcurrentPlayersInput(filters: BoardFilters): HTMLLabelElement {
         { id: '2', label: '2 players' },
         { id: '3', label: '3 players' },
         { id: '4', label: '4 players' },
+        { id: '5', label: '5 players' },
     ], filters.maxConcurrentPlayers === null ? '' : String(filters.maxConcurrentPlayers), value => {
         navigateFilters({ ...filters, maxConcurrentPlayers: value === '' ? null : Number(value), cursor: null });
     });

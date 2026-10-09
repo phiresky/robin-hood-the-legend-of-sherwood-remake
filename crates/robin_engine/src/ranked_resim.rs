@@ -466,7 +466,11 @@ mod tests {
     fn fixture_execution(engine: &Engine) -> RankedExecutionContext {
         RankedExecutionContext::new(
             crate::ranked_rules::ranked_policy_for_board(
-                robin_run_types::BoardSimulationPolicyV1::AnyConfig,
+                if engine.sim_config().coop.players > 1 {
+                    robin_run_types::BoardSimulationPolicyV1::CoopAnyConfig
+                } else {
+                    robin_run_types::BoardSimulationPolicyV1::AnyConfig
+                },
                 engine.sim_config(),
             )
             .unwrap(),
@@ -539,9 +543,31 @@ mod tests {
         include_hash: bool,
         inputs: impl FnOnce(crate::engine::SimConfig) -> Vec<SimulationFrameInput>,
     ) -> (Engine, LevelAssets, ReplayData) {
+        fixture_with_config(
+            include_hash,
+            crate::engine::SimConfig {
+                script_enabled: false,
+                ..Default::default()
+            },
+            inputs,
+        )
+    }
+
+    fn fixture_with_config(
+        include_hash: bool,
+        sim_config: crate::engine::SimConfig,
+        inputs: impl FnOnce(crate::engine::SimConfig) -> Vec<SimulationFrameInput>,
+    ) -> (Engine, LevelAssets, ReplayData) {
         let mut assets = LevelAssets::new();
-        let engine = Engine::new_for_test(1024.0, 768.0, fixture_campaign(), &mut assets)
-            .expect("fixture engine");
+        let engine = Engine::new_for_test_with_simulation(
+            1024.0,
+            768.0,
+            fixture_campaign(),
+            &mut assets,
+            0,
+            sim_config,
+        )
+        .expect("fixture engine");
         let sim_config = engine.sim_config();
         let inputs = inputs(sim_config);
         let total_frames = u32::try_from(inputs.len()).expect("fixture frame count fits u32");
@@ -598,6 +624,59 @@ mod tests {
         fixture_with_input(include_hash, |sim_config| {
             terminal_input(GameCode::LevelSucceeded, sim_config.difficulty)
         })
+    }
+
+    #[test]
+    fn coop_ranked_resimulation_replays_each_seat_and_checks_hashes() {
+        use crate::player_command::PlayerId;
+        for players in 2..=5 {
+            let mut config = crate::engine::SimConfig {
+                script_enabled: false,
+                ..Default::default()
+            };
+            config.coop.players = players;
+            let (engine, assets, replay) = fixture_with_config(true, config, |config| {
+                let connects = (1..players)
+                    .map(|seat| {
+                        PlayerInput::host(PlayerCommand::ConnectSeat {
+                            player_id: PlayerId(seat),
+                            nickname: format!("Player {seat}"),
+                        })
+                    })
+                    .collect();
+                let actions = (0..players)
+                    .map(|seat| PlayerInput {
+                        player_id: PlayerId(seat),
+                        command: PlayerCommand::CrouchDown,
+                    })
+                    .collect();
+                let mut quit = SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
+                    PlayerCommand::QuitMissionRequested,
+                )]);
+                quit.post_commands
+                    .push(terminal_update(GameCode::LevelInterrupted, config.difficulty).into());
+                vec![
+                    SimulationFrameInput::from_player_inputs(connects),
+                    SimulationFrameInput::from_player_inputs(actions),
+                    quit,
+                ]
+            });
+            let id = replay.submission_id();
+            let transcript = replay.submission_transcript(id, id).unwrap();
+            assert_eq!(transcript.max_concurrent_players, u16::from(players));
+            replay
+                .validate_ranked_command_admission(&transcript)
+                .unwrap();
+            let result =
+                resimulate_canonical_ranked_replay(engine.clone(), &assets, &replay).unwrap();
+            assert_eq!(result.outcome, GameCode::LevelInterrupted);
+            let mut tampered = ReplayFile::from(&replay);
+            *tampered.hashes.get_mut(&0).unwrap() ^= 1;
+            assert!(
+                resimulate_canonical_ranked_replay(engine, &assets, &tampered.try_into().unwrap())
+                    .is_err()
+            );
+        }
     }
 
     #[test]

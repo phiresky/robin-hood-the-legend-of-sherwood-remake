@@ -17,7 +17,7 @@ export type RankedSimulationPolicy = {
 
 export type BoardSimulationPolicy =
     | { readonly kind: 'fixed'; readonly policy: RankedSimulationPolicy }
-    | { readonly kind: 'any_config' };
+    | { readonly kind: 'any_config' | 'coop_any_config' };
 
 export type BoardMission = { readonly missionId: string; readonly displayName: string };
 

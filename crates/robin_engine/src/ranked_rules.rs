@@ -22,7 +22,7 @@ pub const FULL_CAMPAIGN_GENESIS_MISSION_ID: &str = "H01_Lin_VL";
 
 /// Resolve the engine policy a board applies to a replay recorded with
 /// `observed`. Fixed boards admit exactly their preset configuration; any-config
-/// boards admit every validated configuration under a `Custom` policy.
+/// boards admit validated solo or co-op configurations under a `Custom` policy.
 pub fn ranked_policy_for_board(
     board: BoardSimulationPolicyV1,
     observed: SimConfig,
@@ -33,7 +33,13 @@ pub fn ranked_policy_for_board(
             policy.validate_config(observed)?;
             Ok(policy)
         }
-        BoardSimulationPolicyV1::AnyConfig => {
+        BoardSimulationPolicyV1::AnyConfig | BoardSimulationPolicyV1::CoopAnyConfig => {
+            let coop_board = matches!(board, BoardSimulationPolicyV1::CoopAnyConfig);
+            if coop_board != (observed.coop.players > 1) {
+                return Err(RankedSimulationPolicyError::ConfigMismatch {
+                    field: crate::engine::RankedSimulationConfigField::Coop,
+                });
+            }
             let difficulty = match observed.difficulty {
                 DifficultyLevel::Easy => RankedSimulationDifficultyV1::Easy,
                 DifficultyLevel::Medium => RankedSimulationDifficultyV1::Medium,
@@ -99,6 +105,21 @@ pub fn validate_fresh_mission_start(
     if matches(&direct) {
         return Ok(());
     }
+    // Lobby mission selection starts from a reset campaign and goes through
+    // normal selection, retaining its pre-selection restart checkpoint.
+    let matches_lobby_start = |mut campaign: Campaign| {
+        if config.coop.players <= 1 {
+            return false;
+        }
+        campaign.force_next_mission(mission_index);
+        campaign.snapshot_with_simulation(0, config);
+        let (selected, index, seed, selected_config) =
+            Engine::select_next_mission(campaign, profiles, 0, config);
+        index == mission_index
+            && seed == simulation_seed
+            && selected_config == config
+            && matches(&selected)
+    };
     match edition {
         OfficialContentEditionV1::Demo => {
             let team = match mission_id {
@@ -127,6 +148,9 @@ pub fn validate_fresh_mission_start(
                         .expect("every profile file was checked")
                 },
             );
+            if matches_lobby_start(fresh.clone()) {
+                return Ok(());
+            }
             fresh.add_all_to_mission_team();
             fresh.current_mission_idx = Some(mission_index);
             fresh.snapshot_preselected_with_simulation(simulation_seed, config);
@@ -135,6 +159,9 @@ pub fn validate_fresh_mission_start(
             }
         }
         OfficialContentEditionV1::Full => {
+            if matches_lobby_start(fresh.clone()) {
+                return Ok(());
+            }
             if mission_id == FULL_CAMPAIGN_GENESIS_MISSION_ID {
                 // A new campaign begins with the application-owned seed zero.
                 // Mission selection may advance it; both checkpoints must agree.
@@ -178,6 +205,33 @@ mod tests {
         assert_eq!(policy.identity().preset, RankedSimulationPresetV1::Custom);
         assert!(policy.validate_config(changed).is_ok());
         assert!(policy.validate_config(expected).is_err());
+    }
+
+    #[test]
+    fn coop_boards_admit_all_team_sizes_without_admitting_solo_runs() {
+        let solo = RankedSimulationPolicy::standard_medium().expected_config();
+        let fixed = BoardSimulationPolicyV1::Fixed {
+            policy: RankedSimulationPolicyV1::standard(RankedSimulationDifficultyV1::Medium),
+        };
+        assert!(ranked_policy_for_board(BoardSimulationPolicyV1::CoopAnyConfig, solo).is_err());
+        for players in 2..=5 {
+            let mut config = solo;
+            config.coop.players = players;
+            assert!(ranked_policy_for_board(fixed, config).is_err());
+            assert!(ranked_policy_for_board(BoardSimulationPolicyV1::AnyConfig, config).is_err());
+            let policy =
+                ranked_policy_for_board(BoardSimulationPolicyV1::CoopAnyConfig, config).unwrap();
+            assert_eq!(policy.expected_config(), config);
+            config.coop.enemy_health_per_duplicate += 1;
+            assert!(policy.validate_config(config).is_err());
+        }
+        for players in [0, 6] {
+            let mut config = solo;
+            config.coop.players = players;
+            assert!(
+                ranked_policy_for_board(BoardSimulationPolicyV1::CoopAnyConfig, config).is_err()
+            );
+        }
     }
 
     #[test]
@@ -235,6 +289,40 @@ mod tests {
         assert!(check(18, &bitcode::encode(&campaign)).is_err());
         let unselected = Campaign::from_profiles(&profiles, config.difficulty);
         assert!(check(17, &bitcode::encode(&unselected)).is_err());
+        for edition in [
+            OfficialContentEditionV1::Demo,
+            OfficialContentEditionV1::Full,
+        ] {
+            let mut coop = config;
+            coop.coop.players = 2;
+            let mut lobby = Campaign::from_profiles(&profiles, coop.difficulty);
+            lobby.reset(&profiles, coop.difficulty);
+            if edition == OfficialContentEditionV1::Demo {
+                lobby.create_gang_from_pcs_with_file_exists(
+                    "RJMT",
+                    &profiles,
+                    coop.difficulty,
+                    |_| false,
+                );
+            }
+            lobby.force_next_mission(0);
+            lobby.snapshot_with_simulation(0, coop);
+            let (mut selected, _, seed, _) = Engine::select_next_mission(lobby, &profiles, 0, coop);
+            let check_lobby = |campaign: &Campaign| {
+                validate_fresh_mission_start(
+                    coop,
+                    &profiles,
+                    edition,
+                    "Dem_Lei_MP",
+                    seed,
+                    &bitcode::encode(campaign),
+                    &files,
+                )
+            };
+            assert!(check_lobby(&selected).is_ok());
+            selected.characters[0].status.life_points += 1;
+            assert!(check_lobby(&selected).is_err());
+        }
         campaign.characters[0].status.life_points += 1;
         assert!(check(17, &bitcode::encode(&campaign)).is_err());
     }

@@ -242,6 +242,16 @@ fn verify(
                     "board_simulation_policy_mismatch",
                 )
             })?;
+    if matches!(
+        job.simulation_policy,
+        robin_run_protocol::BoardSimulationPolicyV1::CoopAnyConfig
+    ) != (transcript.max_concurrent_players > 1)
+    {
+        return Err(stage.reject(
+            VerificationRejectionCodeV1::ConfigMismatch,
+            "board_participation_mismatch",
+        ));
+    }
     let sim_config_value = CanonicalValue::from_serializable(&sim_config).map_err(|_| {
         stage.infrastructure(
             VerificationInfrastructureFailureCodeV1::WorkerInternalFailure,

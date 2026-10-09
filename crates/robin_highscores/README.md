@@ -239,7 +239,8 @@ The verifier itself checks, in order:
 2. the replay schema and network protocol equal the verifier's compiled
    versions;
 3. the board simulation policy admits the replay `SimConfig` (a fixed preset
-   exactly, or any validated configuration for `any_config` boards);
+   exactly, solo configurations for `any_config`, or co-op configurations for
+   `coop_any_config` boards);
 4. the embedded starting campaign is an official fresh mission start built
    from the raw content's profiles, plus structural campaign validation;
 5. command and input-provenance admission (automation, console, cheats and
@@ -303,8 +304,17 @@ missions = [{ mission_id = "H01_Lin_VL", display_name = "Official FULL H01_Lin_V
 ```
 
 `crates/robin_highscores/ops/production/server.toml` is the complete
-production configuration: Standard and Original × Easy/Normal/Hard plus an
-`any_config` board for each edition; Full boards list the 38 field missions.
+production configuration: Standard and Original × Easy/Normal/Hard for each
+edition, a Demo `any_config` board, and separate `coop_any_config` boards for
+Demo and Full. Full boards list the 38 field missions. The `full-any` browsing
+view aggregates solo boards only. Co-op boards combine all team sizes; optional
+player-count filters remain available. Only the host uploads the shared replay,
+with the other participants anonymous. Fresh lobby starts are verified against
+reset campaigns built from official content; incomplete history and recovery
+snapshots remain ineligible. Deploy the updated API/worker, verifier, website
+and game client before publishing the new policies. Run
+`robin-highscores-admin migrate` before restarting the services; migration 0008
+preserves existing runs, metrics and achievements while allowing five players.
 `ops/production/worker.toml` is the matching worker configuration. Removing a
 board hides its runs; queued jobs for it fail after the retry policy.
 

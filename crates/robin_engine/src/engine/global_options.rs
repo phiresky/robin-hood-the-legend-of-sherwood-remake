@@ -267,11 +267,6 @@ impl RankedSimulationPolicy {
         identity
             .validate()
             .map_err(RankedSimulationPolicyError::InvalidIdentity)?;
-        if config.coop.players > 1 {
-            return Err(RankedSimulationPolicyError::ConfigMismatch {
-                field: RankedSimulationConfigField::Coop,
-            });
-        }
         if identity.preset != RankedSimulationPresetV1::Custom {
             let policy = Self::from_identity(identity)?;
             policy.validate_config(config)?;
@@ -280,6 +275,10 @@ impl RankedSimulationPolicy {
         config.validate().map_err(|error| {
             RankedSimulationPolicyError::InvalidCustomConfiguration(error.to_string())
         })?;
+        config
+            .coop
+            .validate()
+            .map_err(RankedSimulationPolicyError::InvalidCustomConfiguration)?;
         let difficulty = match config.difficulty {
             DifficultyLevel::Easy => RankedSimulationDifficultyV1::Easy,
             DifficultyLevel::Medium => RankedSimulationDifficultyV1::Medium,
@@ -979,7 +978,7 @@ mod tests {
         }
     }
     #[test]
-    fn coop_cannot_enter_custom_solo_ranked_policy() {
+    fn custom_ranked_policy_binds_the_complete_coop_configuration() {
         use super::{RankedSimulationPolicy, RankedSimulationPolicyError};
         use robin_run_types::{
             RankedSimulationDifficultyV1, RankedSimulationPolicyV1, RankedSimulationPresetV1,
@@ -989,11 +988,16 @@ mod tests {
         let mut config = SimConfig::standard_ranked(DifficultyLevel::Medium);
         assert!(RankedSimulationPolicy::from_config(identity, config).is_ok());
         config.coop.players = 2;
+        let policy = RankedSimulationPolicy::from_config(identity, config).unwrap();
+        assert!(policy.validate_config(config).is_ok());
+        config.coop.players = 3;
         assert!(matches!(
-            RankedSimulationPolicy::from_config(identity, config),
+            policy.validate_config(config),
             Err(RankedSimulationPolicyError::ConfigMismatch {
                 field: RankedSimulationConfigField::Coop
             })
         ));
+        config.coop.players = 6;
+        assert!(RankedSimulationPolicy::from_config(identity, config).is_err());
     }
 }

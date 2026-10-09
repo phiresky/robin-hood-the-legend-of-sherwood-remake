@@ -7,6 +7,7 @@ Only sight volumes and RGB565 backgrounds are imported, not gameplay.
 
 import argparse
 import bz2
+import copy
 import json
 import math
 import os
@@ -98,6 +99,16 @@ def read_background(data):
 def geometry_adapter(obstacles):
     # Geometry-only interchange for the existing volume pipeline. Empty arrays
     # explicitly omit unimported systems; this is not a playable level export.
+    obstacles = copy.deepcopy(obstacles)
+    for index, obstacle in enumerate(obstacles):
+        for point in obstacle["points"]:
+            delta = point["z_bottom"] - point["z_top"]
+            if delta > 0:
+                if delta > 0.00001:
+                    raise ValueError(f"Obstacle {index}: inverted height by {delta}")
+                obstacle["desperados_record"].setdefault("rounded_points", []).append(dict(point))
+                point["z_top"] = point["z_bottom"]
+                print(f"Obstacle {index}: rounded {delta:g}-unit float height inversion", flush=True)
     return {
         "format": "Demo",
         "misc": {"control_crc": 0, "forest_level": False, "default_material": 0},

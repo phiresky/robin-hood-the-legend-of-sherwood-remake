@@ -126,10 +126,19 @@ fn standard_medium() -> BoardSimulationPolicyV1 {
 /// check that runs before official content is loaded.
 fn compact_replay(mission_id: &str, sim_config: robin_engine::engine::SimConfig) -> Vec<u8> {
     use robin_engine::engine::SimulationFrameInput;
-    use robin_engine::player_command::{PlayerCommand, PlayerInput};
+    use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
     use robin_engine::replay::{
         REPLAY_SCHEMA_VERSION, ReplayData, ReplayFile, ReplayFrame, ReplayHeader,
     };
+    let mut commands = (1..sim_config.coop.players)
+        .map(|seat| {
+            PlayerInput::host(PlayerCommand::ConnectSeat {
+                player_id: PlayerId(seat),
+                nickname: format!("Player {seat}"),
+            })
+        })
+        .collect::<Vec<_>>();
+    commands.push(PlayerInput::host(PlayerCommand::CrouchDown));
     let replay: ReplayData = ReplayFile {
         header: ReplayHeader {
             mission_profiles: None,
@@ -151,9 +160,7 @@ fn compact_replay(mission_id: &str, sim_config: robin_engine::engine::SimConfig)
             ReplayFrame {
                 timeline_before: 0,
                 timeline_after: 1,
-                input: SimulationFrameInput::from_player_inputs(vec![PlayerInput::host(
-                    PlayerCommand::CrouchDown,
-                )]),
+                input: SimulationFrameInput::from_player_inputs(commands),
                 host_controls: Vec::new(),
             },
         )]
@@ -367,10 +374,77 @@ fn replay_config_outside_the_board_policy_is_rejected() {
     ));
 }
 
+#[test]
+fn coop_replay_requires_a_coop_board() {
+    let mut config =
+        robin_engine::engine::RankedSimulationPolicy::standard_medium().expected_config();
+    config.coop.players = 2;
+    let replay = compact_replay(MISSION, config);
+    for policy in [standard_medium(), BoardSimulationPolicyV1::AnyConfig] {
+        let fixture = Fixture::new(&job_for(&replay, policy), &replay);
+        assert_rejected(
+            &fixture.output(),
+            VerificationRejectionCodeV1::ConfigMismatch,
+            "board_simulation_policy_mismatch",
+        );
+    }
+    let fixture = Fixture::new(
+        &job_for(&replay, BoardSimulationPolicyV1::CoopAnyConfig),
+        &replay,
+    );
+    assert!(matches!(&fixture.output().status,
+        VerificationStatusV2::FailedInfrastructure(failure)
+            if failure.code == VerificationInfrastructureFailureCodeV1::ArtifactIoFailure));
+    let (_, data) = robin_replay_format::decode_compact(&replay).unwrap();
+    let mut file = robin_engine::replay::ReplayFile::from(&data);
+    let mut disguised_solo = file.clone();
+    disguised_solo.header.sim_config.coop.players = 1;
+    let disguised_solo = robin_replay_format::encode_compact(
+        &disguised_solo.try_into().unwrap(),
+        robin_replay_format::ENGINE_VERSION_HASH,
+    )
+    .unwrap();
+    let fixture = Fixture::new(
+        &job_for(&disguised_solo, BoardSimulationPolicyV1::AnyConfig),
+        &disguised_solo,
+    );
+    assert_rejected(
+        &fixture.output(),
+        VerificationRejectionCodeV1::ConfigMismatch,
+        "board_participation_mismatch",
+    );
+    file.frames.get_mut(&0).unwrap().input.commands.clear();
+    let replay = robin_replay_format::encode_compact(
+        &file.try_into().unwrap(),
+        robin_replay_format::ENGINE_VERSION_HASH,
+    )
+    .unwrap();
+    let fixture = Fixture::new(
+        &job_for(&replay, BoardSimulationPolicyV1::CoopAnyConfig),
+        &replay,
+    );
+    assert_rejected(
+        &fixture.output(),
+        VerificationRejectionCodeV1::ConfigMismatch,
+        "board_participation_mismatch",
+    );
+    config.coop.players = 1;
+    let replay = compact_replay(MISSION, config);
+    let fixture = Fixture::new(
+        &job_for(&replay, BoardSimulationPolicyV1::CoopAnyConfig),
+        &replay,
+    );
+    assert_rejected(
+        &fixture.output(),
+        VerificationRejectionCodeV1::ConfigMismatch,
+        "board_simulation_policy_mismatch",
+    );
+}
+
 /// End-to-end resimulation of a real won compact replay against real raw
 /// content. Provide `ROBIN_VERIFIER_E2E_REPLAY` (compact `.rhrec`),
 /// `ROBIN_VERIFIER_E2E_CONTENT` (raw Demo datadir) and optionally
-/// `ROBIN_VERIFIER_E2E_POLICY` (`standard-medium`, default, or `any`).
+/// `ROBIN_VERIFIER_E2E_POLICY` (`standard-medium`, default, `any`, or `coop`).
 #[test]
 #[ignore = "requires a recorded won compact replay and raw Demo content"]
 fn real_won_replay_verifies_against_raw_content() {
@@ -379,6 +453,7 @@ fn real_won_replay_verifies_against_raw_content() {
     let replay = std::fs::read(replay_path).unwrap();
     let policy = match std::env::var("ROBIN_VERIFIER_E2E_POLICY").as_deref() {
         Ok("any") => BoardSimulationPolicyV1::AnyConfig,
+        Ok("coop") => BoardSimulationPolicyV1::CoopAnyConfig,
         _ => standard_medium(),
     };
     let mut job: VerifierJobV2 = serde_json::from_slice(&job_for(&replay, policy)).unwrap();

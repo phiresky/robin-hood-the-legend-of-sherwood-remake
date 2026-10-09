@@ -4,7 +4,7 @@ import { type JsonObject } from './types.js';
 export const METRIC_ORDER = ['original_score', 'fastest_success'] as const;
 
 /** robin_run_types::MAX_REPLAY_SEATS_V1 */
-export const MAX_REPLAY_SEATS = 4;
+export const MAX_REPLAY_SEATS = 5;
 
 export function versionedObject(value: unknown, path: string, fields: readonly string[]): JsonObject {
     const obj = strictObject(value, path, ['schema_version', ...fields]);

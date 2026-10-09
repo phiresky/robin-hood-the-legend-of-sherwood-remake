@@ -13,7 +13,9 @@ export function validateBoardView(page: BoardPage, filters: SelectedBoardFilters
 }
 
 export function boardPolicyLabel(board: Board): string {
-    const settings = board.simulationPolicy.kind === 'any_config'
+    const settings = board.simulationPolicy.kind === 'coop_any_config'
+        ? 'Co-op · All team sizes · All rules'
+        : board.simulationPolicy.kind === 'any_config'
         ? 'All rules'
         : `${board.presetName} / ${board.difficultyName}`;
     return `${settings} · ${board.allowStateLoad ? 'Save loading allowed' : 'No save loading'}`;

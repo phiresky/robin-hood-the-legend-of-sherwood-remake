@@ -93,7 +93,7 @@ async fn prepare(
     }
     let bundle = MissionEndRunBundle {
         outcome: MissionEndOutcome::from_replay(replay),
-        multiplayer: transcript.max_concurrent_players > 1,
+        multiplayer: header.sim_config.coop.players > 1 || transcript.max_concurrent_players > 1,
         tick_duration: metadata.tick_duration,
         boards,
         eligible_submission: artifact.map(|artifact| MissionEndSubmissionInput {
@@ -129,18 +129,36 @@ fn replay_submission_unavailable_reason(
     let rankability = replay
         .rankability()
         .map_err(|error| RankedError::evidence(error.to_string()))?;
+    let id = replay.submission_id();
+    let transcript = replay
+        .submission_transcript(id, id)
+        .map_err(RankedError::evidence)?;
+    if (replay.header().sim_config.coop.players > 1) != (transcript.max_concurrent_players > 1) {
+        return Ok(Some(
+            "Co-op rankings require at least two recorded players and co-op mission settings."
+                .into(),
+        ));
+    }
     Ok(rankability.taints().iter().any(|taint|
         taint.kind == robin_engine::replay_rankability::InputTaintKind::StateLoad
     ).then(|| "This save's complete replay history is unavailable. The local replay can be watched, but this run cannot be submitted.".to_owned()))
 }
 
 /// One tab per supported metric of `board`, filtered to this recording's
-/// mission and concurrent player count.
+/// mission. All co-op team sizes share one ranking.
 fn metric_boards(
     board: &BoardV2,
     mission_id: &str,
     max_players: Option<u16>,
 ) -> Vec<MissionEndBoard> {
+    let max_players = if matches!(
+        board.simulation_policy,
+        robin_run_protocol::BoardSimulationPolicyV1::CoopAnyConfig
+    ) {
+        None
+    } else {
+        max_players
+    };
     [
         (BoardMetricV1::OriginalScore, LeaderboardTab::Score, "Score"),
         (BoardMetricV1::FastestSuccess, LeaderboardTab::Time, "Time"),
@@ -189,11 +207,7 @@ impl BrowseLeaderboardContext {
         metadata: &robin_run_protocol::LeaderboardMetadataV2,
         edition: OfficialContentEditionV1,
     ) -> Result<MissionEndRunBundle, RankedError> {
-        let board = if self.sim_config.coop.players > 1 {
-            board::select_coop_browsing_board(metadata, edition, &self.mission_id)?
-        } else {
-            board::select_board(metadata, edition, &self.mission_id, self.sim_config)?
-        };
+        let board = board::select_board(metadata, edition, &self.mission_id, self.sim_config)?;
         let bundle = MissionEndRunBundle {
             outcome: self.outcome,
             multiplayer: true,
@@ -202,11 +216,9 @@ impl BrowseLeaderboardContext {
             // Show all team sizes without inventing a participant count.
             boards: metric_boards(board, &self.mission_id, None),
             eligible_submission: None,
-            submission_unavailable_reason: Some(if self.sim_config.coop.players > 1 {
-                "Co-op runs cannot be submitted to the current leaderboards. You can browse this mission's scores.".into()
-            } else {
-                "Only the host can submit this multiplayer run.".into()
-            }),
+            submission_unavailable_reason: Some(
+                "Only the host can submit this multiplayer run.".into(),
+            ),
         };
         bundle.validate()?;
         Ok(bundle)
@@ -248,8 +260,7 @@ impl MissionLeaderboardRuntime {
         let mut preparation = self.preparation.take().ok_or_else(|| {
             RankedError::lifecycle("mission-end leaderboard was captured more than once")
         })?;
-        if local_seat != robin_engine::player_command::PlayerId::HOST || sim_config.coop.players > 1
-        {
+        if local_seat != robin_engine::player_command::PlayerId::HOST {
             preparation.browse = Some(BrowseLeaderboardContext {
                 mission_id: mission.mission_filename.clone(),
                 sim_config,
@@ -333,6 +344,25 @@ mod tests {
     use robin_engine::replay::{ReplayData, ReplayFile, ReplayLoadBack, ReplaySaveSnapshot};
 
     #[test]
+    fn host_coop_results_browse_all_team_sizes() {
+        use crate::leaderboard::test_fixtures::{MISSION_ID, board};
+        let coop = board(
+            "demo-coop",
+            OfficialContentEditionV1::Demo,
+            robin_run_protocol::BoardSimulationPolicyV1::CoopAnyConfig,
+        );
+        for players in 2..=5 {
+            let boards = metric_boards(&coop, MISSION_ID, Some(players));
+            assert_eq!(boards.len(), 2);
+            assert!(
+                boards
+                    .iter()
+                    .all(|board| board.query.max_concurrent_players.is_none())
+            );
+        }
+    }
+
+    #[test]
     fn client_browsing_does_not_require_a_valid_local_replay_or_offer_upload() {
         use crate::leaderboard::test_fixtures::{MISSION_ID, board};
         use robin_engine::player_command::PlayerId;
@@ -375,89 +405,104 @@ mod tests {
                 numerator_micros: 40_000,
                 denominator: 1,
             },
-            boards: vec![board(
-                "demo-any",
-                OfficialContentEditionV1::Demo,
-                BoardSimulationPolicyV1::AnyConfig,
-            )],
+            boards: vec![
+                board(
+                    "demo-any",
+                    OfficialContentEditionV1::Demo,
+                    BoardSimulationPolicyV1::AnyConfig,
+                ),
+                board(
+                    "demo-coop",
+                    OfficialContentEditionV1::Demo,
+                    BoardSimulationPolicyV1::CoopAnyConfig,
+                ),
+            ],
         };
         let mut coop_config = config;
         coop_config.coop.players = 2;
-        for seat in [PlayerId::HOST, PlayerId(1)] {
-            let mut runtime = MissionLeaderboardRuntime {
-                preparation: Some(MissionEndPreparation {
-                    preferences: LeaderboardPreferences::default(),
-                    browse: None,
-                    upload: None,
-                }),
-            };
-            let preparation = runtime
-                .capture_terminal(MissionEndOutcome::Won, seat, &mission, coop_config)
-                .unwrap();
-            assert!(
-                preparation
-                    .capture_replay(&service.exports())
-                    .unwrap()
-                    .is_none()
-            );
-            let bundle = preparation
-                .browse
-                .unwrap()
-                .bundle(&metadata, OfficialContentEditionV1::Demo)
-                .unwrap();
-            assert!(bundle.eligible_submission.is_none());
-            assert!(
-                bundle
-                    .submission_unavailable_reason
-                    .unwrap()
-                    .contains("Co-op runs cannot be submitted")
-            );
-            assert_eq!(bundle.boards.len(), 2);
-        }
-        for seat in [PlayerId::HOST, PlayerId(1)] {
-            let mut runtime = MissionLeaderboardRuntime {
-                preparation: Some(MissionEndPreparation {
-                    preferences: LeaderboardPreferences::default(),
-                    browse: None,
-                    upload: None,
-                }),
-            };
-            let preparation = runtime
-                .capture_terminal(MissionEndOutcome::Won, seat, &mission, config)
-                .unwrap();
-            let captured = preparation.capture_replay(&service.exports()).unwrap();
-            if seat == PlayerId::HOST {
-                assert!(
-                    captured.unwrap().parse_sync().is_err(),
-                    "the host must still validate its upload evidence"
-                );
-                assert!(preparation.browse.is_none());
-            } else {
-                assert!(captured.is_none());
-                let bundle = preparation
-                    .browse
-                    .unwrap()
-                    .bundle(&metadata, OfficialContentEditionV1::Demo)
+        for config in [config, coop_config] {
+            for seat in [PlayerId::HOST, PlayerId(1)] {
+                let mut runtime = MissionLeaderboardRuntime {
+                    preparation: Some(MissionEndPreparation {
+                        preferences: LeaderboardPreferences::default(),
+                        browse: None,
+                        upload: None,
+                    }),
+                };
+                let preparation = runtime
+                    .capture_terminal(MissionEndOutcome::Won, seat, &mission, config)
                     .unwrap();
-                assert_eq!(bundle.outcome, MissionEndOutcome::Won);
-                assert!(bundle.multiplayer);
-                assert!(bundle.eligible_submission.is_none());
-                assert!(
-                    bundle
-                        .submission_unavailable_reason
+                let captured = preparation.capture_replay(&service.exports()).unwrap();
+                if seat == PlayerId::HOST {
+                    assert!(
+                        captured.unwrap().parse_sync().is_err(),
+                        "the host must still validate its upload evidence"
+                    );
+                    assert!(preparation.browse.is_none());
+                } else {
+                    assert!(captured.is_none());
+                    let bundle = preparation
+                        .browse
                         .unwrap()
-                        .contains("Only the host")
-                );
-                assert_eq!(bundle.boards.len(), 2);
-                assert!(
-                    bundle
-                        .boards
-                        .iter()
-                        .all(|board| board.query.mission_id == MISSION_ID
-                            && board.query.max_concurrent_players.is_none())
-                );
+                        .bundle(&metadata, OfficialContentEditionV1::Demo)
+                        .unwrap();
+                    assert_eq!(bundle.outcome, MissionEndOutcome::Won);
+                    assert!(bundle.multiplayer);
+                    assert!(bundle.eligible_submission.is_none());
+                    assert!(
+                        bundle
+                            .submission_unavailable_reason
+                            .unwrap()
+                            .contains("Only the host")
+                    );
+                    assert_eq!(bundle.boards.len(), 2);
+                    assert!(
+                        bundle
+                            .boards
+                            .iter()
+                            .all(|board| board.query.mission_id == MISSION_ID
+                                && board.query.max_concurrent_players.is_none())
+                    );
+                }
             }
         }
+    }
+
+    #[test]
+    fn coop_submission_requires_recorded_teammates() {
+        use robin_engine::player_command::{PlayerCommand, PlayerId, PlayerInput};
+        let replay = crate::leaderboard::test_fixtures::single_frame_replay(bitcode::encode(
+            &Campaign::default(),
+        ));
+        let mut file = ReplayFile::from(&replay);
+        file.header.sim_config.coop.players = 2;
+        let alone = ReplayData::try_from(file.clone()).unwrap();
+        assert!(
+            replay_submission_unavailable_reason(&alone)
+                .unwrap()
+                .unwrap()
+                .contains("at least two")
+        );
+        file.frames.get_mut(&0).unwrap().input.commands.push(
+            PlayerInput::host(PlayerCommand::ConnectSeat {
+                player_id: PlayerId(1),
+                nickname: "Teammate".into(),
+            })
+            .into(),
+        );
+        let coop = ReplayData::try_from(file.clone()).unwrap();
+        assert!(
+            replay_submission_unavailable_reason(&coop)
+                .unwrap()
+                .is_none()
+        );
+        file.header.sim_config.coop.players = 1;
+        let invalid_solo = ReplayData::try_from(file).unwrap();
+        assert!(
+            replay_submission_unavailable_reason(&invalid_solo)
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]

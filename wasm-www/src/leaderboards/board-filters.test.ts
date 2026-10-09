@@ -4,7 +4,7 @@ import { boardFacets, boardForFacet, filtersForBoard, normalizeFilters, withAggr
 import { boardDocument, metadataDocument } from './model-fixtures.js';
 import { parseBoardMetadata } from './public-response.js';
 import type { BoardFilters } from './state.js';
-import { validateBoardView } from './view-model.js';
+import { boardPolicyLabel, validateBoardView } from './view-model.js';
 import type { BoardPage } from './types.js';
 
 const empty: BoardFilters = { boardId: null, missionId: null, metric: null, maxConcurrentPlayers: null, cursor: null };
@@ -86,4 +86,20 @@ test('Any ruleset is a browsing view built from all full-game submission boards'
     const standard = views.boards.find(board => board.boardId === 'full-standard-normal')!;
     assert.equal(boardForFacet(views, standard, { presetId: 'any' }).boardId, 'full-any');
     assert.equal(withAggregateViews(views).boards.filter(board => board.boardId === 'full-any').length, 1);
+});
+
+
+test('co-op has one combined ranking and stays outside the solo aggregate', () => {
+    const source = metadata([boardDocument({ board_id: 'full-coop', edition: 'full',
+        preset_id: 'coop', preset_name: 'Co-op', difficulty_id: 'any', difficulty_name: 'Any difficulty',
+        simulation_policy: { kind: 'coop_any_config' }, viewer_content_requirement: 'user_local_retail',
+        missions: [{ mission_id: 'CoopOnly', display_name: 'Co-op mission' }] })]);
+    const views = withAggregateViews(source);
+    const coop = normalizeFilters({ ...empty, boardId: 'full-coop' }, views);
+    assert.equal(coop.maxConcurrentPlayers, null);
+    assert.equal(coop.board.simulationPolicy.kind, 'coop_any_config');
+    assert.match(boardPolicyLabel(coop.board), /Co-op · All team sizes/u);
+    assert.equal(boardForFacet(views, coop.board, { presetId: 'coop' }).boardId, 'full-coop');
+    const solo = normalizeFilters({ ...empty, boardId: 'full-any' }, views);
+    assert.equal(solo.board.missions.some(mission => mission.missionId === 'CoopOnly'), false);
 });

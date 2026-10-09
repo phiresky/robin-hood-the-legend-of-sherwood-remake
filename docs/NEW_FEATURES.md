@@ -2832,6 +2832,26 @@ asset-frame translation preserves both. Tilted source frames that require distin
 physical/navigation footprints still warn and omit that clearance in best-effort
 exports; ordinary collision remains.
 
+### Co-op leaderboards
+
+Official Demo and Full missions have separate co-op Score and Time boards. All
+co-op team sizes share one ranking; solo boards and the Full “Any ruleset” view
+exclude co-op runs. The host can submit the shared mission recording after a win,
+while other players browse the same board. The uploader is credited publicly;
+other participants remain anonymous, and player counts come from recorded seat
+events. Co-op submissions require at least two recorded participants playing
+together; configuring extra player slots alone does not qualify.
+
+Co-op boards accept validated co-op gameplay settings and exact fresh lobby or
+campaign-genesis starts. Verification reconstructs the mission from official
+content and checks commands, state hashes, success and metrics. Existing limits
+still apply: incomplete save history, multiplayer recovery snapshots, modified
+starting campaigns, cheats and automation cannot produce ranked submissions.
+Publishing requires the updated client, website, API/worker, verifier and the
+`demo-coop` / `full-coop` board configuration. Database migration 0008 preserves
+existing runs, metrics and achievements while raising the participant limit to
+five.
+
 ### Basic Desperados reconstruction
 
 Basic Desperados scene reconstruction is available through

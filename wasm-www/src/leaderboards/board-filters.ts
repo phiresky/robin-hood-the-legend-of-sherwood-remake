@@ -101,7 +101,7 @@ function unique(values: readonly FacetOption[]): readonly FacetOption[] {
 
 /** Full-game browsing combines configured submission boards without publishing a new one. */
 export function withAggregateViews(metadata: BoardMetadata): BoardMetadata {
-    const full = metadata.boards.filter(board => board.edition === 'full');
+    const full = metadata.boards.filter(board => board.edition === 'full' && board.simulationPolicy.kind !== 'coop_any_config');
     const first = full[0];
     if (first === undefined) return metadata;
     const aggregate: Board = {

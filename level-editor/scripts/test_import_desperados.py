@@ -3,7 +3,7 @@ import bz2
 import struct
 import unittest
 
-from import_desperados import read_background, read_sight, sight_chunk
+from import_desperados import geometry_adapter, read_background, read_sight, sight_chunk
 
 
 class ImportTests(unittest.TestCase):
@@ -43,6 +43,18 @@ class ImportTests(unittest.TestCase):
         self.assertEqual([image.getpixel((x, 0)) for x in range(3)], [(255, 0, 0), (0, 255, 0), (0, 0, 255)])
         with self.assertRaises(ValueError):
             read_background(struct.pack("<HHII", 4, 1, 2, len(packed)) + packed)
+
+    def test_float_rounding_preserves_source_and_rejects_real_inversions(self):
+        obstacles = read_sight(struct.pack("<IH", 6, 1) + self.record())
+        point = obstacles[0]["points"][0]
+        point.update(z_bottom=45, z_top=44.999996185302734)
+        adapted = geometry_adapter(obstacles)["sight_obstacles"][0]
+        self.assertEqual(adapted["points"][0]["z_top"], 45)
+        self.assertEqual(adapted["desperados_record"]["rounded_points"][0], point)
+        self.assertLess(point["z_top"], 45)
+        point["z_top"] = 44
+        with self.assertRaises(ValueError):
+            geometry_adapter(obstacles)
 
 
 if __name__ == "__main__":

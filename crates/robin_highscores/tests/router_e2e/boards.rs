@@ -498,6 +498,10 @@ async fn full_any_combines_configured_boards_with_global_ranks_and_pagination() 
             board.viewer_content_requirement =
                 robin_run_protocol::ViewerContentRequirementV2::UserLocalRetail;
         }
+        let mut coop = config.boards[0].clone();
+        coop.board_id = OpaqueId::new("full-coop").unwrap();
+        coop.simulation_policy = robin_run_protocol::BoardSimulationPolicyV1::CoopAnyConfig;
+        config.boards.push(coop);
         config
             .boards
             .push(robin_highscores::test_support::demo_board(
@@ -515,6 +519,8 @@ async fn full_any_combines_configured_boards_with_global_ranks_and_pagination() 
         ("aggregate-b", 50),
         ("aggregate-c", 30),
         ("aggregate-demo", 100),
+        ("aggregate-coop", 200),
+        ("aggregate-coop-five", 250),
     ] {
         runs.push(
             rig.publish_run(
@@ -529,7 +535,12 @@ async fn full_any_combines_configured_boards_with_global_ranks_and_pagination() 
     }
     // Place accepted fixtures on distinct configured boards; the aggregate must
     // rank them together while excluding a different content edition.
-    for (id, board) in [(&runs[1], SCORE_ONLY_BOARD_ID), (&runs[3], "excluded-demo")] {
+    for (id, board) in [
+        (&runs[1], SCORE_ONLY_BOARD_ID),
+        (&runs[3], "excluded-demo"),
+        (&runs[4], "full-coop"),
+        (&runs[5], "full-coop"),
+    ] {
         sqlx::query("UPDATE verified_runs SET board_id = ? WHERE id = ?")
             .bind(board)
             .bind(id.as_str())
@@ -537,6 +548,22 @@ async fn full_any_combines_configured_boards_with_global_ranks_and_pagination() 
             .await
             .unwrap();
     }
+    for (id, players) in [(&runs[4], 2), (&runs[5], 5)] {
+        sqlx::query("UPDATE verified_runs SET max_concurrent_players = ?, participant_instance_count = ? WHERE id = ?")
+            .bind(players).bind(players).bind(id.as_str()).execute(rig.database.fixture_pool()).await.unwrap();
+    }
+    let coop = page(
+        &rig,
+        &leaderboard_uri("full-coop", "original_score", 10, None),
+    )
+    .await;
+    assert_eq!(
+        coop.entries
+            .iter()
+            .map(|entry| (&entry.run_id, entry.rank, entry.max_concurrent_players))
+            .collect::<Vec<_>>(),
+        [(&runs[5], 1, 5), (&runs[4], 2, 2)]
+    );
     let first = page(
         &rig,
         &leaderboard_uri("full-any", "original_score", 2, None),

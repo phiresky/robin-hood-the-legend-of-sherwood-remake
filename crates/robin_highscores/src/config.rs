@@ -941,7 +941,15 @@ missions = [{ mission_id = "Dem_Lei_MP", display_name = "Leicester" }]
         assert_eq!(full_any.missions.len(), 38);
         assert!(full_any.mission("Sherwood").is_none());
         assert!(full_any.mission("SherwoodOutro").is_some());
-        assert_eq!(production.boards.len(), 13);
+        assert_eq!(production.boards.len(), 15);
+        for (id, missions) in [("demo-coop", 1), ("full-coop", 38)] {
+            let board = production.board(&OpaqueId::new(id).unwrap()).unwrap();
+            assert_eq!(
+                board.simulation_policy,
+                BoardSimulationPolicyV1::CoopAnyConfig
+            );
+            assert_eq!(board.missions.len(), missions);
+        }
     }
 
     #[test]

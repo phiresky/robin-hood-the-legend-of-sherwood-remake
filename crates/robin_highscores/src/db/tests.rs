@@ -245,9 +245,13 @@ async fn serving_connection_refuses_to_create_or_migrate_schema() {
 }
 
 #[test]
-fn migration_chain_ends_with_the_signed_player_request_schema() {
-    assert_eq!(CURRENT_SCHEMA_VERSION, 7);
-    assert_eq!(MIGRATOR.migrations.len(), 7);
+fn migration_chain_ends_with_five_player_coop() {
+    assert_eq!(CURRENT_SCHEMA_VERSION, 8);
+    assert_eq!(MIGRATOR.migrations.len(), 8);
+    assert_eq!(
+        MIGRATOR.migrations[7].description.as_ref(),
+        "five player coop"
+    );
     assert_eq!(MIGRATOR.migrations[0].description.as_ref(), "initial");
     assert_eq!(
         MIGRATOR.migrations[5].description.as_ref(),
@@ -543,6 +547,44 @@ async fn signed_request_migration_preserves_live_protocol_v2_rows() {
             "{sql}"
         );
     }
+    sqlx::query("INSERT INTO verified_run_achievements VALUES ('run-000000000000000000001', 'test-achievement', 'earned', '{}')")
+        .execute(&mut connection).await.unwrap();
+    apply_migration(&mut connection, 7).await;
+    for query in [
+        "SELECT COUNT(*) FROM verified_runs",
+        "SELECT COUNT(*) FROM verified_run_metrics",
+        "SELECT COUNT(*) FROM verified_run_achievements",
+    ] {
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(query)
+                .fetch_one(&mut connection)
+                .await
+                .unwrap(),
+            1,
+            "{query} lost rows in 0008"
+        );
+    }
+    assert!(
+        sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&mut connection)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    sqlx::query(
+        "UPDATE verified_runs SET max_concurrent_players = 5, participant_instance_count = 5",
+    )
+    .execute(&mut connection)
+    .await
+    .unwrap();
+    assert!(
+        sqlx::query(
+            "UPDATE verified_runs SET max_concurrent_players = 6, participant_instance_count = 6"
+        )
+        .execute(&mut connection)
+        .await
+        .is_err()
+    );
     // The rebuilt unique live-replay index still guards the verified replay.
     assert!(
         sqlx::query(

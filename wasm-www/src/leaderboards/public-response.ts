@@ -113,8 +113,8 @@ export function parseBoard(value: unknown, path: string): Board {
 
 export function parseSimulationPolicy(value: unknown, path: string): BoardSimulationPolicy {
     const obj = object(value, path);
-    const kind = enumeration(obj.kind, ['fixed', 'any_config'] as const, `${path}.kind`);
-    if (kind === 'any_config') {
+    const kind = enumeration(obj.kind, ['fixed', 'any_config', 'coop_any_config'] as const, `${path}.kind`);
+    if (kind !== 'fixed') {
         assertExactKeys(obj, path, ['kind']);
         return { kind };
     }

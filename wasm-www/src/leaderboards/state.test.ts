@@ -9,12 +9,12 @@ test('leaderboard URL parsing leaves unset board choices to published defaults',
         kind: 'leaderboard',
         filters: { boardId: null, missionId: null, metric: null, maxConcurrentPlayers: null, cursor: null },
     });
-    assert.deepEqual(routeFromUrl('https://pages.example/leaderboards/?board=demo-standard-normal&mission=Dem_Lei_MP&metric=fastest_success&players=2'), {
+    assert.deepEqual(routeFromUrl('https://pages.example/leaderboards/?board=demo-standard-normal&mission=Dem_Lei_MP&metric=fastest_success&players=5'), {
         kind: 'leaderboard',
-        filters: { boardId: 'demo-standard-normal', missionId: 'Dem_Lei_MP', metric: 'fastest_success', maxConcurrentPlayers: 2, cursor: null },
+        filters: { boardId: 'demo-standard-normal', missionId: 'Dem_Lei_MP', metric: 'fastest_success', maxConcurrentPlayers: 5, cursor: null },
     });
     assert.throws(() => routeFromUrl('https://pages.example/leaderboards/?metric=ransom'), /metric must be one of/u);
-    assert.throws(() => routeFromUrl('https://pages.example/leaderboards/?players=5'), /seat range/u);
+    assert.throws(() => routeFromUrl('https://pages.example/leaderboards/?players=6'), /seat range/u);
     assert.throws(() => routeFromUrl('https://pages.example/leaderboards/?board=%20bad'), /board is invalid/u);
 });
 

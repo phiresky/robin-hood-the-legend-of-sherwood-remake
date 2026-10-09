@@ -58,34 +58,6 @@ pub(super) fn select_board<'a>(
     }
 }
 
-/// Browsing a co-op mission does not grant ranked admission. The current
-/// policies only verify solo runs; show the mission's general board explicitly
-/// without constructing a submission for the unsupported configuration.
-pub(super) fn select_coop_browsing_board<'a>(
-    metadata: &'a LeaderboardMetadataV2,
-    edition: OfficialContentEditionV1,
-    mission_id: &str,
-) -> Result<&'a BoardV2, RankedError> {
-    let candidates: Vec<_> = metadata
-        .boards
-        .iter()
-        .filter(|board| {
-            board.edition == edition
-                && board.mission(mission_id).is_some()
-                && matches!(board.simulation_policy, BoardSimulationPolicyV1::AnyConfig)
-        })
-        .collect();
-    match candidates.as_slice() {
-        [board] => Ok(board),
-        [] => Err(RankedError::unavailable(format!(
-            "Co-op submissions are not supported, and no {edition:?} general leaderboard is published for mission `{mission_id}`"
-        ))),
-        _ => Err(RankedError::unavailable(format!(
-            "multiple {edition:?} general leaderboards are published for mission `{mission_id}`"
-        ))),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -152,54 +124,33 @@ mod tests {
     }
 
     #[test]
-    fn coop_browsing_requires_one_general_board_for_the_same_mission_and_edition() {
-        let general = board(
-            "demo-any",
-            OfficialContentEditionV1::Demo,
-            BoardSimulationPolicyV1::AnyConfig,
-        );
-        let fixed = board(
-            "demo-standard",
-            OfficialContentEditionV1::Demo,
-            standard_medium_policy(),
-        );
-        let catalog = metadata(vec![fixed.clone(), general.clone()]);
+    fn coop_has_its_own_combined_board() {
+        let catalog = metadata(vec![
+            board(
+                "demo-any",
+                OfficialContentEditionV1::Demo,
+                BoardSimulationPolicyV1::AnyConfig,
+            ),
+            board(
+                "demo-coop",
+                OfficialContentEditionV1::Demo,
+                BoardSimulationPolicyV1::CoopAnyConfig,
+            ),
+            board(
+                "demo-standard",
+                OfficialContentEditionV1::Demo,
+                standard_medium_policy(),
+            ),
+        ]);
         assert_eq!(
-            select_coop_browsing_board(&catalog, OfficialContentEditionV1::Demo, MISSION_ID)
-                .unwrap()
-                .board_id
-                .as_str(),
-            "demo-any"
+            selected(&catalog, standard_config()).unwrap(),
+            "demo-standard"
         );
-        assert!(
-            select_coop_browsing_board(&catalog, OfficialContentEditionV1::Full, MISSION_ID)
-                .is_err()
-        );
-        assert!(
-            select_coop_browsing_board(&catalog, OfficialContentEditionV1::Demo, "S02_Lei_MP")
-                .is_err()
-        );
-        assert!(
-            select_coop_browsing_board(
-                &metadata(vec![fixed]),
-                OfficialContentEditionV1::Demo,
-                MISSION_ID
-            )
-            .is_err()
-        );
-        let duplicate = board(
-            "demo-other",
-            OfficialContentEditionV1::Demo,
-            BoardSimulationPolicyV1::AnyConfig,
-        );
-        assert!(
-            select_coop_browsing_board(
-                &metadata(vec![general, duplicate]),
-                OfficialContentEditionV1::Demo,
-                MISSION_ID
-            )
-            .is_err()
-        );
+        for players in 2..=5 {
+            let mut config = standard_config();
+            config.coop.players = players;
+            assert_eq!(selected(&catalog, config).unwrap(), "demo-coop");
+        }
     }
 
     #[test]

@@ -1006,7 +1006,13 @@ async fn leaderboard(
             .config
             .boards
             .iter()
-            .filter(|board| board.edition == robin_run_protocol::OfficialContentEditionV1::Full)
+            .filter(|board| {
+                board.edition == robin_run_protocol::OfficialContentEditionV1::Full
+                    && !matches!(
+                        board.simulation_policy,
+                        robin_run_protocol::BoardSimulationPolicyV1::CoopAnyConfig
+                    )
+            })
             .collect()
     } else {
         vec![

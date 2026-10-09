@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Digest32, Validate, ValidationError};
 
-pub const MAX_REPLAY_SEATS_V1: u16 = 4;
+pub const MAX_REPLAY_SEATS_V1: u16 = 5;
 pub const MAX_PARTICIPANT_INSTANCES_V1: u16 = 1_024;
 
 /// Anonymous-safe seat lifecycle recorded by current canonical replays. Random IDs
