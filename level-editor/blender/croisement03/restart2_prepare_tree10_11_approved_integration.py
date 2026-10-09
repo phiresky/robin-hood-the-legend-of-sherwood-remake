@@ -1,0 +1,30 @@
+"""Freeze approved bark and current catalog sources for private scoped export."""
+import hashlib,json
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement03-refinement/restart2';LIB=ROOT/'level-editor/library'
+def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+def read(p):return json.loads(Path(p).read_text())
+def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
+def main():
+ out=B/'approved-tree10-11-integration-v1';assert not out.exists();out.mkdir();receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/next-six-textures-channels-v1/user-approval.json';assert sha(receipt)=='7f6abc55fa21eee6ebd3b10c4f079e91e7f8159127a30a23fb9a6955d52e3f9d';approval=read(receipt);mappath=LIB/'scenes/croisement03.rhlos-map.json';mapdoc=read(mappath);pins={str(receipt):sha(receipt),str(mappath):sha(mappath)};rows=[]
+ descriptors={}
+ for p in (LIB/'3d-assets/croisement03').glob('*/asset.json'):descriptors[p]=read(p)
+ for tree,nodes,version in [(10,[20],'v3'),(11,[21,22,23],'v4')]:
+  asset=f'croisement03-tree-{tree}';decision=next(d for d in approval['decisions'] if d['asset_id']==asset+'-wood-texture');assert decision['scope']=='texture';model=Path(decision['model']);assert sha(model)==decision['model_sha256'];base=model.parent;native=read(base/'native-audit.json');assert native['model_sha256']==sha(model) and native['accepted_bark_changes']==native['provisional_foliage_changes']==native['known_misses']==native['ray_exhaustions']==0
+  geometry=read(base.parent/'normalization.json');assert geometry['receipt_sha256']=='ca25ba9362b26dfb8ac1239f7acd7b56929463498b125bed0f42dcd98ec628f4';assert sha(geometry['approved_model'])==geometry['approved_model_sha256'];prototype=B/f'tree{tree}-crown-prototype-{version}/receipt.json';source=read(prototype);fragment=B/f'tree{tree}-canopy-fragment-source-v1/receipt.json';frame=read(fragment)
+  relevant=[(p,d) for p,d in descriptors.items() if any(q.get('source_obstacle') in nodes for q in d['parts'])];assert set(q['source_obstacle'] for p,d in relevant for q in d['parts'])==set(nodes)
+  metadata=[]
+  for p,d in relevant:
+   assert all(q.get('source_obstacle') in nodes for q in d['parts']), 'Never replace an unrelated compound part'
+   refs=[r for r in mapdoc['assetSources'] if r.get('descriptor')==str(p.relative_to(LIB))];assert len(refs)==1;ref=refs[0];assert ref['descriptor_sha256']==sha(p);placements=[x for x in mapdoc['placements'] if ref['id'] in x['assets']];assert len(placements)==1 and len(placements[0]['assets'])==1
+   modelpath=p.parent/d['model'];assert ref['model_sha256']==sha(modelpath)
+   metadata.append(dict(descriptor=str(p),descriptor_sha256=sha(p),complete_descriptor=d,reference=ref,placement=placements[0],policy='Preserve every descriptor field and all current gameplay fragments; translate spatial coordinates only if combining asset pivots, with explicit world parity proof.'))
+   pins[str(p)]=sha(p);pins[str(modelpath)]=sha(modelpath)
+  paths=[model,base/'native-audit.json',base/'transfer.json',base/'self-review.json',base.parent/'normalization.json',prototype,fragment,Path(geometry['approved_model'])]
+  for p in paths:pins[str(p)]=sha(p)
+  for i,f in enumerate(frame['frames']):
+   p=fragment.parent/f'{i:03}.png';assert sha(p)==f['fragment_sha256'];pins[str(p)]=sha(p)
+  rows.append(dict(asset_id=asset,source_model=str(model),source_model_sha256=sha(model),geometry_decision=geometry['geometry_scope'],texture_decision=decision,wood_source_nodes=[f'building-{n:03}' for n in nodes],current_metadata=metadata,source_scene='Croisement03 Refinement',working_collection='Croisement03 Working',foliage_group=f'croisement03-arbre06-fragment-tree{tree}-provisional',native_crown_faces=source['native_faces'],native_source_checks=native,animation_reservation=dict(profile='Croisement03 - Arbre06',frame_profile='Treecr03',source_frame_count=len(frame['frames']),fragment_box=frame['global_box'],native_delays=[f['delay'] for f in frame['frames']],policy='Preserve complete native Arbre06 and neighboring regions. Frame0-derived crown remains a separately named private provenance role. Do not install it as static scenery beside the native animation, and do not infer wind or exclusive runtime ownership.'),export_plan=dict(full_review_export='Export exact approved wood and full frame0/inferred crown as private visual evidence, with separate dynamic-frame0-provenance role.',static_body_candidate='Derive wood-only reachable scene from the exact same export, preserving original full-asset pivot and binary geometry/UV/material/image payloads. No approved static-native-samples role exists for these two trees.',required_checks=['Preserve approved original packed source RGB, original UVs, mask-gated inferred wood and physical foliage alpha; flatten the shader into disjoint complementary materials with no source resampling.','Retain every source geometry surface; only barycentric normal-gate subdivision allowed, independently compare surfaces after export.','Native first-hit checks for full export; separately audit wood-only source and newly exposed visibility after excluding dynamic role.','Inspect full and selected static-body exports in production renderer from all eight frozen views before proposing installation.','Rebase/merge current obstacle and gameplay metadata from every replaced legacy group; retain unknown keys and require exact world-frame parity.','No map replacement before relevant painted-ground ownership/exclusion and native animation integration are verified.'])) )
+ write(out/'plan.json',dict(status='PRIVATE CPU PLAN; no export, render or canonical change',approval_receipt=str(receipt),rows=rows,pins=pins,ground_status='New v3 atlas appearance not included in six-card approval; no ground approval inferred.',reference_plan=str(B/'static-pair-publication-audit-v1/prospective-plan.json'),next_step='Coordinator grants a render lane before saved-model inventory/export; root alone publishes.'))
+ assert all(sha(p)==h for p,h in pins.items());print(out/'plan.json')
+if __name__=='__main__':main()
