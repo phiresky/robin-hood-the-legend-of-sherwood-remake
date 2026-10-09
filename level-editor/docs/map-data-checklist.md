@@ -21,7 +21,7 @@ remove usable landing regions on narrow rotated roofs and is not a validated fix
 The current model covers 16,130 recorded native positions across 480 upright,
 sword and shoulder-assisted cases. Takeoff receiver selection now follows adjacent
 planes in the same sector/layer and chooses overlapping receivers by their top
-bound. The latest selected jump/compiler/export run passes all 261 tests.
+bound. The latest selected jump/compiler/export run passes all 263 tests.
 Obstacle-trimmed endpoints were refreshed after 60 native flight-clearance checks
 and 20 assisted traversals passed; their 770 recorded positions are covered by
 the exporter. These small fixtures do not provide sufficient approach space for
@@ -38,6 +38,12 @@ through the export-time clearance checker.
 Grid snapping can expose new obstruction after a span is shortened; connection
 assembly now retries trimming while the span strictly decreases, preserving
 usable connections instead of immediately discarding them.
+An unresolved shortened span now emits a specific warning without aborting
+other spans or independent copied connections. Landing clearance uses the
+destination line's midpoint receiver across its whole span, matching runtime
+binding even when an endpoint lies outside that receiver polygon. A regression
+verifies that an obstacle at the rebound endpoint is no longer missed. Fresh
+exports still pass all 720 native roof traversal cases after this correction.
 Using the exported jump zones' exact sector/layer also passes the full-house sword
 trajectory audit: 120 cases and 2,920 recorded positions. The compiler resolves
 these references from placed landing anchors; no saved level navigation is used.

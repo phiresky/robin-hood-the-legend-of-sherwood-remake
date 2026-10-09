@@ -183,7 +183,14 @@ export function assembleJumpSegments(
       const key = JSON.stringify(finalEdges);
       if (seen.has(key)) continue;
       seen.add(key);
-      const conflicts = clearance(finalEdges, segment.long, body);
+      let conflicts: Interval[];
+      try {
+        conflicts = clearance(finalEdges, segment.long, body);
+      } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        warnings.push(`Jump ${segment.id}: shortened span omitted: ${error.message}.`);
+        continue;
+      }
       if (!conflicts.length) {
         cleared.push(finalEdges);
         continue;

@@ -179,7 +179,7 @@ export function createJumpClearance(
         },
       ];
     });
-  const receiverPlane = (edge: JumpEdge, long: boolean): HeightPlane => {
+  const receiverPlane = (edge: JumpEdge, long: boolean, landing = false): HeightPlane => {
     const topology = receivingSurfaces.get(edge.zone)?.topology;
     const planes = [edge.a, edge.b, edge.a.map((n, i) => (n + edge.b[i]!) / 2) as Vec3].map(
       (point) => {
@@ -236,7 +236,9 @@ export function createJumpClearance(
       )
     )
       throw new Error("Climbing ledge crosses different receiving planes; split the surface");
-    return planes[0]!;
+    // Landing binds one receiver chosen at the line midpoint, even when an
+    // endpoint lies outside its polygon. Takeoff follows local boundaries.
+    return planes[landing ? 2 : 0]!;
   };
   const prisms = obstacles
     .filter((shape) => shape.solid && shape.initial_active !== false)
@@ -327,6 +329,9 @@ export function createJumpClearance(
         ? receiverPlane(edge, long)
         : (receiving?.plane ?? receiverPlane(edge, long));
     });
+    const landingPlanes = edges.map((edge, index) =>
+      receivingSurfaces.get(edge.zone)?.topology ? receiverPlane(edge, long, true) : planes[index]!,
+    );
     const sloped = planes.some((plane) => Math.abs(plane[0]) + Math.abs(plane[1]) >= EPSILON);
     const blocked: Interval[] = [];
     for (const [source, destination, reverse] of [
@@ -378,7 +383,7 @@ export function createJumpClearance(
             clearancePlanes,
             receivingSurfaces.get(source.zone)?.motionPolygon,
             false,
-            planes[reverse ? 0 : 1],
+            landingPlanes[reverse ? 0 : 1],
           ),
           ...longTakeoffRibbons(
             source,
@@ -389,7 +394,7 @@ export function createJumpClearance(
             clearancePlanes,
             receivingSurfaces.get(source.zone)?.motionPolygon,
             true,
-            planes[reverse ? 0 : 1],
+            landingPlanes[reverse ? 0 : 1],
           ),
         );
         for (const path of [

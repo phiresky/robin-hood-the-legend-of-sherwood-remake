@@ -51,6 +51,21 @@ const edges: [JumpEdge, JumpEdge] = [
   { zone: "right", a: [60, 0, 0], b: [60, 100, 0] },
 ];
 
+test("long-jump landing binds the receiver at the destination midpoint across the whole span", () => {
+  const receiver: SightObstacle = {
+    ...wall(55, 140, 10, 20, 100, 100),
+    solid: false,
+    projection_area: [2, 1],
+  };
+  const endpoint = wall(59.99, 199.99, 0.02, 0.02, 99.99, 100.01);
+  const hints = new Map([
+    ["left", { topology: { sector: 1, layer: 1 } }],
+    ["right", { topology: { sector: 2, layer: 1 } }],
+  ]);
+  const blocked = createJumpClearance([receiver, endpoint], hints)(edges, true);
+  assert.ok(blocked.some(([low, high]) => low <= 0 && high >= 0));
+});
+
 test("long-flight clearance includes an upright takeoff that stays at the ledge", () => {
   const pair: [JumpEdge, JumpEdge] = [
     { zone: "low", a: [380, 370, 0], b: [380, 330, 0] },

@@ -19,6 +19,36 @@ test("clearance exposed by movement-grid snapping trims again instead of discard
   assert.equal(assembleJumpSegments(segments, () => [[0, 1]]).pairs.length, 0);
 });
 
+test("an unresolved shortened span warns without discarding other usable spans or connections", () => {
+  const attachment = { maxGap: 50, maxRise: 20, maxDrop: 20, minOverlap: 8 };
+  const segments: PlacedJumpSegment[] = [
+    { id: "a", long: true, attachment, edge: { zone: "a", a: [0, 40, 0], b: [0, 0, 0] } },
+    { id: "b", long: true, attachment, edge: { zone: "b", a: [30, 0, 0], b: [30, 40, 0] } },
+  ];
+  const copies = segments.map((segment): PlacedJumpSegment => ({
+    ...segment,
+    id: `${segment.id}-copy`,
+    edge: {
+      zone: `${segment.edge.zone}-copy`,
+      a: [segment.edge.a[0] + 200, segment.edge.a[1], 0],
+      b: [segment.edge.b[0] + 200, segment.edge.b[1], 0],
+    },
+  }));
+  const result = assembleJumpSegments([...segments, ...copies], (edges) => {
+    if (edges[0].a[0] >= 200) return [];
+    if (edges[0].a[1] === 40 && edges[0].b[1] === 0) return [[0.4, 0.6]];
+    if (edges[0].a[1] === 40) throw new Error("Climbing ledge has ambiguous receiving planes");
+    return [];
+  });
+  assert.equal(result.pairs.length, 2);
+  assert.ok(result.pairs.some((pair) => pair.edges[0].zone === "a-copy"));
+  assert.ok(result.pairs.some((pair) => pair.edges[0].zone === "a" && pair.edges[0].a[1] < 20));
+  assert.match(
+    result.warnings.join("\n"),
+    /Jump a: shortened span omitted:.*ambiguous receiving planes/,
+  );
+});
+
 test("geometric edges connect new neighbours and trim to the overlapping span", () => {
   const rules = { maxGap: 30, maxRise: 20, maxDrop: 20, minOverlap: 5 };
   const a: PlacedJumpSegment = {
