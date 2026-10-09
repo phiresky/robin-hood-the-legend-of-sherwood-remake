@@ -184,7 +184,7 @@ fn upgrade_header(header: &mut serde_json::Value) -> Result<u32> {
         .context("replay header has no valid schema")?;
     ensure!(
         version == REPLAY_SCHEMA_VERSION
-            || (version == 57 && (67..=70).contains(&REPLAY_SCHEMA_VERSION))
+            || (version == 57 && (67..=71).contains(&REPLAY_SCHEMA_VERSION))
             || ((64..=65).contains(&version) && REPLAY_SCHEMA_VERSION == 66)
             || ((43..=56).contains(&version) && (43..=56).contains(&REPLAY_SCHEMA_VERSION)),
         "replay schema {version} needs an input migration before upgrading to {REPLAY_SCHEMA_VERSION}"
@@ -595,7 +595,7 @@ mod tests {
     fn obsolete_input_schemas_require_explicit_migration_before_relabeling() {
         for version in (0..REPLAY_SCHEMA_VERSION)
             .chain([REPLAY_SCHEMA_VERSION + 1])
-            .filter(|version| !(*version == 57 && (67..=70).contains(&REPLAY_SCHEMA_VERSION)))
+            .filter(|version| !(*version == 57 && (67..=71).contains(&REPLAY_SCHEMA_VERSION)))
             .filter(|version| !((64..=65).contains(version) && REPLAY_SCHEMA_VERSION == 66))
         {
             let mut header = serde_json::json!({"version":version});

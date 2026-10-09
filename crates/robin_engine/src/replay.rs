@@ -177,7 +177,8 @@ pub struct ReplayHeader {
 /// Version 68 removes physical solver orders and runtime door endpoints.
 /// Version 69 stores the prepared passage availability bit on doors.
 /// Version 70 stores disconnected fragments of a shared sound emitter.
-pub const REPLAY_SCHEMA_VERSION: u32 = 70;
+/// Version 71 retains completed mission outcomes through speculative rollback.
+pub const REPLAY_SCHEMA_VERSION: u32 = 71;
 
 /// Identity of the next lockstep/history transaction to be admitted.
 ///

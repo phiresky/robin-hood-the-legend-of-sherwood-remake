@@ -1424,7 +1424,7 @@ impl Engine {
         // than another GameLoop tick, so it must leave the refresh pending;
         // the retained fallback remains useful to low-level tests which call
         // simulation tick directly.
-        if run_hourglass {
+        if run_hourglass && self.inner.mission_domain.state.terminal_outcome.is_none() {
             let sim = self.inner.control.simulation_context();
             self.inner.apply_pending_presentation_refresh(&sim);
         }
@@ -1454,8 +1454,29 @@ impl Engine {
         );
 
         let mut side_effects = if run_hourglass {
-            self.inner
-                .perform_frame_hourglass(assets, simulation_body_allowed, execution)
+            // A late exit command can terminate an earlier predicted frame.
+            // Later reconstructed frames still carry their original hourglass
+            // requests. Keep admitting commands, but freeze the completed
+            // mission and return its result without repeating terminal work.
+            if let Some(code) = self.inner.mission_domain.state.terminal_outcome {
+                HostEffects {
+                    code,
+                    ..Default::default()
+                }
+            } else {
+                let effects =
+                    self.inner
+                        .perform_frame_hourglass(assets, simulation_body_allowed, execution);
+                if matches!(
+                    effects.code,
+                    crate::game_operation::GameCode::LevelSucceeded
+                        | crate::game_operation::GameCode::LevelFailed
+                        | crate::game_operation::GameCode::LevelInterrupted
+                ) {
+                    self.inner.mission_domain.state.terminal_outcome = Some(effects.code);
+                }
+                effects
+            }
         } else {
             HostEffects {
                 code: crate::game_operation::GameCode::LevelInProgress,

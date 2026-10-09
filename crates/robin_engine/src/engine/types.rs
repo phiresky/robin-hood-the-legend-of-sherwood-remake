@@ -242,6 +242,11 @@ pub struct MissionState {
     /// EngineInner should transition to "interrupted" result this frame.
     pub quit_interrupted: bool,
 
+    /// Result of the completed terminal tick. Retained through rollback so
+    /// speculative later frames cannot run mission finalization or timers again.
+    #[serde(default)]
+    pub terminal_outcome: Option<crate::game_operation::GameCode>,
+
     /// Map filename from the mission header (e.g. "lincoln").
     pub map_name: String,
 
