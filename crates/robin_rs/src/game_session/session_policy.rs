@@ -461,6 +461,28 @@ impl ReplayModalDismissals {
         self.queue.iter()
     }
 
+    /// A newer simulation may no longer emit an informational popup. Only
+    /// upgrade capture may discard its unused acknowledgement; choices and
+    /// mission transitions must still match exactly.
+    pub(super) fn discard_obsolete_upgrade_popups(&mut self) {
+        self.queue.retain(|command| {
+            let obsolete = matches!(
+                command,
+                PlayerCommand::ModalDismiss {
+                    kind: ModalKind::PopupText { .. },
+                    result: DialogResult::Completed,
+                }
+            );
+            if obsolete {
+                tracing::warn!(
+                    ?command,
+                    "replay upgrade omitted an unopened informational popup acknowledgement"
+                );
+            }
+            !obsolete
+        });
+    }
+
     pub(super) fn assert_consumed(&self) {
         if self.strict_replay && !self.queue.is_empty() {
             panic!(
@@ -727,6 +749,33 @@ mod tests {
                 ModalKind::Debriefing { text_id: win }
             ])
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "recorded modal dismissal(s) were unused")]
+    fn replay_upgrade_only_discards_completed_informational_popups() {
+        let mut frame = ReplayModalDismissals::default();
+        frame.begin_replay_frame();
+        frame.push_back(PlayerCommand::ModalDismiss {
+            kind: ModalKind::PopupText { text_id: 5 },
+            result: DialogResult::Completed,
+        });
+        frame.push_back(PlayerCommand::ModalDismiss {
+            kind: ModalKind::MissionState {
+                kind: robin_engine::player_command::MissionStateModalKind::LeaveMissionNow,
+            },
+            result: DialogResult::Completed,
+        });
+        frame.discard_obsolete_upgrade_popups();
+        assert_eq!(frame.len(), 1);
+        assert!(matches!(
+            frame.iter().next().unwrap(),
+            PlayerCommand::ModalDismiss {
+                kind: ModalKind::MissionState { .. },
+                ..
+            }
+        ));
+        frame.assert_consumed();
     }
 
     fn recorded(kind: ModalKind, result: DialogResult) -> ReplayModalDismissals {

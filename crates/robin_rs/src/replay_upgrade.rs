@@ -1,5 +1,6 @@
 //! Re-execute recorded inputs on this engine and atomically publish verified
-//! hashes. Input eligibility is preserved; leaderboard verification remains
+//! hashes and current host decisions. Input eligibility is preserved;
+//! leaderboard verification remains
 //! authoritative for the resulting run and its metrics.
 
 use anyhow::{Context, Result, ensure};
@@ -31,13 +32,15 @@ pub struct UpgradeReport {
     pub output: PathBuf,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", deny_unknown_fields)]
 enum CaptureRecord {
     Frame {
         ordinal: u32,
         before: u64,
         after: u64,
+        sound_boundary: Option<robin_engine::engine::SoundBoundary>,
+        host_controls: Vec<robin_engine::replay::ReplayHostControl>,
     },
     Complete {
         frames: u32,
@@ -68,7 +71,14 @@ impl HashCapture {
         })
     }
 
-    pub(crate) fn record(&mut self, ordinal: u32, before: u64, after: u64) -> Result<()> {
+    pub(crate) fn record(
+        &mut self,
+        ordinal: u32,
+        before: u64,
+        after: u64,
+        sound_boundary: Option<robin_engine::engine::SoundBoundary>,
+        host_controls: Vec<robin_engine::replay::ReplayHostControl>,
+    ) -> Result<()> {
         ensure!(
             ordinal == self.next,
             "hash capture skipped or repeated frame {ordinal}"
@@ -79,6 +89,8 @@ impl HashCapture {
                 ordinal,
                 before,
                 after,
+                sound_boundary,
+                host_controls,
             },
         )?;
         self.file.write_all(b"\n")?;
@@ -101,9 +113,18 @@ impl HashCapture {
     }
 }
 
-fn read_capture(path: &Path, frames: u32) -> Result<Vec<(u64, u64)>> {
+#[derive(Debug, Serialize, Deserialize)]
+struct CapturedReplay {
+    hashes: Vec<(u64, u64)>,
+    sound_boundaries: Vec<Option<robin_engine::engine::SoundBoundary>>,
+    host_controls: Vec<Vec<robin_engine::replay::ReplayHostControl>>,
+}
+
+fn read_capture(path: &Path, frames: u32) -> Result<CapturedReplay> {
     let reader = std::io::BufReader::new(std::fs::File::open(path)?);
     let mut hashes = Vec::new();
+    let mut sound_boundaries = Vec::new();
+    let mut controls = Vec::new();
     let mut complete = false;
     for line in reader.lines() {
         ensure!(!complete, "hash capture has records after completion");
@@ -112,12 +133,16 @@ fn read_capture(path: &Path, frames: u32) -> Result<Vec<(u64, u64)>> {
                 ordinal,
                 before,
                 after,
+                sound_boundary,
+                host_controls,
             } => {
                 ensure!(
                     ordinal as usize == hashes.len() && ordinal < frames,
                     "hash capture has an invalid ordinal {ordinal}"
                 );
                 hashes.push((before, after));
+                sound_boundaries.push(sound_boundary);
+                controls.push(host_controls);
             }
             CaptureRecord::Complete { frames: captured } => {
                 ensure!(
@@ -129,7 +154,11 @@ fn read_capture(path: &Path, frames: u32) -> Result<Vec<(u64, u64)>> {
         }
     }
     ensure!(complete, "hash capture has no successful completion record");
-    Ok(hashes)
+    Ok(CapturedReplay {
+        hashes,
+        sound_boundaries,
+        host_controls: controls,
+    })
 }
 
 fn bounded_read(path: &Path) -> Result<Vec<u8>> {
@@ -323,7 +352,7 @@ fn run_pass(
     work: &Path,
     pass: &str,
     frames: u32,
-) -> Result<Vec<(u64, u64)>> {
+) -> Result<CapturedReplay> {
     use std::process::{Command, Stdio};
     let capture = work.join(format!("{pass}.hashes.jsonl"));
     let log = work.join(format!("{pass}.log"));
@@ -341,6 +370,9 @@ fn run_pass(
         .stdout(stdout);
     #[cfg(feature = "script-rpc")]
     command.args(["--http-server", "0"]);
+    if pass == "capture" {
+        command.arg("--replay-upgrade-capture");
+    }
     let mut child = command.spawn().context("launch replay upgrade worker")?;
     let started = std::time::Instant::now();
     let status = loop {
@@ -371,6 +403,10 @@ fn run_pass(
 /// Upgrade a local replay into a new standalone JSONL artifact. Never replaces
 /// the source or an existing destination. Both passes run the normal headless
 /// mission loop, including host controls, save/load boundaries and finalization.
+/// Live speech decisions are resampled from the current pending request FIFO
+/// during capture and replayed unchanged during verification. Acknowledgements
+/// for informational popups no longer emitted by the simulation are omitted;
+/// other modal decisions must still match.
 /// Every frame is compared, including the terminal frame. Published hashes
 /// use the normal recorder checkpoint interval required by ranked playback.
 /// Existing taints are retained exactly, with no migration-only taint added.
@@ -403,7 +439,21 @@ pub fn upgrade_replay(
     let input = work_path.join("input.rhrec.jsonl");
     write_replay(&input, &file)?;
     let hashes = run_pass(options, &input, &work_path, "capture", frames)?;
-    apply_captured_hashes(&mut file, &hashes);
+    apply_captured_hashes(&mut file, &hashes.hashes);
+    for (ordinal, boundary) in hashes.sound_boundaries.iter().enumerate() {
+        file.frames
+            .get_mut(&(ordinal as u32))
+            .context("captured frame missing from replay")?
+            .input
+            .external_facts
+            .sound_boundary = boundary.clone();
+    }
+    for (ordinal, controls) in hashes.host_controls.iter().enumerate() {
+        file.frames
+            .get_mut(&(ordinal as u32))
+            .context("captured frame missing from replay")?
+            .host_controls = controls.clone();
+    }
     let upgraded = work_path.join("upgraded.rhrec.jsonl");
     write_replay(&upgraded, &file)?;
     let decoded = ReplayData::from_reader(std::io::BufReader::new(std::fs::File::open(&upgraded)?))
@@ -413,7 +463,17 @@ pub fn upgrade_replay(
         .validate_ranked_hash_coverage()
         .map_err(anyhow::Error::msg)?;
     let verified = run_pass(options, &upgraded, &work_path, "verify", frames)?;
-    verify_hashes(&hashes, &verified)?;
+    verify_hashes(&hashes.hashes, &verified.hashes)?;
+    ensure!(
+        serde_json::to_value(&hashes.sound_boundaries)?
+            == serde_json::to_value(&verified.sound_boundaries)?,
+        "verification changed recorded sound decisions"
+    );
+    ensure!(
+        serde_json::to_value(&hashes.host_controls)?
+            == serde_json::to_value(&verified.host_controls)?,
+        "verification changed recorded modal decisions"
+    );
     let mut publication = tempfile::NamedTempFile::new_in(parent)?;
     std::io::copy(&mut std::fs::File::open(upgraded)?, &mut publication)?;
     publication.as_file().sync_all()?;
@@ -476,12 +536,27 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("hashes");
         let mut capture = HashCapture::create(&path).unwrap();
-        assert!(capture.record(1, 1, 2).is_err());
-        capture.record(0, 7, 8).unwrap();
+        assert!(capture.record(1, 1, 2, None, Vec::new()).is_err());
+        capture
+            .record(
+                0,
+                7,
+                8,
+                Some(robin_engine::engine::SoundBoundary::live(Vec::new())),
+                Vec::new(),
+            )
+            .unwrap();
         capture.file.flush().unwrap();
         assert!(read_capture(&path, 1).is_err());
         capture.finish().unwrap();
-        assert_eq!(read_capture(&path, 1).unwrap(), vec![(7, 8)]);
+        assert_eq!(read_capture(&path, 1).unwrap().hashes, vec![(7, 8)]);
+        assert_eq!(
+            read_capture(&path, 1).unwrap().sound_boundaries[0]
+                .as_ref()
+                .unwrap()
+                .policy,
+            robin_engine::engine::SoundBoundaryPolicy::Live
+        );
         assert!(read_capture(&path, 2).is_err());
         assert!(HashCapture::create(&path).is_err());
     }

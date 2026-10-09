@@ -154,6 +154,7 @@ impl HeadlessMission {
         let mut frame = self.runtime.begin_frame(frame_started_at_ms);
         frame.stage_commands().commands.extend(net_inputs);
 
+        let mut captured_boundary = None;
         if !tick_paused
             && self
                 .runtime
@@ -176,16 +177,25 @@ impl HeadlessMission {
                 robin_engine::replay::state_hash(&self.runtime.world.view().manager.engine)
             });
             self.runtime.inject_next_replay_frame(&mut frame)?;
-            if let Some(capture) = capture.as_mut() {
+            if args.config.cli.replay_upgrade_capture {
+                let view = self.runtime.world.ingress();
+                let mut input = frame.authoritative_input();
+                super::tick::reconstruct_live_sound_boundary(
+                    &view.manager.engine,
+                    view.assets,
+                    &mut input,
+                );
+                frame.adopt_authoritative_input(input);
+            }
+            if capture.is_some() {
                 let after_hash =
                     robin_engine::replay::state_hash(&self.runtime.world.view().manager.engine);
-                capture
-                    .record(
-                        ordinal,
-                        before_hash.expect("capture sampled before load"),
-                        after_hash,
-                    )
-                    .map_err(|error| super::MissionError::replay(error.to_string()))?;
+                captured_boundary = Some((
+                    ordinal,
+                    before_hash.expect("capture sampled before load"),
+                    after_hash,
+                    frame.authoritative_input().external_facts.sound_boundary,
+                ));
             }
             if loads_state {
                 self.modals.after_load_back();
@@ -227,7 +237,27 @@ impl HeadlessMission {
         );
         super::frame_perf::record(super::frame_perf::Phase::Simulation, simulation_start);
         self.runtime.drain_host_rpc(&mut frame);
-        self.drain_headless_modals(&mut frame);
+        self.drain_headless_modals(&mut frame, args.config.cli.replay_upgrade_capture);
+        if let (Some(capture), Some((ordinal, before, after, sound_boundary))) =
+            (capture.as_mut(), captured_boundary)
+        {
+            let controls = frame
+                .modal_dismissals
+                .iter()
+                .map(|command| match command {
+                    PlayerCommand::ModalDismiss { kind, result } => {
+                        robin_engine::replay::ReplayHostControl::ModalDismiss {
+                            modal: kind.clone(),
+                            result: *result,
+                        }
+                    }
+                    _ => unreachable!("modal journal contains a non-modal command"),
+                })
+                .collect();
+            capture
+                .record(ordinal, before, after, sound_boundary, controls)
+                .map_err(|error| super::MissionError::replay(error.to_string()))?;
+        }
         self.runtime
             .timeline
             .lifecycle_mut()
@@ -335,7 +365,11 @@ impl HeadlessMission {
         Ok(result)
     }
 
-    fn drain_headless_modals(&mut self, frame: &mut super::runtime::MissionFrame) {
+    fn drain_headless_modals(
+        &mut self,
+        frame: &mut super::runtime::MissionFrame,
+        upgrade_capture: bool,
+    ) {
         use super::session_policy::ModalDecisionSource;
         let replaying = self.runtime.timeline.replay().playback().is_some();
         let source = if replaying {
@@ -369,6 +403,11 @@ impl HeadlessMission {
                     break;
                 }
             }
+        }
+        if upgrade_capture {
+            frame
+                .replay_modal_dismissals
+                .discard_obsolete_upgrade_popups();
         }
         frame.replay_modal_dismissals.assert_consumed();
     }

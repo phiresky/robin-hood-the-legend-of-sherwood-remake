@@ -1473,6 +1473,31 @@ mod tests {
     }
 
     #[test]
+    fn replay_upgrade_resamples_stale_speech_without_changing_commands() {
+        let (assets, manager, _, _, _, _) = stepping_fixture(None);
+        let mut frame = engine_api::SimulationFrameInput::default();
+        frame.commands.push(
+            robin_engine::player_command::PlayerInput::new(
+                robin_engine::player_command::PlayerId::HOST,
+                robin_engine::player_command::PlayerCommand::CrouchDown,
+            )
+            .into(),
+        );
+        let commands = serde_json::to_value(&frame.commands).unwrap();
+        frame.external_facts.sound_boundary = Some(engine_api::SoundBoundary::live(vec![
+            robin_engine::sound::ResolvedExclamation {
+                actor_id: 64,
+                identifier: 29,
+                exclamation_id: 29,
+                duration_frames: 25,
+            },
+        ]));
+        reconstruct_live_sound_boundary(&manager.engine, &assets, &mut frame);
+        assert!(frame.external_facts.sound_boundary.is_none());
+        assert_eq!(serde_json::to_value(&frame.commands).unwrap(), commands);
+    }
+
+    #[test]
     fn reconstructed_speech_resolves_the_complete_canonical_fifo() {
         use robin_engine::sound::{ExclamationGroup, PendingExclamation};
         let catalog = engine_api::SpeechTimingCatalog {

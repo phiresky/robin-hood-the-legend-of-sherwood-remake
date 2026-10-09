@@ -100,6 +100,11 @@ pub struct CliArgs {
     #[serde(skip)]
     pub replay_hash_output: Option<std::path::PathBuf>,
 
+    /// Recompute derived host decisions during the upgrade capture pass only.
+    #[arg(long, hide = true, requires = "replay_hash_output")]
+    #[serde(skip)]
+    pub replay_upgrade_capture: bool,
+
     /// Runtime rollback consistency checker: rewind a short window of
     /// engine state and re-simulate it to detect desyncs.
     /// On by default — pass `--rollback-check=false` to disable.
@@ -266,6 +271,7 @@ impl Default for CliArgs {
             upgrade_replay: None,
             upgraded_replay: None,
             replay_hash_output: None,
+            replay_upgrade_capture: false,
             rollback_check: true,
             sherwood: false,
             force_main_menu: false,
