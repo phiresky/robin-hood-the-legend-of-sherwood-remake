@@ -7,11 +7,13 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
-P = ROOT / 'level-editor/work/croisement01-refinement/restart2/tree02-rendered-gap-probe-v2'
+P = ROOT / 'level-editor/work/croisement01-refinement/restart2' / ('tree02-filtered-gap-probe-v3' if '--residual' in sys.argv else 'tree02-rendered-gap-probe-v2')
 report = json.loads((P / 'report.json').read_text())
 plans = []
 rejected = []
 for name, packet in report['packets'].items():
+    if name != 'Tree02 upper stems' and '--residual' in sys.argv:
+        continue
     assert name == 'Tree02 upper stems'
     vertices = {int(k): np.array(v) for k, v in packet['vertices_world'].items()}
     triangles = collections.defaultdict(list)
@@ -41,6 +43,7 @@ for name, packet in report['packets'].items():
             if hit['ownership'] == 0 and hit['object'] == name:
                 targets[tuple(hit['atlas_texel'])].append(hit)
     quad_faces = {face for face, ts in triangles.items() if len(ts) == 2 and len({v for tri, _, _ in ts for v in tri['vertices']}) == 4}
+    edge_midpoints = {frozenset(e['faces']): np.mean([vertices[v] for v in e['vertices']], axis=0) for e in packet['adjacency'] if len(e['faces']) == 2}
     for target, hits in targets.items():
         candidates = []
         excluded = []
@@ -80,10 +83,43 @@ for name, packet in report['packets'].items():
                           and ((row['max_edge_hops'] == 1 and row['surface_normal_cosine'] > 0 and row['world_distance'] <= .6)
                                or (row['max_edge_hops'] == 2 and row['surface_normal_cosine'] >= .7 and row['world_distance'] <= .75
                                    and bool(adjacent[row['target_face']] & adjacent[row['donor_face']] & quad_faces)))]
+        if not candidates and '--wrapped-bark' in sys.argv:
+            # A subpixel closed bark sleeve may turn through 180 degrees. A
+            # generated donor can continue around that sleeve only along a
+            # short connected all-quad path; no caps or disconnected surfaces.
+            for row in excluded:
+                first, last = row['target_face'], row['donor_face']
+                if first not in quad_faces or last not in quad_faces or row['donor_ownership'] != 2:
+                    continue
+                paths = [[first]]
+                valid_paths = []
+                for hop in range(5):
+                    valid_paths.extend(path for path in paths if path[-1] == last)
+                    paths = [path+[n] for path in paths for n in adjacent[path[-1]] if n in quad_faces and n not in path]
+                if not valid_paths:
+                    continue
+                # Reconstruct the target and donor physical points from their
+                # actual atlas interiors / recorded first-hit barycentrics.
+                donor_matches = [d for d in donors[last] if d[0].tolist() == row['donor']]
+                lengths = []
+                for hit in hits:
+                    if hit['face'] != first:
+                        continue
+                    for tri, points, _ in triangles[first]:
+                        weights = np.array(hit['weights'])
+                        if not np.array_equal((weights @ (np.array(tri['uv'])*packet['atlas_size'])).astype(int), target):
+                            continue
+                        for donor in donor_matches:
+                            for path in valid_paths:
+                                route = [weights @ points] + [edge_midpoints[frozenset([a,b])] for a,b in zip(path,path[1:])] + [donor[1]]
+                                lengths.append((sum(np.linalg.norm(b-a) for a,b in zip(route,route[1:])),path))
+                if lengths and min(lengths)[0] <= 1.0:
+                    distance, path = min(lengths)
+                    candidates.append(dict(row, inference='inferred generated bark around connected subpixel quad sleeve', quad_path=path, surface_path_upper_bound=float(distance)))
         if candidates:
             plans.append(min(candidates, key=lambda row: (row['max_edge_hops'], row['world_distance'])))
         else:
             rejected.append(dict(target=list(target), witness_faces=sorted({h['face'] for h in hits}), closest_excluded=min(excluded, key=lambda row: row['world_distance']) if excluded else None))
 output = dict(status='CPU PLAN ONLY; NO PIXELS MODIFIED', model_sha256=report['model_sha256'], probe_sha256=hashlib.sha256((P/'report.json').read_bytes()).hexdigest(), object='Tree02 upper stems', plans=plans, rejected=rejected, curved_quad_exception='When enabled: generated donor only across one shared edge between two quads, positive normal cosine, <=0.6 world units; or two edges through another quad, cosine>=0.7 and <=0.75 world units; inferred bark continuation around a sharp bend, not observed source.', scope='Only sampled zero-ownership target texels. Donors are source or generated interior texels on the same polygon or at most four shared-edge neighboring polygons when --four-edge is selected, three for --three-edge, two for --two-edge; otherwise one directly shared-edge neighboring polygon, normal cosine >=0.8 and world distance <=1. Source donors remain inferred extrapolation, never source ownership. Atlas padding cannot authorize geometry or protected-pixel edits.')
-(P/('curved-quad-donor-plan.json' if '--curved-quad' in sys.argv else 'four-edge-donor-plan.json' if '--four-edge' in sys.argv else 'three-edge-donor-plan.json' if '--three-edge' in sys.argv else 'two-edge-donor-plan.json' if '--two-edge' in sys.argv else 'edge-donor-plan.json')).write_text(json.dumps(output, indent=2)+'\n')
+(P/('wrapped-bark-donor-plan.json' if '--wrapped-bark' in sys.argv else 'curved-quad-donor-plan.json' if '--curved-quad' in sys.argv else 'four-edge-donor-plan.json' if '--four-edge' in sys.argv else 'three-edge-donor-plan.json' if '--three-edge' in sys.argv else 'two-edge-donor-plan.json' if '--two-edge' in sys.argv else 'edge-donor-plan.json')).write_text(json.dumps(output, indent=2)+'\n')
 print(json.dumps({'planned':len(plans),'rejected':len(rejected),'same_face':sum(p['same_face'] for p in plans),'max_distance':max(p['world_distance'] for p in plans)}))
