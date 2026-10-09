@@ -2401,6 +2401,80 @@ mod tests {
     }
 
     #[test]
+    fn late_terminal_command_stops_predicted_hourglasses_after_mission_exit() {
+        use robin_engine::engine::SimulationFrameInput;
+        for dense_checkpoint in [false, true] {
+            let (_, mut manager, mut assets, _, _) = network_drain_fixture();
+            use robin_engine::element::{ActorPc, Entity, PcData};
+            std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut assets).profile_manager)
+                .characters
+                .push(Default::default());
+            manager.engine.test_add_entity(Entity::Pc(ActorPc {
+                element: Default::default(),
+                actor: Default::default(),
+                human: Default::default(),
+                pc: PcData {
+                    life_points: 100,
+                    forbidden_expressions: vec![(14, 75)],
+                    ..Default::default()
+                },
+            }));
+            manager.engine.test_set_mission_flags(false, false, true);
+            let mut expected = manager.engine.clone();
+            let quit = PlayerInput::new(PlayerId::HOST, PlayerCommand::QuitMissionRequested);
+            let mut rewind = RewindBuffer::new();
+            for frame in 0..3 {
+                rewind.begin_frame(frame, &manager.engine);
+                let input = SimulationFrameInput {
+                    simulation_body_allowed: false,
+                    ..Default::default()
+                };
+                manager
+                    .engine
+                    .advance_frame(&assets, input.clone())
+                    .unwrap();
+                rewind.end_frame_input(input);
+                let authoritative = if frame == 0 {
+                    SimulationFrameInput::new(vec![quit.clone().into()])
+                } else {
+                    SimulationFrameInput::default().with_hourglass(false)
+                };
+                expected.advance_frame(&assets, authoritative).unwrap();
+            }
+            assert!(rewind.splice_late_input(0, quit));
+            let corrected = if dense_checkpoint {
+                rewind_from_recent_timeline_history(3, &assets, &mut rewind, 0, 1, &mut Vec::new())
+                    .unwrap()
+                    .0
+            } else {
+                rewind.clear_recent_checkpoints();
+                rewind
+                    .rewind_to_corrected_observe(
+                        &assets,
+                        3,
+                        |engine, frame| {
+                            super::super::tick::reconstruct_live_sound_boundary(
+                                engine, &assets, frame,
+                            )
+                        },
+                        |_, _| {},
+                    )
+                    .unwrap()
+            };
+            let restored =
+                Engine::decode_native_snapshot(&corrected.encode_native_snapshot()).unwrap();
+            assert_eq!(
+                restored.mission().terminal_outcome,
+                Some(robin_engine::game_operation::GameCode::LevelSucceeded)
+            );
+            assert_eq!(
+                robin_engine::replay::state_hash(&corrected),
+                robin_engine::replay::state_hash(&expected)
+            );
+        }
+    }
+
+    #[test]
     fn late_speech_command_resolves_at_previously_silent_boundary() {
         use robin_engine::engine::{
             SimulationFrameInput, SpeechTimingCatalog, SpeechTimingGroup, SpeechTimingVariant,
