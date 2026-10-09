@@ -4,6 +4,44 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Independent stair-house placement (2026-10-09)
+
+`check-grounded-stair-placements.mjs` now accepts `--asset=<id>` for independently
+placeable stair assets. Mandatory route and entrance counts come from the asset's
+local definitions, rather than tower-specific constants. Resource references and
+model-scene pins are retained. The default tower and its optional mask checks
+remain available. Compilation reads only the chosen library asset and fresh editor
+terrain; the verifier serializes and reopens each inserted scene.
+
+`work/map-compile/grounded-stair-placements-5Selse` contains sixteen exports of
+`nottingham-south-stair-house`: two copies, rotations 0/37/90/137/180/217/270/317
+and elevations 0/40. All 64 routes pass the synthetic, complete-sprite and native
+gate-discovery audits, with no forbidden routes. All lifts and doors survive.
+
+The first player-click audit rejected twenty targets because its selection check
+required the floor itself. Most usable landing pixels instead select a jump
+overlay. A PC without jump ability walks to the underlying floor through normal
+movement dispatch. The audit now accepts only overlays owned by the intended
+floor and records them as `jump_overlay`, while still requiring actor-sized
+clearance, native approach clearance and actual stair traversal. Sixteen such
+clicks pass. No runtime behavior or collision geometry changes.
+
+The corrected ordinary-click report passes **60/64** routes. Four upper-landing
+clicks at 217 degrees remain unavailable: the roof covers the entire landing in
+screen selection. Both copies at both elevations retain traversable stairs, but
+there is no ordinary floor target within the audited 64-unit radius. The existing
+hidden-sector selection path needs a separate check; those four cases remain
+failures in `actor-stair-player-click-report.json`, not omissions from coverage.
+The earlier rejection details remain in `actor-stair-click-before-overlay-report.json`.
+This is native descriptor/scene coverage, not rendered or ZIP certification.
+
+Regression checks: the default verifier's fresh 0/137-degree tower batch
+`grounded-stair-placements-pkbZ4I` preserves both independent masks and passes all
+four audit modes, 32 routes each. The original eight-angle tower batch still
+passes all 128 player clicks with the overlay-aware audit. The regular navigation
+suite passes 26 tests (31 opt-in audits ignored); scoped verifier lint, Rust
+formatting and the game build pass.
+
 ## Player-click stair placement audit (2026-10-09)
 
 Final native result: **128/128 player-click routes pass**, with zero forbidden

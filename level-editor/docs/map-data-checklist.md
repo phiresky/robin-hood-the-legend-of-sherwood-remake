@@ -6,6 +6,21 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
+This file also retains historical investigations. Results that depended on the
+retired physical-navigation solver do **not** establish current traversal parity;
+assets need verification against prepared-graph movement. The current architecture
+and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
+
+**Fresh stair-house placement (2026-10-09):** Nottingham's south stair house now
+has current prepared-graph coverage on new editor terrain: two independent copies,
+eight rotations and two elevations retain every lift and entrance. All 64 directed
+routes pass synthetic traversal, complete-sprite traversal and gate discovery.
+Normal non-jumping-PC clicks pass 60/64 routes, including sixteen clicks on jump
+overlays that select their underlying floor. The remaining four upper landings
+are covered by the roof at 217 degrees and have no ordinary selectable floor
+target; hidden-sector selection remains to be verified. These are not skipped or
+counted as passes. Rendering and the asset's existing draft warnings remain open.
+
 **Fresh keep mask placement (2026-10-09):** the great keep's west-view mask now
 has a finite asset-local ground receiver probe. Two independent copies at four
 rotations and two terrain elevations retain all twelve masks, versus ten before

@@ -339,6 +339,20 @@ on those surfaces as clicks on the floor beneath. Actor traversal and receiving
 surface assertions remain enabled. It does not test AI decisions or multi-PC
 formation movement.
 
+The walking-PC fixture has no jump ability. Jump-selection overlays may therefore
+select their own underlying landing through normal movement dispatch; they do not
+make that landing unclickable. The report marks these targets with `jump_overlay`.
+The native jump audits separately cover characters that can execute jumps.
+
+Generate a fresh independent-asset matrix with
+`node refinement/check-grounded-stair-placements.mjs --asset=nottingham-south-stair-house
+--padding=500 --rotations=0,37,90,137,180,217,270,317` from `level-editor`.
+The verifier derives its mandatory stair-route count from asset-local doors and
+requires both copies to retain all authored lifts and entrances. It inserts,
+serializes and reopens new editor scenes on flat terrain, without source-map input.
+Omitting `--asset` retains the church-side-tower regression; `--require-masks`
+checks that asset's two ground-bound masks and independent ownership.
+
 Climbing routes use a complete character animation profile instead of synthetic
 walking frames. Only that explicitly supplied RHS file is mounted; source-level
 files and mission scripts are unavailable. Navigation comes from the compiled

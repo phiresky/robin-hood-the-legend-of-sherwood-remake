@@ -14,7 +14,9 @@ import { compileMap } from "../app/src/map-compile.ts";
 // This generates inputs for exported_stairs_support_complete_sprite_actor_routes.
 // Retained entrances are not proof of traversal: inspect forbidden routes as well
 // as failures in the native actor-stair-sprite-route-report.json output.
-const id = "leicester-church-side-tower";
+const assetOptions = process.argv.slice(2).filter((argument) => argument.startsWith("--asset="));
+assert.ok(assetOptions.length <= 1, "Provide at most one asset ID");
+const id = assetOptions[0]?.slice("--asset=".length) ?? "leicester-church-side-tower";
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8"));
 const entry = index.assets.find((asset) => asset.id === id);
 assert.ok(entry);
@@ -51,6 +53,7 @@ assert.ok(
     .slice(2)
     .every(
       (argument) =>
+        argument.startsWith("--asset=") ||
         argument.startsWith("--descriptor=") ||
         argument.startsWith("--padding=") ||
         argument.startsWith("--rotations=") ||
@@ -67,10 +70,21 @@ const reference = {
   model: modelPath,
   descriptor_sha256: digest(descriptorBytes),
   model_sha256: digest(await fs.readFile(`library/${modelPath}`)),
+  resources: descriptor.resources ?? [],
+  ...(entry.model_scene ? { model_scene: entry.model_scene } : {}),
 };
 if (!stagedDescriptor) assert.equal(reference.descriptor_sha256, entry.descriptor_sha256);
 assert.equal(descriptor.id, id);
-assert.ok(descriptor.gameplay.placementGroundHeight > 0);
+const lifts = descriptor.gameplay.lifts ?? [];
+const routesPerCopy = lifts
+  .filter((lift) => lift.type === 1)
+  .reduce((count, lift) => count + lift.doors.length * (lift.doors.length - 1), 0);
+assert.ok(routesPerCopy > 0, "The asset must contain at least one connected stair");
+const expectedRoutes = rotations.length * 2 * 2 * routesPerCopy;
+assert.ok(
+  !requireMasks || id === "leicester-church-side-tower",
+  "The ground-mask ownership check currently describes the church-side tower only",
+);
 const assets = new Map([[id, descriptor]]);
 const bounds = [0, 0, 2000 + padding * 2, 2000 + padding * 2];
 const output = await fs.mkdtemp("work/map-compile/grounded-stair-placements-");
@@ -82,11 +96,11 @@ const report = async () =>
     JSON.stringify({
       scope: "static-geometry-only-not-gameplay-parity",
       complete: results.length === rotations.length * 2,
-      expected_directed_routes: rotations.length * 16,
+      expected_directed_routes: expectedRoutes,
       rotations,
       padding,
       expected_masks_per_map: requireMasks ? 2 : undefined,
-      snapshot_notes: `Fresh editor drops, two independent copies, ${rotations.length} rotations and two terrain elevations. All ${rotations.length * 16} directed stair routes need verification; forbidden routes are not passes.`,
+      snapshot_notes: `Fresh editor drops of ${id}, two independent copies, ${rotations.length} rotations and two terrain elevations. All ${expectedRoutes} directed stair routes need verification; forbidden routes are not passes.`,
       asset: reference,
       staged_descriptor: stagedDescriptor,
       results,
@@ -110,14 +124,15 @@ for (const elevation of [0, 40])
       [1450 + padding, 1400 + padding],
     ]) {
       document = insertProjectionAsset(document, descriptor, reference, [x, y, elevation]).document;
-      assert.ok(
-        Math.abs(
-          document.groups.at(-1).transform.dz +
-            descriptor.gameplay.placementGroundHeight -
-            elevation,
-        ) < 1e-6,
-        "new drops must ground the lower approach at the requested terrain elevation",
-      );
+      if (descriptor.gameplay.placementGroundHeight !== undefined)
+        assert.ok(
+          Math.abs(
+            document.groups.at(-1).transform.dz +
+              descriptor.gameplay.placementGroundHeight -
+              elevation,
+          ) < 1e-6,
+          "new drops must ground the lower approach at the requested terrain elevation",
+        );
       document.groups.at(-1).transform.rot_deg = rotation;
     }
     const stored = serializeStoredMap(document, assets);
@@ -144,11 +159,15 @@ for (const elevation of [0, 40])
         JSON.stringify(compiled.warnings),
       );
     }
-    assert.equal(compiled.descriptor.asset_geometry.lifts?.length, 4);
+    assert.equal(
+      compiled.descriptor.asset_geometry.lifts?.length,
+      lifts.length * 2,
+      `both copies must retain every authored lift: ${JSON.stringify(compiled.warnings)}`,
+    );
     assert.equal(
       compiled.descriptor.asset_geometry.lifts.reduce((sum, lift) => sum + lift.doors.length, 0),
-      8,
-      `both stairs on both copies must retain their entrances: ${JSON.stringify(compiled.warnings)}`,
+      lifts.reduce((count, lift) => count + lift.doors.length, 0) * 2,
+      `both copies must retain their entrances: ${JSON.stringify(compiled.warnings)}`,
     );
     const file = `grounded-stairs-${rotation}-${elevation}.level.json`;
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));

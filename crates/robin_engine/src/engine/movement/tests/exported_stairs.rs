@@ -353,24 +353,41 @@ fn stair_landing_click(
         .filter(|(x, y)| x * x + y * y <= 64 * 64)
         .collect();
     offsets.sort_by_key(|(x, y)| (x * x + y * y, *x, *y));
+    let mut visible = 0;
+    let mut authorized = 0;
+    let mut obstructed = 0;
     for (x, y) in offsets {
         let point = MapPoint::new(door.point_out.x + x as f32, door.point_out.y + y as f32);
         let hit = grid.get_sector_screen(point, source);
-        if hit.sector_idx != door.sector_out_index || hit.layer != door.layer_out {
+        // This walking PC has no jump skill. A jump overlay therefore selects
+        // its underlying floor through normal player movement dispatch.
+        let selected_floor = hit.sector_idx.and_then(|index| {
+            let sector = &grid.level.sectors[usize::from(index)];
+            if sector.sector_type.is_jump() {
+                sector.underlying_sector
+            } else {
+                Some(index)
+            }
+        });
+        if selected_floor != door.sector_out_index || hit.layer != door.layer_out {
             continue;
         }
+        visible += 1;
         let bounds = crate::coordinates::MapBBox::from_corners(
             MapPoint::new(point.x - half.x, point.y - half.y),
             MapPoint::new(point.x + half.x, point.y + half.y),
         );
-        if grid.is_position_authorized(&bounds, door.layer_out)
-            && grid.is_reachable_thick(door.point_out, point, door.layer_out, half)
-        {
+        if !grid.is_position_authorized(&bounds, door.layer_out) {
+            continue;
+        }
+        authorized += 1;
+        if grid.is_reachable_thick(door.point_out, point, door.layer_out, half) {
             return Ok(point);
         }
+        obstructed += 1;
     }
     Err(format!(
-        "no visible actor-sized landing click within 64 units of {:?}",
+        "no visible actor-sized landing click within 64 units of {:?}: visible={visible}, authorized={authorized}, obstructed={obstructed}",
         door.point_out
     ))
 }
@@ -1543,10 +1560,28 @@ fn audit_exported_lift_routes(
                         continue;
                     }
                     if dispatch == StairDispatch::PlayerClick {
+                        let goal =
+                            stair_landing_click(&engine, doors[entrance].point_out, &doors[exit]);
+                        let jump_overlay = goal
+                            .as_ref()
+                            .ok()
+                            .and_then(|point| {
+                                engine
+                                    .world
+                                    .fast_grid
+                                    .get_sector_screen(*point, doors[entrance].point_out)
+                                    .sector_idx
+                            })
+                            .is_some_and(|index| {
+                                engine.world.fast_grid.level.sectors[usize::from(index)]
+                                    .sector_type
+                                    .is_jump()
+                            });
                         click_targets.push(serde_json::json!({
                             "entrance": entrance, "exit": exit,
                             "endpoint": doors[exit].point_out,
-                            "goal": stair_landing_click(&engine, doors[entrance].point_out, &doors[exit]),
+                            "goal": goal,
+                            "jump_overlay": jump_overlay,
                         }));
                     }
                     let outcome = walk_exported_lift_route(
