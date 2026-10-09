@@ -116,6 +116,25 @@ enum TopicMsg {
     Start { game: JoinedGame },
 }
 
+/// Each refresh must have a distinct content hash: gossip suppresses repeated
+/// payloads for longer than the lobby lease. Flattening keeps older peers able
+/// to read the message while ignoring the extra nonce field.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Serialize, Deserialize)]
+struct TopicBroadcast {
+    #[serde(flatten)]
+    message: TopicMsg,
+    nonce: [u8; 16],
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn encode_topic_broadcast(message: &TopicMsg) -> Result<Vec<u8>, serde_json::Error> {
+    serde_json::to_vec(&TopicBroadcast {
+        message: message.clone(),
+        nonce: rand::random(),
+    })
+}
+
 #[derive(Debug, Clone)]
 pub enum MatchmakingEvent {
     /// Fresh snapshot of every live listing.
@@ -516,7 +535,7 @@ mod native {
 
     impl Worker {
         async fn broadcast(&self, msg: &TopicMsg) {
-            let bytes = match serde_json::to_vec(msg) {
+            let bytes = match encode_topic_broadcast(msg) {
                 Ok(bytes) => bytes,
                 Err(e) => {
                     tracing::error!("encode matchmaking message: {e}");
@@ -922,6 +941,93 @@ mod native {
 #[cfg(test)]
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
+    use super::{TopicMsg, encode_topic_broadcast};
+
+    #[test]
+    fn fresh_lobby_broadcasts_preserve_legacy_message_decoding() {
+        let message = TopicMsg::Join {
+            game_id: "host".into(),
+            nickname: "Player".into(),
+            peer_id: "peer".into(),
+        };
+        let first = encode_topic_broadcast(&message).unwrap();
+        let second = encode_topic_broadcast(&message).unwrap();
+        assert_ne!(first, second);
+        for bytes in [first, second, serde_json::to_vec(&message).unwrap()] {
+            let decoded: TopicMsg = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                serde_json::to_value(decoded).unwrap(),
+                serde_json::to_value(&message).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn lobby_refreshes_survive_gossip_deduplication_past_the_lease() {
+        use iroh_gossip::proto::{
+            Scope,
+            topic::{Command, Event, InEvent, OutEvent, State},
+        };
+        use std::collections::VecDeque;
+
+        // Drive the actual gossip protocol with an in-memory two-peer link.
+        // Stable eager delivery does not require timers or public discovery.
+        fn deliver(
+            peers: &mut [State<u64, rand::rngs::ThreadRng>; 2],
+            input: InEvent<u64>,
+            now: tokio::time::Instant,
+        ) -> usize {
+            let mut queue = VecDeque::from([(0usize, input)]);
+            let mut received = 0;
+            let mut steps = 0;
+            while let Some((source, input)) = queue.pop_front() {
+                steps += 1;
+                assert!(steps < 1000, "gossip message exchange did not settle");
+                for output in peers[source].handle(input, now).collect::<Vec<_>>() {
+                    match output {
+                        OutEvent::SendMessage(target, message) => queue.push_back((
+                            target as usize,
+                            InEvent::RecvMessage(source as u64, message),
+                        )),
+                        OutEvent::EmitEvent(Event::Received(_)) if source == 1 => received += 1,
+                        _ => {}
+                    }
+                }
+            }
+            received
+        }
+
+        let message = TopicMsg::Join {
+            game_id: "host".into(),
+            nickname: "Player".into(),
+            peer_id: "peer".into(),
+        };
+        for fresh in [false, true] {
+            let mut peers = [
+                State::new(0, None, Default::default()),
+                State::new(1, None, Default::default()),
+            ];
+            let start = tokio::time::Instant::now();
+            deliver(&mut peers, InEvent::Command(Command::Join(vec![1])), start);
+            let mut received = 0;
+            // Run beyond the 60-second lease, still within gossip's 90-second
+            // duplicate retention. Repeated legacy messages arrive only once.
+            for tick in 0..36 {
+                let bytes = if fresh {
+                    encode_topic_broadcast(&message).unwrap()
+                } else {
+                    serde_json::to_vec(&message).unwrap()
+                };
+                received += deliver(
+                    &mut peers,
+                    InEvent::Command(Command::Broadcast(bytes.into(), Scope::Swarm)),
+                    start + super::BROADCAST_INTERVAL * tick,
+                );
+            }
+            assert_eq!(received, if fresh { 36 } else { 1 });
+        }
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn worker_closure_is_distinct_from_idle_and_commands_fail() {

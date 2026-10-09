@@ -228,6 +228,25 @@ impl MouseCtx<'_> {
                 clicks,
             );
 
+            // Portrait presses belong to the UI, even while the selected unit
+            // is fighting. Keep the paired click, but never record it as a
+            // world gesture or begin a selection/action drag beneath the panel.
+            if ui_panel::hit_test_portrait_detailed(
+                &engine.presentation_view(),
+                local_seat,
+                self.portrait_cache,
+                self.screen_width,
+                self.screen_height,
+                mx as f32,
+                my as f32,
+            )
+            .is_some()
+            {
+                host.frontend.input.disarm_left_drag();
+                host.frontend.clear_gesture();
+                return;
+            }
+
             let click_pt = engine_coordinates::ScreenPoint::new(mx as f32, my as f32);
             let on_minimap = host
                 .frontend
@@ -472,7 +491,7 @@ impl MouseCtx<'_> {
             // `ignore_next_drag` has suppressed this drag
             // cycle.
             if !planning_held
-                && host.frontend.input.left_mouse_down()
+                && host.frontend.input.is_dragging()
                 && !host.frontend.pointer_capture().minimap_drag_active()
                 && !host
                     .frontend
@@ -2719,6 +2738,123 @@ impl SherwoodCtx<'_> {
 #[cfg(test)]
 mod shift_planning_tests {
     use super::*;
+
+    #[test]
+    fn fighting_players_can_select_another_portrait_without_starting_a_gesture() {
+        use crate::host::test_support::{add_pc_with_status, fixture};
+        use robin_engine::engine::SimulationFrameInput;
+        use robin_engine::player_command::{PlayerId, PlayerInput};
+
+        let (mut engine, assets, mut host) = fixture();
+        let teammate = add_pc_with_status(&mut engine, 50.0, 50.0, Posture::Upright, true, 100);
+        let mut fighter = engine.get_entity(teammate).unwrap().clone();
+        if let engine_element::Entity::Pc(pc) = &mut fighter {
+            pc.human.opponents = vec![teammate].into();
+        } else {
+            panic!("fixture must contain a PC");
+        }
+        let fighter = engine.test_add_entity(fighter);
+        engine
+            .advance_frame(
+                &assets,
+                SimulationFrameInput::new(vec![
+                    PlayerCommand::ConnectSeat {
+                        player_id: PlayerId(1),
+                        nickname: "Client".into(),
+                    }
+                    .into(),
+                ])
+                .with_hourglass(false),
+            )
+            .unwrap();
+        let cache = PortraitCache::new();
+        for seat in [PlayerId::HOST, PlayerId(1)] {
+            engine
+                .advance_frame(
+                    &assets,
+                    SimulationFrameInput::new(vec![
+                        PlayerInput::new(
+                            seat,
+                            PlayerCommand::SelectPc {
+                                pc_id: fighter,
+                                append: false,
+                            },
+                        )
+                        .into(),
+                    ])
+                    .with_hourglass(false),
+                )
+                .unwrap();
+            let (net, _incoming, outgoing, _, _) = crate::multiplayer::NetChannels::new();
+            host.transport = crate::host::HostTransport::test_session(net, seat);
+            assert!(crate::game_input::is_selected_unit_swordfighting(
+                &engine.presentation_view(),
+                seat
+            ));
+            let x = i32::from(ui_panel::slot_left_x(800, 0, 5)) + 50;
+            let y = 550;
+            let hit = ui_panel::hit_test_portrait_detailed(
+                &engine.presentation_view(),
+                seat,
+                &cache,
+                800,
+                600,
+                x as f32,
+                y as f32,
+            )
+            .unwrap();
+            assert_eq!(hit.pc_id, teammate);
+            for (clicks, move_pointer) in [(1, false), (1, true), (2, true)] {
+                let mut commands = FrameCommands::new();
+                let mut ctx = MouseCtx {
+                    engine: &engine,
+                    host: &mut host,
+                    assets: &assets,
+                    portrait_cache: &cache,
+                    frame_cmds: &mut commands,
+                    screen_width: 800,
+                    screen_height: 600,
+                    modifiers: InputModifiers {
+                        ctrl: false,
+                        shift: false,
+                        alt: false,
+                        plan: false,
+                    },
+                };
+                ctx.on_left_mouse_down(x, y, clicks);
+                assert!(ctx.host.frontend.input.left_mouse_down());
+                assert!(!ctx.host.frontend.input.is_dragging());
+                if move_pointer {
+                    ctx.on_mouse_move(x + 1, y);
+                }
+                assert!(ctx.host.frontend.mouse_way().is_empty());
+                ctx.on_left_mouse_up(x, y);
+                assert!(
+                    commands.is_empty(),
+                    "network commands must await the host echo"
+                );
+                let sent = outgoing.try_iter().collect::<Vec<_>>();
+                assert!(
+                    sent.iter().any(|message| matches!(
+                        message,
+                        crate::multiplayer::NetOutbound::Input {
+                            command: PlayerCommand::SelectPc { pc_id, .. }, ..
+                        } if *pc_id == teammate
+                    )),
+                    "seat={seat:?}, clicks={clicks}, movement={move_pointer}: {sent:?}"
+                );
+                assert!(!sent.iter().any(|message| matches!(
+                    message,
+                    crate::multiplayer::NetOutbound::Input {
+                        command: PlayerCommand::SwordStrikeCmd { .. }
+                            | PlayerCommand::EnterSwordfight { .. }
+                            | PlayerCommand::BoxSelect { .. },
+                        ..
+                    }
+                )));
+            }
+        }
+    }
 
     #[test]
     fn touch_takeover_cancels_gesture_without_dispatching_world_release() {
