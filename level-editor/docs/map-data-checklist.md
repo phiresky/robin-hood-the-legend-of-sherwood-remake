@@ -23,9 +23,13 @@ correction. Physical receiving surfaces remain unchanged. Placement checks pass
 at both elevations and for both independent copies. At the blocked upper
 entrance, the outside passage footprint overlaps the landing's stairwell hole;
 the exporter still needs to establish supported crossing clearance there.
-Both copies still warn that their projectile
-mask cannot bind a receiving layer on the new terrain. These are open reusable
-asset/export defects, separate from the saved Wychford placement mismatch below.
+Grounded copies now retain their projectile masks: the published asset contains
+a finite receiver probe between its old local mask anchor and its authored
+insertion ground height. All eight exports retain two terrain-bound masks with
+independent obstacle ownership and load natively. Saved Leicester also exports
+without a tower-mask warning; saved Wychford retains its previous missing-receiver
+warning for the existing placement. No receiver outside the finite probe is
+invented. The stair corridor/passage defects remain open.
 The regression must pass all 64 routes without counting forbidden routes as
 success before this asset is certified. The native audit now enforces the
 manifest's expected directed-route count and reports incomplete coverage when

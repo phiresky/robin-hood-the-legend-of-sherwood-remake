@@ -4,6 +4,46 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published tower mask receiving probe (2026-10-09)
+
+The church-side tower now carries a finite local mask receiver segment from its
+existing anchor to its authored insertion-ground height. The catalog is
+`refinement/catalogs/leicester-church-mask-receiver.json`; reproduce a reviewed
+candidate with `node refinement/stage-church-mask-receiver.mjs`. The staging tool
+checks the current descriptor hash, anchor, ground height and mask schema, and
+writes a gameplay edit for the existing publication pipeline.
+
+`check-grounded-stair-placements.mjs --descriptor=<staged asset.json> --require-masks`
+inserts two copies on new terrain at four rotations and two elevations, then
+serializes, reopens and exports each document. All eight cases retain two masks
+on the terrain layer with disjoint, nonempty obstacle ownership. Against the
+previous exports, only masks and warnings change. All eight load natively in
+`work/map-compile/grounded-stair-placements-N2R4Ia`; the stricter ownership checks
+also pass in `work/map-compile/grounded-stair-placements-4Nxv8y`.
+
+Saved-scene checks in `work/map-compile/saved-map-exports-df4Z1e` compile and load
+both maps: Wychford has 86 areas, 31 doors and no jump pairs; Leicester has 57
+areas, 105 doors and 23 jump pairs. Leicester has no tower-mask warning. Wychford
+retains its prior missing-receiver warning for its existing tower placement;
+the new metadata does not extend the probe to unrelated terrain. These checks
+certify construction and receiver binding, not complete visual compositing or
+stair traversal.
+
+Publication and before/after snapshots are in
+`work/map-compile/church-mask-receiver-HnUqtA/publication`. Only the selected
+mask's `receiverSegment` changes in the descriptor. Leicester and Wychford scene
+edits refresh descriptor hashes only; no placements or models change.
+After publication, both saved scenes reopen through the normal pinned-asset
+loader. Running the fresh-placement check with `--require-masks` against the
+installed library produces eight exports exactly equal to the staged results,
+recorded in `work/map-compile/grounded-stair-placements-3yF1RN`.
+
+A separate upper-stair experiment in
+`work/map-compile/stair-kernel-diagnostic-vvItIV` retains a conservative convex
+region inside the slightly concave physical floor before preparing clearance.
+With the upper passage restrictions diagnostically removed, eight 90-degree
+routes still stall. That experiment was not installed in the compiler or asset.
+
 ## Fresh stair coverage and stairwell diagnostic (2026-10-09)
 
 `refinement/check-grounded-stair-placements.mjs` declares 64 required directed

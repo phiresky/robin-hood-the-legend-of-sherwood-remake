@@ -1,0 +1,9 @@
+{
+  "asset": "leicester-church-side-tower",
+  "mask": "tower-projectile-occlusion",
+  "receiverSegment": [
+    [-3.7822265625, -353.86288751590035, 0.000009935441106828641],
+    [-3.7822265625, -353.86288751590035, 50.0010129354411]
+  ],
+  "review": "Finite receiver probe from the existing local mask anchor to the asset's authored insertion ground height. Verified on two independent copies at four rotations and two ground elevations, plus native loading of saved Leicester and Wychford exports. The existing Wychford placement still warns when no receiver meets this finite probe. This changes receiver selection only, not the mask silhouette or projectile boundary."
+}

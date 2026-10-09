@@ -20,7 +20,17 @@ const entry = index.assets.find((asset) => asset.id === id);
 assert.ok(entry);
 const descriptorPath = `3d-assets/${entry.descriptor}`;
 const modelPath = `3d-assets/${entry.model}`;
-const descriptorBytes = await fs.readFile(`library/${descriptorPath}`);
+const overrides = process.argv.slice(2).filter((argument) => argument.startsWith("--descriptor="));
+assert.ok(overrides.length <= 1, "Provide at most one staged descriptor");
+const stagedDescriptor = overrides[0]?.slice("--descriptor=".length);
+const requireMasks = process.argv.includes("--require-masks");
+assert.ok(
+  process.argv
+    .slice(2)
+    .every((argument) => argument.startsWith("--descriptor=") || argument === "--require-masks"),
+  "Unknown verification option",
+);
+const descriptorBytes = await fs.readFile(stagedDescriptor ?? `library/${descriptorPath}`);
 const descriptor = parseProjectionAssetDescriptor(JSON.parse(descriptorBytes));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const reference = {
@@ -30,7 +40,8 @@ const reference = {
   descriptor_sha256: digest(descriptorBytes),
   model_sha256: digest(await fs.readFile(`library/${modelPath}`)),
 };
-assert.equal(reference.descriptor_sha256, entry.descriptor_sha256);
+if (!stagedDescriptor) assert.equal(reference.descriptor_sha256, entry.descriptor_sha256);
+assert.equal(descriptor.id, id);
 assert.ok(descriptor.gameplay.placementGroundHeight > 0);
 const assets = new Map([[id, descriptor]]);
 const bounds = [0, 0, 2000, 2000];
@@ -44,9 +55,11 @@ const report = async () =>
       scope: "static-geometry-only-not-gameplay-parity",
       complete: results.length === 8,
       expected_directed_routes: 64,
+      expected_masks_per_map: requireMasks ? 2 : undefined,
       snapshot_notes:
         "Fresh editor drops, two independent copies, four rotations and two terrain elevations. All 64 directed stair routes need verification; forbidden routes are not passes.",
       asset: reference,
+      staged_descriptor: stagedDescriptor,
       results,
     }),
   );
@@ -81,6 +94,27 @@ for (const elevation of [0, 40])
     const stored = serializeStoredMap(document, assets);
     document = parseStoredMap(stored, assets);
     const compiled = compileMap(document, bounds, assets, { bestEffort: true });
+    if (requireMasks) {
+      assert.equal(
+        compiled.descriptor.asset_geometry.masks?.length,
+        2,
+        "each independent tower must retain its mask",
+      );
+      assert.ok(
+        compiled.descriptor.asset_geometry.masks.every((mask) => mask.layer === 0),
+        "grounded masks must bind the new terrain layer",
+      );
+      const [first, second] = compiled.descriptor.asset_geometry.masks;
+      assert.ok(first.obstacle_indices.length > 0 && second.obstacle_indices.length > 0);
+      assert.ok(
+        !first.obstacle_indices.some((index) => second.obstacle_indices.includes(index)),
+        "copied masks must retain independent obstacle ownership",
+      );
+      assert.ok(
+        !compiled.warnings.some((warning) => warning.startsWith("Mask ")),
+        JSON.stringify(compiled.warnings),
+      );
+    }
     assert.equal(compiled.descriptor.asset_geometry.lifts?.length, 4);
     assert.equal(
       compiled.descriptor.asset_geometry.lifts.reduce((sum, lift) => sum + lift.doors.length, 0),
