@@ -8,7 +8,7 @@ sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinem
 from render_slots import acquire,release
 from evidence_io import sha,write_json
 from export_editor import export_editor
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';TREE=int(sys.argv[sys.argv.index('--')+1]);assert TREE in (12,14)
+B=ROOT/'level-editor/work/croisement03-refinement/restart2'
 CONVERTER=ROOT/'level-editor/work/croisement02-refinement/restart2-textures/exact_composite_export_v2.py'
 assert sha(CONVERTER)=='5457f186ef9e34b4665a6db941caaeecf61a583dd341947e25f29dc41bc389d2'
 sys.path.insert(0,str(CONVERTER.parent))
@@ -61,6 +61,7 @@ def flatten_normal_gate(obj):
  return dict(object=obj.name,original_triangles=len(old.loop_triangles),partition_triangles=len(faces),normal_zero_crossing_triangles=cuts,physical_surface='Only barycentric subdivision; no intentional position offset',complementary=convert(obj))
 
 def main():
+ TREE=int(sys.argv[sys.argv.index('--')+1]);assert TREE in (12,14)
  source=B/f'tree{TREE}-approved-wood-texture-v1/source-restored-fill-v1/worker.blend';decision=json.loads((B/f'user-approval-v15/croisement03-tree-{TREE}-shared-crown-fragment.json').read_text());assert sha(source)==decision['model_sha256'];out=B/f'tree{TREE}-exact-export-v2';assert not out.exists();acquire()
  try:
   bpy.ops.wm.open_mainfile(filepath=str(source));scene=bpy.data.scenes['Croisement03 Refinement'];bpy.context.window.scene=scene;collection=bpy.data.collections['Croisement03 Working'];wood=[o for o in scene.objects if o.type=='MESH' and o.get('asset_group')==f'croisement03-tree-{TREE}'];assert len(wood)==(3 if TREE==12 else 2);records=[flatten_normal_gate(o) for o in wood]
