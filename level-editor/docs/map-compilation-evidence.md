@@ -4,6 +4,41 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Prepared stair sector handoffs (2026-10-09)
+
+Native stair traversal uses an outside-to-midpoint movement, a sector handoff,
+then a midpoint-to-inside movement, reversed on exit. At the fresh tower's
+upper entrance, the landing's stairwell opening intersects the actor footprint
+at the original midpoint. `prepareStairPassages` searches toward the existing
+outside endpoint within one native actor radius, retaining both endpoints and
+requiring both movement segments to clear permanent obstacles. It changes no
+collision geometry. Already clear passages, non-stair lifts and switchable-only
+barriers retain their midpoint; normal state-condition compilation follows.
+
+Fresh editor insertion, save/reopen and export checks in
+`work/map-compile/grounded-stair-placements-vmi3Bp` retain both masks and run all
+64 native complete-sprite routes. **56 pass, eight fail, none are forbidden.**
+The eight remaining failures are the upper stair at 90 degrees, in both
+directions, at both elevations and in both copies. The audit remains failing.
+Compared with `grounded-stair-placements-3yF1RN`, only upper-door midpoints,
+passage conditions and warnings change: 0 degrees moves `[510,238]` to
+`[512,234]`, and 90 degrees moves `[563,288]` to `[569,289]`, with equivalent
+translation for the second copy and elevated terrain. All other descriptor
+data is identical. The earlier diagnostic is
+`work/map-compile/stair-midpoint-diagnostic-Xkiadl`.
+
+Focused tests verify unchanged endpoints/collision, idempotence, retained
+switchable conditions, rejection of a shared solid barrier and rejection of a
+passage needing an excessive adjustment. The 90-degree inner-floor experiment
+has no center region after erosion by the full native 6-by-3 half-footprint;
+moving its handoff does not resolve that separate corridor failure.
+
+Validation: app TypeScript checking, focused lint, game build and Rust formatting
+pass. The existing native rotated-stair traversal regression also passes. The
+full editor suite in `work/map-compile/stair-handoff-editor-suite-20261009.log`
+reports 1,064 passed, two skipped and one existing preset failure caused by the
+locally edited Croisement02 scene's `size: null`; that scene was not changed here.
+
 ## Published keep ground mask receiving probe (2026-10-09)
 
 The great keep's west-view mask now has a finite local receiver segment from its

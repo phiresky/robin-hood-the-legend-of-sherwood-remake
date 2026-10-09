@@ -10,6 +10,7 @@ import { packageAppearanceRegions, type BakedAppearanceRegion } from "./map-appe
 import { compileMission } from "./compile-mission.ts";
 import { compileLiftApproaches } from "../../shared/src/compile-lift-approaches.ts";
 import { compileLiftPassageStates } from "../../shared/src/compile-passage-states.ts";
+import { prepareStairPassages } from "../../shared/src/prepare-stair-passages.ts";
 import type { SceneryResources } from "./scenery-resources.ts";
 
 export type BakeBounds = [number, number, number, number];
@@ -113,6 +114,7 @@ export function compileMap(
       : undefined;
   if (assetGeometry) {
     compileLiftApproaches(assetGeometry);
+    prepareStairPassages(assetGeometry);
     const passageStates = compileLiftPassageStates(assetGeometry);
     assetGeometry.lifts?.forEach((lift, index) => {
       lift.doors.forEach((door, doorIndex) => {

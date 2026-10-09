@@ -20,8 +20,13 @@ remains open.
 tower through the editor's asset insertion API onto new flat terrain, serializes
 and reopens each document, then exports two independent copies at four rotations
 and two elevations. Grounding retains both stairs and all four entrances per
-copy. The complete-sprite native stair audit now passes 48 of 64 directed routes;
-sixteen remain forbidden by upper-entrance collision checks at 0/90 degrees.
+copy. The complete-sprite native stair audit now passes 56 of 64 directed routes;
+eight upper-stair routes at 90 degrees still stall. No routes are skipped as
+forbidden. Stair passage preparation can move a blocked sector handoff toward
+the landing along its existing approach, bounded by one native actor radius.
+Both animation segments must clear their floors' permanent obstacles; endpoints
+and collision geometry stay unchanged, and state conditions are compiled again.
+This restores eight 0-degree routes without disabling their collision checks.
 The eight lower-stair stalls at 180 degrees are fixed at export: when a convex,
 unobstructed floor projects too narrowly to fit a native actor, the compiler
 adjusts its collision boundaries to preserve physically supported movement
@@ -29,27 +34,27 @@ footprints after projection. Quantization includes an inward safety margin.
 Already traversable floors retain their boundaries and prepared entrances;
 ladders, walls, holes, obstacles, bent and singular floors are excluded from this
 correction. Physical receiving surfaces remain unchanged. Placement checks pass
-at both elevations and for both independent copies. At the blocked upper
-entrance, the outside passage footprint overlaps the landing's stairwell hole;
-the exporter still needs to establish supported crossing clearance there.
+at both elevations and for both independent copies. The upper entrance's
+footprint overlaps the landing's stairwell hole before handoff preparation.
+The remaining 90-degree corridor has no full actor-sized center region, including
+after the conservative inner-floor projection experiment; that needs a separate
+export solution.
 Grounded copies now retain their projectile masks: the published asset contains
 a finite receiver probe between its old local mask anchor and its authored
 insertion ground height. All eight exports retain two terrain-bound masks with
 independent obstacle ownership and load natively. Saved Leicester also exports
 without a tower-mask warning; saved Wychford retains its previous missing-receiver
 warning for the existing placement. No receiver outside the finite probe is
-invented. The stair corridor/passage defects remain open.
+invented. The 90-degree stair corridor defect remains open.
 The regression must pass all 64 routes without counting forbidden routes as
 success before this asset is certified. The native audit now enforces the
 manifest's expected directed-route count and reports incomplete coverage when
-any required route is forbidden. A diagnostic removing only the upper-door
-restriction completes the eight additional 0-degree routes, but exposes eight
-upper-stair stalls at 90 degrees. Removing the restriction alone is not a fix;
-the 90-degree corridor and supported stairwell passage both remain open.
+any required route is forbidden. The current audit attempts all 64 routes and
+still fails on the eight 90-degree stalls; it is not a passing parity gate.
 No runtime routing solver is required
 or reintroduced by this audit.
 
-**Broader verification (2026-10-09):** the full editor suite now reports 1,061
+**Broader verification (2026-10-09):** the full editor suite now reports 1,064
 passed, two skipped and one failure: the named-size preset test reads a locally
 edited Croisement02 scene with `size: null`. That scene was left untouched.
 The export-related failures were resolved: the final jump audit now retains
