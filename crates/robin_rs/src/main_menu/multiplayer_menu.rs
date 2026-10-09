@@ -2595,24 +2595,26 @@ fn add_campaign_choices(
     if sources.profiles.characters.len() < 2 || sources.campaign.missions.is_empty() {
         return;
     }
+    // Checkpoints carry their own mission catalogue and asset descriptor.
+    // A generated or formerly installed mission need not be in the menu's
+    // currently loaded campaign. Use the same payload authority as Load Save.
     let resume = sources.saves.and_then(|saves| {
-        saves.find_resume_target().map(|index| {
-            (
-                saves.slot_name(index).expect("resume slot identity"),
-                saves.get(index).expect("resume slot metadata"),
-            )
-        })
+        let index = saves.find_resume_target()?;
+        let slot = saves.slot_name(index).expect("resume slot identity");
+        match saves.preflight_exact_slot(index) {
+            Ok(save) => Some((slot, save)),
+            Err(error) => {
+                tracing::warn!(%error, slot = slot.as_str(), "Cannot read campaign checkpoint; use Load Save for recovery");
+                None
+            }
+        }
     });
     let config = context.sim_config();
     let (mission_id, basename) = if let Some((_, save)) = &resume {
-        let mission = sources
-            .campaign
-            .missions
-            .iter()
-            .find(|m| m.profile(sources.profiles).id == save.mission_id)
-            .expect("profile checkpoint mission must exist in campaign catalogue");
-        let profile = mission.profile(sources.profiles);
-        (profile.id, profile.mission_filename.clone())
+        (
+            save.header.mission_id,
+            save.header.mission_assets.mission_basename.clone(),
+        )
     } else {
         let mut campaign = sources.campaign.clone();
         campaign.reset(sources.profiles, config.difficulty);
@@ -2632,21 +2634,9 @@ fn add_campaign_choices(
     } else {
         "Start Campaign"
     };
-    let rules = sources
-        .saves
-        .and_then(|saves| {
-            let (slot, _) = resume.as_ref()?;
-            let index = saves
-                .find_by_filename(slot.as_str())
-                .expect("resume slot exists");
-            match saves.preflight_exact_slot(index) {
-                Ok(save) => Some(save.engine.sim_config().coop),
-                Err(error) => {
-                    tracing::warn!(%error, "Cannot read checkpoint rules for campaign menu");
-                    None
-                }
-            }
-        })
+    let rules = resume
+        .as_ref()
+        .map(|(_, save)| save.engine.sim_config().coop)
         .unwrap_or(robin_engine::coop::CoopRules {
             campaign: true,
             ..Default::default()
@@ -3217,7 +3207,18 @@ mod visual_tests {
         assert_eq!(choices[0].label, "Start Campaign");
         assert_eq!(choices[1].label, "Load Save");
         assert!(choices[1].load_save);
-        let mut saves = crate::savegame::SaveGameManager::new(String::new());
+        let save_dir = tempfile::tempdir().unwrap();
+        let mut saves =
+            crate::savegame::SaveGameManager::new(save_dir.path().to_string_lossy().into_owned());
+        let (engine, _) = robin_engine::test_support::fresh_engine_sized(640.0, 480.0);
+        let host = crate::host::Host::scratch(640.0, 480.0);
+        let mut payload =
+            crate::save_file::GameSaveFile::capture(&engine, &host, first.id, "Checkpoint".into());
+        std::fs::write(
+            save_dir.path().join("Continue.json"),
+            serde_json::to_vec(&payload).unwrap(),
+        )
+        .unwrap();
         let mut checkpoint =
             crate::savegame::SaveGame::new("Continue".into(), "Solo checkpoint".into(), first.id);
         checkpoint.timestamp = "100".into();
@@ -3241,6 +3242,63 @@ mod visual_tests {
                     .unwrap()
             )
         );
+        // The saved catalogue may contain a generated mission absent from
+        // the currently installed campaign. Opening the menu must retain its
+        // exact checkpoint identity without requiring a live catalogue entry.
+        payload.header.mission_id = 0xfeed;
+        payload.header.mission_assets.mission_basename = "SavedGeneratedMission".into();
+        assert!(
+            !profiles
+                .missions
+                .iter()
+                .any(|p| p.id == payload.header.mission_id)
+        );
+        std::fs::write(
+            save_dir.path().join("Continue.json"),
+            serde_json::to_vec(&payload).unwrap(),
+        )
+        .unwrap();
+        let mut generated_saves =
+            crate::savegame::SaveGameManager::new(save_dir.path().to_string_lossy().into_owned());
+        let mut generated_checkpoint = crate::savegame::SaveGame::new(
+            "Continue".into(),
+            "Generated checkpoint".into(),
+            payload.header.mission_id,
+        );
+        generated_checkpoint.timestamp = "100".into();
+        generated_saves
+            .insert_test_slot(generated_checkpoint, crate::savegame::SlotState::Published);
+        let mut generated = Vec::new();
+        add_campaign_choices(
+            &mut generated,
+            MultiplayerMissionSources {
+                campaign: &campaign,
+                profiles: &profiles,
+                saves: Some(&generated_saves),
+            },
+            &context,
+        );
+        assert_eq!(generated[0].label, "Continue Campaign");
+        assert_eq!(generated[0].mission_id, 0xfeed);
+        assert_eq!(generated[0].campaign_save, continued[0].campaign_save);
+        assert_eq!(
+            generated[0].campaign_rules,
+            Some(payload.engine.sim_config().coop)
+        );
+        // A damaged checkpoint cannot prevent reaching the explicit recovery UI.
+        std::fs::write(save_dir.path().join("Continue.json"), b"broken").unwrap();
+        let mut damaged = Vec::new();
+        add_campaign_choices(
+            &mut damaged,
+            MultiplayerMissionSources {
+                campaign: &campaign,
+                profiles: &profiles,
+                saves: Some(&generated_saves),
+            },
+            &context,
+        );
+        assert_eq!(damaged[0].label, "Start Campaign");
+        assert_eq!(damaged[1].label, "Load Save");
         assert_eq!(continued[1].label, "Load Save");
         assert!(
             !continued
