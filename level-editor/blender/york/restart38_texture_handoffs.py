@@ -1,8 +1,13 @@
 """Freeze worker-reviewed York texture-only cards, preserving explicit exclusions."""
-import hashlib,json
+import hashlib,json,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/york-refinement/restart2';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 config={
+ 'storehouse':('york-riverside-stone-storehouse','York riverside stone storehouse texture','Saved texture appearance of the exact approved six storehouse meshes only. Surrounding shed, ground, doors, ownership and runtime remain excluded.',[
+ 'All eight saved-model views, native before/after and four context views inspected; original artwork camera first.',
+ 'Hidden walls use uninterrupted weathered masonry without invented openings; all four hip roof shells use tiles, including the triangular end planes.',
+ 'Known source imagery is retained; generated hidden masonry and roofing are inferred and differ in detail scale from the original front.',
+ 'Existing storehouse and shoreline edge colors are preserved; unchanged shed/terrain context is outside this decision.']),
  'well':('york-market-roofed-stone-well','York market well texture','Saved appearance of the approved seven well components in the shown native pose only. No geometry, terrain, ownership or runtime decision.',[
  'All eight actual saved-model views, native before/after and four ground-contact views inspected; original artwork camera first.',
  'Hidden inner masonry and timber support colors are filled, with the hollow opening and separate small pail retained.',
@@ -14,7 +19,8 @@ config={
  'Warm inferred timber covers previously gray surfaces. Orange and dark source facets are retained and visibly contrast with finer hidden wood.',
  'Supplemental room/chain context is unchanged and outside this decision; the final context angle is partly occluded by the existing room wall.'])}
 for key,(asset,title,scope,findings)in config.items():
- O=B/f'restart38-{key}-texture-baked-v1';E=B/'approved-texture-inputs-v1'/key/'experiment';G=E/'generation-short-no-mask-with-lighting-openrouter-with-auxiliary';v=json.loads((O/'validation.json').read_text());c=json.loads((O/'contact/validation.json').read_text());g=json.loads((G/'generation-review.json').read_text());assert sha(O/'model.blend')==v['baked_model_sha256']==c['saved_model_sha256'];assert v['geometry_verified']and not v['geometry_changed'];assert g['bake_authorized']and g['independent_protected_pixel_changes']==0
+ if len(sys.argv)>1 and key!=sys.argv[1]:continue
+ O=B/f"restart38-{key}-texture-baked-{'v3'if key=='storehouse'else'v1'}";E=B/'approved-texture-inputs-v1'/key/('retry-material-regions-v3'if key=='storehouse'else'experiment');G=E/'generation-short-no-mask-with-lighting-openrouter-with-auxiliary';v=json.loads((O/'validation.json').read_text());c=json.loads((O/'contact/validation.json').read_text());g=json.loads((G/'generation-review.json').read_text());assert sha(O/'model.blend')==v['baked_model_sha256']==c['saved_model_sha256'];assert v['geometry_verified']and not v['geometry_changed'];assert g['bake_authorized']and g['independent_protected_pixel_changes']==0
  review={'status':'PASS_FOR_ROOT_GROUPED_REVIEW','model_sha256':sha(O/'model.blend'),'scope':scope,'findings':findings,'limits':['Generated appearance is inferred and requires user approval. No canonical publication performed.','Protected input RGBA and bake source texels are exact; rendered image pixels differ with resampling and are not claimed byte-identical.','No claim that every hidden underside or atlas padding texel has a generated sample.'],'checked_known_atlas_texels':sum(r['known_texels']for r in v['layers']),'context_validation':str(O/'contact/validation.json')};(O/'self-review.json').write_text(json.dumps(review,indent=2)+'\n')
  images=[('Saved model: eight views, native camera top-left',O/'actual/textured-eight.png'),('Native camera: approved source and saved texture candidate',O/'actual/native-before-after.png'),('Existing neighbor context, outside approval scope; native first',O/'contact/contact-four.png')]
  paths=[O/'model.blend',O/'validation.json',O/'self-review.json',O/'contact/validation.json',G/'generation-review.json',G/'generation.json',E/'approval.json',E/'views.json',E.parent/'input-review.json']+[p for _,p in images]+list((O/'actual').glob('view-*.png'))+list((O/'contact').glob('view-*.png'))

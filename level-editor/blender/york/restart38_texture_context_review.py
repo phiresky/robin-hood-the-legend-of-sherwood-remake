@@ -19,8 +19,8 @@ def signature(o):
   if isinstance(v,list):return [clean(x)for x in v]
   return v
  return {'vertices':[list(v.co)for v in o.data.vertices],'faces':[list(p.vertices)for p in o.data.polygons],'edges':[list(e.vertices)for e in o.data.edges],'modifiers':[(m.name,m.type,m.show_viewport,m.show_render)for m in o.modifiers],'appearance':clean(a)}
-key=sys.argv[sys.argv.index('--')+1];assert key in ('well','stable24')
-B=ROOT/'level-editor/work/york-refinement/restart2';E=B/'approved-texture-inputs-v1'/key/'experiment';O=B/f'restart38-{key}-texture-baked-v1';info=json.loads((E.parent/'input-review.json').read_text());names=set(info['object_names']);sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();digest=sha(O/'model.blend');source=E/'approved-model.blend'
+key=sys.argv[sys.argv.index('--')+1];assert key in ('well','stable24','storehouse')
+B=ROOT/'level-editor/work/york-refinement/restart2';E=B/'approved-texture-inputs-v1'/key/('retry-material-regions-v3'if key=='storehouse'else'experiment');O=B/f"restart38-{key}-texture-baked-{'v3'if key=='storehouse'else'v1'}";info=json.loads((E.parent/'input-review.json').read_text());names=set(info['object_names']);sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();digest=sha(O/'model.blend');source=E/'approved-model.blend'
 bpy.ops.wm.open_mainfile(filepath=str(source));scene=bpy.context.scene
 if key=='stable24':
  freeze=json.loads((Path(info['approved_scope']['model']).parent/'component-freeze.json').read_text());scene.frame_set(freeze['poses'][44]['tick'])
