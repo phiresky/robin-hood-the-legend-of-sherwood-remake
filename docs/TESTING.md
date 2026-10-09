@@ -328,6 +328,17 @@ then executes that discovered route. Its separate
 This checks gate discovery and copy isolation, but still supplies endpoint
 sectors directly; it does not cover mouse picking or full player/AI dispatch.
 
+`exported_stairs_resolve_player_clicks_and_complete_routes` uses normal
+screen-sector selection and single-PC group movement with no sector or route
+overrides. It chooses the nearest visible, actor-sized destination on the intended
+landing within 64 units of its endpoint, with a clear native thick sweep between
+them. The report `actor-stair-player-click-report.json` records all chosen
+`click_targets`; absence of a suitable target fails the route. This accommodates
+endpoints covered on screen by stairs or higher floors without treating clicks
+on those surfaces as clicks on the floor beneath. Actor traversal and receiving
+surface assertions remain enabled. It does not test AI decisions or multi-PC
+formation movement.
+
 Climbing routes use a complete character animation profile instead of synthetic
 walking frames. Only that explicitly supplied RHS file is mounted; source-level
 files and mission scripts are unavailable. Navigation comes from the compiled

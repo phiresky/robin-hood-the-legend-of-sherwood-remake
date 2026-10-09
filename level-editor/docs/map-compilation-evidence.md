@@ -4,6 +4,48 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Player-click stair placement audit (2026-10-09)
+
+Final native result: **128/128 player-click routes pass**, with zero forbidden
+or failed routes across eight rotations, two elevations and two independent
+copies. Report:
+`work/map-compile/grounded-stair-placements-bO6Dnx/actor-stair-player-click-report.json`.
+All four native stair audits pass against the current engine build: prepared
+synthetic routes, prepared complete-sprite routes, gate-discovered complete-sprite
+routes and player-click routes, each checking all 128 directed traversals.
+The regular compiled-navigation suite passes 26 tests with 31 opt-in audits
+ignored, including its checked-in bidirectional player-click fixture.
+Game build and Rust formatting checks pass. This change adds test coverage and
+documentation only; no production runtime or exported geometry changes.
+
+The test `exported_stairs_resolve_player_clicks_and_complete_routes` adds normal
+screen-sector selection and single-PC group movement to the fresh tower matrix.
+It supplies no sector, door-route or recorded-path overrides. It retains native
+movement, passage completion, destination layer/sector and receiving-plane checks.
+
+The initial raw-endpoint run completed 104 of 128 intended routes. Its other
+24 clicks selected a higher floor or the stair itself, rather than the intended
+landing. This is recorded in
+`work/map-compile/grounded-stair-placements-bO6Dnx/actor-stair-raw-endpoint-click-report.json`.
+An endpoint inside an overlapping screen polygon is not an unambiguous floor
+click. The landing audit therefore chooses the nearest visible, actor-sized point
+on the intended floor, within 64 units and connected to the endpoint by a clear
+native thick sweep. Every selected point is recorded in `click_targets`; missing
+targets fail rather than reducing the expected route count. All 128 targets exist:
+24 are shifted, with maximum distance 8.485282 units.
+
+The first visible-target run reached every destination sector but failed twenty
+strict arrival checks. The actor had completed its stop order approximately 0.01
+units before the goal. Evidence is retained in
+`actor-stair-click-strict-arrival-report.json` in the same directory. A
+zero-distance stop animation reserves 0.01 units when appended to walking orders.
+The final audit accepts that residual plus four coordinate ULPs only after an
+observed stop order completes, the actor selects Wait, and the stop animation has
+zero travel. It does not relax collision, passage or receiving-plane checks.
+
+Full AI behavior, multiple-PC formations and rendered scene interaction remain
+separate requirements from this single-PC movement audit.
+
 ## Expanded stair rotation and placement coverage (2026-10-09)
 
 Follow-up gate-discovery audit: `exported_stairs_discover_complete_sprite_actor_routes`

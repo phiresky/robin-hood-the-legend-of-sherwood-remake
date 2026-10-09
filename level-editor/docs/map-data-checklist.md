@@ -61,9 +61,14 @@ The native audit enforces the
 manifest's expected directed-route count and reports incomplete coverage when
 any required route is forbidden. A separate native gate-discovery audit also
 passes all 128 routes, selecting the intended entrance/exit on the intended copy
-and executing the returned path. It supplies source/destination sectors directly;
-normal player-click/AI dispatch, further angles and broader actor/posture
-interactions remain separate gates.
+and executing the returned path. A normal single-PC player-click audit also
+passes all 128 routes with no sector or route overrides. Its targets are the
+nearest visible, actor-sized landing points with clear endpoint approaches:
+24 covered endpoints need a nearby click, at most 8.485282 units away. Completed
+zero-travel stop animations allow only their native 0.01-unit residual plus
+coordinate rounding; passage and receiver checks remain unchanged. AI decisions,
+multi-PC formations, further angles and broader actor/posture interactions remain
+separate gates.
 No runtime routing solver is required
 or reintroduced by this audit.
 
@@ -76,7 +81,7 @@ to identify each source zone. Rotated roof fixtures match again without changing
 their expected output. Six terrain/navigation fixtures were refreshed to include
 explicit receiving-plane anchors and current native contour ordering; their
 navigation graphs are unchanged. Native map integration passes 71 tests (five
-ignored), and actor navigation passes 26 (30 opt-in audits ignored).
+ignored), and actor navigation passes 26 (31 opt-in audits ignored).
 
 Fresh saved-document exports after the clearance correction load natively:
 Wychford constructs 86 areas, 31 doors and no jump pairs; Derby constructs 60

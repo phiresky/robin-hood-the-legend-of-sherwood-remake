@@ -323,7 +323,56 @@ fn walk_exported_lift_with_tick(
     sprite: Option<&crate::sprite::Sprite>,
     tick: impl FnMut(&mut EngineInner, &LevelAssets, crate::element::EntityId),
 ) -> Result<bool, String> {
-    walk_exported_lift_route(engine, assets, entrance, exit, sprite, false, tick)
+    walk_exported_lift_route(
+        engine,
+        assets,
+        entrance,
+        exit,
+        sprite,
+        StairDispatch::Prepared,
+        tick,
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+enum StairDispatch {
+    Prepared,
+    GateSearch,
+    PlayerClick,
+}
+
+fn stair_landing_click(
+    engine: &EngineInner,
+    source: MapPoint,
+    door: &crate::gate::Door,
+) -> Result<MapPoint, String> {
+    let grid = &engine.world.fast_grid;
+    let half = crate::coordinates::MoveBoxHalfDiagonal::new(6., 3.);
+    let mut offsets: Vec<_> = (-64i32..=64)
+        .flat_map(|x| (-64i32..=64).map(move |y| (x, y)))
+        .filter(|(x, y)| x * x + y * y <= 64 * 64)
+        .collect();
+    offsets.sort_by_key(|(x, y)| (x * x + y * y, *x, *y));
+    for (x, y) in offsets {
+        let point = MapPoint::new(door.point_out.x + x as f32, door.point_out.y + y as f32);
+        let hit = grid.get_sector_screen(point, source);
+        if hit.sector_idx != door.sector_out_index || hit.layer != door.layer_out {
+            continue;
+        }
+        let bounds = crate::coordinates::MapBBox::from_corners(
+            MapPoint::new(point.x - half.x, point.y - half.y),
+            MapPoint::new(point.x + half.x, point.y + half.y),
+        );
+        if grid.is_position_authorized(&bounds, door.layer_out)
+            && grid.is_reachable_thick(door.point_out, point, door.layer_out, half)
+        {
+            return Ok(point);
+        }
+    }
+    Err(format!(
+        "no visible actor-sized landing click within 64 units of {:?}",
+        door.point_out
+    ))
 }
 
 fn walk_exported_lift_route(
@@ -332,12 +381,17 @@ fn walk_exported_lift_route(
     entrance: usize,
     exit: usize,
     sprite: Option<&crate::sprite::Sprite>,
-    discover_gates: bool,
+    dispatch: StairDispatch,
     mut tick: impl FnMut(&mut EngineInner, &LevelAssets, crate::element::EntityId),
 ) -> Result<bool, String> {
     let doors = &engine.script_domains.interactables.doors;
     let enter = doors[entrance].clone();
     let leave = doors[exit].clone();
+    let goal = if dispatch == StairDispatch::PlayerClick {
+        stair_landing_click(&engine, enter.point_out, &leave)?
+    } else {
+        leave.point_out
+    };
     let source_sector = crate::position_interface::SectorHandle::from_number(enter.sector_out)
         .with_arena_index(enter.sector_out_index.unwrap());
     let destination_sector = crate::position_interface::SectorHandle::from_number(leave.sector_out)
@@ -387,7 +441,7 @@ fn walk_exported_lift_route(
             direct: false,
         },
     ];
-    let path = if discover_gates {
+    let path = if dispatch == StairDispatch::GateSearch {
         let path = crate::gate::find_path_gates_with_sector_indices(
             &engine.script_domains.interactables.doors,
             (enter.point_out.x, enter.point_out.y),
@@ -424,44 +478,75 @@ fn walk_exported_lift_route(
     } else {
         prepared_path
     };
-    let route = engine
-        .launch_gate_movement_sequence(
+    let route = if dispatch == StairDispatch::PlayerClick {
+        engine.perform_group_move(
             TickCtx::new(&sim, &assets),
-            &mut vec![],
-            crate::engine::movement::GateRouteRequest {
-                entity_id: owner,
-                source_sector: Some(source_sector),
-                gate_path: path,
-                goal: crate::engine::movement::GoalShape::Point {
-                    point: leave.point_out,
-                    tolerance: 0.,
-                },
-                goal_layer: leave.layer_out,
-                base_action: OrderType::WalkingUpright,
-                move_after_last_door: true,
-                speed_factor: 1.,
-                initial_flags: crate::sequence::MoveFlags::empty(),
-                prefix_elements: vec![],
-                tail_elements: vec![],
-                append_arrival_speech: false,
-                append_recovery: false,
-            },
+            &[owner],
+            goal,
+            false,
+            false,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+        );
+        None
+    } else {
+        Some(
+            engine
+                .launch_gate_movement_sequence(
+                    TickCtx::new(&sim, &assets),
+                    &mut vec![],
+                    crate::engine::movement::GateRouteRequest {
+                        entity_id: owner,
+                        source_sector: Some(source_sector),
+                        gate_path: path,
+                        goal: crate::engine::movement::GoalShape::Point {
+                            point: leave.point_out,
+                            tolerance: 0.,
+                        },
+                        goal_layer: leave.layer_out,
+                        base_action: OrderType::WalkingUpright,
+                        move_after_last_door: true,
+                        speed_factor: 1.,
+                        initial_flags: crate::sequence::MoveFlags::empty(),
+                        prefix_elements: vec![],
+                        tail_elements: vec![],
+                        append_arrival_speech: false,
+                        append_recovery: false,
+                    },
+                )
+                .ok_or("could not construct walking stair route sequence")?,
         )
-        .ok_or("could not construct walking stair route sequence")?;
+    };
     let distance = (enter.point_out - enter.point_mid).length()
         + (enter.point_mid - enter.point_in).length()
         + (enter.point_in - leave.point_in).length()
         + (leave.point_in - leave.point_mid).length()
-        + (leave.point_mid - leave.point_out).length();
+        + (leave.point_mid - leave.point_out).length()
+        + (leave.point_out - goal).length();
     let mut crossed = false;
     let mut previous = enter.point_out;
     let mut stationary = 0;
     let mut previous_receiver = receiver;
+    let mut stop_element = None;
+    let stop = OrderType::TransitionWalkingUprightWaitingUpright;
     let trace = std::env::var_os("ROBIN_LIFT_TRACE").is_some();
     for _ in 0..(distance.ceil() as usize * 4 + 1000) {
         engine.control.frame_counter += 1;
         engine.t_hourglass_phase_sequences(&assets);
         engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
+        if let Some((id, index)) = engine.entities().current_element_for_actor(owner) {
+            if engine.seq().get_element(id, index).is_some_and(|element| {
+                element
+                    .orders
+                    .front()
+                    .is_some_and(|order| order.order_type == stop)
+            }) {
+                stop_element = Some((id, index));
+            }
+        }
         engine.t_tick_actor_owner_envelopes(&assets);
         tick(&mut engine, &assets, owner);
         let element = engine.ent(owner).element_data();
@@ -490,9 +575,30 @@ fn walk_exported_lift_route(
         if !passing && !((climbing || virtual_room) && sector.arena_index() == Some(lift_sector)) {
             actor_receiver_result(&engine, &assets, owner, sector, element.layer(), position)?;
         }
+        // A zero-distance stop reserves 0.01 units before playing in place.
+        // Only accept that residual after the observed stop order has finished.
+        let stopped = dispatch == StairDispatch::PlayerClick
+            && stop_element.is_some_and(|(id, index)| {
+                engine
+                    .seq()
+                    .get_element(id, index)
+                    .is_none_or(|element| element.orders.is_empty())
+            })
+            && engine
+                .entities()
+                .current_element_for_actor(owner)
+                .and_then(|(id, index)| engine.seq().get_element(id, index))
+                .is_some_and(|element| element.command == Command::Wait)
+            && element.sprite.distance_for_animation(stop) == 0;
+        let rounding = [position.x, position.y, goal.x, goal.y]
+            .into_iter()
+            .map(|value| (value.next_up() - value).abs())
+            .fold(0.0_f32, f32::max);
+        let arrived = (position - goal).length() < 0.01
+            || (stopped && (position - goal).length() <= 0.01 + 4.0 * rounding);
         if crossed
             && !passing
-            && (position - leave.point_out).length() < 0.01
+            && arrived
             && element.layer() == leave.layer_out
             && sector == destination_sector
         {
@@ -506,13 +612,15 @@ fn walk_exported_lift_route(
         };
         previous = position;
         if stationary >= 200 {
-            let route_states = engine.seq().get_sequence(route).map(|sequence| {
-                sequence
-                    .elements
-                    .iter()
-                    .map(|element| (element.command, element.state))
-                    .collect::<Vec<_>>()
-            });
+            let route_states = route
+                .and_then(|route| engine.seq().get_sequence(route))
+                .map(|sequence| {
+                    sequence
+                        .elements
+                        .iter()
+                        .map(|element| (element.command, element.state))
+                        .collect::<Vec<_>>()
+                });
             let bounds = *engine.ent(owner).position_iface().get_move_box_map();
             let blockers: Vec<_> = engine
                 .world
@@ -531,13 +639,13 @@ fn walk_exported_lift_route(
             return Err(format!(
                 "lift route stalled at {position:?}, layer {}, sector {sector:?}, goal {:?}, crossed={crossed}, bounds={bounds:?}, blockers={blockers:?}, selected={selected:?}, route={route_states:?}",
                 element.layer(),
-                leave.point_out,
+                goal,
             ));
         }
     }
     Err(format!(
         "stair route exhausted its movement budget at {previous:?}, goal {:?}, crossed={crossed}",
-        leave.point_out
+        goal
     ))
 }
 
@@ -570,7 +678,19 @@ fn exported_stairs_discover_complete_sprite_actor_routes() {
         &[crate::sector::LiftType::Stairs],
         Some(&sprite),
         "actor-stair-discovered-route-report.json",
-        true,
+        StairDispatch::GateSearch,
+    );
+}
+
+#[test]
+#[ignore = "requires ROBIN_ASSET_MAP_DIAGNOSTICS and ROBIN_CLIMB_RHS"]
+fn exported_stairs_resolve_player_clicks_and_complete_routes() {
+    let sprite = complete_climb_sprite();
+    audit_exported_lift_routes(
+        &[crate::sector::LiftType::Stairs],
+        Some(&sprite),
+        "actor-stair-player-click-report.json",
+        StairDispatch::PlayerClick,
     );
 }
 
@@ -581,20 +701,22 @@ fn compiled_stairs_discover_and_execute_gate_routes() {
         "/tests/fixtures/asset-lift.level.json"
     ));
     let (engine, assets) = compiled_walkway(bytes);
-    for (entrance, exit) in [(0, 1), (1, 0)] {
-        assert_eq!(
-            walk_exported_lift_route(
-                engine.clone(),
-                assets.clone(),
-                entrance,
-                exit,
-                None,
-                true,
-                |_, _, _| {},
-            ),
-            Ok(true),
-            "discovered stair route {entrance}->{exit}"
-        );
+    for dispatch in [StairDispatch::GateSearch, StairDispatch::PlayerClick] {
+        for (entrance, exit) in [(0, 1), (1, 0)] {
+            assert_eq!(
+                walk_exported_lift_route(
+                    engine.clone(),
+                    assets.clone(),
+                    entrance,
+                    exit,
+                    None,
+                    dispatch,
+                    |_, _, _| {},
+                ),
+                Ok(true),
+                "{dispatch:?} stair route {entrance}->{exit}"
+            );
+        }
     }
 }
 
@@ -1349,14 +1471,14 @@ fn audit_exported_lifts(
     sprite: Option<&crate::sprite::Sprite>,
     report_name: &str,
 ) {
-    audit_exported_lift_routes(types, sprite, report_name, false);
+    audit_exported_lift_routes(types, sprite, report_name, StairDispatch::Prepared);
 }
 
 fn audit_exported_lift_routes(
     types: &[crate::sector::LiftType],
     sprite: Option<&crate::sprite::Sprite>,
     report_name: &str,
-    discover_gates: bool,
+    dispatch: StairDispatch,
 ) {
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
@@ -1373,7 +1495,8 @@ fn audit_exported_lift_routes(
     let mut report = serde_json::json!({
         "scope": "initial-state-directed-lift-walks-between-every-entrance-pair",
         "lift_types": types, "complete_sprite": sprite.is_some(),
-        "gate_discovery": discover_gates,
+        "dispatch": dispatch,
+        "gate_discovery": dispatch == StairDispatch::GateSearch,
         "input_snapshot_notes": manifest.get("snapshot_notes"),
         "expected_directed_routes": expected_routes,
         "map_filter": std::env::var("ROBIN_LIFT_AUDIT_MAP").ok(),
@@ -1401,6 +1524,7 @@ fn audit_exported_lift_routes(
         let mut checked = 0;
         let mut skipped = 0;
         let mut failures = vec![];
+        let mut click_targets = vec![];
         let doors = &engine.script_domains.interactables.doors;
         for (sector_index, sector) in engine.world.fast_grid.level.sectors.iter().enumerate() {
             if !sector.lift_type.is_some_and(|kind| types.contains(&kind)) {
@@ -1418,13 +1542,20 @@ fn audit_exported_lift_routes(
                     if entrance == exit {
                         continue;
                     }
+                    if dispatch == StairDispatch::PlayerClick {
+                        click_targets.push(serde_json::json!({
+                            "entrance": entrance, "exit": exit,
+                            "endpoint": doors[exit].point_out,
+                            "goal": stair_landing_click(&engine, doors[entrance].point_out, &doors[exit]),
+                        }));
+                    }
                     let outcome = walk_exported_lift_route(
                         engine.clone(),
                         assets.clone(),
                         entrance,
                         exit,
                         sprite,
-                        discover_gates,
+                        dispatch,
                         |_, _, _| {},
                     );
                     match outcome {
@@ -1448,7 +1579,8 @@ fn audit_exported_lift_routes(
             failures.len()
         );
         report["results"].as_array_mut().unwrap().push(serde_json::json!({
-            "file": file, "checked": checked, "skipped_permissions": skipped, "failures": failures
+            "file": file, "checked": checked, "skipped_permissions": skipped, "failures": failures,
+            "click_targets": click_targets,
         }));
         std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     }
