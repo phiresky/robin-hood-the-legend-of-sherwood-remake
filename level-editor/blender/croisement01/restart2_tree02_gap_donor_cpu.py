@@ -1,8 +1,8 @@
 """Diagnose exact same-face donors without crossing protected review masks."""
-import json,collections
+import json,collections,sys
 from pathlib import Path
 import numpy as np
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';P=R/'tree02-rendered-gap-probe-v1';d=json.loads((P/'report.json').read_text());targets=collections.defaultdict(set)
+R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';P=R/('tree02-rendered-gap-probe-v2' if '--extended' in sys.argv else 'tree02-rendered-gap-probe-v1');d=json.loads((P/'report.json').read_text());targets=collections.defaultdict(set)
 for witness in d['witnesses']:
  for hit in witness['hits']:
   if hit['ownership']==0:targets[(hit['object'],hit['face'])].add(tuple(hit['atlas_texel']))
