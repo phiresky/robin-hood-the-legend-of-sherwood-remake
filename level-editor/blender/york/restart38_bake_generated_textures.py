@@ -20,7 +20,7 @@ if args.output.exists():raise FileExistsError(args.output)
 manifest=args.experiment/'views.json'
 approval=json.loads((args.experiment/'approval.json').read_text())
 review=json.loads((args.generation/'generation-review.json').read_text())
-assert approval['asset_id'] in ('york-market-roofed-stone-well','york-castle-winch')
+assert approval['asset_id'] in ('york-market-roofed-stone-well','york-castle-winch','york-riverside-stone-storehouse')
 input_review=json.loads((args.experiment.parent/'input-review.json').read_text())
 receiver_names=set(input_review['object_names'])
 model=args.experiment/'approved-model.blend'
