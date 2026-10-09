@@ -27,7 +27,13 @@ Both copies still warn that their projectile
 mask cannot bind a receiving layer on the new terrain. These are open reusable
 asset/export defects, separate from the saved Wychford placement mismatch below.
 The regression must pass all 64 routes without counting forbidden routes as
-success before this asset is certified. No runtime routing solver is required
+success before this asset is certified. The native audit now enforces the
+manifest's expected directed-route count and reports incomplete coverage when
+any required route is forbidden. A diagnostic removing only the upper-door
+restriction completes the eight additional 0-degree routes, but exposes eight
+upper-stair stalls at 90 degrees. Removing the restriction alone is not a fix;
+the 90-degree corridor and supported stairwell passage both remain open.
+No runtime routing solver is required
 or reintroduced by this audit.
 
 **Broader verification (2026-10-09):** the full editor suite now reports 1,061

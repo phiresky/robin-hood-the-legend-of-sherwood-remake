@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Fresh stair coverage and stairwell diagnostic (2026-10-09)
+
+`refinement/check-grounded-stair-placements.mjs` declares 64 required directed
+routes across two independent church-side tower drops, four rotations and two
+terrain elevations. Current exports in
+`work/map-compile/grounded-stair-placements-j4d4sV` complete 48 routes and forbid
+16. The native complete-sprite audit now reads `expected_directed_routes` and
+fails this batch for incomplete coverage, even though all attempted routes pass.
+Its report records expected, checked, failed and skipped counts separately.
+The two 37-degree exports independently pass a 16-route positive control in
+`work/map-compile/stair-audit-complete-control-XPVx6m`.
+
+The landing's upper-door passage footprint overlaps a hole formed by the joined
+landing surfaces. The two-segment native passage changes floor membership at
+the midpoint, so treating a floor opening as an arbitrary solid requires review.
+A diagnostic batch in `work/map-compile/stairwell-passage-diagnostic-60UhpF`
+removes only the upper doors' prepared passage-state restrictions, retaining all
+motion and receiving geometry. All 64 routes are then attempted: 56 complete,
+while eight fail inside the upper stair at 90 degrees. The stalls occur just
+after either entrance, with the projected stair boundary intersecting the actor
+footprint. This is additional corridor failure, not proof that unrestricted
+passage is safe. The diagnostic is not a published asset or compiler change.
+
+The next correction must distinguish supported stairwell crossings from solid
+barriers and preserve a usable upper-flight corridor after rotation. Blanket
+removal of permanent passage restrictions would hide real obstruction and does
+not satisfy this regression. Mask receiving-layer binding is also unresolved.
+
 ## Opposing traffic on exported ladders (2026-10-09)
 
 `exported_ladder_serializes_opposing_actor_routes` exercises the native occupancy

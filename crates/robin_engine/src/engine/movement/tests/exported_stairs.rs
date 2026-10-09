@@ -1268,16 +1268,24 @@ fn audit_exported_lifts(
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
             .unwrap();
     assert_eq!(manifest["complete"], true);
+    let expected_routes = manifest.get("expected_directed_routes").map(|count| {
+        count
+            .as_u64()
+            .filter(|count| *count > 0)
+            .expect("expected_directed_routes must be a positive integer")
+    });
     let report_path = directory.join(report_name);
     let mut report = serde_json::json!({
         "scope": "initial-state-directed-lift-walks-between-every-entrance-pair",
         "lift_types": types, "complete_sprite": sprite.is_some(),
         "input_snapshot_notes": manifest.get("snapshot_notes"),
+        "expected_directed_routes": expected_routes,
         "map_filter": std::env::var("ROBIN_LIFT_AUDIT_MAP").ok(),
         "complete": false, "audit_finished": false, "results": []
     });
     let mut total_checked = 0;
     let mut total_failed = 0;
+    let mut total_skipped = 0;
     std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     for result in manifest["results"].as_array().unwrap() {
         let file = result["file"].as_str().unwrap();
@@ -1331,6 +1339,7 @@ fn audit_exported_lifts(
         }
         total_checked += checked;
         total_failed += failures.len();
+        total_skipped += skipped;
         eprintln!(
             "{file}: {checked} lift routes, {} failures, {skipped} forbidden routes",
             failures.len()
@@ -1341,8 +1350,19 @@ fn audit_exported_lifts(
         std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     }
     report["audit_finished"] = true.into();
-    report["complete"] = (total_checked > 0 && total_failed == 0).into();
+    let coverage_complete = expected_routes
+        .is_none_or(|expected| total_checked as u64 == expected && total_skipped == 0);
+    report["checked"] = total_checked.into();
+    report["failed"] = total_failed.into();
+    report["skipped_permissions"] = total_skipped.into();
+    report["coverage_complete"] = coverage_complete.into();
+    report["complete"] = (total_checked > 0 && total_failed == 0 && coverage_complete).into();
     std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     assert!(total_checked > 0, "no lift routes tested");
     assert_eq!(total_failed, 0, "see {}", report_path.display());
+    assert!(
+        coverage_complete,
+        "expected {expected_routes:?} directed routes, checked {total_checked}, skipped {total_skipped}; see {}",
+        report_path.display()
+    );
 }
