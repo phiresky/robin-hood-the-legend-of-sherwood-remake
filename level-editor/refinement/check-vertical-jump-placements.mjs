@@ -15,6 +15,7 @@ const results = [];
 const automatic = process.argv.includes("--automatic");
 const reposition = process.argv.includes("--reposition");
 const surfaces = process.argv.includes("--surfaces");
+const forcedLong = process.argv.includes("--long");
 const slopeArgument = process.argv.find((argument) => argument.startsWith("--slope="));
 const slope = slopeArgument ? Number(slopeArgument.slice("--slope=".length)) : 0;
 assert.ok(Number.isFinite(slope), "Slope must be finite");
@@ -48,8 +49,9 @@ for (const height of [0, 40]) {
     segment.edge.b[2] += rise - 100;
   }
   for (const asset of assets.values()) {
+    if (forcedLong) for (const zone of asset.gameplay?.jumpZones ?? []) zone.helperNeeded = false;
     for (const segment of asset.gameplay?.jumpSegments ?? []) {
-      segment.long = false;
+      segment.long = forcedLong;
       [segment.edge.a, segment.edge.b] = [segment.edge.b, segment.edge.a];
       // Authored takeoff/landing lines reserve the native six-unit half-width.
       const inset = reposition ? 5 : 3;
@@ -82,8 +84,8 @@ for (const height of [0, 40]) {
       gameplay.jumpSegments = [];
       gameplay.jumpPairs = [];
       gameplay.surfaces[0].jump = {
-        long: false,
-        helperNeeded: true,
+        long: forcedLong,
+        helperNeeded: !forcedLong,
         edges: [edge],
         inset: 10,
         landingDepth: 4,
@@ -163,6 +165,7 @@ for (const height of [0, 40]) {
       automatic,
       reposition,
       surfaces,
+      forcedLong,
       slope,
       rise,
       rejected_placements: rejectedPlacements,

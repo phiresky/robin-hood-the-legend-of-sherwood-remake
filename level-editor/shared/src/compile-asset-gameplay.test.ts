@@ -1873,7 +1873,7 @@ test("moving a separate wall rebuilds the usable jump span", () => {
     const line = geometry.jump_line_pairs![0]!.line1;
     return Math.hypot(line.point_b[0] - line.point_a[0], line.point_b[1] - line.point_a[1]);
   };
-  assert.equal(span(blocked), 18);
+  assert.equal(span(blocked), 16);
   assert.match(blocked.warnings!.join("\n"), /solid obstacles obstruct/);
   document.groups.find((group) => group.id === "jump-wall")!.transform.dx = 100;
   const clear = compileAssetGameplay(document, assets, bounds);

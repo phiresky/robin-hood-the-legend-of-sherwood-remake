@@ -2,6 +2,7 @@ import earcut from "earcut";
 import type { Point, SightObstacle } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
 import { heightPlane, planeHeight, type HeightPlane } from "./gameplay-plane.ts";
+import { longTakeoffRibbons } from "./long-jump-takeoff.ts";
 import {
   ribbonParameterRange,
   verticalFlightRibbons,
@@ -9,11 +10,18 @@ import {
 } from "./vertical-jump-clearance.ts";
 
 export type JumpEdge = { zone: string; a: Vec3; b: Vec3 };
+export interface JumpReceivingSurface {
+  plane?: HeightPlane;
+  topology?: { sector: number; layer: number };
+  motionPolygon?: Point[];
+}
 type Vertex = [number, number, number, number];
 type Plane = (point: Vertex, body: JumpBody) => number;
 export interface JumpBody {
   radius: number;
   height: number;
+  radiusX?: number;
+  radiusY?: number;
 }
 export type Interval = [number, number];
 const EPSILON = 1e-4;
@@ -131,7 +139,20 @@ export function boundedLongJumpTrajectory(start: Vec3, targets: Vec3[], error: n
 }
 
 /** Precompute solid prisms once, then intersect the full flight ribbon, not sampled rays. */
-export function createJumpClearance(obstacles: SightObstacle[]) {
+export function createJumpClearance(
+  obstacles: SightObstacle[],
+  receivingSurfaces: ReadonlyMap<string, JumpReceivingSurface> = new Map(),
+  onBlocked?: (contact: {
+    obstacle: SightObstacle;
+    points: Vec3[];
+    range: Interval;
+    paddingAxes: Vec3;
+    reverse: boolean;
+    planeBounds?: { plane: HeightPlane; minimum: number }[];
+    convexPadding?: number;
+    flightOrders?: number;
+  }) => void,
+) {
   const receivers = obstacles
     .filter((shape) => shape.projection_area)
     .flatMap((shape) => {
@@ -141,6 +162,15 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
       return [
         {
           plane,
+          sector:
+            Array.isArray(shape.projection_area) && typeof shape.projection_area[0] === "number"
+              ? shape.projection_area[0]
+              : undefined,
+          maximumZ: Math.max(...shape.points.map((p) => p.z_top)),
+          layer:
+            Array.isArray(shape.projection_area) && typeof shape.projection_area[1] === "number"
+              ? shape.projection_area[1]
+              : undefined,
           polygon: shape.points.map((p): Point => [p.x, p.y - p.z_top]),
           minX: Math.min(...shape.points.map((p) => p.x)),
           maxX: Math.max(...shape.points.map((p) => p.x)),
@@ -149,18 +179,24 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
         },
       ];
     });
-  const receiverPlane = (edge: JumpEdge): HeightPlane => {
+  const receiverPlane = (edge: JumpEdge, long: boolean): HeightPlane => {
+    const topology = receivingSurfaces.get(edge.zone)?.topology;
     const planes = [edge.a, edge.b, edge.a.map((n, i) => (n + edge.b[i]!) / 2) as Vec3].map(
       (point) => {
         const x = point[0],
           y = point[1] - point[2];
         const candidates = receivers.filter((r) => {
           if (
+            (topology && (r.sector !== topology.sector || r.layer !== topology.layer)) ||
             x < r.minX ||
             x > r.maxX ||
             y < r.minY ||
             y > r.maxY ||
-            Math.abs(planeHeight(r.plane, [x, y]) - point[2]) > 1 + EPSILON
+            // Ledge XY coordinates round to the native integer grid, and Z
+            // rounds upward. Include the plane's height change over half a cell.
+            (!topology &&
+              Math.abs(planeHeight(r.plane, [x, y]) - point[2]) >
+                1 + 0.5 * (Math.abs(r.plane[0]) + Math.abs(r.plane[1])) + EPSILON)
           )
             return false;
           let inside = false;
@@ -181,8 +217,10 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
           }
           return inside;
         });
-        const first: HeightPlane = candidates[0]?.plane ?? [0, 0, point[2]];
+        if (topology) candidates.sort((a, b) => b.maximumZ - a.maximumZ);
+        const first: HeightPlane = candidates[0]?.plane ?? [0, 0, topology ? 0 : point[2]];
         if (
+          !topology &&
           candidates.some((r) =>
             r.plane.some((value, axis) => Math.abs(value - first[axis]!) > EPSILON),
           )
@@ -192,6 +230,7 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
       },
     );
     if (
+      !(topology && long) &&
       planes.some((plane) =>
         plane.some((value, axis) => Math.abs(value - planes[0]![axis]!) > EPSILON),
       )
@@ -203,7 +242,14 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
     .filter((shape) => shape.solid && shape.initial_active !== false)
     .flatMap((shape) => {
       const indices = earcut(shape.points.flatMap((p) => [p.x, p.y]));
-      const result: { planes: Plane[]; bounds: [number, number, number, number] }[] = [];
+      const result: {
+        obstacle: SightObstacle;
+        top: HeightPlane;
+        planes: Plane[];
+        bounds: [number, number, number, number];
+        minimumZ: number;
+        maximumZ: number;
+      }[] = [];
       // Runtime caps use the first three vertices, even if later stored heights differ.
       const top = heightPlane(
         shape.projection_plane ?? shape.points.slice(0, 3).map((p) => [p.x, p.y, p.z_top]),
@@ -218,7 +264,15 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
           return sum + p.x * q.y - q.x * p.y;
         }, 0);
         if (Math.abs(area) < EPSILON) continue;
+        const minX = Math.min(...points.map((p) => p.x)),
+          maxX = Math.max(...points.map((p) => p.x));
+        const minY = Math.min(...points.map((p) => p.y)),
+          maxY = Math.max(...points.map((p) => p.y));
         result.push({
+          obstacle: shape,
+          top,
+          minimumZ: Math.min(...points.map((p) => planeHeight(bottom, [p.x, p.y]))),
+          maximumZ: Math.max(...points.map((p) => planeHeight(top, [p.x, p.y]))),
           bounds: [
             Math.min(...points.map((p) => p.x)),
             Math.min(...points.map((p) => p.y)),
@@ -226,28 +280,38 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
             Math.max(...points.map((p) => p.y)),
           ],
           planes: [
+            (v, body) => v[0] - minX + (body.radiusX ?? body.radius),
+            (v, body) => maxX - v[0] + (body.radiusX ?? body.radius),
+            (v, body) => v[1] - minY + (body.radiusY ?? body.radius),
+            (v, body) => maxY - v[1] + (body.radiusY ?? body.radius),
             ...points.map((p, j): Plane => {
               const q = points[(j + 1) % 3]!;
               return (v, body) =>
                 Math.sign(area) * ((q.x - p.x) * (v[1] - p.y) - (q.y - p.y) * (v[0] - p.x)) +
-                body.radius * (Math.abs(q.x - p.x) + Math.abs(q.y - p.y));
+                (body.radiusY ?? body.radius) * Math.abs(q.x - p.x) +
+                (body.radiusX ?? body.radius) * Math.abs(q.y - p.y);
             }),
             (v, body) =>
               v[2] +
               body.height -
               planeHeight(bottom, [v[0], v[1]]) +
-              body.radius * (Math.abs(bottom[0]) + Math.abs(bottom[1])) -
+              (body.radiusX ?? body.radius) * Math.abs(bottom[0]) +
+              (body.radiusY ?? body.radius) * Math.abs(bottom[1]) -
               EPSILON,
             (v, body) =>
               planeHeight(top, [v[0], v[1]]) -
               v[2] +
-              body.radius * (Math.abs(top[0]) + Math.abs(top[1])) -
+              (body.radiusX ?? body.radius) * Math.abs(top[0]) +
+              (body.radiusY ?? body.radius) * Math.abs(top[1]) -
               EPSILON,
           ],
         });
       }
       return result;
     });
+  const clearancePlanes = [
+    ...new Map(prisms.map((prism) => [prism.top.join(","), prism.top])).values(),
+  ];
   return (
     edges: [JumpEdge, JumpEdge],
     long: boolean,
@@ -257,9 +321,13 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
       throw new Error(
         "Sloped jump edges need an authored connection; automatic flight clearance requires level ledges",
       );
-    const planes =
-      !long && Math.abs(edges[0].a[2] - edges[1].a[2]) >= 60 ? edges.map(receiverPlane) : undefined;
-    const sloped = planes?.some((plane) => Math.abs(plane[0]) + Math.abs(plane[1]) >= EPSILON);
+    const planes = edges.map((edge) => {
+      const receiving = receivingSurfaces.get(edge.zone);
+      return receiving?.topology
+        ? receiverPlane(edge, long)
+        : (receiving?.plane ?? receiverPlane(edge, long));
+    });
+    const sloped = planes.some((plane) => Math.abs(plane[0]) + Math.abs(plane[1]) >= EPSILON);
     const blocked: Interval[] = [];
     for (const [source, destination, reverse] of [
       [edges[0], edges[1], false],
@@ -282,15 +350,17 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
         source.a[2],
       ];
       const rise = destination.b[2] - source.a[2];
-      const slopedRibbons = sloped
-        ? verticalFlightRibbons(
-            source,
-            destination,
-            planes![reverse ? 1 : 0]!,
-            planes![reverse ? 0 : 1]!,
-          )
-        : [];
+      const slopedRibbons =
+        sloped && !long && Math.abs(rise) >= 60
+          ? verticalFlightRibbons(
+              source,
+              destination,
+              planes[reverse ? 1 : 0]!,
+              planes[reverse ? 0 : 1]!,
+            )
+          : [];
       const flights: [Vec3, Vec3, number, number?][] = [];
+      const takeoffRibbons: VerticalFlightRibbon[] = [];
       const addPath = (path: Vec3[], extraHeight = 0) => {
         for (let i = 1; i < path.length; i++) flights.push([path[i - 1]!, path[i]!, extraHeight]);
       };
@@ -298,12 +368,35 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
       // still uses the long-flight branch. Reserve both possible paths.
       if (long || Math.abs(rise) < 100) {
         const targets = longJumpTrajectory(start, destination.b).slice(1);
-        const shoulders: Vec3 = [source.a[0], source.a[1], source.a[2] + 40];
+        takeoffRibbons.push(
+          ...longTakeoffRibbons(
+            source,
+            planes[reverse ? 1 : 0]!,
+            receivers,
+            [targets, [destination.b]],
+            receivingSurfaces.get(source.zone)?.topology,
+            clearancePlanes,
+            receivingSurfaces.get(source.zone)?.motionPolygon,
+            false,
+            planes[reverse ? 0 : 1],
+          ),
+          ...longTakeoffRibbons(
+            source,
+            planes[reverse ? 1 : 0]!,
+            receivers,
+            [targets],
+            receivingSurfaces.get(source.zone)?.topology,
+            clearancePlanes,
+            receivingSurfaces.get(source.zone)?.motionPolygon,
+            true,
+            planes[reverse ? 0 : 1],
+          ),
+        );
         for (const path of [
           [source.a, start, ...targets],
+          integratedLongJumpTrajectory(source.a, targets),
           integratedLongJumpTrajectory(start, targets),
           integratedLongJumpTrajectory(start, [destination.b]),
-          [source.a, ...integratedLongJumpTrajectory(shoulders, targets)],
         ])
           addPath(path);
         flights.push([start, destination.b, 0]);
@@ -313,27 +406,7 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
             const z = planeHeight(plane, [point[0], y]);
             return [point[0], y + z, z];
           };
-          const sourcePlane = planes![reverse ? 1 : 0]!;
-          const boundSource = bind(source.a, sourcePlane);
-          const boundStart = bind(start, sourcePlane);
-          const boundShoulders: Vec3 = [boundSource[0], boundSource[1], boundSource[2] + 40];
-          const endHeight = planeHeight(sourcePlane, [source.b[0], source.b[1] - source.b[2]]);
-          const error = Math.SQRT2 * Math.abs(endHeight - boundSource[2]);
-          // Takeoff stays bound to the source plane. Flight targets still use
-          // the stored ledge height; only the actual integration start changes.
-          // Bound the small receiver-height variation across rounded ledges.
-          flights.push(
-            [boundSource, boundStart, 0, error],
-            [boundSource, boundShoulders, 0, error],
-          );
-          for (const [launch, goals] of [
-            [boundStart, targets],
-            [boundStart, [destination.b]],
-            [boundShoulders, targets],
-          ] satisfies [Vec3, Vec3[]][])
-            for (const step of boundedLongJumpTrajectory(launch, goals, error))
-              flights.push([step.a, step.b, 0, step.padding]);
-          addPath([destination.b, bind(destination.b, planes![reverse ? 0 : 1]!)]);
+          addPath([destination.b, bind(destination.b, planes[reverse ? 0 : 1]!)]);
         }
       }
       if (!sloped && !long && Math.abs(rise) >= 60) {
@@ -363,14 +436,31 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
       }
       const ribbons: VerticalFlightRibbon[] = [
         ...slopedRibbons,
+        ...takeoffRibbons,
         ...flights.map(([a, b, extraHeight, padding]): VerticalFlightRibbon => ({
           points: [a, b, [b[0] + dx, b[1] + dy, b[2]], [a[0] + dx, a[1] + dy, a[2]]],
           extraHeight,
           padding,
         })),
       ];
-      for (const { points, extraHeight, shift, padding = 0 } of ribbons) {
-        const ribbon: Vertex[] = points.map((point, i) => [...point, i < 2 ? 0 : 1]);
+      for (const {
+        points,
+        extraHeight,
+        shift,
+        padding = 0,
+        paddingAxes = [padding, padding, padding] satisfies Vec3,
+        paddingFactors,
+        minimumZ,
+        maximumZ,
+        planeBounds,
+        convexPadding = 0,
+        flightOrders,
+        parameters,
+      } of ribbons) {
+        const ribbon: Vertex[] = points.map((point, i) => [
+          ...point,
+          parameters?.[i] ?? (i < 2 ? 0 : 1),
+        ]);
         const minX =
           Math.min(...ribbon.map((p) => p[0])) -
           body.radius -
@@ -392,6 +482,18 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
           padding +
           Math.max(0, shift?.[1] ?? 0);
         for (const prism of prisms) {
+          const bound = planeBounds?.find((bound) =>
+            bound.plane.every((value, axis) => value === prism.top[axis]),
+          );
+          if (
+            bound &&
+            bound.minimum >=
+              body.radius * (Math.abs(prism.top[0]) + Math.abs(prism.top[1])) - EPSILON
+          )
+            continue;
+          if (minimumZ !== undefined && minimumZ >= prism.maximumZ - EPSILON) continue;
+          if (maximumZ !== undefined && maximumZ + body.height <= prism.minimumZ + EPSILON)
+            continue;
           if (
             maxX < prism.bounds[0] ||
             maxY < prism.bounds[1] ||
@@ -399,15 +501,21 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
             minY > prism.bounds[3]
           )
             continue;
-          if (sloped) {
-            const envelope = {
-              radius: body.radius + padding,
-              height: body.height + extraHeight + 2 * padding,
-            };
+          if (sloped || parameters) {
             const range = ribbonParameterRange(
               points,
-              prism.planes.map((plane) => (point) => {
-                const value = plane([point[0], point[1], point[2] - padding, 0], envelope);
+              prism.planes.map((plane) => (point, index) => {
+                const factor = paddingFactors?.[index] ?? 1;
+                const envelope = {
+                  radius: body.radius,
+                  radiusX: body.radius + paddingAxes[0] * factor,
+                  radiusY: body.radius + paddingAxes[1] * factor,
+                  height: body.height + extraHeight + 2 * paddingAxes[2] * factor,
+                };
+                const value = plane(
+                  [point[0], point[1], point[2] - paddingAxes[2] * factor, 0],
+                  envelope,
+                );
                 return shift
                   ? Math.max(
                       value,
@@ -415,7 +523,7 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
                         [
                           point[0] + shift[0],
                           point[1] + shift[1],
-                          point[2] + shift[2] - padding,
+                          point[2] + shift[2] - paddingAxes[2] * factor,
                           0,
                         ],
                         envelope,
@@ -423,8 +531,21 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
                     )
                   : value;
               }),
+              parameters,
             );
-            if (range) blocked.push(reverse ? [1 - range[1], 1 - range[0]] : range);
+            if (range) {
+              blocked.push(reverse ? [1 - range[1], 1 - range[0]] : range);
+              onBlocked?.({
+                obstacle: prism.obstacle,
+                points,
+                range,
+                paddingAxes,
+                reverse,
+                planeBounds,
+                convexPadding,
+                flightOrders,
+              });
+            }
             continue;
           }
           let intersection = ribbon;
@@ -447,6 +568,13 @@ export function createJumpClearance(obstacles: SightObstacle[]) {
             const lo = Math.min(...intersection.map((v) => v[3]));
             const hi = Math.max(...intersection.map((v) => v[3]));
             blocked.push(reverse ? [1 - hi, 1 - lo] : [lo, hi]);
+            onBlocked?.({
+              obstacle: prism.obstacle,
+              points,
+              range: [lo, hi],
+              paddingAxes,
+              reverse,
+            });
           }
         }
       }

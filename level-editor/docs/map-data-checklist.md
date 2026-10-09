@@ -6,6 +6,45 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
+**Takeoff clearance progress (2026-10-09):** long-jump clearance covers sprite
+takeoff positions between the ledge and the nominal fifteen-unit target, including
+receiver changes. The compiler catches stationary upright and intermediate sword
+departures; recovered roof and rock connection regressions pass. Leaving a
+receiver polygon does not necessarily drop takeoff to ground. Native movement
+retains the bound plane until an elevation boundary is
+crossed; boundary generation is clipped to motion areas. Export-time takeoff now
+sweeps these boundaries, with tests for retained slopes and subpixel side probes.
+The latest boundary calculation passes 120 full-house sword cases and all 2,920
+recorded positions, including rotated takeoffs that defeated polygon-only lookup.
+Increasing every ledge inset would
+remove usable landing regions on narrow rotated roofs and is not a validated fix.
+The current model covers 16,130 recorded native positions across 480 upright,
+sword and shoulder-assisted cases. Takeoff receiver selection now follows adjacent
+planes in the same sector/layer and chooses overlapping receivers by their top
+bound. The latest selected jump/compiler/export run passes all 261 tests.
+Obstacle-trimmed endpoints were refreshed after 60 native flight-clearance checks
+and 20 assisted traversals passed; their 770 recorded positions are covered by
+the exporter. These small fixtures do not provide sufficient approach space for
+the general click-route audit, so that audit does not certify them.
+Assisted departures now use the bounded flight calculation with an in-place
+forty-unit lift; native trace coverage passes 120 full-house cases (3,580 positions)
+and 160 synthetic cases (5,840 positions). Fresh roof exports now pass 720 native
+traversal cases across six audit modes, retaining connections at 0, 37 and 180
+degrees at both tested elevations. The recovered-roof regression passes again.
+Final landing checks model the atomic receiver binding instead of sweeping a
+fictitious intermediate segment. These fresh exports also pass all 120 sword
+cases and 2,920 recorded positions, plus 120 assisted cases and 3,580 positions,
+through the export-time clearance checker.
+Grid snapping can expose new obstruction after a span is shortened; connection
+assembly now retries trimming while the span strictly decreases, preserving
+usable connections instead of immediately discarding them.
+Using the exported jump zones' exact sector/layer also passes the full-house sword
+trajectory audit: 120 cases and 2,920 recorded positions. The compiler resolves
+these references from placed landing anchors; no saved level navigation is used.
+These checks certify the tested placements, not full gameplay parity. Broader
+authoring/traversal coverage and the remaining categories below still require
+validation; no runtime solver is being added.
+
 **Navigation architecture correction (2026-10-08):** the graph-less runtime
 visibility fallback has been removed, with no compatibility replacement. Export
 now compiles native `graph_bytes` from placed motion geometry, with actor clearance

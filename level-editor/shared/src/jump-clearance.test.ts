@@ -51,6 +51,25 @@ const edges: [JumpEdge, JumpEdge] = [
   { zone: "right", a: [60, 0, 0], b: [60, 100, 0] },
 ];
 
+test("long-flight clearance includes an upright takeoff that stays at the ledge", () => {
+  const pair: [JumpEdge, JumpEdge] = [
+    { zone: "low", a: [380, 370, 0], b: [380, 330, 0] },
+    { zone: "high", a: [420, 410, 80], b: [420, 450, 80] },
+  ];
+  // A recorded native airborne position after a stationary takeoff animation.
+  const obstacle = wall(383.063038, 373.503468, 0.04, 0.04, 6.466904, 6.506904);
+  assert.ok(createJumpClearance([obstacle])(pair, true).some(([a, b]) => a <= 0 && b >= 0));
+});
+
+test("sword flight clearance covers an intermediate twelve-unit takeoff", () => {
+  const pair: [JumpEdge, JumpEdge] = [
+    { zone: "low", a: [1524, 774, 0], b: [1594, 774, 0] },
+    { zone: "high", a: [1594, 894, 80], b: [1524, 894, 80] },
+  ];
+  const obstacle = wall(1523.98, 798.836934, 0.04, 0.04, 9.503642, 9.543642);
+  assert.ok(createJumpClearance([obstacle])(pair, true).some(([a, b]) => a <= 0 && b >= 0));
+});
+
 test("vertical airborne integration uses native speeds and final snapping", () => {
   assert.deepEqual(integratedJumpTrajectory([0, 0, 0], [[100, 0, 0]], "up"), [
     [0, 0, 0],

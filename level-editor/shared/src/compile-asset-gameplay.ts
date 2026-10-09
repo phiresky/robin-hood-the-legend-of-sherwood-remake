@@ -33,7 +33,11 @@ import {
   type PlacedNavigationJoin,
 } from "./assemble-navigation-joins.ts";
 import { assembleJumpSegments, type PlacedJumpSegment } from "./assemble-jump-segments.ts";
-import { createJumpClearance, mergeIntervals } from "./jump-clearance.ts";
+import {
+  createJumpClearance,
+  mergeIntervals,
+  type JumpReceivingSurface,
+} from "./jump-clearance.ts";
 import { auditCompiledJump } from "./audit-compiled-jump.ts";
 import { createJumpWalkingClearance, type JumpWalkArea } from "./jump-walking-clearance.ts";
 import {
@@ -2385,6 +2389,7 @@ function compileAssetGameplayAttempt(
   const changingSight = new Set(
     transitions.flatMap((transition) => [...transition.initialSight, ...transition.appliedSight]),
   );
+  const jumpReceivers = new Map<string, JumpReceivingSurface>(generatedLandings);
   const flightClearance =
     jumpPairs.length || jumpSegments.length
       ? createJumpClearance(
@@ -2393,13 +2398,28 @@ function compileAssetGameplayAttempt(
               ? { ...shape, initial_active: true }
               : shape,
           ),
+          jumpReceivers,
         )
       : undefined;
   const walkingClearance = createJumpWalkingClearance(jumpWalkAreas, generatedLandings);
   const assembledJumps = assembleJumpSegments(
     jumpSegments,
-    (edges, long, body) =>
-      mergeIntervals([...flightClearance!(edges, long, body), ...walkingClearance(edges)]),
+    (edges, long, body) => {
+      for (const edge of edges) {
+        const band = generatedLandings.get(edge.zone);
+        const zone = band
+          ? jumpLandingBand(edge.zone, edge, band)
+          : jumpZones.find((zone) => zone.id === edge.zone);
+        if (!zone) throw new Error(`Jump ${edge.zone}: missing receiving zone`);
+        const area = resolve(zone.anchor, `${edge.zone} takeoff receiver`);
+        jumpReceivers.set(edge.zone, {
+          ...jumpReceivers.get(edge.zone),
+          topology: { sector: area.sector, layer: area.layer },
+          motionPolygon: area.polygon,
+        });
+      }
+      return mergeIntervals([...flightClearance!(edges, long, body), ...walkingClearance(edges)]);
+    },
     generatedLandings.size ? "obstacles obstruct the flight or walking approach" : undefined,
   );
   for (const pair of assembledJumps.pairs) {

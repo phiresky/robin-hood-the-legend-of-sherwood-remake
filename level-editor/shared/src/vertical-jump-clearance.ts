@@ -7,13 +7,23 @@ export interface VerticalFlightRibbon {
   points: [Vec3, Vec3, Vec3, Vec3];
   extraHeight: number;
   padding?: number;
+  paddingAxes?: Vec3;
+  paddingFactors?: [number, number, number, number];
+  minimumZ?: number;
+  maximumZ?: number;
+  /** Signed height bounds above solid caps, after each non-overshooting order. */
+  planeBounds?: { plane: HeightPlane; minimum: number }[];
+  convexPadding?: number;
+  flightOrders?: number;
+  parameters?: [number, number, number, number];
   shift?: Vec3;
 }
 
 /** Intersect the full four-point convex envelope, including non-coplanar ribbons. */
 export function ribbonParameterRange(
   points: VerticalFlightRibbon["points"],
-  planes: ((point: Vec3) => number)[],
+  planes: ((point: Vec3, index: number) => number)[],
+  parameters: [number, number, number, number] = [0, 0, 1, 1],
 ): [number, number] | undefined {
   // Barycentric coordinates for vertices 1..3; vertex 0 has weight 1-sum.
   const constraints = [
@@ -58,7 +68,17 @@ export function ribbonParameterRange(
           (axis) => (-a[3]! * bc[axis]! - b[3]! * ca[axis]! - c[3]! * ab[axis]!) / determinant,
         );
         if (constraints.some((row) => dot(row, weights) + row[3]! < -1e-8)) continue;
-        const parameter = Math.max(0, Math.min(1, weights[1]! + weights[2]!));
+        const parameter = Math.max(
+          0,
+          Math.min(
+            1,
+            parameters[0] +
+              weights.reduce(
+                (sum, weight, index) => sum + weight * (parameters[index + 1]! - parameters[0]),
+                0,
+              ),
+          ),
+        );
         low = Math.min(low, parameter);
         high = Math.max(high, parameter);
       }

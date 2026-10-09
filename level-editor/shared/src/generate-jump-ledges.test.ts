@@ -234,7 +234,31 @@ for (const source of ["rock", "roof"])
     };
     const result = assembleJumpSegments(
       [...first.segments, ...second.segments],
-      createJumpClearance([obstacle, other]),
+      createJumpClearance(
+        [obstacle, other],
+        new Map([
+          ...[...first.landings].map(
+            ([id, band]) =>
+              [
+                id,
+                {
+                  ...band,
+                  motionPolygon: points.map(([x, y]): Point => [x, y]),
+                },
+              ] as const,
+          ),
+          ...[...second.landings].map(
+            ([id, band]) =>
+              [
+                id,
+                {
+                  ...band,
+                  motionPolygon: rotated.map(([x, y]): Point => [x, y]),
+                },
+              ] as const,
+          ),
+        ]),
+      ),
     );
     assert.ok(result.pairs.length > 0, JSON.stringify(result.warnings));
     for (const pair of result.pairs) {
