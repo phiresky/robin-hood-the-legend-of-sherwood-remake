@@ -896,6 +896,16 @@ fn changing_climb_barrier_near_entrance_blocks_actor_approach() {
 #[test]
 #[ignore = "requires ROBIN_CLIMB_RHS"]
 fn changing_climb_entry_barrier_closes_during_animation() {
+    audit_climb_barrier_animation(false);
+}
+
+#[test]
+#[ignore = "requires ROBIN_CLIMB_RHS"]
+fn changing_climb_exit_barrier_closes_during_animation() {
+    audit_climb_barrier_animation(true);
+}
+
+fn audit_climb_barrier_animation(exit_phase: bool) {
     let sprite = complete_climb_sprite();
     let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -904,7 +914,7 @@ fn changing_climb_entry_barrier_closes_during_animation() {
     .unwrap();
     for (placement, fixture) in fixtures.iter().enumerate() {
         let (engine, assets) = compiled_walkway(&serde_json::to_vec(fixture).unwrap());
-        let entrance = usize::from(placement >= 12);
+        let entrance = usize::from((placement >= 12) != exit_phase);
         for reopen_after in [None, Some(20), Some(120)] {
             let sim = crate::sim_rng::test_context();
             let mut applied = false;
@@ -921,6 +931,10 @@ fn changing_climb_entry_barrier_closes_during_animation() {
                     let element = engine.ent(owner).element_data();
                     let cursor = (
                         element.position_map(),
+                        element.position(),
+                        element.layer(),
+                        element.sector(),
+                        element.sprite.position_iface.get_obstacle(),
                         element.sprite.current_row,
                         element.sprite.current_frame,
                         element.sprite.frame_count,
@@ -932,7 +946,7 @@ fn changing_climb_entry_barrier_closes_during_animation() {
                         assert_eq!(
                             Some(cursor),
                             paused,
-                            "blocked entry must retain position and animation cursor"
+                            "blocked passage must retain position and animation cursor"
                         );
                         held_ticks += 1;
                         if reopen_after == Some(held_ticks) {
@@ -944,14 +958,23 @@ fn changing_climb_entry_barrier_closes_during_animation() {
                         }
                         return;
                     }
-                    if !matches!(
+                    let entering = matches!(
                         element.sprite.last_action,
                         OrderType::TransitionWaitingUprightClimbingLadderUp
                             | OrderType::TransitionWaitingUprightClimbingWallUp
                             | OrderType::TransitionWaitingCrouchedClimbingLadderDown
                             | OrderType::TransitionWaitingCrouchedClimbingWallDown
                             | OrderType::TransitionWaitingCrouchedClimbingWallDownCrenel
-                    ) {
+                    );
+                    let exiting = matches!(
+                        element.sprite.last_action,
+                        OrderType::TransitionClimbingLadderUpWaitingCrouched
+                            | OrderType::TransitionClimbingLadderDownWaitingUpright
+                            | OrderType::TransitionClimbingWallUpWaitingCrouched
+                            | OrderType::TransitionClimbingWallUpWaitingCrouchedCrenel
+                            | OrderType::TransitionClimbingWallDownWaitingUpright
+                    );
+                    if !(if exit_phase { exiting } else { entering }) {
                         return;
                     }
                     assert!(crate::engine::ai::selected_actor_is_passing_door(
@@ -969,21 +992,21 @@ fn changing_climb_entry_barrier_closes_during_animation() {
             );
             assert!(
                 applied,
-                "entry animation never started at placement {placement}: {result:?}"
+                "passage animation never started at placement {placement}, exit={exit_phase}: {result:?}"
             );
             if reopen_after.is_some() {
                 assert!(reopened);
                 assert_eq!(
                     result,
                     Ok(true),
-                    "entry resumes at placement {placement}, hold {reopen_after:?}"
+                    "passage resumes at placement {placement}, exit={exit_phase}, hold {reopen_after:?}"
                 );
             } else {
                 assert!(
                     result
                         .as_ref()
                         .is_err_and(|error| error.starts_with("lift route stalled")),
-                    "entry barrier closed during animation at placement {placement}: {result:?}"
+                    "passage barrier closed during animation at placement {placement}, exit={exit_phase}: {result:?}"
                 );
             }
         }

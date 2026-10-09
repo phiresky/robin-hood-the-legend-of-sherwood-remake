@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Passage barriers during climb exit animations (2026-10-09)
+
+The native passage audit now closes the prepared barrier during exit animations
+as well as entry animations. It reverses traversal through the same 24 exported
+fixtures so the controlled endpoint is the exit. Coverage includes ladders,
+ordinary walls and crenellated walls at four rotations, with barriers at either
+the lower or upper endpoint. Export equality tests regenerate these fixtures
+from editor documents and asset-local definitions.
+
+All **72 new exit cases** pass: keeping the barrier closed pauses traversal;
+reopening after 20 or 120 ticks completes it. The shared entry/exit audit now
+asserts that map/world position, elevation, layer, sector, receiver and animation
+cursor remain unchanged during the pause. Both phases pass these stronger checks
+(144 cases total). The five selected native changing-climb tests pass, including
+the existing 72 mid-climb reopening checks. Fresh export equality and the three
+passage-state compiler tests also pass.
+
+No compiler output or production runtime behavior changed. The existing cached
+passage-availability flag covers these exit transitions. Actor overlap/crushing,
+multi-actor interactions, broader placements and rendered traversal remain open;
+this does not certify full stair or map parity.
+
 ## Mixed-posture sloped climbing clearance (2026-10-09)
 
 The exporter now reserves both possible flights for sloped climbs between 60 and
