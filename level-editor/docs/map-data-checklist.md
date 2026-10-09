@@ -1574,13 +1574,23 @@ height at every tick, bounds travelled distance, and waits for the stop animatio
 and order queue to finish. A zero-distance stop's reserved 0.01-unit offset is
 accepted only after that specific animation completes.
 
-Rotated spline openings remain unresolved: the expanded `--rotated` batch from
-`refinement/check-spline-clearance-planes.mjs` tests 0/37/90/180 degrees. At 37
-degrees and a 30-unit terrain rise, the first failing animated crossing travels
-67.949 units for a 40-unit crossing (limit 45). A separate thin-ray audit also
-rejects an expected opening at 37 degrees on flat terrain. This is not certified
-rotated-opening parity; the next check must distinguish clearance placement from
-the probe's intended opening before changing either geometry or expectations.
+Rotated openings now pass the expanded `--rotated` batch from
+`refinement/check-spline-clearance-planes.mjs`: 32 exports at 0/37/90/180 degrees,
+two elevations, flat/rising terrain and enabled/disabled clearances pass 384
+thin movement probes and 192 bounded pathfinder routes. All 192 complete sprite
+crossings pass, with maximum travelled distance 39.991 for a 40-unit crossing
+(limit 45). Every tick retains collision clearance and the expected receiver.
+
+This exposed a compiler error: clearance contours and holes used physical
+height for projection while their plane used navigation height. They now use
+navigation coordinates consistently, preserving pillars in their authored
+position. Ordinary rotated-clearance regression coverage also checks that a
+whole-footprint cut leaves no shifted obstruction and a preserved hole still
+blocks navigation. The synthetic ground gradient was separately corrected to
+stay constant across spline cross-sections in scene space; the oblique camera
+means a game-coordinate perpendicular is insufficient. All 287 selected
+compiler/export/spline tests pass. Broader curved placement and rendered actor
+integration remain open.
 Use the ignored native `exported_openings_support_complete_sprite_routes` test
 with `ROBIN_ASSET_MAP_DIAGNOSTICS` set to the generated directory and
 `ROBIN_CLIMB_RHS` set to a complete character sprite to reproduce the actor audit.

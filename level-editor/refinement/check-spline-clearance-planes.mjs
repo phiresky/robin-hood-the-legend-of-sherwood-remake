@@ -17,6 +17,11 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
     for (const rise of [0, 30]) {
       for (const enabled of [false, true]) {
         const { document, asset, assets, bounds } = wallSplineFixture();
+        const sine = Math.sin((document.camera.elevation_deg * Math.PI) / 180);
+        // Cross-sections are perpendicular in scene space. Express the ground
+        // gradient in game coordinates so it is constant across each section.
+        const gradient = [direction[0], direction[1] / (sine * sine)];
+        const run = 300 * (gradient[0] * direction[0] + gradient[1] * direction[1]);
         const path = document.splines[0];
         path.points = [
           [...start, elevation],
@@ -25,10 +30,10 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
         for (const vertex of document.terrain.vertices)
           vertex.position[2] =
             elevation +
-            (((vertex.position[0] - start[0]) * direction[0] +
-              (vertex.position[1] - start[1]) * direction[1]) *
+            (((vertex.position[0] - start[0]) * gradient[0] +
+              (vertex.position[1] - start[1]) * gradient[1]) *
               rise) /
-              300;
+              run;
         if (enabled)
           asset.gameplay.movementClearances = [
             {

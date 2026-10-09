@@ -983,7 +983,13 @@ function compileAssetGameplayAttempt(
           surface.navigationRegion === undefined
             ? undefined
             : `${placement.id}/${surface.navigationRegion}`,
-        polygon: ring(points.map(projectMovement), `${placement.id}/${surface.id}`, minimumArea),
+        // Collision cutouts must use the same navigation plane for both their
+        // contour and height; physical height would shift the projected hole.
+        polygon: ring(
+          (clearance ? navigationPoints : points).map(projectMovement),
+          `${placement.id}/${surface.id}`,
+          minimumArea,
+        ),
         plane,
         worldPlane,
         worldPolygon: navigationPoints.map(([x, y]): Point => [x, y]),
@@ -991,7 +997,7 @@ function compileAssetGameplayAttempt(
         ...(gameplay.lifts?.find((l) => l.surface === surface.id)
           ? { lift: `${placement.id}/${gameplay.lifts.find((l) => l.surface === surface.id)!.id}` }
           : {}),
-        holes: geometry.holes.map((hole) =>
+        holes: (clearance ? geometry.navigationHoles : geometry.holes).map((hole) =>
           ring(hole.map(projectMovement), `${placement.id}/${surface.id} hole`, minimumArea),
         ),
       };

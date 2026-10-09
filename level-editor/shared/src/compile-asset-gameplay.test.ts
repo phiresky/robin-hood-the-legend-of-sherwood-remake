@@ -995,9 +995,10 @@ test("physical clearances project after rotation onto their authored navigation 
           id: "deck-passage",
           node: part.node,
           polygon: [],
-          outside: [25, 70, 12.5],
-          inside: [75, 70, 37.5],
-          middle: [50, 70, 25],
+          // Door navigation anchors lie on the authored navigation plane.
+          outside: [25, 70, 0],
+          inside: [75, 70, 0],
+          middle: [50, 70, 0],
           type: 0,
           locked: false,
           unlockable: false,
@@ -1009,7 +1010,11 @@ test("physical clearances project after rotation onto their authored navigation 
       const compiled = compileAssetGameplay(document, assets, bounds);
       assert.deepEqual(compiled.sight_obstacles[0]!.projection_area, [0, 0]);
       assert.equal(compiled.doors.length, 0);
-      assert.ok(compiled.motion_data.layers[0]![0]!.obstacles.length > 0);
+      assert.equal(
+        compiled.motion_data.layers[0]![0]!.obstacles.length,
+        0,
+        "a whole-footprint clearance must not leave a height-shifted obstruction",
+      );
       gameplay.movementClearances[0]!.holes = [
         [
           [20, 65],
@@ -1018,7 +1023,10 @@ test("physical clearances project after rotation onto their authored navigation 
           [20, 75],
         ],
       ];
-      assert.throws(() => compileAssetGameplay(document, assets, bounds), /outside must resolve/);
+      assert.throws(
+        () => compileAssetGameplay(document, assets, bounds),
+        /(?:outside|navigation anchor) must resolve.*unblocked/,
+      );
       delete gameplay.movementClearances[0]!.holes;
       document.objects[1]!.transform.dz += 1;
       assert.throws(
