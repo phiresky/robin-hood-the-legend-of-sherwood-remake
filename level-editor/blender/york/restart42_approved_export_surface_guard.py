@@ -23,6 +23,8 @@ CONFIG = {
     'shed': ('restart43-approved-shed-export-v1', 'shed-texture-baked-v1'),
     'gatehouse': ('restart43-approved-gatehouse-export-v1', 'restart42-channel-assembly-v1'),
     'storehouse': ('restart42-approved-storehouse-export-v1', 'restart38-storehouse-texture-baked-v3'),
+    'portcullis-covered': ('restart44-approved-portcullis-export-v1/covered', 'gate-textures-v1/covered'),
+    'portcullis-raised': ('restart44-approved-portcullis-export-v1/raised', 'gate-textures-v1/raised'),
 }
 sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
 
@@ -38,7 +40,8 @@ def main(key):
     out, source_dir = (BASE / p for p in CONFIG[key])
     proof = json.loads((out / 'export-report.json').read_text())
     source = source_dir / 'model.blend'
-    assert sha(source) == proof['approved_model_sha256']
+    approved_sha256 = proof.get('approved_model_sha256', proof.get('source_model_sha256'))
+    assert sha(source) == approved_sha256
     glb = out / '3d-assets' / proof['asset_id'] / 'model.glb'
     assert sha(glb) == proof['model_sha256']
     bpy.ops.wm.open_mainfile(filepath=str(source))
@@ -46,6 +49,9 @@ def main(key):
     objects = {o.name: o for o in bpy.context.scene.objects if o.type == 'MESH'}
     doc, buffers, _ = la.read_glb(glb)
     nodes = [n for n in doc['nodes'] if 'mesh' in n]
+    if key.startswith('portcullis-'):
+        assert {n['name'] for n in nodes} == {'scenery-york-castle-portcullis'}
+        objects = {'scenery-york-castle-portcullis': objects['scenery-york-castle-portcullis']}
     if key == 'gatehouse':
         assert set(objects) - {n['name'] for n in nodes} == {'scenery-york-castle-portcullis'}
         objects = {name: obj for name, obj in objects.items() if name in {n['name'] for n in nodes}}
@@ -114,7 +120,7 @@ def main(key):
         assert count == len(mesh.loop_triangles)
         rows.append(dict(object=obj.name, triangles=count, materials=material_rows))
         bpy.data.meshes.remove(mesh)
-    assert sha(source) == proof['approved_model_sha256'] and sha(glb) == proof['model_sha256']
+    assert sha(source) == approved_sha256 and sha(glb) == proof['model_sha256']
     result = dict(status='PASS approved triangles, winding, UVs, RGBA and opaque unlit materials',
                   approved_model_sha256=sha(source), exported_glb_sha256=sha(glb), objects=rows,
                   limitations=['Private export only; production conversion and browser verification remain separate.',

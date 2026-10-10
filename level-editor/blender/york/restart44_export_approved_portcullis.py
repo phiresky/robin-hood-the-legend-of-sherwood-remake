@@ -46,9 +46,12 @@ def main(state):
     audit = json.loads((BASE / 'gate-saved-contact-audit-v1/report.json').read_text())
     vs = audit['geometry_world']['gate_vertices']
     pivot = [(min(p[i] for p in vs) + max(p[i] for p in vs)) / 2 for i in range(2)] + [min(p[2] for p in vs)]
-    collection = bpy.data.collections.new('york Working')
-    scene.collection.children.link(collection)
-    collection.objects.link(gate)
+    collection = bpy.data.collections.get('york Working')
+    if collection is None:
+        collection = bpy.data.collections.new('york Working')
+        scene.collection.children.link(collection)
+    if gate.name not in collection.objects:
+        collection.objects.link(gate)
     old = {k: gate[k] for k in ['asset_group', 'asset_name', 'part_name'] if k in gate}
     gate['asset_group'] = aid
     gate['asset_name'] = 'Castle portcullis'
@@ -67,6 +70,7 @@ def main(state):
     asset = destination / '3d-assets' / aid
     result = {'status': 'PRIVATE_EXPORT_PENDING_ROUNDTRIP_AND_BROWSER', 'state': state,
               'asset_id': aid, 'source_model': str(source), 'source_model_sha256': sha(source),
+              'approved_model_sha256': sha(source),
               'approval_authority': str(authority), 'approval_authority_sha256': sha(authority),
               'model_sha256': sha(asset / 'model.glb'), 'descriptor_sha256': sha(asset / 'asset.json'),
               'source_origin_scene': pivot, 'source_geometry_uv_materials_exact': True,
@@ -75,6 +79,9 @@ def main(state):
                              'Roundtrip source surface and all 45 approved poses remain to verify.',
                              'Native artwork compositor and full editor integration remain separate.']}
     (destination / 'export-report.json').write_text(json.dumps(result, indent=2) + '\n')
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import restart42_approved_export_surface_guard as guard
+    guard.main('portcullis-' + state)
     print(json.dumps(result), flush=True)
 
 

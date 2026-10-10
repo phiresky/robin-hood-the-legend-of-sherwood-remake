@@ -23,6 +23,7 @@ spec = importlib.util.spec_from_file_location('york_publication_core', CORE)
 core = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(core)
 require, sha, dump = core.require, core.sha, core.durable_json
+EXECUTOR_SHA256 = sha(Path(__file__))
 require(sha(CORE) == '1b79d5020ec58855514800d8d48b6196eefefedb19ea2ac0937245d8e609787f', 'Publisher core changed')
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from asset_index import write_asset_index, validate_asset_index
@@ -147,6 +148,7 @@ def browser_evidence(file, digest, rows):
 
 
 def prepare(folder, browser=None, browser_hash=None):
+    require(sha(Path(__file__)) == EXECUTOR_SHA256, 'Executor changed after startup')
     stage = stage_plan()
     preservation = preserve(stage)
     folder.mkdir(exist_ok=False)
@@ -158,6 +160,9 @@ def prepare(folder, browser=None, browser_hash=None):
                       descriptors=[f'york/{aid}/asset.json' for aid in sorted(ids)])
     affected = json.loads((folder / 'affected-index.json').read_text())['assets']
     require({r['id'] for r in affected} == ids, 'Index generation scope mismatch')
+    frozen_affected = json.loads((STAGE / 'affected-index.json').read_text())['assets']
+    require({r['id']: r for r in affected} == {r['id']: r for r in frozen_affected},
+            'Generated affected rows differ from reviewed stage')
     current = json.loads((ASSETS / 'index.json').read_text())
     index_pin = pin(ASSETS / 'index.json')
     changes = {r['id']: r for r in affected}
@@ -191,6 +196,7 @@ def prepare(folder, browser=None, browser_hash=None):
                     protected.append(item)
     proof = browser_evidence(browser, browser_hash, rows) if browser else None
     require(sha(ASSETS / 'index.json') == index_pin['sha256'], 'Index drift during preparation')
+    require(sha(Path(__file__)) == EXECUTOR_SHA256, 'Executor changed during preparation')
     result = {'status': 'PREPARED_NOT_APPLIED', 'records': rows, 'protected': protected,
               'browser': proof, 'preservation': preservation,
               'evidence': [pin(Path(__file__)), pin(CORE), pin(STAGE / 'plan.json'),
