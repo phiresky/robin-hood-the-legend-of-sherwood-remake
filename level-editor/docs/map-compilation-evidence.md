@@ -4,6 +4,25 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## East-hall quantization and open stair failures (2026-10-10)
+
+Fresh `derby-east-hall` placement previously aborted at 270 degrees because
+`building-270-walk-0` rounded to two distinct points before floor assembly.
+Best-effort compilation now retains such floor fragments in precise coordinates
+until final union and quantization. Unrepresentable final regions emit the existing
+explicit omission warning. Strict compilation still rejects the collapsed input;
+genuinely degenerate authored geometry remains an error even in best-effort mode.
+Collision blockers are not relaxed. No runtime code changed.
+
+`work/map-compile/grounded-stair-placements-BqoB9w` now contains both 270-degree
+exports at elevations 0/40 with two independent hall copies and all authored lift
+entrances. This is not a traversal pass: prepared synthetic and sprite traversal
+each pass **24/32**, while gate discovery, ordinary clicks and hidden-selection
+audits each pass **16/32**. Reports include receiving-obstacle mismatches,
+interrupted post-stair movement and gate search choosing a different route.
+These failures remain open; no forbidden route is counted as a pass. The broader
+eight-angle hall matrix has not yet been certified. Compiler tests: **146 passed**.
+
 ## Fresh Derby upper-west curtain (2026-10-10)
 
 `work/map-compile/grounded-stair-placements-xCBv3V` contains sixteen newly authored

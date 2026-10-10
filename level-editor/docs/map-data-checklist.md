@@ -11,6 +11,14 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**East-hall placement remains incomplete (2026-10-10):** best-effort export now
+survives a floor fragment collapsing during 270-degree placement by deferring its
+rounding until floor union. Final unrepresentable regions are warned and omitted;
+strict validation and collision blockers retain their existing behavior. Fresh
+two-copy exports at elevations 0/40 pass only 24/32 prepared stair traversals and
+16/32 discovered/player-click routes. Receiving-obstacle mismatches and interrupted
+movement remain to be fixed in export preparation; this is not a parity pass.
+
 **Fresh upper-west curtain placement (2026-10-10):** Derby's published asset passes
 all 64 directed routes in each of five current-engine audit modes: synthetic and
 complete-sprite traversal, gate discovery, ordinary clicks and hidden-selection

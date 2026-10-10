@@ -964,10 +964,19 @@ function compileAssetGameplayAttempt(
       // Clearances are intermediate cutouts. Snapping their intersections before
       // clipping solids bends otherwise straight movement boundaries.
       const clearance = target === movementClearances;
-      // Physical climbs need their authored landing seams before final grid
-      // rounding; rounding individual surfaces can disconnect a rotated entry.
+      const roundedBoundary = simplifyMotionRing(points.map(project));
+      // A placed floor sliver can disappear on the integer grid while still
+      // contributing to a larger joined floor. Keep it until the final union;
+      // final quantization reports any region that remains unrepresentable.
+      const deferFloorRounding =
+        options.bestEffort &&
+        target === surfaces &&
+        (roundedBoundary.length < 3 || Math.abs(signedArea(roundedBoundary)) < 0.5);
+      // Climbs need their authored landing seams before final grid rounding;
+      // rounding individual surfaces can disconnect a rotated entry.
       const continuous =
         clearance ||
+        deferFloorRounding ||
         surface.preserveMovementPrecision === true ||
         gameplay.lifts?.some((lift) => lift.type === 2 || lift.type === 3) === true;
       const projectMovement = continuous ? ([x, y, z]: Vec3): Point => [x, y - z] : project;

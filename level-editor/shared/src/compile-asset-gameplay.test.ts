@@ -62,6 +62,46 @@ test("a rail cut cannot disconnect a fractional terrain bank from its rotated br
   assert.equal(banks.motion_data.layers.flat().length, 2);
 });
 
+test("a subpixel placed floor reaches final union and reports an unrepresentable remnant", () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  hut.gameplay!.collision = "none";
+  hut.gameplay!.doors = [];
+  hut.gameplay!.surfaces = [
+    {
+      id: "floor",
+      node: "building-999",
+      height: 0,
+      polygon: [
+        [0, 0],
+        [100, 0],
+        [100, 100],
+        [0, 100],
+      ],
+    },
+    {
+      id: "sliver",
+      node: "building-999",
+      height: 0,
+      polygon: [
+        [120.1, 0],
+        [120.2, 0],
+        [120.1, 40],
+      ],
+    },
+  ];
+  const compiled = compileAssetGameplay(document, assets, [0, 0, 1000, 1000], { bestEffort: true });
+  assert.equal(compiled.motion_data.layers.flat().length, 1);
+  assert.ok(compiled.warnings?.some((warning) => warning.includes("collapsed to zero area")));
+  hut.gameplay!.surfaces[1]!.polygon = [
+    [120, 0],
+    [120, 10],
+    [120, 40],
+  ];
+  assert.throws(() =>
+    compileAssetGameplay(document, assets, [0, 0, 1000, 1000], { bestEffort: true }),
+  );
+});
+
 test("fractional terrain remnants survive floor clipping until navigation union", () => {
   const { document, assets, hut } = assetCompilerFixture();
   document.terrain = createTerrainGrid([300, 300, 100, 100], 100, 0);
