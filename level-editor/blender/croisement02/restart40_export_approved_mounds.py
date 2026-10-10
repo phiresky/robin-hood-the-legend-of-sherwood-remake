@@ -22,8 +22,7 @@ def main(site):
  row=next(r for r in json.loads(AUTH.read_text())['records']if r['site']==site);names={r['object']for r in row['objects']};assert len(names)==67
  dest=DEST/site;dest.mkdir(parents=True,exist_ok=False)
  bpy.ops.wm.open_mainfile(filepath=str(source));scene=bpy.context.scene;objects=[scene.objects[n]for n in sorted(names)]
- for o in list(bpy.data.objects):
-  if o.name not in names:bpy.data.objects.remove(o,do_unlink=True)
+ bpy.data.batch_remove(ids=[o for o in bpy.data.objects if o.name not in names])
  expected={};records=[]
  for o in objects:
   assert not o.modifiers;o.data=o.data.copy();o.data.transform(o.matrix_world);o.matrix_world.identity();o.hide_render=False;o.hide_set(False)
@@ -58,10 +57,10 @@ def main(site):
     uv=la.accessor_array(doc,buffers,p['attributes']['TEXCOORD_'+str(tex.get('texCoord',0))])[ids].reshape(-1,3,2);uv[:,:,1]=1-uv[:,:,1];assert min(float(np.max(np.abs(uv-u)))for u in e['uv'].values())<2e-7
    checks.append(dict(key=key,triangles=len(ids)//3,position_max_error=error))
  assert seen==set(expected);assert sha(source)==card['model_sha256']
- report=dict(status='PRIVATE_EXPORT_GEOMETRY_UV_PASS_APPEARANCE_BROWSER_PENDING',site=site,source_model=str(source),source_sha256=sha(source),approval=str(APPROVAL),approval_sha256=sha(APPROVAL),authority_sha256=sha(AUTH),model=str(target),model_sha256=sha(target),model_scene=site+'-initial',coordinate_frame='Absolute approved world coordinates, transformed Z-up to glTF Y-up; no placement translation required.',objects=67,conversion_records=records,primitive_guards=checks,canonical_writes=False,recipe_sha256=sha(__file__))
+ report=dict(status='PRIVATE_EXPORT_GEOMETRY_UV_PASS_APPEARANCE_BROWSER_PENDING',site=site,source_model=str(source),source_sha256=sha(source),approval=str(APPROVAL),approval_sha256=sha(APPROVAL),authority_sha256=sha(AUTH),model=str(target),model_sha256=sha(target),model_scene=site+'-initial',coordinate_frame='Absolute approved world coordinates, transformed Z-up to glTF Y-up; no placement translation required.',objects=67,decoded_rgba_exact=True,binary_mask_samplers_nearest=True,conversion_records=records,primitive_guards=checks,canonical_writes=False,recipe_sha256=sha(__file__))
  (dest/'export.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(dict(site=site,model_sha256=sha(target),bytes=target.stat().st_size)),flush=True)
 if __name__=='__main__':
- acquire(slots=2)
- try:
-  for site in sys.argv[sys.argv.index('--')+1:]:main(site)
- finally:release()
+ for site in sys.argv[sys.argv.index('--')+1:]:
+  acquire(slots=2)
+  try:main(site)
+  finally:release()
