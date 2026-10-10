@@ -4,6 +4,7 @@ import { clipHeight } from "./gameplay-plane.ts";
 import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
 import clipping from "polygon-clipping";
 import { stairBoundaryPlanes, stairCenterRegion } from "./stair-center-region.ts";
+import { simplifyMotionRing } from "./motion-quantization.ts";
 
 /**
  * Recover a floor whose projection cannot fit a native actor. Native
@@ -17,6 +18,9 @@ export function projectStairClearance(
   plane: HeightPlane,
   preservePrecision = false,
 ): Point[] | undefined {
+  // Clipping can retain a nearly straight intermediate vertex. Remove noise
+  // within two clipping-grid units before intersecting offset edge planes.
+  boundary = simplifyMotionRing(boundary, 2 / 1048576);
   const [a, b, c] = plane;
   if (Math.abs(1 - b) < 1e-6 || boundary.length < 3) return undefined;
   let projected: Point[] = boundary.map(([x, y]) => [x, y - a * x - b * y - c]);

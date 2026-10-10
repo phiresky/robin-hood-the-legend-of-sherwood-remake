@@ -4,6 +4,24 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## East-hall clipping cleanup and complete stair matrix (2026-10-10)
+
+The remaining 217-degree failure was caused by an almost-collinear vertex left
+by clipping, not a required bend in the stair. Adjacent offset edges became
+nearly parallel and cancelled clearance preparation. The exporter now removes
+straight-edge noise within two clipping-grid units before constructing clearance.
+A regression retains the problematic five-vertex input and verifies supported
+world-space actor footprints throughout the resulting usable integer centers.
+
+Fresh output `work/map-compile/grounded-stair-placements-cY6Eu1` retains all doors
+and lifts across two copies, eight rotations and two elevations. Prepared,
+sprite, native gate-discovered and hidden-selection audits each pass **256/256**.
+Ordinary clicks pass **252/256**: four covered upper targets at 217 degrees fail
+ordinary selection and pass through native hidden selection. The hidden audit
+uses that mode for exactly those four targets. No forbidden route is counted as
+a pass. Focused compiler/navigation checks: **169 passed**; scoped lint and
+formatting pass. This cleanup adds no engine runtime changes.
+
 ## Static subpixel stair clearance (2026-10-10)
 
 The nearly edge-on east-hall floor retains usable physical space but loses all

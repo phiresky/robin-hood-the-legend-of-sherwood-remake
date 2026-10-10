@@ -88,6 +88,29 @@ test("subpixel clearance preserves usable centers on a nearly edge-on stair", ()
   assert.ok(usable >= 10, `Only ${usable} supported integer endpoints survived`);
 });
 
+test("clipping noise on a straight stair edge cannot disable clearance preparation", () => {
+  const vertices: Vec3[] = [
+    [1029.3831071853638, 1094.9561649982327, 295.0010010425442],
+    [1032.0934076309204, 1118.7921615516743, 295.0010000145039],
+    [988.0496873855591, 1116.7610264051898, 360.0010004271014],
+    [986.7643604278564, 1105.4570876551952, 360.00099958909414],
+    [985.7782773971558, 1096.7848858808577, 360.00099992504715],
+  ];
+  const plane = heightPlane(vertices);
+  const boundary = vertices.map(([x, y]): Point => [x, y]);
+  const compiled = projectStairClearance(boundary, plane, true);
+  assert.ok(compiled, "almost-collinear clipping vertices must not cancel clearance");
+  let supported = 0;
+  for (let x = 985; x < 1035; x++)
+    for (let y = 725; y < 835; y++) {
+      if (!fits([x, y], compiled)) continue;
+      const world: Point = [x, (y + plane[0] * x + plane[2]) / (1 - plane[1])];
+      assert.ok(fits(world, boundary));
+      supported++;
+    }
+  assert.ok(supported > 10);
+});
+
 test("flat, singular and usable nonconvex floors keep their existing representation", () => {
   const square: Point[] = [
     [0, 0],

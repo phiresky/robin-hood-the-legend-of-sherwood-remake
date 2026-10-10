@@ -11,6 +11,13 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**East-hall eight-angle traversal (2026-10-10):** removing a redundant,
+almost-collinear clipping vertex restores clearance preparation at 217 degrees.
+Fresh two-copy exports at eight angles and elevations 0/40 now pass **256/256**
+prepared, sprite, gate-discovered and hidden-selection routes. Ordinary clicks
+pass **252/256**; four covered targets require hidden selection. This verifies
+the tested stair placements, not complete map gameplay or rendering parity.
+
 **Subpixel stair clearance (2026-10-10):** the exporter preserves precise
 clearance contours, constructs graphs against them and chooses supported integer
 endpoints. Startup binds those contours into existing static collision and sector
