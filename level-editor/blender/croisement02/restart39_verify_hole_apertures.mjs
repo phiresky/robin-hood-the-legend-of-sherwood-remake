@@ -7,10 +7,10 @@ import {StateAperturePreview} from '../../app/src/state-aperture-preview.ts';
 import {isEffectivelyVisible} from '../../app/src/patch-display.ts';
 import {validateStateDelivery} from '../../shared/src/state-delivery.ts';
 import {prepareCurrentHoleApertures} from './restart39_hole_aperture_stage.ts';
-const folder=resolve('level-editor/work/croisement02-refinement/restart39-current-hole-apertures-v1');
+const folder=resolve(process.argv[2] ?? 'level-editor/work/croisement02-refinement/restart39-current-hole-apertures-v1');
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const checked=async pin=>{const bytes=await readFile(pin.path);assert.equal(sha(bytes),pin.sha256,pin.path);return bytes;};
-const integration=JSON.parse(await readFile(join(folder,'integration-focused-v2.json'),'utf8'));
+const integration=JSON.parse(await readFile(join(folder,process.argv[3] ?? 'integration-focused-v2.json'),'utf8'));
 for(const pin of [integration.map,integration.receiver_partition,integration.endpoint_config,integration.endpoint_approval,integration.recipe])await checked(pin);
 // Lifecycle checks need the exact GLB node hierarchy, transforms and reveal extras; no image/render claim.
 async function hierarchy(pin){
@@ -38,4 +38,4 @@ for(const control of integration.controls){
  results.push({id:control.id,mission:control.mission,site:control.site,cap_apply_reset_exact:true,unrelated_caps_unchanged:true,other_controls_rejected:true,native_contract_exact:true,native_visibility_and_retirement_exact:true});
 }
 assert.equal(results.length,30);
-const report={status:'PASS_CURRENT_RECEIVER_FOCUSED_CAP_LIFECYCLE',integration_sha256:sha(await readFile(join(folder,'integration-focused-v2.json'))),sites:17,controls:results,missions:7,independent_cap_reset:true,focus_only_no_background_domain_union:true,native_visibility_restore:true,dispose_and_original_transforms_exact:true,current_map_pin_verified:true,browser_verified:false,appearance_scope:'No render claim; actual GLB node hierarchy/transforms/extras exercised through production StateAperturePreview.',canonical_writes:false,recipe_sha256:sha(await readFile(new URL(import.meta.url)))};await writeFile(join(folder,'lifecycle-focused-verification-v2.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({status:report.status,controls:results.length,sites:17,missions:7}));
+const report={status:'PASS_CURRENT_RECEIVER_FOCUSED_CAP_LIFECYCLE',integration_sha256:sha(await readFile(join(folder,process.argv[3] ?? 'integration-focused-v2.json'))),sites:17,controls:results,missions:7,independent_cap_reset:true,focus_only_no_background_domain_union:true,native_visibility_restore:true,dispose_and_original_transforms_exact:true,current_map_pin_verified:true,browser_verified:false,appearance_scope:'No render claim; actual GLB node hierarchy/transforms/extras exercised through production StateAperturePreview.',canonical_writes:false,recipe_sha256:sha(await readFile(new URL(import.meta.url)))};await writeFile(join(folder,'lifecycle-focused-verification-v2.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify({status:report.status,controls:results.length,sites:17,missions:7}));

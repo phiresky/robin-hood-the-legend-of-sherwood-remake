@@ -120,6 +120,14 @@ export class TextureDisplay {
           // Isolate the mask so shared RGB textures keep their own sampling.
           masked.map = masked.map.clone();
           this.nearestRequired.add(masked.map);
+          // Some projected atlases have non-surface padding beside valid RGB.
+          // Only exports explicitly declaring that constraint lock RGB too.
+          if (material.userData.export_rgb_sampling === "nearest-required") {
+            if (!(masked.emissiveMap instanceof THREE.Texture))
+              throw new Error("Required RGB sampling needs an emissive texture");
+            masked.emissiveMap = masked.emissiveMap.clone();
+            this.nearestRequired.add(masked.emissiveMap);
+          }
           this.samplingConfigured.add(material);
         }
         for (const value of Object.values(material)) {

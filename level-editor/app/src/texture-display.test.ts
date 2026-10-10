@@ -197,3 +197,35 @@ test("complementary ownership rejects a nonbinary material contract", () => {
   material.userData.export_complementary_binary_ownership = true;
   assert.throws(() => new TextureDisplay().apply(new THREE.Mesh(new THREE.PlaneGeometry(), material)), /binary MASK/);
 });
+
+test("explicit projected RGB sampling stays nearest without affecting shared wall RGB", () => {
+  const shared = new THREE.Texture();
+  const hole = new THREE.MeshStandardMaterial({ map: shared, emissiveMap: shared, alphaTest: 0.5 });
+  hole.userData.export_complementary_binary_ownership = true;
+  hole.userData.export_rgb_sampling = "nearest-required";
+  const wall = new THREE.MeshStandardMaterial({ map: shared, emissiveMap: shared, alphaTest: 0.5 });
+  wall.userData.export_complementary_binary_ownership = true;
+  const root = new THREE.Group();
+  root.add(new THREE.Mesh(new THREE.PlaneGeometry(), hole), new THREE.Mesh(new THREE.PlaneGeometry(), wall));
+  const display = new TextureDisplay();
+  display.apply(root, 8);
+  const rgb = hole.emissiveMap;
+  assert.notEqual(rgb, shared);
+  for (const texture of [hole.map!, rgb!]) {
+    assert.equal(texture.magFilter, THREE.NearestFilter);
+    assert.equal(texture.minFilter, THREE.NearestFilter);
+    assert.equal(texture.generateMipmaps, false);
+    assert.equal(texture.anisotropy, 1);
+  }
+  display.smooth = false;
+  display.apply(root, 8);
+  display.smooth = true;
+  display.apply(root, 8);
+  assert.equal(hole.emissiveMap, rgb);
+  assert.equal(rgb!.magFilter, THREE.NearestFilter);
+  assert.equal(wall.emissiveMap, shared);
+  assert.equal(shared.magFilter, THREE.LinearFilter);
+  assert.equal(shared.minFilter, THREE.LinearMipmapLinearFilter);
+  assert.equal(shared.generateMipmaps, true);
+  assert.equal(shared.anisotropy, 8);
+});
