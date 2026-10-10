@@ -13,7 +13,7 @@ from pathlib import Path
 import bpy
 import bmesh
 import numpy as np
-from mathutils import Matrix
+from mathutils import Matrix,Vector
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(Path(__file__).parent), str(ROOT/'level-editor/refinement')]
@@ -55,7 +55,13 @@ def main():
         primary=wood[0]
         others=[o for o in objects if o.type=='MESH' and o!=primary]
         protected=protected_state(others)
-        bm=bmesh.new();points=[bm.verts.new(point)for point in vertices]
+        # Keep map placement in the object transform. Blender's polygon-area
+        # arithmetic loses small valid triangles when all coordinates include
+        # the large map offset; this exact float32 rebase changes no world point.
+        anchor=np.array([1584.,-1225.,0.],dtype=np.float32)
+        world=vertices.astype(np.float32);local=world-anchor
+        if not np.array_equal(local+anchor,world):raise ValueError('Local rebase changes world coordinates')
+        bm=bmesh.new();points=[bm.verts.new(point)for point in local]
         for indices in faces:
             face=bm.faces.new([points[int(i)]for i in indices]);face.smooth=True
         bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
@@ -73,14 +79,16 @@ def main():
         data=bpy.data.meshes.new('Private full visible Tree38 wood');bm.to_mesh(data);bm.free()
         neutral=bpy.data.materials.new('Unprojected field wood38 full visible');neutral.diffuse_color=(.4,.4,.4,1.)
         data.materials.append(neutral)
-        primary.data=data;primary.parent=None;primary.matrix_world=Matrix.Identity(4)
+        primary.data=data;primary.parent=None;primary.matrix_world=Matrix.Translation(Vector(anchor))
+        bpy.context.view_layer.update()
+        if not np.array_equal(np.asarray([primary.matrix_world@v.co for v in data.vertices]),world):raise ValueError('Object placement changes CPU world coordinates')
         if protected!=protected_state(others):raise ValueError('Protected crown or another asset changed')
         args.output.mkdir(parents=True)
         packet={'status':'PRIVATE full visible wood construction; not approved','records':[{'tree':38,'input_model':str(MODEL),'input_model_sha256':MODEL_SHA,'source_node':'building-094','source_mask':str(source),'source_mask_sha256':sha(source),'source_box':report['source_box'],'unresolved_source_coordinates':[],'construction_scope':'Replace complete private wood094; preserve source ownership, other assets and crown','cpu_mesh':str(args.mesh.resolve()),'cpu_mesh_sha256':mesh_sha,'cpu_report':str(report_path.resolve()),'cpu_report_sha256':sha(report_path)}]}
         packet_path=args.output/'recipe.json';packet_path.write_text(json.dumps(packet,indent=2)+'\n')
         destination=args.output/'model.blend';bpy.ops.wm.save_as_mainfile(filepath=str(destination),compress=True)
         if sha(MODEL)!=MODEL_SHA or sha(args.mesh)!=mesh_sha:raise ValueError('Input changed during integration')
-        evidence={'status':'PRIVATE HOLD: full wood hypothesis, source projection and context pending','model_sha256':sha(destination),'input_model':str(MODEL),'input_model_sha256':MODEL_SHA,'packet':str(packet_path.resolve()),'packet_sha256':sha(packet_path),'mesh':topology,'connected_components':components,'protected':protected,'source_mask_unchanged':True,'retained_upper_geometry_changed':True,'inference':'Complete visible wood depth rebuilt; observed source pixels remain the constraint. No previous geometry approval is carried.','gallery_ready':False}
+        evidence={'status':'PRIVATE HOLD: full wood hypothesis, source projection and context pending','model_sha256':sha(destination),'input_model':str(MODEL),'input_model_sha256':MODEL_SHA,'packet':str(packet_path.resolve()),'packet_sha256':sha(packet_path),'mesh':topology,'connected_components':components,'protected':protected,'source_mask_unchanged':True,'local_mesh_origin':anchor.tolist(),'world_float32_coordinates_unchanged_by_rebase':True,'retained_upper_geometry_changed':True,'inference':'Complete visible wood depth rebuilt; observed source pixels remain the constraint. No previous geometry approval is carried.','gallery_ready':False}
         (args.output/'evidence.json').write_text(json.dumps(evidence,indent=2)+'\n')
         print(json.dumps({k:v for k,v in evidence.items()if k!='protected'},indent=2))
     finally:release()

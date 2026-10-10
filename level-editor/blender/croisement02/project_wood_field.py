@@ -6,7 +6,7 @@ model mutation. Run only with a released Blender lane and two threads.
 import argparse, hashlib, json, sys
 from pathlib import Path
 import bpy, bmesh, numpy as np
-from mathutils import Vector
+from mathutils import Vector, Matrix
 from mathutils.bvhtree import BVHTree
 from mathutils.kdtree import KDTree
 
@@ -168,6 +168,19 @@ def main():
                     if (verts[i].co-verts[0].co).cross(verts[i+1].co-verts[0].co).length < 2e-9: continue
                     face = bm.faces.new((verts[0],verts[i],verts[i+1])); face.material_index = len(obj.data.materials)-1; face[layer] = 1
             bm.to_mesh(obj.data); bm.free()
+        local_origin = evidence.get('local_mesh_origin')
+        if local_origin is not None:
+            if args.tree != 38: raise ValueError('Local wood rebase is only established for the whole Tree38 study')
+            before_rebase = faces_hash(parts)
+            anchor = Vector(local_origin)
+            for obj in parts:
+                world = [obj.matrix_world @ v.co for v in obj.data.vertices]
+                for vertex, point in zip(obj.data.vertices, world): vertex.co = point-anchor
+                obj.parent = None
+                obj.matrix_world = Matrix.Translation(anchor)
+                obj.data.update()
+            bpy.context.view_layer.update()
+            if faces_hash(parts) != before_rebase: raise ValueError('Local rebase changed world faces')
         before_projection = faces_hash(parts)
         scoped = {o.name:[f.index for f in o.data.polygons if o.data.materials[f.material_index].name.startswith('Unprojected field wood')] for o in parts}
         if any(not faces for faces in scoped.values()): raise ValueError('Empty new-surface projection scope')
@@ -189,6 +202,9 @@ def main():
         bpy.ops.wm.save_as_mainfile(filepath=str(args.output/'model.blend'), compress=args.compress)
         if sha(model) != evidence['model_sha256'] or sha(old) != record['input_model_sha256']: raise ValueError('Input mutation')
         report=dict(status='PRIVATE HOLD: projected prototype, no renders or approval', model_sha256=sha(args.output/'model.blend'), previous_prototype=str(args.prototype), previous_model_sha256=evidence['model_sha256'], packet_sha256=sha(args.packet), body_world_faces_sha256=body_hash, partition_preserves_world_faces=True, internal_caps_added=0, domain_review=str(args.domain_review) if args.domain_review else None, domain_review_sha256=sha(args.domain_review) if args.domain_review else None, disconnected_source_checks=pixel_checks, retained_source_fragments=len(fragments), source_scoped_projection=scoped, support=support, actual_ground_receiver=ground_evidence, protected=protected, pending=['Opaque source coverage and nine-pixel exact coverage','Actual terrain receiver footprint and38 terrain-occluded source coverage','Solid/actual independent visual review'])
+        if local_origin is not None:
+            report['local_mesh_origin'] = local_origin
+            report['world_faces_unchanged_by_rebase'] = True
         (args.output/'evidence.json').write_text(json.dumps(report,indent=2)+'\n')
     except Exception as error:
         (args.output/'failure.json').write_text(json.dumps(dict(status='PRIVATE HOLD; failed before readiness',error=str(error)),indent=2)+'\n')
