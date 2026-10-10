@@ -13,6 +13,22 @@ mod pcs;
 #[cfg(test)]
 mod stage_tests;
 
+/// Resolve authored stair precision once while constructing static navigation.
+fn motion_area_points(area: &crate::level_data::RawMotionArea) -> Vec<MapPoint> {
+    if area.is_lift && !area.precise_polygon.is_empty() {
+        area.precise_polygon
+            .iter()
+            .map(|&[x, y]| MapPoint::new(x as f32, y as f32))
+            .collect()
+    } else {
+        area.polygon
+            .points
+            .iter()
+            .map(|&(x, y)| MapPoint::new(f32::from(x), f32::from(y)))
+            .collect()
+    }
+}
+
 /// Validated, staged construction of the mission-authored runtime domains.
 ///
 /// The builder owns the mission identity and explicit script mode; stage inputs
@@ -2534,23 +2550,21 @@ impl EngineInner {
                 // perimeter is both motion-blocking and repulsive, so
                 // anti-collision pushes actors off walls instead of
                 // letting them scrape along.
-                let poly = &area.polygon;
-                for current in 0..poly.points.len() {
+                let poly = motion_area_points(area);
+                for current in 0..poly.len() {
                     // The original game seeds the previous point from the final
                     // polygon vertex, so the closing edge is inserted first,
                     // followed by 0→1, 1→2, ... . Position authorization
                     // applies intersecting line pushes in this insertion
                     // order, making the cyclic edge order observable.
                     let previous = if current == 0 {
-                        poly.points.len() - 1
+                        poly.len() - 1
                     } else {
                         current - 1
                     };
-                    let (x1, y1) = poly.points[previous];
-                    let (x2, y2) = poly.points[current];
                     let mut line = crate::fast_find_grid::GridLine::new(
-                        MapPoint::new(x1 as f32, y1 as f32),
-                        MapPoint::new(x2 as f32, y2 as f32),
+                        poly[previous],
+                        poly[current],
                         true, // is_motion
                     );
                     line.initialize_motion_normal(true);
@@ -2561,12 +2575,12 @@ impl EngineInner {
                 // of the motion area.  `det(v1, v2) < 0` marks an
                 // inward corner (the wedge faces *into* the walkable
                 // area, pushing actors away from the pinch point).
-                let n = poly.points.len();
+                let n = poly.len();
                 if n > 2 {
                     for i in 0..n {
-                        let (ax, ay) = poly.points[i];
-                        let (bx, by) = poly.points[(i + 1) % n];
-                        let (cx, cy) = poly.points[(i + 2) % n];
+                        let MapPoint { x: ax, y: ay } = poly[i];
+                        let MapPoint { x: bx, y: by } = poly[(i + 1) % n];
+                        let MapPoint { x: cx, y: cy } = poly[(i + 2) % n];
                         let v1 = (bx as f32 - ax as f32, by as f32 - ay as f32);
                         let v2 = (cx as f32 - bx as f32, cy as f32 - by as f32);
                         let det = v1.0 * v2.1 - v1.1 * v2.0;
@@ -2702,16 +2716,9 @@ impl EngineInner {
                 }
 
                 // Store polygon vertices for point-in-area hit-testing.
-                let polygon_pts: Vec<MapPoint> = area
-                    .polygon
-                    .points
-                    .iter()
-                    .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
-                    .collect();
-
                 move_areas.push(crate::pathfinder::MotionArea {
                     skeleton,
-                    polygon: polygon_pts,
+                    polygon: poly,
                     motion_obstacles: obstacles,
                 });
             }
@@ -2870,12 +2877,7 @@ impl EngineInner {
                         area_type |= SectorType::LIFT;
                     }
 
-                    let pts: Vec<_> = area
-                        .polygon
-                        .points
-                        .iter()
-                        .map(|&(x, y)| MapPoint::new(x as f32, y as f32))
-                        .collect();
+                    let pts = motion_area_points(area);
                     let mut bbox = MapBBox::new();
                     for &p in &pts {
                         bbox.expand_point(p);

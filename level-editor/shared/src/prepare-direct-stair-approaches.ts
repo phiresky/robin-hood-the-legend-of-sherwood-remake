@@ -57,7 +57,7 @@ export function prepareDirectStairApproaches(
     if (lift.lift_type !== 1 || lift.doors.length < 2) continue;
     const area = areas.get(lift.motion_area_index);
     if (!area || area.obstacles.length) continue;
-    const boundary = area.polygon.points;
+    const boundary = area.precise_polygon ?? area.polygon.points;
     const planes = stairBoundaryPlanes(boundary);
     if (
       planes.length < 3 ||

@@ -6,6 +6,8 @@ import { pointInGameplayPolygon } from "./navigation-anchor.ts";
 import { physicalCollisionPieces } from "./physical-collision-pieces.ts";
 import { physicalStairFloor } from "./physical-stair-floor.ts";
 import { projectStairClearance } from "./project-stair-clearance.ts";
+import { stairCenterRegion } from "./stair-center-region.ts";
+import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
 
 export interface PhysicalStairInput {
   /** Prepare native walking clearance for stair lifts, excluding ladders and walls. */
@@ -55,10 +57,18 @@ export function compilePhysicalStairArea(input: PhysicalStairAreaInput): {
     polygon: obstacle.polygon,
   }));
   const floor = physicalStairFloor(input.surfaces);
-  const clearanceBoundary =
+  const roundedClearance =
     input.prepareWalkingClearance && !floor.patches && collision.length === 0
       ? projectStairClearance(navigation.boundary, floor.plane)
       : undefined;
+  // Keep established endpoints when integer clearance remains usable. Recover
+  // subpixel precision only when rounding removes the walking center region.
+  const preciseClearance =
+    roundedClearance &&
+    stairCenterRegion(roundedClearance, [half[0] - 0.99, half[1] - 0.99]).length < 3
+      ? projectStairClearance(navigation.boundary, floor.plane, true)
+      : undefined;
+  const clearanceBoundary = preciseClearance ?? roundedClearance;
   const project = (point: Point): Point => {
     const result: Point = [Math.round(point[0]), Math.round(point[1] - floor.heightAt(point))];
     if (result.some((value) => !Number.isFinite(value) || value < -32768 || value > 32767))
@@ -74,7 +84,12 @@ export function compilePhysicalStairArea(input: PhysicalStairAreaInput): {
       skeleton_segments: [],
       // A valid physical floor can project to a line. Preserve its ordered
       // vertices; simplifying that line would lose the physical surface identity.
-      polygon: { points: clearanceBoundary ?? floor.splitRing(navigation.boundary).map(project) },
+      polygon: {
+        points: clearanceBoundary
+          ? clearanceBoundary.map(([x, y]): Point => [Math.round(x), Math.round(y)])
+          : floor.splitRing(navigation.boundary).map(project),
+      },
+      ...(preciseClearance ? { precise_polygon: preciseClearance } : {}),
       obstacles: collision.map((obstacle) => ({
         state_id: obstacle.stateId,
         polygon: { points: floor.splitRing(obstacle.polygon).map(project) },

@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Static subpixel stair clearance.** Map export preserves precise clearance
+  contours for stairs whose projection loses walking space on the integer grid.
+  Mission startup uses these contours for existing collision lines, sector bounds
+  and pathfinder polygons. Graphs and passage endpoints remain prepared by the
+  exporter; no runtime geometry solver is involved.
+
 - **Fresh-mission parity capture.** A reproducible capture controller inventories
   playable missions, starts ten independent 60-second random-input runs for each,
   and admits only complete fresh-start traces. See `docs/TESTING.md`.

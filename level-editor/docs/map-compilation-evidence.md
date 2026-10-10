@@ -4,6 +4,44 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Static subpixel stair clearance (2026-10-10)
+
+The nearly edge-on east-hall floor retains usable physical space but loses all
+walking centers when its clearance polygon is rounded. The exporter now emits
+`precise_polygon` only when the rounded clearance has no inset walking center
+region. It constructs graph links and passage endpoints against that contour.
+Startup consumes it for the lift's static collision lines, repulsive corners,
+sector bounds and pathfinder polygon. No per-tick code or runtime solver changed.
+A regression finds at least ten supported integer endpoints on the subpixel
+fixture and verifies their world-space actor footprints; another checks that a
+quarter-unit contour reaches all three native static navigation representations.
+
+Applying precision to every corrected stair initially moved working tower
+endpoints and failed receiver checks at 137 degrees. Restricting recovery to
+unusable rounded clearance fixes that regression. Final fresh matrices:
+
+| Asset / local output suffix | Prepared / sprite | Gate discovery | Ordinary click | Hidden-capable click |
+| --- | ---: | ---: | ---: | ---: |
+| East hall / `VeWmvd` | 232/256 each | 240/256 | 236/256 | 240/256 |
+| Church side tower / `FtNRqq` | 128/128 each | 128/128 | 128/128 | 128/128 |
+
+Both directories are under `work/map-compile/grounded-stair-placements-`. Each
+matrix uses two copies, eight angles and elevations 0/40, with all authored
+entrances retained. East-hall failures are exclusively at 217 degrees; the
+previously failing 270-degree cases pass 32/32 in every mode. Its upper stair at
+217 degrees has a narrow five-vertex contour and emits unavailable-approach
+warnings. Broader concave-floor preparation remains open.
+
+The earlier precision experiment `lcu5Bq` also rechecked Nottingham south stair
+house: 64/64 prepared, sprite, gate and hidden-capable cases, with the known four
+occluded ordinary clicks still failing. This is not a new full-parity claim.
+Validation: 168 affected compiler tests pass; engine suite 4,352 passed, zero
+failed, 47 ignored; game build, Rust formatting and scoped editor lint pass.
+The optimized stock benchmark and a direct repeat both complete all 540 frames,
+but repeat medians of 9.105/0.786/2.615 ms exceed the historical baseline. See the
+runtime inventory for the full timing table and limitation; this is not a timing
+budget certification.
+
 ## Same-landing movement audit correction (2026-10-10)
 
 Two east-hall upper-stair doors lead to the same landing sector. Native gate

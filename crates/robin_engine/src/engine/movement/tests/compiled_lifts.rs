@@ -83,6 +83,64 @@ fn transformed_lift_fixture(
 }
 
 #[test]
+fn compiled_stair_precision_initializes_static_sectors_lines_and_pathfinder() {
+    let mut document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-lift.level.json"
+    )))
+    .unwrap();
+    let layers = document["asset_geometry"]["motion_data"]["layers"]
+        .as_array_mut()
+        .unwrap();
+    let area = layers
+        .iter_mut()
+        .flat_map(|layer| layer.as_array_mut().unwrap())
+        .find(|area| area["is_lift"] == true)
+        .unwrap();
+    let precise: Vec<[f64; 2]> = area["polygon"]["points"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|point| {
+            [
+                point[0].as_f64().unwrap() + 0.25,
+                point[1].as_f64().unwrap(),
+            ]
+        })
+        .collect();
+    area["precise_polygon"] = serde_json::json!(precise);
+    let (engine, assets) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+    let door = &engine.script_domains.interactables.doors[0];
+    let sector = &engine.world.fast_grid.level.sectors[usize::from(door.sector_in_index.unwrap())];
+    let expected: Vec<_> = precise
+        .iter()
+        .map(|&[x, y]| MapPoint::new(x as f32, y as f32))
+        .collect();
+    assert_eq!(sector.points, expected);
+    for point in &expected {
+        assert!(
+            engine
+                .world
+                .fast_grid
+                .level
+                .lines
+                .iter()
+                .any(|line| line.a == *point)
+        );
+    }
+    assert!(
+        assets
+            .navigation
+            .pathfinder_graph
+            .static_data
+            .move_layers
+            .iter()
+            .flatten()
+            .any(|area| area.polygon == expected)
+    );
+}
+
+#[test]
 fn compiled_lift_endpoints_and_ai_follow_height_after_rotation() {
     use crate::ai::{ForecastInput, forecast_destination_for_ia};
     for degrees in [0., 68., 180., 248.] {

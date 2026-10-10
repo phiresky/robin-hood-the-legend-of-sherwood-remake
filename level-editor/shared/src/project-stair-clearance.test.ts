@@ -56,6 +56,38 @@ test("projected stair collision admits only physically supported movement footpr
   assert.ok(corrected > 0, "at least one projected floor must require recovery");
 });
 
+test("subpixel clearance preserves usable centers on a nearly edge-on stair", () => {
+  const vertices: Vec3[] = [
+    [1075.2933405239062, 1039.2424001432735, 110.00101],
+    [1170.6715386567926, 991.3159636750036, 0],
+    [1202.7889942370982, 1012.488504478648, 0],
+    [1105.995070924013, 1059.481663431518, 110.00101],
+  ];
+  const plane = heightPlane(vertices);
+  const boundary = vertices.map(([x, y]): Point => [x, y]);
+  const precise = projectStairClearance(boundary, plane, true);
+  const rounded = projectStairClearance(boundary, plane);
+  assert.ok(precise && rounded);
+  const { area } = compilePhysicalStairArea({
+    surfaces: [{ polygon: vertices, holes: [] }],
+    doors: [],
+    obstacles: [],
+    prepareWalkingClearance: true,
+  });
+  assert.ok(area.precise_polygon);
+  assert.deepEqual(area.precise_polygon, precise);
+  let usable = 0;
+  for (let x = 1070; x < 1210; x++)
+    for (let y = 920; y < 1020; y++) {
+      assert.ok(!fits([x, y], rounded));
+      if (!fits([x, y], precise)) continue;
+      usable++;
+      const world: Point = [x, (y + plane[0] * x + plane[2]) / (1 - plane[1])];
+      assert.ok(fits(world, boundary));
+    }
+  assert.ok(usable >= 10, `Only ${usable} supported integer endpoints survived`);
+});
+
 test("flat, singular and usable nonconvex floors keep their existing representation", () => {
   const square: Point[] = [
     [0, 0],

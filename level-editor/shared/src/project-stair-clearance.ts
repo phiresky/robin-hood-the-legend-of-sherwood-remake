@@ -12,7 +12,11 @@ import { stairBoundaryPlanes, stairCenterRegion } from "./stair-center-region.ts
  * A collapsed concave outline may use its conservative inner kernel.
  * Holes, obstacles and bent floors must be handled separately by the caller.
  */
-export function projectStairClearance(boundary: Point[], plane: HeightPlane): Point[] | undefined {
+export function projectStairClearance(
+  boundary: Point[],
+  plane: HeightPlane,
+  preservePrecision = false,
+): Point[] | undefined {
   const [a, b, c] = plane;
   if (Math.abs(1 - b) < 1e-6 || boundary.length < 3) return undefined;
   let projected: Point[] = boundary.map(([x, y]) => [x, y - a * x - b * y - c]);
@@ -59,9 +63,10 @@ export function projectStairClearance(boundary: Point[], plane: HeightPlane): Po
     const nativeSupport = Math.abs(nx) * (half[0] - 1) + Math.abs(ny) * (half[1] - 1);
     const correction = nativeSupport - physicalSupport;
     changed ||= Math.abs(correction) > 1e-6;
-    // Rounding each coordinate by at most half a unit must not expand the
-    // physically supported center region. Keep a further floating-point margin.
-    lines.push([nx, ny, limit + correction - 0.5001 * (Math.abs(nx) + Math.abs(ny))]);
+    // Integer output reserves half a unit per coordinate for rounding. Precise
+    // output needs only a margin for native binary32 collision coordinates.
+    const margin = preservePrecision ? 0.001 : 0.5001;
+    lines.push([nx, ny, limit + correction - margin * (Math.abs(nx) + Math.abs(ny))]);
   }
   if (!changed || lines.length < 3) return undefined;
   // Keep established passage endpoints and receiving-boundary crossings when
@@ -82,7 +87,7 @@ export function projectStairClearance(boundary: Point[], plane: HeightPlane): Po
       (first[0] * second[2] - first[2] * second[0]) / determinant,
     ];
     if (lines.some(([x, y, limit]) => x * point[0] + y * point[1] > limit + 1e-6)) return undefined;
-    result.push([Math.round(point[0]), Math.round(point[1])]);
+    result.push(preservePrecision ? point : [Math.round(point[0]), Math.round(point[1])]);
   }
   if (
     result.some((point) =>

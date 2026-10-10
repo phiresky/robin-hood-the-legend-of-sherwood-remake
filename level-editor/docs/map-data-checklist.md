@@ -11,7 +11,16 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
-**East-hall current audit (2026-10-10):** all five modes pass 24/32 cases after
+**Subpixel stair clearance (2026-10-10):** the exporter preserves precise
+clearance contours, constructs graphs against them and chooses supported integer
+endpoints. Startup binds those contours into existing static collision and sector
+data. East hall at 270 degrees now passes **32/32 in all five modes**; the full
+eight-angle matrix still fails at 217 degrees. This introduces no per-tick solver.
+The stock regression completes all 540 frames, but its latest timing repeat
+exceeds the historical baseline. Approximately 1 ms ticks are not currently
+certified; see the runtime inventory for measurements and the unresolved gap.
+
+**Earlier east-hall audit (2026-10-10):** all five modes pass 24/32 cases after
 correcting the expectation that movement between doors on one landing must detour
 through a stair. Gate/player audits separately report eight same-landing walks;
 prepared audits still force the stair traversal. The remaining eight failures

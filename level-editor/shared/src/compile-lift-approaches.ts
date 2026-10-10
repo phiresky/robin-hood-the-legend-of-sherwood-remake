@@ -83,11 +83,14 @@ export function compileLiftApproaches(geometry: CompiledAssetGeometry): void {
       for (const side of ["in", "out"] as const) {
         const area = areas.get(`${door[`sector_${side}`]}/${door[`layer_${side}`]}`);
         if (!area) throw new Error(`Lift ${liftIndex} door ${doorIndex}: missing ${side} area`);
+        const boundary = area.is_lift
+          ? (area.precise_polygon ?? area.polygon.points)
+          : area.polygon.points;
         const blockers = area.obstacles.filter((obstacle) => obstacle.state_id === 0);
         const half: Point = side === "in" && directStairs.has(door) ? [5, 2] : [6, 3];
         const fits = (point: Point) =>
-          pointInGameplayPolygon(point, area.polygon.points) &&
-          !touches(area.polygon.points, point, half) &&
+          pointInGameplayPolygon(point, boundary) &&
+          !touches(boundary, point, half) &&
           blockers.every(
             (obstacle) =>
               !pointInGameplayPolygon(point, obstacle.polygon.points) &&
@@ -119,13 +122,13 @@ export function compileLiftApproaches(geometry: CompiledAssetGeometry): void {
         let adjusted: Point | undefined;
         const reachable = (candidate: Point) =>
           candidate.every((value) => value >= -32768 && value <= 32767) &&
-          !crosses(area.polygon.points, source, candidate) &&
+          !crosses(boundary, source, candidate) &&
           blockers.every(
             (obstacle) =>
               !pointInGameplayPolygon(source, obstacle.polygon.points) &&
               !crosses(obstacle.polygon.points, source, candidate),
           );
-        if (length > 0 && pointInGameplayPolygon(source, area.polygon.points)) {
+        if (length > 0 && pointInGameplayPolygon(source, boundary)) {
           if (radius === undefined) {
             for (let distance = 0; distance <= 64; distance++) {
               const candidate: Point = [
@@ -134,7 +137,7 @@ export function compileLiftApproaches(geometry: CompiledAssetGeometry): void {
               ];
               if (
                 !reachable(candidate) ||
-                !pointInGameplayPolygon(candidate, area.polygon.points) ||
+                !pointInGameplayPolygon(candidate, boundary) ||
                 blockers.some((obstacle) => touches(obstacle.polygon.points, candidate))
               )
                 break;

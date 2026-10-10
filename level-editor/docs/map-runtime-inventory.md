@@ -1,5 +1,30 @@
 # Runtime changes introduced or extended for map compilation
 
+**2026-10-10 — subpixel stair boundaries:** mission startup now reads a lift
+area's validated `precise_polygon` when constructing its collision lines,
+repulsive corners, sector polygon and pathfinder area polygon. Export constructs
+the clearance contour, graph and integer passage endpoints. The change adds no
+per-tick branch, route solver or dynamic geometry preparation. Stock maps lack
+this optional contour and retain the same coordinates and line order. The
+quarter-unit startup regression verifies all three static representations agree.
+Fresh east-hall 270-degree exports now pass all 32 routes in each of five native
+audit modes; broader rotation limitations remain in the map-data checklist.
+
+The optimized stock regression and a direct repeat both complete all 540 frames.
+The repeat is saved in `work/map-compile/subpixel-stair-stock-ticks-20261010.log`
+under the editor directory. Its median / p95 / maximum tick times are:
+
+| Mission | Median | p95 | Maximum |
+| --- | ---: | ---: | ---: |
+| H07_Not_MK | 9.105 ms | 22.557 ms | 30.972 ms |
+| H01_Lin_VL | 0.786 ms | 7.747 ms | 15.495 ms |
+| S01_Not_VL | 2.615 ms | 9.634 ms | 15.978 ms |
+
+These measurements are worse than the historical table below and do **not**
+certify the approximately 1 ms target. The difference has not been isolated to
+code changes or execution conditions; no causal performance claim is made for
+the startup-only contour change. Performance investigation remains open.
+
 Audit date: 2026-10-08. Code inspected through `beec74bc8`.
 
 **Static navigation preparation has incorrectly entered movement ticks.**
