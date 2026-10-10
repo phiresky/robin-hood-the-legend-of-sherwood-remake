@@ -239,6 +239,8 @@ def main():
                     'Full map/group/part/palette/reload browser proof required before publication')
             editor_pin = browser_evidence(args.editor_proof, args.editor_sha256, rows)
             editor = json.loads(args.editor_proof.read_text())
+            require(editor.get('staged_map_sha256') == sha(STAGE / 'york.rhlos-map.json'),
+                    'Editor proof does not bind the exact staged York map')
             require(editor.get('editor_checks') == {
                 'map_load': True, 'group_selection': True, 'part_selection': True,
                 'palette_insert': True, 'save_reload': True}, 'Incomplete editor integration proof')
