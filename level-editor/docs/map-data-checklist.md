@@ -11,6 +11,21 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**Browser bake/reopen round trip (2026-10-10):** two independently placed
+east-hall assets on elevated editor terrain bake to a real 2000×2000 color/depth
+export. ZIP decoding and reopening/rebaking through the browser viewport preserve
+the pixels and gameplay descriptor exactly. A second scene adds one PC spawn
+and one soldier: both survive with correct elevated receiver bindings, while map
+geometry and PNGs remain identical. The browser-produced map-only descriptor
+passes **16/16 stair routes in all five native modes**.
+
+This is not full asset parity: the export reports **150 warnings**, including
+omitted `hall-reveal` controls, unbound entrances and appearances held in their
+initial state. Repairing those asset-local bindings remains necessary. The
+explicit frame also clips the first tower's top. Browser component integration
+is covered here; full editor button flows, game-menu installation and in-game
+image/actor compositing are still open.
+
 **Packaged stair round trip (2026-10-10):** the placement verifier's
 `--zip-roundtrip` mode packages the export, reads its descriptor back from the
 ZIP, reopens the pinned editor document and recompiles it. Descriptors and

@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Browser-rendered ZIP and mission separation (2026-10-10)
+
+`app/tests/map-bake-library.html?map=<scene>&roundtrip=1` now checks worker
+packaging, decoded PNG dimensions/formats/pixels, browser reopening of the ZIP's
+editor document and pinned models, and a second complete viewport bake. Gameplay,
+authoring data, warnings and color/depth hashes must remain identical. Depth must
+vary, so an empty diagnostic raster cannot satisfy this test. Normal bake mode
+remains available without the second load/render.
+
+Local artifacts are under `work/map-compile/browser-east-hall-20261010/`.
+The bounded HTTP library contains only the published east-hall catalog entry,
+its embedded descriptor, pinned model/resources and the new two-copy scene from
+`grounded-stair-placements-fR7tTe` at 270 degrees and elevation 40. No level-data
+fallback is used. Chromium/SwiftShader runs produced:
+
+- `rendered-east-hall.zip`: 2000×2000, 105 sight obstacles, 8,596,811 bytes.
+- `rendered-east-hall-mission.zip`: same map with an authored Robin spawn and
+  blue halberdier, 8,597,687 bytes. Both marker profiles/directions survive;
+  projected positions are [900,860] and [1000,910], bound to the height-40 terrain.
+- `mission-separation-report.json`: verifies identical map geometry and PNG
+  hashes across the map-only and mission variants. Editor coordinates remain 3D.
+- `native/`: map-only descriptor extracted from the browser ZIP and five native
+  stair reports; each passes **16/16**, with zero failures or forbidden routes.
+
+The viewport visibly renders both textured assets on grass; the first tower's
+top is clipped by the explicit export frame. This checks repeatability and data
+transport, not a visual comparison against stock gameplay. The preserved 150
+warnings include unresolved reveal controls and entrances plus appearance
+bindings retained in their initial state. These remain actual gameplay gaps,
+not successful round-trip coverage. Full editor button interaction, game-menu
+installation, actual mission actor spawning and in-game compositing remain open.
+Type checking, scoped lint/formatting, game build and Cargo formatting pass.
+
 ## Packaged prepared-navigation round trip (2026-10-10)
 
 Run from the editor directory:
