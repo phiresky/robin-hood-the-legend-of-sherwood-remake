@@ -18,8 +18,11 @@ routes pass synthetic traversal, complete-sprite traversal and gate discovery.
 Normal non-jumping-PC clicks pass 60/64 routes, including sixteen clicks on jump
 overlays that select their underlying floor. The remaining four upper landings
 are covered by the roof at 217 degrees and have no ordinary selectable floor
-target; hidden-sector selection remains to be verified. These are not skipped or
-counted as passes. Rendering and the asset's existing draft warnings remain open.
+target. A separate hidden-sector selection audit now passes all 64 routes, using
+the existing hidden lookup for exactly those four cases and preserving its chosen
+sector/layer through normal movement dispatch. Ordinary-click coverage remains
+60/64; no cases are skipped. Host modifier events, planning-queue playback,
+rendering and the asset's existing draft warnings remain open.
 
 **Fresh keep mask placement (2026-10-09):** the great keep's west-view mask now
 has a finite asset-local ground receiver probe. Two independent copies at four
@@ -96,7 +99,7 @@ to identify each source zone. Rotated roof fixtures match again without changing
 their expected output. Six terrain/navigation fixtures were refreshed to include
 explicit receiving-plane anchors and current native contour ordering; their
 navigation graphs are unchanged. Native map integration passes 71 tests (five
-ignored), and actor navigation passes 26 (31 opt-in audits ignored).
+ignored), and actor navigation passes 26 (32 opt-in audits ignored).
 
 Fresh saved-document exports after the clearance correction load natively:
 Wychford constructs 86 areas, 31 doors and no jump pairs; Derby constructs 60

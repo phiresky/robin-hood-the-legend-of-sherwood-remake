@@ -339,12 +339,35 @@ enum StairDispatch {
     Prepared,
     GateSearch,
     PlayerClick,
+    PlayerHiddenSelection,
+}
+
+impl StairDispatch {
+    fn is_player(self) -> bool {
+        matches!(self, Self::PlayerClick | Self::PlayerHiddenSelection)
+    }
+}
+
+fn select_stair_landing(
+    engine: &EngineInner,
+    source: MapPoint,
+    door: &crate::gate::Door,
+    dispatch: StairDispatch,
+) -> Result<(MapPoint, bool), String> {
+    match stair_landing_click(engine, source, door, false) {
+        Ok(point) => Ok((point, false)),
+        Err(_) if dispatch == StairDispatch::PlayerHiddenSelection => {
+            stair_landing_click(engine, source, door, true).map(|point| (point, true))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn stair_landing_click(
     engine: &EngineInner,
     source: MapPoint,
     door: &crate::gate::Door,
+    hidden: bool,
 ) -> Result<MapPoint, String> {
     let grid = &engine.world.fast_grid;
     let half = crate::coordinates::MoveBoxHalfDiagonal::new(6., 3.);
@@ -358,7 +381,11 @@ fn stair_landing_click(
     let mut obstructed = 0;
     for (x, y) in offsets {
         let point = MapPoint::new(door.point_out.x + x as f32, door.point_out.y + y as f32);
-        let hit = grid.get_sector_screen(point, source);
+        let hit = if hidden {
+            grid.get_sector_screen_hidden(point, source)
+        } else {
+            grid.get_sector_screen(point, source)
+        };
         // This walking PC has no jump skill. A jump overlay therefore selects
         // its underlying floor through normal player movement dispatch.
         let selected_floor = hit.sector_idx.and_then(|index| {
@@ -404,10 +431,10 @@ fn walk_exported_lift_route(
     let doors = &engine.script_domains.interactables.doors;
     let enter = doors[entrance].clone();
     let leave = doors[exit].clone();
-    let goal = if dispatch == StairDispatch::PlayerClick {
-        stair_landing_click(&engine, enter.point_out, &leave)?
+    let (goal, hidden) = if dispatch.is_player() {
+        select_stair_landing(&engine, enter.point_out, &leave, dispatch)?
     } else {
-        leave.point_out
+        (leave.point_out, false)
     };
     let source_sector = crate::position_interface::SectorHandle::from_number(enter.sector_out)
         .with_arena_index(enter.sector_out_index.unwrap());
@@ -495,15 +522,30 @@ fn walk_exported_lift_route(
     } else {
         prepared_path
     };
-    let route = if dispatch == StairDispatch::PlayerClick {
+    let route = if dispatch.is_player() {
+        // Preserve the sector resolved by hidden-screen selection, as the host
+        // command does. Neither the expected destination nor a gate path is injected.
+        let selected = hidden.then(|| {
+            engine
+                .world
+                .fast_grid
+                .get_sector_screen_hidden(goal, enter.point_out)
+        });
+        let selected_index = selected.and_then(|hit| hit.sector_idx);
+        let selected_goal = selected.and_then(|hit| {
+            let index = hit.sector_idx?;
+            let selected = &engine.world.fast_grid.level.sectors[usize::from(index)];
+            (!selected.sector_type.is_door() && !selected.sector_type.is_jump())
+                .then_some((selected.sector_number, hit.layer))
+        });
         engine.perform_group_move(
             TickCtx::new(&sim, &assets),
             &[owner],
             goal,
             false,
             false,
-            None,
-            None,
+            selected_goal,
+            selected_goal.and(selected_index),
             None,
             &[],
             &[],
@@ -594,7 +636,7 @@ fn walk_exported_lift_route(
         }
         // A zero-distance stop reserves 0.01 units before playing in place.
         // Only accept that residual after the observed stop order has finished.
-        let stopped = dispatch == StairDispatch::PlayerClick
+        let stopped = dispatch.is_player()
             && stop_element.is_some_and(|(id, index)| {
                 engine
                     .seq()
@@ -708,6 +750,18 @@ fn exported_stairs_resolve_player_clicks_and_complete_routes() {
         Some(&sprite),
         "actor-stair-player-click-report.json",
         StairDispatch::PlayerClick,
+    );
+}
+
+#[test]
+#[ignore = "requires ROBIN_ASSET_MAP_DIAGNOSTICS and ROBIN_CLIMB_RHS"]
+fn exported_stairs_resolve_hidden_landings_and_complete_routes() {
+    let sprite = complete_climb_sprite();
+    audit_exported_lift_routes(
+        &[crate::sector::LiftType::Stairs],
+        Some(&sprite),
+        "actor-stair-hidden-selection-report.json",
+        StairDispatch::PlayerHiddenSelection,
     );
 }
 
@@ -1559,18 +1613,26 @@ fn audit_exported_lift_routes(
                     if entrance == exit {
                         continue;
                     }
-                    if dispatch == StairDispatch::PlayerClick {
-                        let goal =
-                            stair_landing_click(&engine, doors[entrance].point_out, &doors[exit]);
+                    if dispatch.is_player() {
+                        let selection = select_stair_landing(
+                            &engine,
+                            doors[entrance].point_out,
+                            &doors[exit],
+                            dispatch,
+                        );
+                        let hidden = selection.as_ref().is_ok_and(|(_, hidden)| *hidden);
+                        let goal = selection.map(|(point, _)| point);
                         let jump_overlay = goal
                             .as_ref()
                             .ok()
                             .and_then(|point| {
-                                engine
-                                    .world
-                                    .fast_grid
-                                    .get_sector_screen(*point, doors[entrance].point_out)
-                                    .sector_idx
+                                let grid = &engine.world.fast_grid;
+                                if hidden {
+                                    grid.get_sector_screen_hidden(*point, doors[entrance].point_out)
+                                } else {
+                                    grid.get_sector_screen(*point, doors[entrance].point_out)
+                                }
+                                .sector_idx
                             })
                             .is_some_and(|index| {
                                 engine.world.fast_grid.level.sectors[usize::from(index)]
@@ -1582,6 +1644,7 @@ fn audit_exported_lift_routes(
                             "endpoint": doors[exit].point_out,
                             "goal": goal,
                             "jump_overlay": jump_overlay,
+                            "hidden_selection": hidden,
                         }));
                     }
                     let outcome = walk_exported_lift_route(

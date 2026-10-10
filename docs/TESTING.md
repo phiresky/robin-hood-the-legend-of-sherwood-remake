@@ -353,6 +353,16 @@ serializes and reopens new editor scenes on flat terrain, without source-map inp
 Omitting `--asset` retains the church-side-tower regression; `--require-masks`
 checks that asset's two ground-bound masks and independent ownership.
 
+`exported_stairs_resolve_hidden_landings_and_complete_routes` first tries ordinary
+landing selection, then the existing hidden-screen lookup if no ordinary target
+fits. The report `actor-stair-hidden-selection-report.json` marks each use with
+`hidden_selection: true`. For those clicks, it preserves the lookup's sector,
+arena index and layer using the same command fields as host input, then executes
+normal group movement. No gate path or expected destination sector is supplied
+to the search. The ordinary-click report remains separate. This verifies hidden
+selection plus movement, not host modifier events, planning-queue playback or
+rendered visibility.
+
 Climbing routes use a complete character animation profile instead of synthetic
 walking frames. Only that explicitly supplied RHS file is mounted; source-level
 files and mission scripts are unavailable. Navigation comes from the compiled

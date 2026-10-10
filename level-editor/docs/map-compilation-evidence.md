@@ -4,6 +4,27 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Hidden stair-house landing selection (2026-10-10)
+
+`exported_stairs_resolve_hidden_landings_and_complete_routes` passes **64/64**
+routes on `grounded-stair-placements-5Selse`. Its separate
+`actor-stair-hidden-selection-report.json` records exactly four uses of hidden
+selection: ascending to the roof-covered landing at 217 degrees, on both copies
+and elevations. The other sixty routes use ordinary screen selection.
+
+The audit tries the normal target search first, then `get_sector_screen_hidden`
+when no normal landing target fits. It preserves the hidden lookup's sector,
+arena index and layer using the host command's ordinary movement fields; it does
+not inject the expected destination or a gate path. Normal movement completes
+each crossing with unchanged passage, receiver and final-arrival checks. This
+closes native hidden selection plus movement for these exports. It does not
+simulate host modifier events, planning-queue playback or rendered visibility.
+The ordinary-click audit still reports its four covered landings separately.
+No production engine or export-geometry changes are needed.
+The final source revision passes all 64 routes again and the regular navigation
+suite passes 26 tests (32 opt-in audits ignored). Rust formatting and the game
+build pass.
+
 ## Independent stair-house placement (2026-10-09)
 
 `check-grounded-stair-placements.mjs` now accepts `--asset=<id>` for independently
