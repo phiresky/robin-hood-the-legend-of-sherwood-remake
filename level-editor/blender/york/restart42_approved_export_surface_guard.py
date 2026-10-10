@@ -20,6 +20,8 @@ from render_slots import acquire, release
 BASE = ROOT / 'level-editor/work/york-refinement/restart2'
 CONFIG = {
     'well': ('restart42-approved-well-export-v2', 'restart38-well-texture-baked-v1'),
+    'shed': ('restart43-approved-shed-export-v1', 'shed-texture-baked-v1'),
+    'gatehouse': ('restart43-approved-gatehouse-export-v1', 'restart42-channel-assembly-v1'),
     'storehouse': ('restart42-approved-storehouse-export-v1', 'restart38-storehouse-texture-baked-v3'),
 }
 sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
@@ -44,6 +46,9 @@ def main(key):
     objects = {o.name: o for o in bpy.context.scene.objects if o.type == 'MESH'}
     doc, buffers, _ = la.read_glb(glb)
     nodes = [n for n in doc['nodes'] if 'mesh' in n]
+    if key == 'gatehouse':
+        assert set(objects) - {n['name'] for n in nodes} == {'scenery-york-castle-portcullis'}
+        objects = {name: obj for name, obj in objects.items() if name in {n['name'] for n in nodes}}
     assert set(objects) == {n['name'] for n in nodes}
     pivot = Vector(proof['source_origin_scene'])
     rows = []
@@ -66,8 +71,13 @@ def main(key):
             image_nodes = [n for n in source_mat.node_tree.nodes if n.type == 'TEX_IMAGE' and n.image]
             assert len(image_nodes) == 1, (source_mat.name, len(image_nodes))
             image_node = image_nodes[0]
-            assert image_node.image.packed_file
-            source_rgba = np.array(Image.open(io.BytesIO(image_node.image.packed_file.data)).convert('RGBA'))
+            if image_node.image.packed_file:
+                source_bytes = image_node.image.packed_file.data
+            else:
+                image_path = Path(bpy.path.abspath(image_node.image.filepath))
+                assert sha(image_path) == proof['external_image_pins'][str(image_path)]
+                source_bytes = image_path.read_bytes()
+            source_rgba = np.array(Image.open(io.BytesIO(source_bytes)).convert('RGBA'))
             tex = mat['pbrMetallicRoughness']['baseColorTexture']
             exported_rgba = np.array(Image.open(io.BytesIO(image_bytes(doc, buffers, tex))).convert('RGBA'))
             assert np.array_equal(source_rgba, exported_rgba), ('Atlas RGBA changed', obj.name)
@@ -75,8 +85,11 @@ def main(key):
             assert 'KHR_materials_unlit' in mat['extensions']
             assert mat.get('doubleSided', False) == (not source_mat.use_backface_culling)
             vector_links = image_node.inputs['Vector'].links
-            assert len(vector_links) == 1 and vector_links[0].from_node.type == 'UVMAP'
-            uv_name = vector_links[0].from_node.uv_map
+            if vector_links:
+                assert len(vector_links) == 1 and vector_links[0].from_node.type == 'UVMAP'
+                uv_name = vector_links[0].from_node.uv_map
+            else:
+                uv_name = next(layer.name for layer in mesh.uv_layers if layer.active_render)
             uv = np.array([tuple(l.uv) for l in mesh.uv_layers[uv_name].data])
             tris = [t for t in mesh.loop_triangles if t.material_index == slot]
             src_pos = np.array([world[list(t.vertices)] for t in tris])

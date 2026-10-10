@@ -1,16 +1,20 @@
 """Bind approved York private exports and exact surface guards for root integration."""
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE = ROOT / 'level-editor/work/york-refinement/restart2'
 CONFIG = {
     'well': ('restart42-approved-well-export-v2', 'restart38-well-texture-baked-v1'),
+    'shed': ('restart43-approved-shed-export-v1', 'shed-texture-baked-v1'),
     'storehouse': ('restart42-approved-storehouse-export-v1', 'restart38-storehouse-texture-baked-v3'),
 }
 sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest()
 for key, (export_dir, source_dir) in CONFIG.items():
+    if len(sys.argv) > 1 and key not in sys.argv[1:]:
+        continue
     out, source = BASE / export_dir, BASE / source_dir
     report = json.loads((out / 'export-report.json').read_text())
     guard = json.loads((out / 'source-surface-guard.json').read_text())

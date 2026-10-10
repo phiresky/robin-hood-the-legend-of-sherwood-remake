@@ -1,0 +1,15 @@
+"""Bind York private approved GLBs to the exact saved review cameras and pictures."""
+import hashlib,json,struct,sys
+from pathlib import Path
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2'
+CONFIG={'shed':('restart43-approved-shed-export-v1','shed-texture-baked-v1'),'well':('restart42-approved-well-export-v2','restart38-well-texture-baked-v1'),'storehouse':('restart42-approved-storehouse-export-v1','restart38-storehouse-texture-baked-v3')}
+def pin(p):return dict(path=str(p),sha256=hashlib.sha256(p.read_bytes()).hexdigest())
+for key,(export,worker) in CONFIG.items():
+ if len(sys.argv)>1 and key not in sys.argv[1:]:continue
+ out=BASE/export;source=BASE/worker;h=json.loads((out/'integration-handoff.json').read_text());report=json.loads((out/'export-report.json').read_text());model=out/'3d-assets'/h['asset_id']/'model.glb';raw=model.read_bytes();doc=json.loads(raw[20:20+struct.unpack_from('<I',raw,12)[0]]);renders=json.loads((source/'actual/renders.json').read_text());assert len(renders['renders'])==8
+ for p,digest in h['files'].items():assert pin(Path(p))['sha256']==digest
+ views=[]
+ for i,r in enumerate(renders['renders']):
+  views.append(dict(index=i,camera_matrix_world=r['camera_matrix'],ortho_scale=r['ortho_scale'],resolution=r['resolution'],reference=pin(Path(r['file']))))
+ request=dict(status='READY_FOR_SINGLE_BROWSER_OWNER',kind='PRIVATE_APPROVED_YORK_STATIC_ASSET',asset_id=h['asset_id'],integration_handoff=pin(out/'integration-handoff.json'),model=pin(model),descriptor=pin(model.with_name('asset.json')),source_surface_guard=pin(out/'source-surface-guard.json'),scene_names=[s.get('name')for s in doc['scenes']],mesh_names=[n['name']for n in doc['nodes']if'mesh'in n],part_names=[n['name']for n in doc['nodes']if'editor_part_node'in n.get('extras',{})],placement_origin_scene=report['source_origin_scene'],camera_space='Saved cameras are original scene-space Z-up. Local exported mesh positions are scene positions minus placement origin; root GLB wrapper rotates Z-up to Y-up. Use the production loader/display conventions; do not apply the wrapper twice.',saved_camera_manifest=pin(source/'actual/renders.json'),reference_sheet=pin(source/'actual/textured-eight.png'),native_comparison=pin(source/'actual/native-before-after.png'),views=views,checks=['Load exact pinned GLB through production loader and confirm downloaded bytes and all expected parts.','Review all eight saved cameras, original art camera first/top-left; compare actual approved texture views.','Confirm opaque source-ownership atlas alpha never hides inferred surfaces.','Check model selection is complete; component IDs and naming resolve without missing meshes.'],limitations=['Direct private model appearance verification only; canonical map/group/palette and production transaction checks remain separate.'],canonical_writes=False)
+ p=out/'browser-request.json';assert not p.exists();p.write_text(json.dumps(request,indent=2)+'\n');print(key,p,pin(p)['sha256'])
