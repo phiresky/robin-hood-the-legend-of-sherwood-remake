@@ -5,6 +5,8 @@ export class TextureDisplay {
   smooth = true;
   readonly synthesized = { value: true };
   private readonly configured = new WeakSet<THREE.Material>();
+  private readonly samplingConfigured = new WeakSet<THREE.Material>();
+  private readonly nearestRequired = new WeakSet<THREE.Texture>();
 
   material(material: THREE.Material) {
     if (this.configured.has(material)) return;
@@ -104,24 +106,43 @@ export class TextureDisplay {
             `Foliage mesh ${object.name} is missing its separate ownership COLOR_0 attribute`,
           );
         this.material(material);
+        if (
+          material.userData.export_complementary_binary_ownership === true &&
+          !this.samplingConfigured.has(material)
+        ) {
+          if (material.alphaTest !== 0.5 || material.transparent)
+            throw new Error("Complementary ownership requires binary MASK cutoff 0.5");
+          // These coincident branches partition source ownership exactly. Filtering
+          // either their masks or colors blends across that discrete partition.
+          // Isolate textures so unrelated materials retain display preferences.
+          for (const [key, value] of Object.entries(material)) {
+            if (!(value instanceof THREE.Texture)) continue;
+            const texture = value.clone();
+            (material as unknown as Record<string, unknown>)[key] = texture;
+            this.nearestRequired.add(texture);
+          }
+          this.samplingConfigured.add(material);
+        }
         for (const value of Object.values(material)) {
           if (value instanceof THREE.Texture) textures.add(value);
         }
       }
     });
     for (const texture of textures) {
-      const mag = this.smooth ? THREE.LinearFilter : THREE.NearestFilter;
-      const min = this.smooth ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter;
-      const anisotropy = this.smooth ? maxAnisotropy : 1;
+      const smooth = this.smooth && !this.nearestRequired.has(texture);
+      const mag = smooth ? THREE.LinearFilter : THREE.NearestFilter;
+      const min = smooth ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter;
+      const anisotropy = smooth ? maxAnisotropy : 1;
       if (
         texture.magFilter === mag &&
         texture.minFilter === min &&
-        texture.anisotropy === anisotropy
+        texture.anisotropy === anisotropy &&
+        texture.generateMipmaps === smooth
       )
         continue;
       texture.magFilter = mag;
       texture.minFilter = min;
-      texture.generateMipmaps = this.smooth;
+      texture.generateMipmaps = smooth;
       texture.anisotropy = anisotropy;
       texture.needsUpdate = true;
     }

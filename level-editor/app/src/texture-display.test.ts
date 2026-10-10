@@ -160,3 +160,39 @@ test("authored room floors keep depth priority without changing shared wall mate
   display.apply(root);
   assert.equal(floor.material, configured);
 });
+
+
+test("complementary ownership stays nearest under smooth display without changing shared textures", () => {
+  const shared = new THREE.Texture();
+  const composite = new THREE.MeshStandardMaterial({ map: shared, emissiveMap: shared, alphaTest: 0.5 });
+  composite.userData.export_complementary_binary_ownership = true;
+  const ordinary = new THREE.MeshBasicMaterial({ map: shared });
+  const root = new THREE.Group();
+  root.add(new THREE.Mesh(new THREE.PlaneGeometry(), composite), new THREE.Mesh(new THREE.PlaneGeometry(), ordinary));
+  const display = new TextureDisplay();
+  display.apply(root, 8);
+  const mask = composite.map;
+  for (const texture of [composite.map!, composite.emissiveMap!]) {
+    assert.notEqual(texture, shared);
+    assert.equal(texture.magFilter, THREE.NearestFilter);
+    assert.equal(texture.minFilter, THREE.NearestFilter);
+    assert.equal(texture.generateMipmaps, false);
+    assert.equal(texture.anisotropy, 1);
+  }
+  assert.equal(shared.magFilter, THREE.LinearFilter);
+  assert.equal(shared.minFilter, THREE.LinearMipmapLinearFilter);
+  assert.equal(shared.anisotropy, 8);
+  display.smooth = false;
+  display.apply(root, 8);
+  display.smooth = true;
+  display.apply(root, 8);
+  assert.equal(composite.map, mask);
+  assert.equal(mask!.magFilter, THREE.NearestFilter);
+  assert.equal(shared.magFilter, THREE.LinearFilter);
+});
+
+test("complementary ownership rejects a nonbinary material contract", () => {
+  const material = new THREE.MeshStandardMaterial({ map: new THREE.Texture() });
+  material.userData.export_complementary_binary_ownership = true;
+  assert.throws(() => new TextureDisplay().apply(new THREE.Mesh(new THREE.PlaneGeometry(), material)), /binary MASK/);
+});
