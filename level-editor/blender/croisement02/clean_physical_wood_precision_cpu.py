@@ -22,13 +22,27 @@ def main():
     mesh=np.load(args.input,allow_pickle=False);vertices,faces=mesh['vertices'],mesh['faces']
     pairs=cKDTree(vertices).query_pairs(args.merge_distance,output_type='ndarray')
     parent=np.arange(len(vertices))
+    members={int(i):[int(i)]for i in np.unique(pairs)}
+    representative={int(i):int(i)for i in np.unique(pairs)}
+    skipped_pairs=0
     def root(i):
         while parent[i]!=i:parent[i]=parent[parent[i]];i=parent[i]
         return i
-    for a,b in pairs:
+    lengths=np.linalg.norm(vertices[pairs[:,0]]-vertices[pairs[:,1]],axis=1)
+    for a,b in pairs[np.argsort(lengths,kind='stable')]:
         a,b=root(int(a)),root(int(b))
-        if a!=b:parent[max(a,b)]=min(a,b)
-    mapping=np.array([root(i)for i in range(len(vertices))])
+        if a==b:continue
+        group=np.array(sorted(members[a]+members[b]))
+        points=vertices[group]
+        radii=np.linalg.norm(points[:,None,:]-points[None,:,:],axis=2).max(axis=1)
+        chosen=int(np.argmin(radii))
+        if radii[chosen]>args.merge_distance:
+            skipped_pairs+=1
+            continue
+        first,last=min(a,b),max(a,b)
+        parent[last]=first;members[first]=group.tolist();representative[first]=int(group[chosen])
+        del members[last];del representative[last]
+    mapping=np.array([representative.get(root(i),root(i))for i in range(len(vertices))])
     drift=float(np.linalg.norm(vertices[mapping]-vertices,axis=1).max())
     if drift>args.merge_distance*1.01:raise ValueError('Transitive cluster exceeds merge bound')
     triangles=mapping[faces];keep=(triangles[:,0]!=triangles[:,1])&(triangles[:,0]!=triangles[:,2])&(triangles[:,1]!=triangles[:,2]);triangles=triangles[keep]
@@ -48,7 +62,7 @@ def main():
     observed_audit=projection_coverage(new,triangles,observed,box[:2]);body_audit=projection_coverage(new,triangles,body,box[:2])
     if observed_audit['missing_body_centers'] or body_audit['missing_body_centers']:raise ValueError('Precision cleanup lost source/construction centers')
     args.output.mkdir(parents=True);np.savez_compressed(args.output/'preview-mesh.npz',vertices=new,faces=triangles)
-    report.update(vertices=len(new),faces=len(triangles),observed_source_ground=observed_audit,source_ground=body_audit,precision_cleanup={'input':str(args.input.resolve()),'input_sha256':hashlib.sha256(args.input.read_bytes()).hexdigest(),'merge_distance':args.merge_distance,'maximum_world_displacement':drift,'vertices_removed':len(vertices)-len(new),'collapsed_faces_removed':int((~keep).sum()),'closed_edge_incidence':True,'blender_guard_pending':True})
+    report.update(vertices=len(new),faces=len(triangles),observed_source_ground=observed_audit,source_ground=body_audit,precision_cleanup={'input':str(args.input.resolve()),'input_sha256':hashlib.sha256(args.input.read_bytes()).hexdigest(),'merge_distance':args.merge_distance,'maximum_world_displacement':drift,'representative_method':'Existing vertex with smallest maximum cluster distance; transitive merges beyond the bound are skipped','skipped_pairs':skipped_pairs,'vertices_removed':len(vertices)-len(new),'collapsed_faces_removed':int((~keep).sum()),'closed_edge_incidence':True,'blender_guard_pending':True})
     (args.output/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report['precision_cleanup'],indent=2))
 
 
