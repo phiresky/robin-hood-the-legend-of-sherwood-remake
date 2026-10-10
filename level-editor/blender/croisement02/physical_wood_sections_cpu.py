@@ -81,25 +81,43 @@ def projection_coverage(vertices, faces, body, origin):
         covered[lo[1]:hi[1]+1,lo[0]:hi[0]+1]|=inside
     return dict(body_centers=int(body.sum()),covered_body_centers=int((body&covered).sum()),missing_body_centers=int((body&~covered).sum()),source_ground_coverage=float((body&covered).sum()/body.sum()),silhouette_iou=float((body&covered).sum()/(body|covered).sum()),missing_coordinates=[[int(x+origin[0]),int(y+origin[1])] for y,x in np.argwhere(body&~covered)],scope='CPU exact projected triangle barycentrics at source centers; pinned ground plane approximation, no neighbouring owners')
 
-def safe_surface(volume, axes, voxel):
+def safe_surface(volume, axes, voxel, method='tetra'):
     target=.15*voxel
     nearby=np.unique(volume[(volume>target-.006*voxel)&(volume<target+.006*voxel)])
     mids=(nearby[1:]+nearby[:-1])/2;gaps=np.diff(nearby)
     candidates=mids[np.argsort(-gaps)[:12]] if len(mids) else [target]
     failures=[]
     for level in candidates:
-        vertices,faces=tetra_surface(volume-level,axes)
+        print(f'Surface attempt {len(failures)+1}: {method}, level {level:.9g}',flush=True)
+        if method=='marching-cubes':
+            from skimage.measure import marching_cubes
+            points,faces,_,_=marching_cubes(volume,level=float(level),spacing=(voxel,voxel,voxel),gradient_direction='ascent',allow_degenerate=False)
+            vertices=points[:,::-1]+np.array([axis[0] for axis in axes])
+            triangles=vertices[faces]
+            signed_volume=np.sum(np.einsum('ij,ij->i',triangles[:,0],np.cross(triangles[:,1],triangles[:,2])))/6
+            if signed_volume<0:faces=faces[:,::-1].copy()
+        else:
+            vertices,faces=tetra_surface(volume-level,axes)
         q=vertices.astype(np.float32);area=np.linalg.norm(np.cross(q[faces[:,1]]-q[faces[:,0]],q[faces[:,2]]-q[faces[:,0]]),axis=1)/2
         bad=int((area<1e-9).sum());failures.append(dict(level=float(level),degenerate_faces=bad,minimum_face_area=float(area.min())))
+        print(f'Surface attempt result: {len(vertices)} vertices, {bad} float32 degenerate faces',flush=True)
         if not bad:return vertices,faces,dict(level=float(level),target=target,attempts=failures)
     raise ValueError('No numerically stable CPU isosurface: '+str(failures))
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('--tree',type=int,choices=[32,38],default=32);p.add_argument('--voxel',type=float,default=1.5);p.add_argument('--output',type=Path,required=True);p.add_argument('--source-box',type=int,nargs=4,metavar=('LEFT','TOP','RIGHT','BOTTOM'));p.add_argument('--diagonal-connectivity',action='store_true');a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--tree',type=int,choices=[32,38],default=32);p.add_argument('--voxel',type=float,default=1.5);p.add_argument('--output',type=Path,required=True);p.add_argument('--source-box',type=int,nargs=4,metavar=('LEFT','TOP','RIGHT','BOTTOM'));p.add_argument('--diagonal-connectivity',action='store_true');p.add_argument('--surface-method',choices=['tetra','marching-cubes'],default='tetra');p.add_argument('--construction-mask',type=Path);a=p.parse_args()
  if a.output.exists():raise FileExistsError(a.output)
  box=tuple(a.source_box) if a.source_box else CONFIG[a.tree][2]
  if box[2]<=box[0] or box[3]<=box[1]:raise ValueError('Source box must have positive area')
- observed,sourcepath=source(a.tree,box);labels,count=label(observed,np.ones((3,3)) if a.diagonal_connectivity else None);sizes=np.bincount(labels.ravel());sizes[0]=0;body=binary_fill_holes(labels==int(np.argmax(sizes)));coverage=dict(observed_pixels=int(observed.sum()),main_body_observed_pixels=int((body&observed).sum()),unresolved_disconnected_pixels=int((observed&~body).sum()));centers,radii,contour,native=medial_discs(body,box[:2]);print('Inscribed round sections:',len(radii),flush=True);ground=next(r['ground_y'] for r in json.load(open(OUT/'forest-v4-sources/manifest.json')) if r['mask']==a.tree)
+ observed,sourcepath=source(a.tree,box)
+ construction=observed.copy();construction_record=None
+ if a.construction_mask:
+  from PIL import Image
+  construction=np.asarray(Image.open(a.construction_mask).convert('L'))[box[1]:box[3],box[0]:box[2]]>0
+  if construction.shape!=observed.shape or np.any(observed & ~construction):raise ValueError('Construction guide must preserve every observed source sample')
+  extra=np.argwhere(construction & ~observed)[:,::-1]+np.array(box[:2])
+  construction_record=dict(path=str(a.construction_mask.resolve()),sha256=hashlib.sha256(a.construction_mask.read_bytes()).hexdigest(),inferred_extra_pixels=extra.tolist(),scope='Geometry construction only; source ownership mask is unchanged')
+ labels,count=label(construction,np.ones((3,3)) if a.diagonal_connectivity else None);sizes=np.bincount(labels.ravel());sizes[0]=0;body=binary_fill_holes(labels==int(np.argmax(sizes)));coverage=dict(observed_pixels=int(observed.sum()),main_body_observed_pixels=int((body&observed).sum()),unresolved_disconnected_pixels=int((observed&~body).sum()));centers,radii,contour,native=medial_discs(body,box[:2]);print('Inscribed round sections:',len(radii),flush=True);ground=next(r['ground_y'] for r in json.load(open(OUT/'forest-v4-sources/manifest.json')) if r['mask']==a.tree)
  world=np.column_stack((centers[:,0],np.full(len(centers),-ground/SIN),(ground-centers[:,1])/COS))
  # Raise source silhouettes out of the floor along their own camera rays.
  lift=np.maximum(0,radii*COS+.25-world[:,2]);world+=lift[:,None]/SIN*RAY
@@ -111,7 +129,7 @@ def main():
  # A small preview-only grid relaxation suppresses subvoxel sphere seams.
  # It is NOT a saved native-coverage claim; final guards remain mandatory.
  volume=gaussian_filter(volume,.4)
- vertices,faces,precision=safe_surface(volume,axes,a.voxel);triangles=vertices[faces];print('CPU solid mesh:',len(vertices),len(faces),flush=True)
+ vertices,faces,precision=safe_surface(volume,axes,a.voxel,a.surface_method);triangles=vertices[faces];print('CPU solid mesh:',len(vertices),len(faces),flush=True)
  sections=[]
  for z in [20,40,60,80,100]:
   points=[]
@@ -128,7 +146,8 @@ def main():
  # Full visible forks can contain thousands of discs. Bound the temporary
  # distance matrix rather than allocating every source/disc pair together.
  theoretical=np.concatenate([np.max(radii[None,:]-np.linalg.norm(chunk[:,None,:]-centers[None,:,:],axis=2),axis=1) for chunk in np.array_split(native,max(1,int(np.ceil(len(native)/256))))])
- report=dict(status='CPU volume proposal only; no Blender model or canonical changes',tree=a.tree,source_box=list(box),construction_connectivity=8 if a.diagonal_connectivity else 4,source_mask=str(sourcepath),source_sha256=hashlib.sha256(sourcepath.read_bytes()).hexdigest(),coverage=coverage,medial_discs=len(radii),theoretical_body_centers_covered=int((theoretical>=-1e-6).sum()),body_centers=len(native),voxel=a.voxel,vertices=len(vertices),faces=len(faces),sections=sections,source_ground=projection_coverage(vertices,faces,body,box[:2]),precision=precision,permitted_references=['leicester-southeast-cottage-tree','leicester-moat-bank-tree'],limitations=['The preview mesh uses a small grid relaxation; theoretical disc coverage is not saved mesh source coverage.','Retained upper limbs are not attached in this preview.','Private inferred front depth changed; native rays and source ownership remain the eventual constraints.'])
+ report=dict(status='CPU volume proposal only; no Blender model or canonical changes',tree=a.tree,source_box=list(box),construction_connectivity=8 if a.diagonal_connectivity else 4,source_mask=str(sourcepath),source_sha256=hashlib.sha256(sourcepath.read_bytes()).hexdigest(),coverage=coverage,medial_discs=len(radii),theoretical_body_centers_covered=int((theoretical>=-1e-6).sum()),body_centers=len(native),voxel=a.voxel,surface_method=a.surface_method,vertices=len(vertices),faces=len(faces),sections=sections,source_ground=projection_coverage(vertices,faces,body,box[:2]),precision=precision,permitted_references=['leicester-southeast-cottage-tree','leicester-moat-bank-tree'],limitations=['The preview mesh uses a small grid relaxation; theoretical disc coverage is not saved mesh source coverage.','Retained upper limbs are not attached in this preview.','Private inferred front depth changed; native rays and source ownership remain the eventual constraints.'])
+ report['construction_mask']=construction_record
  report['observed_source_ground']=projection_coverage(vertices,faces,observed,box[:2])
  report['permitted_reference_evidence']=reference_bindings()
  (a.output/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
