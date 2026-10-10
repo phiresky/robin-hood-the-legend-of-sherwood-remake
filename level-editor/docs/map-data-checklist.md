@@ -11,6 +11,13 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**East-hall current audit (2026-10-10):** all five modes pass 24/32 cases after
+correcting the expectation that movement between doors on one landing must detour
+through a stair. Gate/player audits separately report eight same-landing walks;
+prepared audits still force the stair traversal. The remaining eight failures
+in each mode concern the lower stair. Upper-west curtain remains 64/64 in all
+five modes. This is an audit correction, not additional gameplay parity.
+
 **East-hall receivers (2026-10-10):** receiver boundaries now retain the exact
 placed floor instead of reconstructing heights from rounded movement geometry.
 The nearly edge-on lower stair now exports its actual 0–110 height range. Route

@@ -4,6 +4,25 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Same-landing movement audit correction (2026-10-10)
+
+Two east-hall upper-stair doors lead to the same landing sector. Native gate
+search correctly returns no doors for movement between them, and ordinary player
+movement stays on that landing. The audit now requires a stair crossing only for
+different outside sectors/layers or explicitly prepared traversal. It still
+checks arrival, receiver identity and permissions. Successful same-landing walks
+are listed separately in `same_landing_routes`; they are not claimed as crossings.
+The observed zero-distance stop-animation residual check also applies to gate
+dispatch, using the same completion and floating-point conditions as player clicks.
+
+Rerunning `grounded-stair-placements-8uWe2L` gives **24/32 in all five modes**.
+Gate and both player modes each include eight successful same-landing walks.
+Prepared modes still explicitly traverse those entrances and retain their previous
+24/32 result. All eight remaining failures per mode involve the lower stair.
+The existing upper-west curtain matrix `grounded-stair-placements-xCBv3V` still
+passes **64/64 in each of all five modes**, with no same-landing substitutions.
+This changes audit expectations, not exported geometry or production runtime.
+
 ## Exact stair receivers and remaining clearance failure (2026-10-10)
 
 The east-hall 270-degree test exposed a second export defect: receiver geometry

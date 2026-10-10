@@ -440,6 +440,11 @@ fn walk_exported_lift_route(
         .with_arena_index(enter.sector_out_index.unwrap());
     let destination_sector = crate::position_interface::SectorHandle::from_number(leave.sector_out)
         .with_arena_index(leave.sector_out_index.unwrap());
+    // Ordinary movement between two doors on one landing does not need to
+    // enter the stair. Prepared dispatch still exercises that explicit detour.
+    let requires_crossing = dispatch == StairDispatch::Prepared
+        || source_sector != destination_sector
+        || enter.layer_out != leave.layer_out;
     let lift_sector = enter.sector_in_index.unwrap();
     let virtual_room = engine.world.fast_grid.level.sectors[usize::from(lift_sector)]
         .sector_type
@@ -475,7 +480,7 @@ fn walk_exported_lift_route(
         engine.get_projection_area_index(&assets, source_sector, enter.layer_out, enter.point_out);
     engine.set_obstacle_and_material(&assets, owner, receiver);
     let sim = crate::sim_rng::test_context();
-    let prepared_path = vec![
+    let mut prepared_path = vec![
         crate::gate::GatePathStep {
             door_index: crate::gate::DoorIndex::new(entrance as u32).unwrap(),
             direct: true,
@@ -485,6 +490,9 @@ fn walk_exported_lift_route(
             direct: false,
         },
     ];
+    if !requires_crossing {
+        prepared_path.clear();
+    }
     let path = if dispatch == StairDispatch::GateSearch {
         let path = crate::gate::find_path_gates_with_sector_indices(
             &engine.script_domains.interactables.doors,
@@ -636,18 +644,16 @@ fn walk_exported_lift_route(
         }
         // A zero-distance stop reserves 0.01 units before playing in place.
         // Only accept that residual after the observed stop order has finished.
-        let stopped = dispatch.is_player()
-            && stop_element.is_some_and(|(id, index)| {
-                engine
-                    .seq()
-                    .get_element(id, index)
-                    .is_none_or(|element| element.orders.is_empty())
-            })
-            && engine
-                .entities()
-                .current_element_for_actor(owner)
-                .and_then(|(id, index)| engine.seq().get_element(id, index))
-                .is_some_and(|element| element.command == Command::Wait)
+        let stopped = stop_element.is_some_and(|(id, index)| {
+            engine
+                .seq()
+                .get_element(id, index)
+                .is_none_or(|element| element.orders.is_empty())
+        }) && engine
+            .entities()
+            .current_element_for_actor(owner)
+            .and_then(|(id, index)| engine.seq().get_element(id, index))
+            .is_some_and(|element| element.command == Command::Wait)
             && element.sprite.distance_for_animation(stop) == 0;
         let rounding = [position.x, position.y, goal.x, goal.y]
             .into_iter()
@@ -655,7 +661,7 @@ fn walk_exported_lift_route(
             .fold(0.0_f32, f32::max);
         let arrived = (position - goal).length() < 0.01
             || (stopped && (position - goal).length() <= 0.01 + 4.0 * rounding);
-        if crossed
+        if (crossed || !requires_crossing)
             && !passing
             && arrived
             && element.layer() == leave.layer_out
@@ -1596,6 +1602,7 @@ fn audit_exported_lift_routes(
         let mut skipped = 0;
         let mut failures = vec![];
         let mut click_targets = vec![];
+        let mut same_landing_routes = vec![];
         let doors = &engine.script_domains.interactables.doors;
         for (sector_index, sector) in engine.world.fast_grid.level.sectors.iter().enumerate() {
             if !sector.lift_type.is_some_and(|kind| types.contains(&kind)) {
@@ -1657,7 +1664,17 @@ fn audit_exported_lift_routes(
                         |_, _, _| {},
                     );
                     match outcome {
-                        Ok(true) => checked += 1,
+                        Ok(true) => {
+                            checked += 1;
+                            if dispatch != StairDispatch::Prepared
+                                && doors[entrance].sector_out_index == doors[exit].sector_out_index
+                                && doors[entrance].layer_out == doors[exit].layer_out
+                            {
+                                same_landing_routes.push(serde_json::json!({
+                                    "entrance": entrance, "exit": exit,
+                                }));
+                            }
+                        }
                         Ok(false) => skipped += 1,
                         Err(message) => {
                             checked += 1;
@@ -1678,6 +1695,7 @@ fn audit_exported_lift_routes(
         );
         report["results"].as_array_mut().unwrap().push(serde_json::json!({
             "file": file, "checked": checked, "skipped_permissions": skipped, "failures": failures,
+            "same_landing_routes": same_landing_routes,
             "click_targets": click_targets,
         }));
         std::fs::write(&report_path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
