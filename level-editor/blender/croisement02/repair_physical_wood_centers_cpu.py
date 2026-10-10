@@ -61,7 +61,7 @@ def main():
     report=json.loads((args.input.parent/'report.json').read_text());tree=report['tree'];box=tuple(report.get('source_box',CONFIG[tree][2]))
     observed,path=source(tree,box)
     if hashlib.sha256(path.read_bytes()).hexdigest()!=report['source_sha256']:raise ValueError('Source changed')
-    labels,_=label(observed);sizes=np.bincount(labels.ravel());sizes[0]=0;body=binary_fill_holes(labels==sizes.argmax())
+    labels,_=label(observed,np.ones((3,3)) if report.get('construction_connectivity')==8 else None);sizes=np.bincount(labels.ravel());sizes[0]=0;body=binary_fill_holes(labels==sizes.argmax())
     mesh=np.load(args.input,allow_pickle=False)
     vertices,audit,repair_report=repair(mesh['vertices'].copy(),mesh['faces'],body,box[:2],args.minimum_source_y)
     args.output.mkdir(parents=True)
