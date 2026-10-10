@@ -12,6 +12,19 @@ Run the suite owning your change, then its affected consumers. Cargo retains
 the checkout's normal `target/` directory. Build and run the game separately;
 do not hide Cargo output behind filters. These gates do not run Clippy.
 
+The opt-in stock navigation benchmark runs 180 frames in each of three missions
+with three PCs and active mission scripts:
+
+```sh
+ROBINHOOD_DATA_DIR="$PWD/datadirs/fullgame_gog" CARGO_BUILD_JOBS=1 RUST_MIN_STACK=33554432 cargo test -p robin_rs --profile parity --lib stock_three_player_navigation_tick_cost -- --ignored --nocapture --test-threads=1
+```
+
+It reports elapsed tick time and, on Linux, advancing-thread CPU time separately.
+Startup and frame zero are excluded from the distributions. CPU time excludes
+other threads; wall time includes scheduling delays. Completion checks for hangs,
+but neither metric is an automatic certification of the desired tick budget.
+Record both distributions and the execution conditions when comparing runs.
+
 `bash scripts/check-quality.sh format` runs `cargo fmt --all -- --check` over
 Cargo-discovered sources. Client modules are explicit declarations, so rustfmt
 traverses their real module tree; no file needs a separate direct pass.

@@ -1,5 +1,24 @@
 # Runtime changes introduced or extended for map compilation
 
+**2026-10-10 — paired CPU/wall measurement:** the opt-in stock benchmark now
+also records Linux advancing-thread CPU time. This is test-only instrumentation;
+it does not change gameplay, include startup in tick timing, or count worker
+threads. Frame zero remains excluded from both distributions. The direct repeat
+in `work/map-compile/stock-tick-wall-cpu-20261010.log` under the editor directory
+completes all 540 frames:
+
+| Mission | Wall median / p95 | Thread CPU median / p95 |
+| --- | ---: | ---: |
+| H07_Not_MK | 4.828 / 8.535 ms | 4.619 / 5.124 ms |
+| H01_Lin_VL | 0.996 / 2.828 ms | 0.981 / 1.184 ms |
+| S01_Not_VL | 3.221 / 8.087 ms | 3.075 / 3.520 ms |
+
+CPU time remains above the earlier wall-time baseline in two missions, so
+descheduling alone does not explain the discrepancy. These runs do not isolate
+code, CPU frequency, cache contention or other execution conditions. The
+approximately 1 ms target remains unproven; no performance restoration claim is
+made from these measurements. The earlier timing tables are retained below.
+
 **2026-10-10 — subpixel stair boundaries:** mission startup now reads a lift
 area's validated `precise_polygon` when constructing its collision lines,
 repulsive corners, sector polygon and pathfinder area polygon. Export constructs

@@ -851,6 +851,24 @@ fn stock_three_player_navigation_tick_cost() {
     use robin_engine::engine::{
         Engine, EngineArgs, LevelLoadArgs, SimConfig, SimulationFrameInput,
     };
+    let thread_cpu_ms = || {
+        #[cfg(target_os = "linux")]
+        {
+            let mut time = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            // The benchmark owns this thread; measure its CPU consumption
+            // separately from elapsed time spent descheduled or waiting.
+            let result = unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) };
+            assert_eq!(result, 0, "cannot read benchmark thread CPU clock");
+            Some(time.tv_sec as f64 * 1000. + time.tv_nsec as f64 / 1_000_000.)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None::<f64>
+        }
+    };
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -944,8 +962,10 @@ fn stock_three_player_navigation_tick_cost() {
             "stock mission must retain its prepared navigation"
         );
         let mut timings = Vec::new();
+        let mut cpu_timings = Vec::new();
         for frame in 0..180 {
             eprintln!("{mission_name}: starting frame {frame}");
+            let cpu_started = thread_cpu_ms();
             let started = std::time::Instant::now();
             engine
                 .advance_frame_without_hash(
@@ -954,9 +974,18 @@ fn stock_three_player_navigation_tick_cost() {
                 )
                 .unwrap();
             let elapsed = started.elapsed().as_secs_f64() * 1000.;
+            let cpu_elapsed = cpu_started
+                .zip(thread_cpu_ms())
+                .map(|(start, end)| end - start);
             eprintln!("{mission_name}: frame {frame}: {elapsed:.3} ms");
+            if let Some(cpu) = cpu_elapsed {
+                eprintln!("{mission_name}: frame {frame}: thread CPU {cpu:.3} ms");
+            }
             if frame > 0 {
                 timings.push(elapsed);
+                if let Some(cpu) = cpu_elapsed {
+                    cpu_timings.push(cpu);
+                }
             }
         }
         timings.sort_by(f64::total_cmp);
@@ -966,5 +995,14 @@ fn stock_three_player_navigation_tick_cost() {
             timings[timings.len() * 95 / 100],
             timings.last().unwrap()
         );
+        if !cpu_timings.is_empty() {
+            cpu_timings.sort_by(f64::total_cmp);
+            eprintln!(
+                "{mission_name}: thread CPU median={:.3} ms p95={:.3} ms max={:.3} ms",
+                cpu_timings[cpu_timings.len() / 2],
+                cpu_timings[cpu_timings.len() * 95 / 100],
+                cpu_timings.last().unwrap()
+            );
+        }
     }
 }
