@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Fresh Derby upper-west curtain (2026-10-10)
+
+`work/map-compile/grounded-stair-placements-xCBv3V` contains sixteen newly authored
+exports of `derby-upper-west-curtain`: two independent copies at rotations
+0/37/90/137/180/217/270/317 and elevations 0/40. Every authored lift and entrance
+survives insertion, scene serialization/reopen and compilation from library assets
+plus new terrain. All five native stair audit modes pass **64/64 routes each**,
+with zero failures or forbidden routes. Hidden-selection capability is never
+needed: all clicks select ordinary targets. Rendering, full AI behavior and
+multi-character interactions remain separate requirements.
+
+The first attempt stopped before compilation because the local catalog had grown
+to 898,302,389 bytes and `fs.readFile(..., "utf8")` exceeded Node's string limit.
+The verifier now uses a small `uv`/`ijson` reader to select one reference from the
+catalog. It retains descriptor/model/scene pins and still hash-checks the actual
+asset descriptor and model. Only one catalog entry is materialized at a time;
+the embedded editor copy is excluded from subprocess output because the verifier
+reads the pinned descriptor separately. Three reader tests cover bounded reads,
+escaped/Unicode content, preserved pins, absent IDs and invalid JSON. This repairs
+the local audit path, not the editor's monolithic local-catalog loading path.
+Scoped verifier lint, Rust formatting and the game build pass.
+
 ## Hidden stair-house landing selection (2026-10-10)
 
 `exported_stairs_resolve_hidden_landings_and_complete_routes` passes **64/64**

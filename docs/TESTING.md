@@ -352,6 +352,11 @@ requires both copies to retain all authored lifts and entrances. It inserts,
 serializes and reopens new editor scenes on flat terrain, without source-map input.
 Omitting `--asset` retains the church-side-tower regression; `--require-masks`
 checks that asset's two ground-bound masks and independent ownership.
+The verifier uses `uv` to run `read_asset_index_entry.py` with its declared
+`ijson` dependency. This streams the local catalog one entry at a time, retaining
+the requested reference pins without decoding the entire index into one string.
+Run its reader tests with `uv run --with 'ijson>=3.3,<4' python3 -m unittest
+test_read_asset_index_entry.py` from `level-editor/refinement`.
 
 `exported_stairs_resolve_hidden_landings_and_complete_routes` first tries ordinary
 landing selection, then the existing hidden-screen lookup if no ordinary target

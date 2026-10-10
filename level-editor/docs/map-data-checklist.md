@@ -11,6 +11,15 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**Fresh upper-west curtain placement (2026-10-10):** Derby's published asset passes
+all 64 directed routes in each of five current-engine audit modes: synthetic and
+complete-sprite traversal, gate discovery, ordinary clicks and hidden-selection
+capable clicks. None requires hidden selection. The sixteen newly inserted,
+saved/reopened exports cover two copies, eight rotations and two elevations.
+Rendered integration and broader actor/state coverage remain open. The local
+verifier now streams catalog entries after the 898 MB index exceeded Node's
+single-string limit; this does not certify large-catalog editor loading.
+
 **Fresh stair-house placement (2026-10-09):** Nottingham's south stair house now
 has current prepared-graph coverage on new editor terrain: two independent copies,
 eight rotations and two elevations retain every lift and entrance. All 64 directed

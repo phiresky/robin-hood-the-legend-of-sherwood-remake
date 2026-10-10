@@ -1,6 +1,9 @@
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import {
   createTerrainGrid,
   parseProjectionAssetDescriptor,
@@ -17,9 +20,15 @@ import { compileMap } from "../app/src/map-compile.ts";
 const assetOptions = process.argv.slice(2).filter((argument) => argument.startsWith("--asset="));
 assert.ok(assetOptions.length <= 1, "Provide at most one asset ID");
 const id = assetOptions[0]?.slice("--asset=".length) ?? "leicester-church-side-tower";
-const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8"));
-const entry = index.assets.find((asset) => asset.id === id);
-assert.ok(entry);
+const { stdout } = await promisify(execFile)("uv", [
+  "run",
+  "--script",
+  fileURLToPath(new URL("./read_asset_index_entry.py", import.meta.url)),
+  "library/3d-assets/index.json",
+  id,
+]);
+const entry = JSON.parse(stdout);
+assert.equal(entry.id, id);
 const descriptorPath = `3d-assets/${entry.descriptor}`;
 const modelPath = `3d-assets/${entry.model}`;
 const overrides = process.argv.slice(2).filter((argument) => argument.startsWith("--descriptor="));
