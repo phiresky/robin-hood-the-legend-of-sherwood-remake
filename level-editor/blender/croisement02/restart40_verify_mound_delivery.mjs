@@ -16,7 +16,7 @@ for(const row of config.bindings){
  for(const state of ['initial','applied']){
   const endpoints=family.physical[state];
   if(state==='applied'&&prior.endpoints.applied.kind==='source-absent'){
-   assert.equal(row.id,'mission-Tac19_FoB_EC-patch-015');assert.deepEqual(endpoints,[]);const patch=contract.native.patch_states.find(p=>p.id===row.id);assert.deepEqual(patch.final,[]);assert.equal(patch.integrate_in_background,false);continue;
+   assert.equal(row.id,'mission-Tac19_FoB_EC-patch-015');assert.deepEqual(endpoints,{kind:'absent'});const missing=structuredClone(contract);missing.families[0].physical.applied=[];assert.throws(()=>validateStateDelivery(missing),/missing physical endpoint/);const patch=contract.native.patch_states.find(p=>p.id===row.id);assert.deepEqual(patch.final,[]);assert.equal(patch.integrate_in_background,false);continue;
   }
   assert.equal(endpoints.length,1);const e=endpoints[0];assert.deepEqual(e.position,[0,0,0]);
   if(!scenes.has(e.model)){
