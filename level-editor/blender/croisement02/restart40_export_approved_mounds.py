@@ -1,5 +1,5 @@
 """Private per-site export of the approved hiding-mound appearances."""
-import sys,json,hashlib,struct,shutil,io
+import sys,json,hashlib,struct,shutil,io,time,gc
 from PIL import Image
 from pathlib import Path
 import bpy,numpy as np
@@ -59,8 +59,17 @@ def main(site):
  assert seen==set(expected);assert sha(source)==card['model_sha256']
  report=dict(status='PRIVATE_EXPORT_GEOMETRY_UV_PASS_APPEARANCE_BROWSER_PENDING',site=site,source_model=str(source),source_sha256=sha(source),approval=str(APPROVAL),approval_sha256=sha(APPROVAL),authority_sha256=sha(AUTH),model=str(target),model_sha256=sha(target),model_scene=site+'-initial',coordinate_frame='Absolute approved world coordinates, transformed Z-up to glTF Y-up; no placement translation required.',objects=67,decoded_rgba_exact=True,binary_mask_samplers_nearest=True,conversion_records=records,primitive_guards=checks,canonical_writes=False,recipe_sha256=sha(__file__))
  (dest/'export.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(dict(site=site,model_sha256=sha(target),bytes=target.stat().st_size)),flush=True)
+def available_memory():
+ return int(next(l.split()[1]for l in Path('/proc/meminfo').read_text().splitlines()if l.startswith('MemAvailable:')))*1024
 if __name__=='__main__':
  for site in sys.argv[sys.argv.index('--')+1:]:
-  acquire(slots=2)
+  while True:
+   while available_memory()<6*1024**3:
+    print('Waiting for6GiB available memory before '+site,flush=True);time.sleep(20)
+   acquire(slots=2)
+   if available_memory()>=6*1024**3:break
+   release();print('Memory changed during queue; releasing slot before '+site,flush=True);time.sleep(5)
   try:main(site)
-  finally:release()
+  finally:
+   # Release the large loaded worker before waiting for another shared slot.
+   bpy.ops.wm.read_factory_settings(use_empty=True);gc.collect();release()
