@@ -1,5 +1,6 @@
 """Independently compare authoritative rays after a branch union trial."""
 import json
+import sys
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -9,7 +10,8 @@ from restart2_tree08_fork_kernel import poly
 from restart2_tree08_local_fork import audit
 
 R = Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
-out = R/'tree08-inferred-shell-union-v1'
+out = R/(sys.argv[1] if len(sys.argv)>1 else 'tree08-inferred-shell-union-v1')
+assert out.resolve().parent == R.resolve()
 before = np.load(R/'tree08-source-guarded-fairing-cpu-v2-oriented/candidate.npz')
 after = np.load(out/'candidate.npz')
 s, c = np.sin(np.radians(35)), np.cos(np.radians(35))
