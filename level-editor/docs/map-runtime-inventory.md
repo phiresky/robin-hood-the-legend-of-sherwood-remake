@@ -1,5 +1,28 @@
 # Runtime changes introduced or extended for map compilation
 
+**2026-10-10 — publication check:** a fresh direct run of the same optimized
+test binary completes all 540 stock frames. Median advancing-thread CPU times
+are 4.417 / 1.004 / 3.026 ms for H07 / H01 / S01 respectively; wall medians are
+4.786 / 1.035 / 3.109 ms. Navigation node, link and collision-line counts still
+match the earlier run. Evidence is in
+`work/map-compile/stock-tick-wall-cpu-publication-check-20261010.log`.
+
+A sandboxed hardware-cycle sample also completed with no lost samples
+(`work/map-compile/stock-tick-publication-cycles-20261010.perf`). This samples
+the whole test, including loading: decompression accounts for about 44% of
+samples, so these percentages must not be presented as tick costs. Sampled
+tick work includes actor-slot retention, enemy detection, animation updates,
+sound coverage and anti-collision. This is a lead for investigation, not proof
+that any of those systems regressed. A matched baseline and tick-only profile
+are still required before certifying restored performance. Do not reintroduce
+runtime geometry solving to address this discrepancy.
+
+The follow-up DWARF sample (`stock-tick-publication-dwarf-20261010.perf` in
+the same directory) does not recover usable tick caller chains; it therefore
+does not supply the missing tick-only attribution. Its instrumented CPU
+medians are 2.718 / 0.624 / 2.605 ms, further demonstrating run-to-run
+variation rather than establishing a restored baseline.
+
 **2026-10-10 — paired CPU/wall measurement:** the opt-in stock benchmark now
 also records Linux advancing-thread CPU time. This is test-only instrumentation;
 it does not change gameplay, include startup in tick timing, or count worker
