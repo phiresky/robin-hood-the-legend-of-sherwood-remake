@@ -14,7 +14,11 @@ for(const row of config.bindings){
  const contract=JSON.parse(await checked(row.contract)),source=JSON.parse(await checked(row.source_contract));validateStateDelivery(contract);assert.deepEqual(contract.native,source.native);assert.equal(contract.families.length,1);const family=contract.families[0];assert.deepEqual(family.patch_ids,[row.id]);assert.equal(family.body_terminal_tick,row.terminal_tick);
  const prior=before.bindings.find(b=>b.id===row.id);assert.equal(prior.endpoints.initial.selection.site,row.site);assert.equal(prior.transition_duration,row.transition_duration);
  for(const state of ['initial','applied']){
-  const endpoints=family.physical[state];assert.equal(endpoints.length,1);const e=endpoints[0];assert.deepEqual(e.position,[0,0,0]);
+  const endpoints=family.physical[state];
+  if(state==='applied'&&prior.endpoints.applied.kind==='source-absent'){
+   assert.equal(row.id,'mission-Tac19_FoB_EC-patch-015');assert.deepEqual(endpoints,[]);const patch=contract.native.patch_states.find(p=>p.id===row.id);assert.deepEqual(patch.final,[]);assert.equal(patch.integrate_in_background,false);continue;
+  }
+  assert.equal(endpoints.length,1);const e=endpoints[0];assert.deepEqual(e.position,[0,0,0]);
   if(!scenes.has(e.model)){
    const raw=await checked({path:config.asset_handle.mapping[e.model],sha256:e.model_sha256});const doc=JSON.parse(raw.subarray(20,20+raw.readUInt32LE(12)).toString());scenes.set(e.model,doc.scenes.map(s=>s.name));
   }
