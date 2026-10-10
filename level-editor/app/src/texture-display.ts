@@ -112,15 +112,14 @@ export class TextureDisplay {
         ) {
           if (material.alphaTest !== 0.5 || material.transparent)
             throw new Error("Complementary ownership requires binary MASK cutoff 0.5");
-          // These coincident branches partition source ownership exactly. Filtering
-          // either their masks or colors blends across that discrete partition.
-          // Isolate textures so unrelated materials retain display preferences.
-          for (const [key, value] of Object.entries(material)) {
-            if (!(value instanceof THREE.Texture)) continue;
-            const texture = value.clone();
-            (material as unknown as Record<string, unknown>)[key] = texture;
-            this.nearestRequired.add(texture);
-          }
+          // Alpha is discrete ownership data; smoothing it mixes the two
+          // coincident branches. RGB keeps the normal display preference.
+          const masked = material as THREE.MeshStandardMaterial;
+          if (!(masked.map instanceof THREE.Texture))
+            throw new Error("Complementary ownership requires a binary mask texture");
+          // Isolate the mask so shared RGB textures keep their own sampling.
+          masked.map = masked.map.clone();
+          this.nearestRequired.add(masked.map);
           this.samplingConfigured.add(material);
         }
         for (const value of Object.values(material)) {
