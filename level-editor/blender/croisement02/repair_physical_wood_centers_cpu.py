@@ -58,7 +58,7 @@ def repair(vertices, faces, body, origin, minimum_source_y):
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--input',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--minimum-source-y',type=float,required=True);args=parser.parse_args()
     if args.output.exists():raise FileExistsError(args.output)
-    report=json.loads((args.input.parent/'report.json').read_text());tree=report['tree'];box=CONFIG[tree][2]
+    report=json.loads((args.input.parent/'report.json').read_text());tree=report['tree'];box=tuple(report.get('source_box',CONFIG[tree][2]))
     observed,path=source(tree,box)
     if hashlib.sha256(path.read_bytes()).hexdigest()!=report['source_sha256']:raise ValueError('Source changed')
     labels,_=label(observed);sizes=np.bincount(labels.ravel());sizes[0]=0;body=binary_fill_holes(labels==sizes.argmax())
