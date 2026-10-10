@@ -35,7 +35,9 @@ def main():
     if args.target_z is not None:target.z=args.target_z
     if args.scale is not None and args.scale<=0:raise ValueError('Review scale must be positive')
     for index,view in enumerate(packet['views']):
-        az=math.radians(index*45);e=math.radians(25);position=target+Vector((math.sin(az)*math.cos(e),-math.cos(az)*math.cos(e),math.sin(e)))*5000;rotation=(target-position).to_track_quat('-Z','Y').to_euler();matrix=rotation.to_matrix().to_4x4();matrix.translation=position
+        # The first card must use the source artwork camera; remaining views
+        # use a lower orbit to expose root and terrain contacts.
+        az=math.radians(index*45);e=math.radians(35 if index==0 else 25);position=target+Vector((math.sin(az)*math.cos(e),-math.cos(az)*math.cos(e),math.sin(e)))*5000;rotation=(target-position).to_track_quat('-Z','Y').to_euler();matrix=rotation.to_matrix().to_4x4();matrix.translation=position
         view.update(camera_location=list(position),camera_rotation_euler=list(rotation),camera_matrix_world=[list(r) for r in matrix],ortho_scale=args.scale if args.scale is not None else (120 if args.mask==7 else 140),crop=dict(width=384,height=384))
     write_json(out/'views.json',packet);scene=bpy.data.scenes[packet['scene_name']];scene.render.engine='CYCLES';scene.cycles.samples=8
     modes=('solid',) if args.solid_only else ('textured','solid')
