@@ -11,6 +11,15 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**Packaged stair round trip (2026-10-10):** the placement verifier's
+`--zip-roundtrip` mode packages the export, reads its descriptor back from the
+ZIP, reopens the pinned editor document and recompiles it. Descriptors and
+warnings match. Two east-hall copies at 270 degrees and terrain elevations 0/40
+retain their precise stair contours and pass **32/32 routes in each of five
+native modes** using the ZIP-extracted descriptors. The diagnostic ZIP images
+are blank; this does not certify rendering, installation through the game menu,
+or browser editor reopening.
+
 **East-hall eight-angle traversal (2026-10-10):** removing a redundant,
 almost-collinear clipping vertex restores clearance preparation at 217 degrees.
 Fresh two-copy exports at eight angles and elevations 0/40 now pass **256/256**
@@ -21,8 +30,9 @@ the tested stair placements, not complete map gameplay or rendering parity.
 **Subpixel stair clearance (2026-10-10):** the exporter preserves precise
 clearance contours, constructs graphs against them and chooses supported integer
 endpoints. Startup binds those contours into existing static collision and sector
-data. East hall at 270 degrees now passes **32/32 in all five modes**; the full
-eight-angle matrix still fails at 217 degrees. This introduces no per-tick solver.
+data. At this stage east hall at 270 degrees passed **32/32 in all five modes**;
+the remaining 217-degree failure was subsequently fixed by the clipping cleanup
+above. This introduces no per-tick solver.
 The stock regression completes all 540 frames, but its latest timing repeat
 exceeds the historical baseline. Approximately 1 ms ticks are not currently
 certified; see the runtime inventory for measurements and the unresolved gap.

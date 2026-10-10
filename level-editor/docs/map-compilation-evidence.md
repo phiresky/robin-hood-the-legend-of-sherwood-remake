@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Packaged prepared-navigation round trip (2026-10-10)
+
+Run from the editor directory:
+`node refinement/check-grounded-stair-placements.mjs --asset=derby-east-hall --rotations=270 --zip-roundtrip`.
+Output `work/map-compile/grounded-stair-placements-fR7tTe` contains two diagnostic
+ZIPs, their extracted runtime descriptors, editable documents and native reports.
+Each scene contains two independent editor-inserted copies. Terrain elevations
+are 0 and 40. Each packaged descriptor retains two precise lift contours.
+
+The verifier compares the packaged descriptor with compiler output, reopens the
+editor document named by the ZIP report using pinned assets, compares its stored
+form, recompiles and compares the resulting descriptor and warnings. Native
+tests consume the ZIP-extracted descriptor. All five audit modes pass **32/32**
+directed routes with zero failures or forbidden routes, including gate discovery,
+ordinary clicks, hidden-capable clicks and complete sprite traversal.
+
+This closes a packaging-data coverage gap for these stair placements. Blank
+diagnostic rasters do not establish image/depth correctness, and direct native
+descriptor loading does not establish menu installation or browser reopening.
+No engine behavior changed.
+
+The broader export suite exposed nine stale native fixtures after the precise
+receiver-boundary correction. Refreshing them changes only receiver vertices
+and their projection planes; graphs, collision contours, doors, state bindings
+and warnings compare exactly. Several differences are floating-point noise;
+others replace rounded receiver corners with authored corners (maximum nearest
+vertex displacement about 1.009 map units). The export suite passes **68/68**.
+Native compiled-map checks pass **33/33 enabled tests** (32 opt-in tests remain
+excluded from that run). Separate complete-sprite checks pass all six changing
+climb tests, copied-climb control isolation and opposing-ladder actor occupancy.
+The native asset-compilation integration suite passes **71/71 enabled tests**
+(five external-data audits excluded). Game build, formatting and scoped lint pass.
+
 ## East-hall clipping cleanup and complete stair matrix (2026-10-10)
 
 The remaining 217-degree failure was caused by an almost-collinear vertex left

@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import {
   createTerrainGrid,
   parseProjectionAssetDescriptor,
@@ -11,7 +12,11 @@ import {
   parseStoredMap,
 } from "../shared/src/index.ts";
 import { insertProjectionAsset } from "../app/src/asset-commands.ts";
-import { compileMap } from "../app/src/map-compile.ts";
+import { compileMap, packageCompiledMap } from "../app/src/map-compile.ts";
+
+const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", import.meta.url))(
+  "fflate",
+);
 
 // Exercise real editor insertion using only a reusable library asset and new terrain.
 // This generates inputs for exported_stairs_support_complete_sprite_actor_routes.
@@ -35,6 +40,7 @@ const overrides = process.argv.slice(2).filter((argument) => argument.startsWith
 assert.ok(overrides.length <= 1, "Provide at most one staged descriptor");
 const stagedDescriptor = overrides[0]?.slice("--descriptor=".length);
 const requireMasks = process.argv.includes("--require-masks");
+const zipRoundtrip = process.argv.includes("--zip-roundtrip");
 const paddingOptions = process.argv
   .slice(2)
   .filter((argument) => argument.startsWith("--padding="));
@@ -66,7 +72,8 @@ assert.ok(
         argument.startsWith("--descriptor=") ||
         argument.startsWith("--padding=") ||
         argument.startsWith("--rotations=") ||
-        argument === "--require-masks",
+        argument === "--require-masks" ||
+        argument === "--zip-roundtrip",
     ),
   "Unknown verification option",
 );
@@ -108,6 +115,8 @@ const report = async () =>
       expected_directed_routes: expectedRoutes,
       rotations,
       padding,
+      zip_roundtrip: zipRoundtrip,
+      raster_scope: zipRoundtrip ? "blank diagnostic images, not rendering coverage" : undefined,
       expected_masks_per_map: requireMasks ? 2 : undefined,
       snapshot_notes: `Fresh editor drops of ${id}, two independent copies, ${rotations.length} rotations and two terrain elevations. All ${expectedRoutes} directed stair routes need verification; forbidden routes are not passes.`,
       asset: reference,
@@ -179,8 +188,43 @@ for (const elevation of [0, 40])
       `both copies must retain their entrances: ${JSON.stringify(compiled.warnings)}`,
     );
     const file = `grounded-stairs-${rotation}-${elevation}.level.json`;
-    await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
+    let runtimeDescriptor = compiled.descriptor;
+    let packagedPreciseLifts;
+    if (zipRoundtrip) {
+      // Diagnostic rasters exercise packaging only; native traversal consumes
+      // the descriptor extracted from the ZIP, not the pre-package object.
+      const bytes = await packageCompiledMap(compiled, {
+        color: new Uint8Array(bounds[2] * bounds[3] * 4),
+        depth: new Uint16Array(bounds[2] * bounds[3]),
+      });
+      const files = unzipSync(bytes);
+      const readJson = (path) => {
+        assert.ok(files[path], `Missing ZIP entry ${path}`);
+        return JSON.parse(strFromU8(files[path]));
+      };
+      runtimeDescriptor = readJson(`Data/Levels/${compiled.name}.level.json`);
+      assert.deepEqual(runtimeDescriptor, JSON.parse(JSON.stringify(compiled.descriptor)));
+      const report = readJson("compile-report.json");
+      assert.deepEqual(report.warnings, compiled.warnings);
+      const reopened = parseStoredMap(readJson(report.editor_document), assets);
+      assert.deepEqual(serializeStoredMap(reopened, assets), stored);
+      const recompiled = compileMap(reopened, bounds, assets, { bestEffort: true });
+      assert.deepEqual(JSON.parse(JSON.stringify(recompiled.descriptor)), runtimeDescriptor);
+      assert.deepEqual(recompiled.warnings, compiled.warnings);
+      packagedPreciseLifts = runtimeDescriptor.asset_geometry.motion_data.layers
+        .flat()
+        .filter((area) => area.is_lift && area.precise_polygon?.length).length;
+      await fs.writeFile(`${output}/${file}.zip`, bytes);
+    }
+    await fs.writeFile(`${output}/${file}`, JSON.stringify(runtimeDescriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(stored));
-    results.push({ file, map: file, rotation, elevation, warnings: compiled.warnings });
+    results.push({
+      file,
+      map: file,
+      rotation,
+      elevation,
+      packaged_precise_lifts: packagedPreciseLifts,
+      warnings: compiled.warnings,
+    });
     await report();
   }
