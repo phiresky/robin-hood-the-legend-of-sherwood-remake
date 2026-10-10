@@ -2114,7 +2114,17 @@ function compileAssetGameplayAttempt(
           );
         receiver.projection_area = [sector, layer];
       }
-      const receivingPolygon = !lift ? (piece.receivingPolygon ?? piece.polygon) : piece.polygon;
+      // Movement contours may be rounded or widened for actor clearance. They
+      // cannot define receiver heights on a nearly edge-on stair plane.
+      const receivingPolygon =
+        physical && !physical.navigation.floor_patches
+          ? physical.navigation.boundary.map(([x, y]): Point => [
+              x,
+              y - planeHeight(physical.navigation.plane, [x, y]),
+            ])
+          : !lift
+            ? (piece.receivingPolygon ?? piece.polygon)
+            : piece.polygon;
       const preciseLanding =
         !lift &&
         fixedPolygonBoolean("xor", polygon(receivingPolygon), [polygon(piece.polygon)]).length > 0;

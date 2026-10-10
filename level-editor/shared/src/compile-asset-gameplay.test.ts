@@ -156,6 +156,19 @@ for (const type of [1, 2, 3] as const)
       assert.ok(lift.physical_navigation);
       assert.equal(lift.physical_navigation.doors.length, 2);
       assert.equal(lift.physical_navigation.obstacles.length, 0);
+      const floor = lift.physical_navigation;
+      const heights = floor.boundary.map((point) => planeHeight(floor.plane, point));
+      const receivers = compiled.sight_obstacles.filter(
+        (obstacle) => obstacle.projection_area?.[0] === lift.motion_area_index,
+      );
+      assert.ok(receivers.length);
+      for (const receiver of receivers)
+        for (const point of receiver.points)
+          assert.ok(
+            point.z_top >= Math.min(...heights) - 0.01 &&
+              point.z_top <= Math.max(...heights) + 0.01,
+            "receiver vertices must remain within the authored floor height range",
+          );
     }
   });
 

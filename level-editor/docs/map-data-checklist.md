@@ -11,6 +11,13 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**East-hall receivers (2026-10-10):** receiver boundaries now retain the exact
+placed floor instead of reconstructing heights from rounded movement geometry.
+The nearly edge-on lower stair now exports its actual 0–110 height range. Route
+counts remain unchanged: its rounded clearance polygon still cannot fit the
+walking footprint, and same-landing route expectations need a separate audit.
+No runtime solver was introduced.
+
 **East-hall placement remains incomplete (2026-10-10):** best-effort export now
 survives a floor fragment collapsing during 270-degree placement by deferring its
 rounding until floor union. Final unrepresentable regions are warned and omitted;

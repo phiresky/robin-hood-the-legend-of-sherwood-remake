@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Exact stair receivers and remaining clearance failure (2026-10-10)
+
+The east-hall 270-degree test exposed a second export defect: receiver geometry
+was reconstructed from rounded movement coordinates. On its nearly edge-on lower
+stair, the resulting receiver vertices ranged from about -86 to 110 units instead
+of the authored 0–110 range. Receivers now use the precise placed floor boundary;
+movement clearance remains separate. Fresh output
+`work/map-compile/grounded-stair-placements-8uWe2L` has four receiver vertices at
+0/110 within numerical tolerance. The pinched-floor compiler regression checks
+receiver height bounds for stairs, ladders and walls in copied placements.
+
+Native traversal counts remain unchanged: 24/32 prepared and 16/32 discovered or
+player-click routes. The lower stair's emitted movement polygon has an empty
+center region even for the inset walking footprint. Endpoint search constrained
+to receivers was tested separately and did not recover it; that experiment was
+not retained. A separate audit issue also needs review: two entrances on the
+upper stair share the same outside sector, so gate search returns a direct route
+rather than the audit's required excursion through the stair. Neither issue is
+counted as resolved. No engine runtime code changed.
+
 ## East-hall quantization and open stair failures (2026-10-10)
 
 Fresh `derby-east-hall` placement previously aborted at 270 degrees because
