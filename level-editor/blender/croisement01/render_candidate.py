@@ -19,7 +19,7 @@ from evidence_io import sha
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('workspace',type=Path);parser.add_argument('--native-context-node',action='append',default=[])
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
-    workspace=args.workspace.resolve();acquire()
+    workspace=args.workspace.resolve();acquire(slots=2)
     model_hash=sha(workspace/'model.blend')
     bpy.ops.wm.open_mainfile(filepath=str(workspace/'model.blend'))
     config=json.loads((workspace/'workspace.json').read_text())

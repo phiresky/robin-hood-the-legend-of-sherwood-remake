@@ -35,5 +35,6 @@ try:
  assert images=={im.name:hashlib.sha256(im.packed_file.data).hexdigest() for im in bpy.data.images if im.packed_file}
  bpy.ops.wm.save_as_mainfile(filepath=str(out/'model.blend'));assert sha(w/'model.blend')==proof['model_sha256'];report=dict(status='CLEANED_REQUIRES_INDEPENDENT_COVERAGE_AND_VIEWS',source_model_sha256=proof['model_sha256'],model_sha256=sha(out/'model.blend'),removed=removed,packed_images_exact=images,source_support_proof_sha256=sha(w/'inspection/independent-wood-coverage-v2.json'))
  (dest/'cleanup.json').write_text(json.dumps(report,indent=2)+'\n');construction=json.loads((dest/'construction.json').read_text());construction['model_sha256']=report['model_sha256'];construction['cleanup']='Removed only disconnected remesh crumbs with zero native source ray hits';(dest/'construction.json').write_text(json.dumps(construction,indent=2)+'\n')
+ (out/'inspection').mkdir(exist_ok=True)
  import render_candidate;sys.argv=['render','--',str(out)];render_candidate.main()
 finally:release()
