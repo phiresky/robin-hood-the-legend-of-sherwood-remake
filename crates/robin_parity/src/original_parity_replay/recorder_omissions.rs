@@ -314,6 +314,7 @@ pub(super) fn original_reset_blocked_box_this_frame(
     prior_pending_motion_order_id: Option<u32>,
     prior_stoppable_motion_order: Option<LegacyStoppableMotionOrder>,
     prior_last_processed_order_id: Option<u32>,
+    sprite_frame_count: u16,
 ) -> bool {
     let Some(sequence) = actor.sequence_element.as_ref() else {
         return false;
@@ -345,7 +346,11 @@ pub(super) fn original_reset_blocked_box_this_frame(
         && current_order_id
             .is_some_and(|current_order_id| current_order_id != last_processed_order_id)
         && !moved_this_frame;
-    if hidden_stop_movement_rewrite {
+    // The same stop-animation identity can come from an action-only
+    // transition installed by the replacement sequence. Its first action
+    // update retains the 0xFFFF frame-count sentinel; motion initialization
+    // advances it before returning. Only the latter resets collision history.
+    if hidden_stop_movement_rewrite && sprite_frame_count != u16::MAX {
         return true;
     }
 

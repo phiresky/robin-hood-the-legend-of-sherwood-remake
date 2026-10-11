@@ -4483,12 +4483,10 @@ impl EngineInner {
         // When the blocked counter trips, the motion aborts
         // and the backing sequence element is marked
         // Impossible.
-        let movement_aborted = entity.position_iface().is_blocked();
-        if movement_aborted {
-            entity.position_iface_mut().reset_box_blocked();
-        }
-
-        movement_aborted
+        // An abort retains the collision history. The next movement order
+        // resets it when that order initializes; clearing it here changes the
+        // state observed during the intervening idle/sequence callbacks.
+        entity.position_iface().is_blocked()
     }
 
     /// Settle a reached ordinary waypoint and return its motion result.

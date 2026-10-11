@@ -68,6 +68,7 @@ fn earlier_projectile_runs_before_later_bow_release_and_spawned_arrow_runs_again
         damage: 10,
         layer: 0,
         lands_in_hole: false,
+        terminal_solid_impact: false,
         initial_velocity: WorldVec3D {
             x: -1.0,
             y: 0.0,

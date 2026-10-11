@@ -513,7 +513,7 @@ mod suite {
             entity.actor_data().unwrap().action_state,
             expected_action_state
         );
-        assert_eq!(entity.position_iface().blocked_count, 0);
+        assert_eq!(entity.position_iface().blocked_count, 51);
         assert!(entity.position_iface().box_blocked.0.is_none());
         assert_eq!(
             engine

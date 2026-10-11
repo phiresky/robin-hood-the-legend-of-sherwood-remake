@@ -1253,14 +1253,9 @@ fn apply_active_animation_start_state_side_effect(
             OrderType::TransitionEquipBow | OrderType::TransitionEquipBowAnonymous,
             MotionState::Start,
         ) => {
-            if entity.element_data().posture() != Posture::AnonymousArcher {
-                engine.set_entity_posture(entity_id, Posture::Upright);
-            }
-            let entity = engine
-                .world
-                .entities
-                .get_mut(entity_id)
-                .expect("animation owner disappeared");
+            // Equipping changes only the action state. Even a redundant
+            // upright write would erase the previous posture retained by an
+            // earlier transition (for example, leaving a hiding place).
             if let Some(actor) = entity.actor_data_mut() {
                 actor.action_state = ActionState::AimingWithBow;
             }
@@ -1270,7 +1265,7 @@ fn apply_active_animation_start_state_side_effect(
             OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous,
             MotionState::Start,
         ) => {
-            if entity.element_data().posture() != Posture::AnonymousArcher {
+            if anim_type == OrderType::TransitionUnequipBow {
                 engine.set_entity_posture(entity_id, Posture::Upright);
             }
             let entity = engine

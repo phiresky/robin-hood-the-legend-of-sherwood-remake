@@ -666,6 +666,7 @@ impl FrameComparison<'_> {
                         legacy_blocked_box_shadows
                             .get(&expected.creation_order)
                             .map(|shadow| shadow.last_processed_order_id),
+                        expected.sprite_frame_count,
                     )
                 });
             let current_motion_order_id = expected

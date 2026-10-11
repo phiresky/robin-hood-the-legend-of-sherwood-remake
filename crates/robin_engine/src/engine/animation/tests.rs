@@ -1077,7 +1077,7 @@ fn arrow_extraction_start_is_universal_for_civilians() {
 
 #[test]
 fn bow_equip_start_enters_aiming_state() {
-    let entity = Entity::Pc(ActorPc {
+    let mut entity = Entity::Pc(ActorPc {
         element: {
             let mut initial_element = ElementData::from_initial_posture(Posture::Upright);
             initial_element.kind = ElementKind::ActorPc;
@@ -1087,6 +1087,10 @@ fn bow_equip_start_enters_aiming_state() {
         human: Default::default(),
         pc: Default::default(),
     });
+
+    entity.set_posture(Posture::Crouched);
+    entity.set_posture(Posture::Upright);
+    let retained_position = entity.position_iface().v48_serialized_state();
 
     let mut posture_engine = EngineInner::new();
     let entity_id = posture_engine.add_test_entity(entity);
@@ -1099,6 +1103,10 @@ fn bow_equip_start_enters_aiming_state() {
     let entity = posture_engine.get_entity_mut(entity_id).unwrap();
 
     assert_eq!(entity.element_data().posture(), Posture::Upright);
+    assert_eq!(
+        entity.position_iface().v48_serialized_state().old_posture,
+        retained_position.old_posture
+    );
     assert_eq!(
         entity.actor_data().unwrap().action_state,
         ActionState::AimingWithBow

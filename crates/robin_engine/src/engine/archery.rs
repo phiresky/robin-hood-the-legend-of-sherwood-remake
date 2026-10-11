@@ -885,6 +885,7 @@ impl EngineInner {
             damage,
             layer,
             lands_in_hole: terminal_lands_in_hole,
+            terminal_solid_impact: terminal_membership,
             initial_velocity: velocity,
         });
         let diagnostic_identity = arrow_publication_debug_gate().enabled().then(|| {

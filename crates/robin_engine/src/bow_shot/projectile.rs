@@ -17,6 +17,9 @@ pub struct SpawnArrowParams {
     pub target: EntityId,
     pub target_pos: MapPoint,
     pub trajectory: Vec<TrajectoryPoint>,
+    /// A solid terminal collision writes the no-sound-material sentinel into
+    /// its waypoint. Water and hole exits do not perform that write.
+    pub terminal_solid_impact: bool,
     pub damage: u16,
     pub layer: u16,
     /// Initial 3D velocity — `compute_initial_throw_velocity` output
@@ -59,6 +62,7 @@ impl SpawnArrowParams {
             layer: 0,
             initial_velocity: WorldVec3D::new(1.0, 0.0, 0.0),
             lands_in_hole: false,
+            terminal_solid_impact: false,
         }
     }
 }
@@ -76,6 +80,7 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
         target,
         target_pos: _,
         trajectory,
+        terminal_solid_impact,
         damage,
         layer: _trajectory_layer,
         lands_in_hole,
@@ -117,6 +122,7 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
     };
     object.reference = Some(target);
 
+    let trajectory_runtime = arrow_trajectory_runtime(trajectory.len(), terminal_solid_impact);
     let projectile = ProjectileData {
         start: bow_point,
         end: end_pos,
@@ -126,6 +132,7 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
         flying: true,
         disappear: lands_in_hole,
         trajectory,
+        trajectory_runtime,
         damage,
         ..ProjectileData::default()
     };
@@ -142,6 +149,27 @@ pub fn spawn_arrow(params: SpawnArrowParams) -> Entity {
     ) as u16;
     arrow.projectile.launch_segment_start = Some(bow_point);
     Entity::Projectile(arrow)
+}
+
+fn arrow_trajectory_runtime(
+    count: usize,
+    terminal_solid_impact: bool,
+) -> Vec<crate::element::TrajectoryPointRuntime> {
+    let mut trajectory_runtime = vec![
+        crate::element::TrajectoryPointRuntime {
+            bounce: false,
+            material: crate::element::GameMaterial::Ground.as_u32(),
+        };
+        count
+    ];
+    if terminal_solid_impact {
+        let impact = trajectory_runtime
+            .last_mut()
+            .expect("solid arrow impact requires a trajectory endpoint");
+        impact.bounce = true;
+        impact.material = crate::element::GameMaterial::NumberOfMaterials.as_u32();
+    }
+    trajectory_runtime
 }
 
 fn trajectory_end_or_start(
@@ -1071,6 +1099,10 @@ pub(crate) fn make_arrow_falling_down(
         false,
         obstacle_check,
         None,
+    );
+    proj.projectile.trajectory_runtime = arrow_trajectory_runtime(
+        trajectory.len(),
+        terminal_impact && !terminal_lands_in_hole && !terminal_lands_in_water,
     );
     proj.projectile.trajectory = trajectory;
     proj.projectile.trajectory_frame_count = 0;

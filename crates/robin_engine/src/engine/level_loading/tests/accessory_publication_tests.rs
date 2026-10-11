@@ -22,6 +22,7 @@ fn accessory_sprite_keeps_fresh_instance_order_sentinel() {
         damage: 1,
         layer: 0,
         lands_in_hole: false,
+        terminal_solid_impact: false,
         initial_velocity: WorldVec3D::new(4.0, 0.0, 0.0),
     });
     let mut engine = super::EngineInner::new();

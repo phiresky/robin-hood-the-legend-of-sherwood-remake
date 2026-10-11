@@ -468,6 +468,7 @@ fn legacy_blocked_box_reset_requires_perform_motion_execute_arm() {
                 pending,
                 None,
                 None,
+                0,
             ),
             expected,
             "row {row}"
@@ -489,12 +490,13 @@ fn legacy_blocked_box_reset_recognizes_hidden_stop_movement_rewrite() {
         stop_animation: robin_engine::order::OrderType::TransitionWalkingUprightWaitingUpright
             as u32,
     };
-    // (last processed order id, moved this frame, prior last processed, expected)
-    for (last_processed, moved, prior_last_processed, expected) in [
-        (25, false, 20, true),
-        (25, false, 19, false),
-        (30, false, 20, false),
-        (25, true, 20, false),
+    // Action-only replacement transitions retain the first-frame sentinel.
+    for (last_processed, moved, prior_last_processed, frame_count, expected) in [
+        (25, false, 20, 0, true),
+        (25, false, 20, u16::MAX, false),
+        (25, false, 19, 0, false),
+        (30, false, 20, 0, false),
+        (25, true, 20, 0, false),
     ] {
         assert_eq!(
             original_reset_blocked_box_this_frame(
@@ -505,6 +507,7 @@ fn legacy_blocked_box_reset_recognizes_hidden_stop_movement_rewrite() {
                 None,
                 Some(prior_walking),
                 Some(prior_last_processed),
+                frame_count,
             ),
             expected,
             "last_processed={last_processed} moved={moved} prior={prior_last_processed}"
@@ -590,6 +593,7 @@ fn legacy_blocked_box_reset_recognizes_motion_completed_within_tolerance() {
                 pending,
                 None,
                 prior_processed,
+                0,
             ),
             expected,
         );

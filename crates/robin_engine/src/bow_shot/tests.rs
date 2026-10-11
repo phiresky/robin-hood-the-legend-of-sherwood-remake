@@ -2142,6 +2142,7 @@ fn tick_arrows_leaning_eye_hit_can_be_replaced_by_later_eligible_human() {
         damage: 30,
         layer: 0,
         lands_in_hole: false,
+        terminal_solid_impact: false,
         initial_velocity: WorldVec3D::new(1.0, 0.0, 0.0),
     });
     let mut earlier = make_soldier(80.0, 0.0);
@@ -4200,6 +4201,7 @@ fn shield_ricochet_with_empty_trajectory_finishes_nested_hourglass() {
         damage: 30,
         layer: 0,
         lands_in_hole: false,
+        terminal_solid_impact: false,
         initial_velocity: WorldVec3D::new(-47.394_653, 46.451_09, -7.129_664),
     }) else {
         panic!("spawn_arrow returned a non-projectile entity");
@@ -4373,6 +4375,7 @@ fn one_waypoint_falling_arrow_into_hole_disappears_without_ground_snap() {
         damage: 30,
         layer: 0,
         lands_in_hole: false,
+        terminal_solid_impact: false,
         initial_velocity: WorldVec3D::new(1.0, 0.0, 0.0),
     }) else {
         panic!("spawn_arrow returned a non-projectile entity");
@@ -4441,6 +4444,7 @@ fn falling_arrow_into_water_retires_without_ground_snap() {
         damage: 30,
         layer: 0,
         lands_in_hole: false,
+        terminal_solid_impact: false,
         initial_velocity: WorldVec3D::new(1.0, 0.0, 0.0),
     }) else {
         panic!("spawn_arrow returned a non-projectile entity");
@@ -4933,4 +4937,44 @@ fn non_falling_flying_arrow_retires_after_stationary_final_waypoint() {
     assert!(arrow.projectile.flying);
     assert!(!arrow.element.sprite.position_iface.is_moving());
     assert_eq!(arrow.element.position().z, 0.0);
+}
+
+#[test]
+fn arrow_material_changes_when_the_solid_impact_segment_starts() {
+    for solid_impact in [false, true] {
+        let Entity::Projectile(mut arrow) = spawn_arrow(SpawnArrowParams {
+            trajectory: vec![
+                TrajectoryPoint {
+                    position: WorldPoint3D::new(10.0, 0.0, 10.0),
+                    time: 1,
+                },
+                TrajectoryPoint {
+                    position: WorldPoint3D::new(20.0, 0.0, 0.0),
+                    time: 1,
+                },
+            ],
+            terminal_solid_impact: solid_impact,
+            ..SpawnArrowParams::test_flat(
+                EntityId::Pc(crate::entity_id::PcId(0)),
+                EntityId::Soldier(crate::entity_id::SoldierId(1)),
+                WorldPoint3D::new(0.0, 0.0, 20.0),
+                MapPoint::new(20.0, 0.0),
+            )
+        }) else {
+            panic!("arrow constructor returned another entity kind");
+        };
+        assert_eq!(
+            arrow.element.material(),
+            crate::element::GameMaterial::Ground
+        );
+        assert!(!arrow.advance_projectile_hourglass());
+        assert_eq!(
+            arrow.element.material(),
+            if solid_impact {
+                crate::element::GameMaterial::NumberOfMaterials
+            } else {
+                crate::element::GameMaterial::Ground
+            }
+        );
+    }
 }

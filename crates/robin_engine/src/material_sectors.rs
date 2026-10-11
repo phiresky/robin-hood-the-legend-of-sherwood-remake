@@ -85,8 +85,9 @@ impl MaterialSector {
         })
     }
 
-    /// Ray-casting point-in-polygon test — same implementation as
-    /// [`crate::water_zones::WaterZone::contains`].
+    /// Closed polygon membership, including exact edges and vertices.
+    /// Sound-line crossings can end precisely on a sector boundary; that
+    /// endpoint still belongs to the material sector.
     pub fn contains(&self, p: MapPoint) -> bool {
         if self.points.len() < 3 {
             return false;
@@ -100,9 +101,18 @@ impl MaterialSector {
         for i in 0..n {
             let vi = self.points[i];
             let vj = self.points[j];
+            let left = (p.y - vj.y) * (vi.x - vj.x);
+            let right = (p.x - vj.x) * (vi.y - vj.y);
+            if left == right
+                && p.x >= vi.x.min(vj.x)
+                && p.x <= vi.x.max(vj.x)
+                && p.y >= vi.y.min(vj.y)
+                && p.y <= vi.y.max(vj.y)
+            {
+                return true;
+            }
             if (vi.y > p.y) != (vj.y > p.y) {
-                let x_intersect = (vj.x - vi.x) * (p.y - vi.y) / (vj.y - vi.y) + vi.x;
-                if p.x < x_intersect {
+                if (vi.y > vj.y && left > right) || (vi.y < vj.y && left < right) {
                     inside = !inside;
                 }
             }
@@ -364,6 +374,29 @@ mod tests {
             polygon: SectorPolygon {
                 points: vec![(min, min), (max, min), (max, max), (min, max)],
             },
+        }
+    }
+
+    #[test]
+    fn material_sector_includes_edges_and_vertices_in_both_windings() {
+        let mut sector = MaterialSector::from_raw(&square(3, 0, 10), GameMaterial::Ground).unwrap();
+        for _ in 0..2 {
+            for point in [
+                (0.0, 0.0),
+                (10.0, 10.0),
+                (5.0, 0.0),
+                (10.0, 5.0),
+                (0.0, 5.0),
+                (5.0, 10.0),
+                (5.0, 5.0),
+            ] {
+                assert!(
+                    sector.contains(MapPoint::new(point.0, point.1)),
+                    "{point:?}"
+                );
+            }
+            assert!(!sector.contains(MapPoint::new(10.001, 5.0)));
+            sector.points.reverse();
         }
     }
 

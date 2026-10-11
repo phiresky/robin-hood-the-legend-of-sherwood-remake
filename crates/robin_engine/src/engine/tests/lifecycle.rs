@@ -74,6 +74,7 @@ fn immortal_pc_hit_by_creation_ordered_arrow(pc_before_arrow: bool) -> i16 {
             damage: 10,
             layer: 0,
             lands_in_hole: false,
+            terminal_solid_impact: false,
             initial_velocity: WorldVec3D {
                 x: 1.0,
                 y: 0.0,
