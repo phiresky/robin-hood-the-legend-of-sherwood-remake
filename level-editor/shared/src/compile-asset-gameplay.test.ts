@@ -1492,8 +1492,10 @@ test("physical receiving planes use the first three vertices without flattening 
   points[2] = { ...points[1]! };
   assert.throws(
     () => compileAssetGameplay(document, assets, bounds),
-    /no nondegenerate height plane/,
+    /top must lie on the surface/,
   );
+  points[3]!.z_top = 20;
+  assert.doesNotThrow(() => compileAssetGameplay(document, assets, bounds));
 });
 
 test("receiving part links reuse physical geometry and preserve state references", () => {

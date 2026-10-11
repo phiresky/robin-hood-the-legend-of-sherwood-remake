@@ -14,6 +14,7 @@ import { wallSplineGameplay } from "./wall-spline-gameplay.ts";
 import polygonClipping, { type Polygon, type MultiPolygon } from "polygon-clipping";
 import { assembleSightVolumes } from "./assemble-sight-volumes.ts";
 import { orderSightVolumes } from "./order-sight-volumes.ts";
+import { prepareSightCap } from "./prepare-sight-cap.ts";
 import { compileSoundSource } from "./compile-sound-source.ts";
 import { compileSceneryAnimation } from "./compile-scenery-animation.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
@@ -676,7 +677,9 @@ function compileAssetGameplayAttempt(
         // Keep per-vertex heights and flags, but rebuild all map-wide references.
         sight.push({
           ...shape,
-          points: shape.points.map((p) => ({ ...p, x: p.x - bounds[0], y: p.y - bounds[1] })),
+          points: prepareSightCap(
+            shape.points.map((p) => ({ ...p, x: p.x - bounds[0], y: p.y - bounds[1] })),
+          ),
           projection_area: null,
           material_indices: [],
         });
@@ -714,6 +717,7 @@ function compileAssetGameplayAttempt(
           return { x: top[0], y: top[1], z_bottom: bottom[2], z_top: top[2] };
         }),
       };
+      shape.points = prepareSightCap(shape.points);
       sight.push(shape);
       sightLabels.set(sight.length - 1, `${placement.id}/${volume.id}`);
       partSight.set(volume.id, shape);
