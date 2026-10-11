@@ -15,7 +15,10 @@ in these placements. Sixteen archives in
 `work/map-compile/spline-clearance-planes-tNInD9` preserve descriptors, warnings,
 scenes and pins through reopening/recompilation. Their extracted descriptors
 pass native construction, all 384 collision probes and 192 bounded graph routes.
-The complete sprite traversal audit is still pending. The verifier's previous
+All 192 complete sprite crossings now pass, checking collision, receiver and
+height at every tick and waiting for the stopping animation and order queue to
+finish. Maximum travelled distance is 39.990029 units for a 40-unit crossing;
+the 45-unit bound rejects wall-end detours. The verifier's previous
 32 straight/sloped descriptors remain unchanged (`spline-clearance-planes-IzkBXA`
 compared with `spline-clearance-planes-TT69Ak`).
 

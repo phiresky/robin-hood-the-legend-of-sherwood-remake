@@ -1832,6 +1832,11 @@ All 16 exports also pass editable ZIP round-tripping with `--zip-roundtrip`:
 geometry, warnings, scene and pins survive reopening/recompilation, and the
 ZIP-extracted descriptors pass the native collision and graph-route checks.
 Diagnostic blank rasters do not establish rendered appearance.
+The `--copied` extension places two independent spline paths in the same map.
+Across four rotations/two heights, all 16 editable ZIP round trips, 384 collision
+probes, 192 bounded routes and 192 complete sprite crossings pass. Routes retain
+their own sector and receiver bindings; maximum travelled distance is 39.990029
+units for a 40-unit crossing.
 Explicit upright headroom retains the uncut wall and authored pillar holes.
 Curved terrain conformance and rendered actor integration remain open; see the
 curved traversal evidence above.
