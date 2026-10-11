@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import struct
+import shutil
 from pathlib import Path
 import numpy as np
 from scipy.ndimage import map_coordinates
@@ -22,13 +23,17 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--fields',type=Path,required=True)
     parser.add_argument('--output',type=Path,required=True)
+    parser.add_argument('--masks',type=int,nargs='+')
     args=parser.parse_args();args.output.mkdir(exist_ok=False)
     report=json.loads((args.fields/'report.json').read_text())
     packet=np.load(args.fields/'flows.npz');flows=packet['flow'];left,top,w,h=map(int,packet['bbox'])
     assert flows.shape==(14,h,w,2) and np.all(flows[0]==0)
     map_path=LIB/'scenes/croisement02.rhlos-map.json';map_bytes=map_path.read_bytes();scene=json.loads(map_bytes)
     records=[]
+    if args.masks:assert set(args.masks)<=set(x[0] for x in CROWNS[report['animation_index']])
     for mask,_,_ in CROWNS[report['animation_index']]:
+        if args.masks and mask not in args.masks:continue
+        assert shutil.disk_usage(args.output).free>=10*1024**3
         asset=f'croisement02-tree-{mask:02}';model=LIB/f'3d-assets/croisement02/{asset}/model.glb'
         source_bytes=model.read_bytes();jlen=struct.unpack_from('<I',source_bytes,12)[0];doc=json.loads(source_bytes[20:20+jlen]);start=28+jlen
         assert not doc.get('animations') and not doc.get('skins')
