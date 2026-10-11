@@ -1,12 +1,12 @@
 """Infer fuller rear basal wood while retaining native camera-ray front surfaces."""
 import json,math,os,shutil,sys,hashlib
 from pathlib import Path
-import bpy,numpy as np
+import bpy,bmesh,numpy as np
 from mathutils import Vector
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'));sys.path.insert(0,str(Path(__file__).parent))
 from render_slots import acquire
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';src=R/'tree05-v8';dest=R/'tree05-basal-depth-v6';w=src/'assets/croisement01-tree-05';out=dest/'assets/croisement01-tree-05';assert not dest.exists();acquire(slots=2)
+R=ROOT/'level-editor/work/croisement01-refinement/restart2';src=R/'tree05-v8';dest=R/'tree05-basal-depth-v8';w=src/'assets/croisement01-tree-05';out=dest/'assets/croisement01-tree-05';assert not dest.exists();acquire(slots=2)
 for f in src.iterdir():
  if f.is_file():dest.mkdir(exist_ok=True);shutil.copy2(f,dest/f.name)
 out.mkdir(parents=True)
@@ -38,12 +38,23 @@ helper.DENSE=True
 if 'defer_union' in o:del o['defer_union']
 roots=[]
 for tipx,tipy in [(302,-420),(329,-406),(354,-425)]:
- centers=[Vector((329,-477,65))];radii=[8]
+ centers=[Vector((329,-477,99))];radii=[8]
  for t in np.linspace(.04,1,25):
+  t=float(t)
   radius=float(np.interp(t,[0,.32,.68,1],[8,5,2,.4]))
-  x=329+(tipx-329)*t;y=-477+(tipy+477)*t;hit,_,_,_=soil.ray_cast(Vector((x,y,2000)),Vector((0,0,-1)),4000);assert hit is not None
-  z=65-12*math.sin(float(t)*math.pi/2);centers.append(Vector((x,y,z)));radii.append(radius)
+  p0=Vector((329,-477,99));p1=Vector((329,-477,65));p2=Vector(((329+tipx)/2,-455,53));p3=Vector((tipx,tipy,53));center=(1-t)**3*p0+3*(1-t)**2*t*p1+3*(1-t)*t*t*p2+t**3*p3;centers.append(center);radii.append(radius)
  root=helper.tube('Inferred rear subsurface root',centers,radii);union(o,root);roots.append(dict(centers=[list(p) for p in centers],radii=radii))
+bm=bmesh.new();bm.from_mesh(o.data);todo=set(bm.verts);components=[]
+while todo:
+ stack=[todo.pop()];n=0
+ while stack:
+  v=stack.pop();n+=1
+  for edge in v.link_edges:
+   other=edge.other_vert(v)
+   if other in todo:todo.remove(other);stack.append(other)
+ components.append(n)
+assert len(components)==1,components
+assert all(e.is_manifold for e in bm.edges);bm.free()
 bpy.ops.wm.save_as_mainfile(filepath=str(out/'geometry-before-projection.blend'))
 from refinement_workspace import _reproject
 _reproject(cfg,out/'projection-new-roots')
