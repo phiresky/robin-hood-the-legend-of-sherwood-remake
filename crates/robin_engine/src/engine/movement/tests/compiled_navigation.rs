@@ -93,12 +93,17 @@ fn exported_posture_passage_zips_support_native_player_routes() {
         let file = entry["file"].as_str().unwrap();
         let count = entry["expected_doors"].as_u64().unwrap() as usize;
         let height = entry["height"].as_f64().unwrap() as f32;
-        let passed =
-            audit_posture_passages(&std::fs::read(directory.join(file)).unwrap(), height, count);
+        let initially_closed = entry["initially_closed"] == true;
+        let passed = audit_posture_passages_with_controls(
+            &std::fs::read(directory.join(file)).unwrap(),
+            height,
+            count,
+            initially_closed,
+        );
         crossings += passed;
         eprintln!("{file}: {passed} complete posture crossings");
         results.push(
-            serde_json::json!({"file":file, "crossings":passed, "doors":count, "height":height}),
+            serde_json::json!({"file":file, "crossings":passed, "doors":count, "height":height, "initially_closed":initially_closed}),
         );
     }
     assert!(crossings > 0);
@@ -153,10 +158,27 @@ fn audit_posture_passages_with_controls(
         for reverse in [false, true] {
             let (mut engine, mut assets) = compiled_walkway_with_dimensions(bytes, dimensions);
             if open_controls {
+                assert!(
+                    engine
+                        .script_domains
+                        .interactables
+                        .doors
+                        .iter()
+                        .all(|door| door.passage_blocked)
+                );
                 let sim = crate::sim_rng::test_context();
                 engine.apply_patch(
                     TickCtx::new(&sim, &assets),
                     crate::patch::PatchIndex::new(index as u32).unwrap(),
+                );
+                assert!(
+                    engine
+                        .script_domains
+                        .interactables
+                        .doors
+                        .iter()
+                        .enumerate()
+                        .all(|(i, door)| door.passage_blocked == (i != index))
                 );
             }
             let door = engine.script_domains.interactables.doors[index].clone();

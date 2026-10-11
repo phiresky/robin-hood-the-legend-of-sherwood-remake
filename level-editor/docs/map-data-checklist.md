@@ -445,8 +445,13 @@ connections start blocked, opening/resetting one control affects only its copy,
 and all four directed full-character player routes complete after opening with
 the correct posture, height and sector. If the control is unavailable,
 best-effort compilation retains its initial solid barrier and omits the passage.
-Rotated native traversal and closure during these posture-changing crossings
-remain open.
+The `check-posture-passages.mjs --initially-closed` audit also passes eight
+editable ZIP round trips at 0/37/90/180 degrees and floor elevations 40/80.
+Native player movement passes all 32 directed crossings after opening the
+relevant asset control, checking independent copied availability, corridor
+adherence, final posture, height and sector. Evidence:
+`work/map-compile/closed-posture-passages-OuSqkE/actor-posture-report.json`.
+Closure during these posture-changing crossings remains open.
 Virtual-room entrances now prepare their outdoor leg against the outdoor area's
 state word and retained permanent cuts; the virtual interior has no motion-area
 state word. Compiler and ZIP checks cover permanent blocking and warning output,

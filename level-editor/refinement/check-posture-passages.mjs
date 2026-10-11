@@ -1,14 +1,22 @@
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { joinedPostureCompilerFixture } from "../shared/test-fixtures/asset-gameplay.ts";
+import {
+  joinedPostureCompilerFixture,
+  closedPostureCompilerFixture,
+} from "../shared/test-fixtures/asset-gameplay.ts";
 import { compileMap, packageCompiledMap } from "../app/src/map-compile.ts";
 import { serializeStoredMap, parseStoredMap } from "../shared/src/index.ts";
 
 const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", import.meta.url))(
   "fflate",
 );
-const output = await fs.mkdtemp("work/map-compile/posture-passages-");
+const options = process.argv.slice(2);
+assert.ok(options.every((option) => option === "--initially-closed"));
+const initiallyClosed = options.includes("--initially-closed");
+const output = await fs.mkdtemp(
+  `work/map-compile/${initiallyClosed ? "closed-" : ""}posture-passages-`,
+);
 console.log(output);
 const results = [];
 const report = (complete) =>
@@ -23,8 +31,11 @@ const report = (complete) =>
 await report(false);
 for (const rotation of [0, 37, 90, 180])
   for (const elevation of [0, 40])
-    for (const obstruction of ["clear", "split", "blocked"]) {
+    for (const obstruction of initiallyClosed ? ["clear"] : ["clear", "split", "blocked"]) {
       const { document, assets, hut, upper } = joinedPostureCompilerFixture();
+      if (initiallyClosed)
+        hut.gameplay.movementTransitions =
+          closedPostureCompilerFixture().hut.gameplay.movementTransitions;
       if (obstruction !== "clear")
         for (const asset of [hut, upper])
           asset.gameplay.movementBlockers = [
@@ -104,6 +115,7 @@ for (const rotation of [0, 37, 90, 180])
         rotation,
         height: 40 + elevation,
         obstruction,
+        initially_closed: initiallyClosed,
         expected_doors: expectedDoors,
         warnings: compiled.warnings,
       });
