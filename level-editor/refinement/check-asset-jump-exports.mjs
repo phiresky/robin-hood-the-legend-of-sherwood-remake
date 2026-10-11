@@ -1,0 +1,76 @@
+// Isolate reusable asset jump definitions on authored flat ground.
+import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { compileMap } from "../app/src/map-compile.ts";
+import { insertProjectionAsset } from "../app/src/asset-commands.ts";
+import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
+
+const ids = process.argv.slice(2);
+assert.ok(ids.length && ids.every((id) => !id.startsWith("-")));
+const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8"));
+const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const output = await fs.mkdtemp("work/map-compile/asset-jump-exports-");
+console.log(output);
+const results = [];
+const save = (complete) =>
+  fs.writeFile(
+    `${output}/diagnostics.json`,
+    JSON.stringify({
+      scope: "static-geometry-only-not-gameplay-parity",
+      complete,
+      results,
+    }),
+  );
+await save(false);
+for (const id of ids) {
+  const entry = index.assets.find((entry) => entry.id === id);
+  assert.ok(entry, id);
+  const bytes = await fs.readFile(`library/3d-assets/${entry.descriptor}`);
+  assert.equal(hash(bytes), entry.descriptor_sha256);
+  const descriptor = JSON.parse(bytes);
+  const reference = {
+    id,
+    role: "objects",
+    descriptor: `3d-assets/${entry.descriptor}`,
+    descriptor_sha256: hash(bytes),
+    model: `3d-assets/${entry.model}`,
+    model_sha256: hash(await fs.readFile(`library/3d-assets/${entry.model}`)),
+    model_scene: entry.model_scene,
+    resources: descriptor.resources ?? [],
+  };
+  for (const elevation of [0, 40])
+    for (const rotation of [0, 37, 90, 180]) {
+      const empty = {
+        version: 1,
+        map: id,
+        camera: { kind: "oblique-orthographic", elevation_deg: 35 },
+        size: [2000, 2000],
+        objects: [],
+        groups: [],
+        sceneAssets: [],
+        assetSources: [],
+        terrain: createTerrainGrid([0, 0, 2000, 2000], 2000, elevation),
+      };
+      const { document } = insertProjectionAsset(empty, descriptor, reference, [
+        800,
+        800,
+        elevation,
+      ]);
+      document.groups[0].transform.rot_deg = rotation;
+      const compiled = compileMap(document, [0, 0, 2000, 2000], new Map([[id, descriptor]]), {
+        bestEffort: true,
+      });
+      const file = `${id}-${elevation}-${rotation}.level.json`;
+      await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
+      await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
+      results.push({
+        file,
+        warnings: compiled.warnings,
+        pairs: compiled.descriptor.asset_geometry.jump_line_pairs?.length ?? 0,
+      });
+      await save(false);
+    }
+  console.log(`${id}: eight placements compiled`);
+}
+await save(true);

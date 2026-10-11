@@ -24,8 +24,11 @@ five minutes.
 Croisement02's collapsing caps are traced to mesh-derived wood assets. Published fence repairs
 pass 20 moved/rotated native exports and 33,160 mesh-derived sight/projectile
 checks, with measured loss below 0.003% of footprint and 0.002% of volume.
-The full-scene retry passes those fences and fails on supplemental wood 09;
-the remaining wood definitions still need repair. These results do not establish
+Supplemental wood 09/44 repairs are now published too. Croisement02 exports and
+passes native loading plus six ordinary route samples, but retains 1,729 non-draft
+warnings and existing mesh/collision mismatches. The click-route audit is also
+being corrected to use authorized destinations rather than raw clicks; its
+failure counts are provisional. These results do not establish
 full parity; see [the current evidence](map-compilation-evidence.md).
 
 **Matched runtime comparison (2026-10-11):** current code and the earlier

@@ -4,6 +4,47 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Croisement02 exports after the remaining wood cap repairs (2026-10-12)
+
+Stage `wood-cap-slivers-nv199T` repairs supplemental wood 09/44 with the same
+bounded authoring filter as the fences. It removes 67/11 microscopic fragments
+and retains 2,016/1,919 volumes. Footprint losses are 0.002194%/0.0000542%; enclosed
+volume losses are 0.0007094%/0.00000917%. Twenty rotated/raised exports pass native
+geometry construction. Both definitions are published; the stage's `publication`
+report records the applied changes, guarded backups and updated scene pins.
+
+The independent visual-mesh ray audit does **not** pass: 664 of 74,760 directed
+sight/projectile checks disagree, covering 166 distinct placement/probe pairs.
+`authored-ray-comparison.json` compares those samples against the existing authored
+caps and the retained candidate caps in double precision: 164 miss both; two hit
+both but fail the native query. No lost authored hit was found at those samples.
+This establishes existing approximation/precision issues, not full collision
+parity. Draft warnings remain. The probe generator now handles large meshes
+without argument-stack overflow and reuses asset-local samples across placements.
+
+Saved-scene export `saved-map-exports-2evInr` completes in about 471 seconds,
+including bounds preparation, with both published fence repairs and staged wood
+09/44 repairs. It passes native construction and six ordinary collision-connected
+route samples. It retains 2,079 warnings, including 1,729 non-draft warnings;
+loading and sparse route samples do not certify the whole map, rendering or ZIP
+round trips.
+
+## Isolated stump click-route investigation (2026-10-12)
+
+`refinement/check-asset-jump-exports.mjs` places the southwest cut stump, south cut
+stump and central ivy stump independently on authored terrain at four rotations
+and two elevations. Export `asset-jump-exports-0fTlUC` retains jumps in all 24
+cases. The initial click audit reports 106 failures in 640 attempts: 64 stalls,
+24 blocked launch/landing approaches and 18 selections of a different jump.
+An uncommitted metadata trial aligning opposing spans (`asset-jump-exports-JkYxsI`)
+still reports 102 failures and is not published.
+
+The click audit also incorrectly compares arrivals against raw clicks instead of
+the movement system's authorized formation destinations. A test-only correction
+is being verified; no production movement code is changed. The counts above are
+diagnostic evidence, not a final count of asset defects, and the remaining
+failures must be reassessed with the corrected audit.
+
 ## Mesh-derived fence cap repair candidates (2026-10-12)
 
 Croisement02's failure is reproduced on fence 94 `wood-52`, then on fence 95
