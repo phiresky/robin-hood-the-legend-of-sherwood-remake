@@ -1,5 +1,5 @@
 """Independent first-hit guards for fixed sidewall traces and bank source seeds."""
-import json,math,hashlib
+import json,math,hashlib,sys
 from pathlib import Path
 import numpy as np
 from PIL import Image
@@ -16,4 +16,6 @@ def main():
   origin=np.array([x,-y/S,0.])+ray*5000;a=boundary_hits(origin,-ray,before);b=boundary_hits(origin,-ray,after)
   if not a or not b or a[0]['owner']!=b[0]['owner']:changed.append([int(x),int(y)])
  report={'status':'PASS_CPU_SIDEWALL_ANCHORS_AND_BANK_SEEDS'if not control_errors and not changed else'HOLD','fixed_sidewall_samples':sum(r['surface']=='side'for r in rows),'control_errors':control_errors,'bank_seed_samples':int(seeds.sum()),'bank_seed_firsthit_changes':changed,'geometry_sha256':hashlib.sha256((O/'geometry.json').read_bytes()).hexdigest(),'limits':['Private local sidewall study; whole52/54 morphology remains incomplete.','Saved Boolean/context/neighbors and native/actual/solid contact review still required.','No source pixel ownership or texture fill assigned.']};(O/'source-firsthit-guard.json').write_text(json.dumps(report,indent=2)+'\n');print({k:len(v)if isinstance(v,list)else v for k,v in report.items()if k!='limits'})
-if __name__=='__main__':main()
+if __name__=='__main__':
+ if len(sys.argv)>1:O=Path(sys.argv[1]).resolve()
+ main()
