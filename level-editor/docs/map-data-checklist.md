@@ -377,9 +377,19 @@ the invalid lift in best-effort exports. Explicit navigation regions with mixed
 posture remain separate and warn that their boundary needs authored passages.
 A compiler-generated two-room fixture passes a native waiting-transition test:
 the crouch room generates the crouching transition while its neighbour stays
-upright. Native traversal/landing, moved/copied assembly, spline coverage and
-automatic connections across mixed-posture boundaries remain unverified or
-incomplete; this is not full crouch-area parity. No runtime solver was added.
+upright. Compiler tests also cover independently copied room passages at
+0/37/90/180 degrees and crouched curved rising spline floors above upright ground.
+The roof placement audit accepts `--crouched`; the eight resulting descriptors
+match the upright control exactly apart from area flags. Native sprite landing,
+walk-jump-walk and player-click routing each pass 120 cases across two copies,
+0/37/180-degree rotations and 0/40 height offsets, checking the destination's
+crouched posture. Evidence: `work/map-compile/prepared-crouched-roof-placements-8A1PvE`;
+upright control: `work/map-compile/prepared-roof-placements-ntgG7I`.
+Both variants omit the 90-degree jump pairs because no character-sized receiving
+span remains; those omitted connections are not covered by the passing audit.
+Automatic connections across mixed-posture boundaries and native spline crouch
+traversal remain incomplete or unverified. This is not full crouch-area parity.
+No runtime solver was added.
 
 Spline-wall trimming now preserves disconnected closed mask contours as separate
 applications, including sloped and vertical boundaries. Moved, bent and rising

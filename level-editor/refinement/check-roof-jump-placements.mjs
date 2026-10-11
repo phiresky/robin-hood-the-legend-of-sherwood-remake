@@ -8,10 +8,14 @@ const input = JSON.parse(
 );
 const source = parseLevel3D(input.document);
 const asset = parseProjectionAssetDescriptor(input.asset);
+const crouched = process.argv.includes("--crouched");
+if (crouched) for (const surface of asset.gameplay.surfaces) surface.forceCrouched = true;
 const approachDepth = Math.min(
   ...asset.gameplay.surfaces.filter((s) => s.jump).map((s) => s.jump.landingDepth),
 );
-const output = await fs.mkdtemp("work/map-compile/prepared-roof-placements-");
+const output = await fs.mkdtemp(
+  `work/map-compile/prepared-${crouched ? "crouched-" : ""}roof-placements-`,
+);
 console.log(output);
 const results = [];
 const report = (complete) =>
@@ -19,6 +23,7 @@ const report = (complete) =>
     `${output}/diagnostics.json`,
     JSON.stringify({
       scope: "prepared-roof-jump-placements-awaiting-native-traversal",
+      crouched,
       complete,
       results,
     }),

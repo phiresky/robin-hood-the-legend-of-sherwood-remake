@@ -93,6 +93,39 @@ test("forced crouching remains local to authored floors with working passages", 
   );
 });
 
+test("copied and rotated crouch rooms keep passages bound to their own posture areas", () => {
+  for (const rotation of [0, 37, 90, 180]) {
+    const { document, assets, hut } = forcedCrouchCompilerFixture();
+    const before = structuredClone(hut);
+    const copy = structuredClone(document.objects[0]!);
+    copy.id = "crouch-copy";
+    copy.group = "crouch-copy";
+    copy.transform = { ...IDENTITY_TRANSFORM };
+    document.objects.push(copy);
+    document.groups.push({
+      id: "crouch-copy",
+      transform: { dx: 1000, dy: 900, dz: 30, rot_deg: rotation },
+    });
+    const compiled = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+    const flags = new Map<number, number>();
+    let sector = 0;
+    for (const area of compiled.motion_data.layers.flat()) {
+      flags.set(sector, area.flags);
+      sector += 1 + area.obstacles.length;
+    }
+    assert.equal(compiled.doors.length, 2);
+    const roomSectors = new Set<number>();
+    for (const door of compiled.doors) {
+      assert.equal(flags.get(door.sector_out), 0);
+      assert.equal(flags.get(door.sector_in), 1);
+      roomSectors.add(door.sector_out);
+      roomSectors.add(door.sector_in);
+    }
+    assert.equal(roomSectors.size, 4);
+    assert.deepEqual(hut, before);
+  }
+});
+
 test("assembled lifts retain uniform posture and warn when conflicting segments cannot join", () => {
   const { document, hut, upper, assets } = compoundLiftCompilerFixture();
   for (const asset of [hut, upper])

@@ -579,6 +579,14 @@ fn dispatch_jump(
     };
     let source_sector = handle(&source);
     let destination_sector = handle(&destination);
+    let landing_posture = if engine.world.fast_grid.level.sectors
+        [usize::from(destination.sector_index.unwrap())]
+    .force_crouched
+    {
+        Posture::Crouched
+    } else {
+        Posture::Upright
+    };
     let offset = crate::coordinates::MapVec::new(source.vector().x * t, source.vector().y * t);
     let normal = crate::coordinates::MapVec::new(-source.vector().y, source.vector().x);
     let distance = if approach {
@@ -817,7 +825,7 @@ fn dispatch_jump(
             } else {
                 finished
             }
-            && element.posture() == Posture::Upright
+            && element.posture() == landing_posture
             && (final_distance < 0.1 || completed_turning_startup)
         {
             if element.sector() != Some(destination_sector) || element.layer() != destination.layer

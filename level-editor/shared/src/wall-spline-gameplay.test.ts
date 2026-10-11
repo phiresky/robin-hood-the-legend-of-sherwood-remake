@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   wallSplineFixture,
+  wallAutomaticLightFixture,
   wallDisconnectedSoundFixture,
   wallMaterialFixture,
   wallDisconnectedMaskFixture,
@@ -14,6 +15,24 @@ import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
 import { validateAssetGameplay } from "./asset-gameplay.ts";
 import { sceneToGame } from "./geometry.ts";
 import { splineCurve } from "./spline-sampling.ts";
+
+test("curved rising spline floors retain their authored crouch flag", () => {
+  const { document, asset, assets, bounds } = wallAutomaticLightFixture();
+  asset.gameplay!.surfaces[0]!.forceCrouched = true;
+  const before = structuredClone(asset);
+  const generated = wallSplineGameplay(document, assets, false);
+  const floors = generated.descriptors.flatMap((d) => d.gameplay!.surfaces);
+  assert.ok(floors.length > 1);
+  assert.ok(floors.every((floor) => floor.forceCrouched === true));
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.ok(compiled.motion_data.layers.flat().some((area) => area.flags === 1));
+  assert.ok(compiled.motion_data.layers.flat().some((area) => area.flags === 0));
+  asset.gameplay!.surfaces[0]!.forceCrouched = false;
+  const upright = compileAssetGameplay(document, assets, bounds);
+  assert.ok(upright.motion_data.layers.flat().every((area) => area.flags === 0));
+  asset.gameplay!.surfaces[0]!.forceCrouched = true;
+  assert.deepEqual(asset, before);
+});
 
 test("closed mask boundaries split at cropped necks without reconnecting islands", () => {
   const { document, assets, bounds } = wallClosedBoundaryFixture();
