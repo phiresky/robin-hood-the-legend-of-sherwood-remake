@@ -15,6 +15,7 @@ import {
 import {
   assetCompilerFixture,
   ordinaryPassageBarrierCompilerFixture,
+  interiorPassageBarrierCompilerFixture,
   rotatedSceneryCompilerFixture,
   anchoredReceiverCompilerFixture,
   preservedBoundaryCompilerFixture,
@@ -69,6 +70,79 @@ import {
   doorAnchorCompilerFixture,
 } from "../../shared/test-fixtures/asset-gameplay.ts";
 import { readFile } from "node:fs/promises";
+
+test("interior passage states affect only their own outdoor entrance", async () => {
+  const { document, assets, hut } = interiorPassageBarrierCompilerFixture();
+  const compiled = compileMap(document, [0, 0, 2000, 2000], assets);
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-interior-passage-states.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled.descriptor, expected);
+  const files = unzipSync(
+    await packageCompiledMap(compiled, {
+      color: new Uint8Array(2000 * 2000 * 4),
+      depth: new Uint16Array(2000 * 2000),
+    }),
+  );
+  assert.deepEqual(
+    JSON.parse(strFromU8(files[`Data/Levels/${compiled.name}.level.json`]!)),
+    expected,
+  );
+  const buildings = compiled.descriptor.asset_geometry!.buildings!;
+  assert.equal(buildings.length, 2);
+  for (const { Building } of buildings) {
+    assert.deepEqual(
+      Building.doors[0]!.passage_states!.map((s) => s.allowed_states),
+      [[1]],
+    );
+    assert.equal(Building.doors[1]!.passage_states, undefined);
+    assert.equal(Building.doors[1]!.locked_pc, true);
+  }
+  assert.notEqual(
+    buildings[0]!.Building.doors[0]!.passage_states![0]!.area,
+    buildings[1]!.Building.doors[0]!.passage_states![0]!.area,
+  );
+  hut.gameplay!.movementBlockers = hut.gameplay!.movementTransitions![0]!.applied;
+  hut.gameplay!.movementTransitions = [];
+  const permanent = compileMap(document, [0, 0, 2000, 2000], assets);
+  assert.match(permanent.warnings.join("\n"), /Building 0 door 0:.*permanent movement obstacle/);
+  for (const { Building } of permanent.descriptor.asset_geometry!.buildings!) {
+    assert.ok(Building.doors[0]!.passage_states!.some((s) => s.allowed_states.length === 0));
+    assert.equal(Building.doors[1]!.passage_states, undefined);
+  }
+});
+
+test("interior passage states follow rotated and raised building copies", () => {
+  for (const rotation of [0, 37, 90, 180])
+    for (const elevation of [0, 40]) {
+      const { document, assets } = interiorPassageBarrierCompilerFixture();
+      document.size = [3000, 2000];
+      document.groups.forEach((group, index) => {
+        group.transform = { dx: 900 + index * 700, dy: 900, dz: elevation, rot_deg: rotation };
+      });
+      const compiled = compileMap(document, [0, 0, 3000, 2000], assets);
+      const buildings = compiled.descriptor.asset_geometry!.buildings!;
+      assert.equal(buildings.length, 2);
+      for (const { Building } of buildings) {
+        assert.deepEqual(
+          Building.doors[0]!.passage_states!.map((s) => s.allowed_states),
+          [[1]],
+          `${rotation}/${elevation}`,
+        );
+        assert.equal(Building.doors[1]!.passage_states, undefined);
+      }
+      assert.notEqual(
+        buildings[0]!.Building.doors[0]!.passage_states![0]!.area,
+        buildings[1]!.Building.doors[0]!.passage_states![0]!.area,
+      );
+    }
+});
 
 test("permanent ordinary passage collisions warn and export an unavailable corridor", async () => {
   const { document, assets, hut } = assetCompilerFixture();

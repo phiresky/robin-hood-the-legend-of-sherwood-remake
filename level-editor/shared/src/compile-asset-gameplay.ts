@@ -2861,11 +2861,12 @@ function compileAssetGameplayAttempt(
     const d = door.definition;
     const permanentStates: NonNullable<CompiledAssetGeometry["doors"][number]["passage_states"]> =
       [];
-    if (!door.lift && !door.interior) {
-      for (const [area, endpoint, anchor] of [
+    if (!door.lift) {
+      const legs = [
         [outside, door.outside, door.outsideAnchor],
         [inside, door.inside, door.insideAnchor],
-      ] as const) {
+      ] as const;
+      for (const [area, endpoint, anchor] of door.interior ? legs.slice(0, 1) : legs) {
         const receiving = areas.find(
           (candidate) =>
             candidate.sector === area.sector && containsNavigationAnchor(candidate, anchor),

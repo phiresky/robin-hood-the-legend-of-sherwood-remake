@@ -434,8 +434,15 @@ script activation or lock settings. Compiler/export tests pin editable ZIP
 descriptors to native fixtures. Native loading and authorization tests verify
 permanent blocking, independent copied patch controls, reopening, and preservation
 of explicit deactivation. These checks do not yet certify interruption/resumption
-of ordinary animated crossings, initially closed generated socket placement, or
-virtual-room entrances. Changing mixed-posture passages and regions without
+of ordinary animated crossings or initially closed generated socket placement.
+Virtual-room entrances now prepare their outdoor leg against the outdoor area's
+state word and retained permanent cuts; the virtual interior has no motion-area
+state word. Compiler and ZIP checks cover permanent blocking and warning output,
+and native loading/apply/reset checks cover two copied buildings with two
+entrances each: blocking one entrance preserves the other entrance, the other
+copy, and authored locks. Compiler checks also preserve those independent
+requirements at 0/37/90/180 degrees and elevations 0/40. Complete actor crossings
+through changing virtual-room entrances remain unverified. Changing mixed-posture passages and regions without
 explicit sockets still need broader coverage. This is not full crouch-area
 parity. No runtime solver was added.
 

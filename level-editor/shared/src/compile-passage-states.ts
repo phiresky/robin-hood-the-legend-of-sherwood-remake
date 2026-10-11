@@ -46,6 +46,24 @@ export function compileOrdinaryPassageStates(
   });
 }
 
+/** Virtual interiors have no motion-area state word; check only the outdoor leg. */
+export function compileBuildingPassageStates(
+  geometry: CompiledAssetGeometry,
+): PassageStateRequirement[][][] {
+  const areas = passageAreas(geometry);
+  return (geometry.buildings ?? []).map(({ Building }, buildingIndex) =>
+    Building.doors.map((door, doorIndex) => {
+      const layer = door.layer_out;
+      const entry = areas.get(`${door.sector_out}/${layer}`);
+      if (!entry) throw new Error(`Building ${buildingIndex} door ${doorIndex}: missing out area`);
+      const allowed_states = entry.allowed(door.point_mid, door.point_out);
+      return allowed_states.length === 1 && allowed_states[0] === 0
+        ? []
+        : [{ layer, area: entry.area, allowed_states }];
+    }),
+  );
+}
+
 export function compileLiftPassageStates(
   geometry: CompiledAssetGeometry,
 ): PassageStateRequirement[][][] {

@@ -10,6 +10,7 @@ import { packageAppearanceRegions, type BakedAppearanceRegion } from "./map-appe
 import { compileMission } from "./compile-mission.ts";
 import { compileLiftApproaches } from "../../shared/src/compile-lift-approaches.ts";
 import {
+  compileBuildingPassageStates,
   compileLiftPassageStates,
   compileOrdinaryPassageStates,
 } from "../../shared/src/compile-passage-states.ts";
@@ -126,6 +127,20 @@ export function compileMap(
         (assetGeometry.warnings ??= []).push(
           `Door ${index}: the animated passage intersects a permanent movement obstacle; this passage is unavailable.`,
         );
+    });
+    const buildingStates = compileBuildingPassageStates(assetGeometry);
+    assetGeometry.buildings?.forEach(({ Building }, index) => {
+      Building.doors.forEach((door, doorIndex) => {
+        const requirements = [
+          ...(door.passage_states ?? []),
+          ...buildingStates[index]![doorIndex]!,
+        ];
+        if (requirements.length) door.passage_states = requirements;
+        if (requirements.some((requirement) => requirement.allowed_states.length === 0))
+          (assetGeometry.warnings ??= []).push(
+            `Building ${index} door ${doorIndex}: the outdoor passage intersects a permanent movement obstacle; this passage is unavailable.`,
+          );
+      });
     });
     const passageStates = compileLiftPassageStates(assetGeometry);
     assetGeometry.lifts?.forEach((lift, index) => {

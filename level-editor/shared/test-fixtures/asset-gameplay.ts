@@ -1699,6 +1699,21 @@ export function interiorAssetCompilerFixture() {
   return fixture;
 }
 
+export function interiorPassageBarrierCompilerFixture() {
+  const fixture = ordinaryPassageBarrierCompilerFixture();
+  const gameplay = fixture.hut.gameplay!;
+  gameplay.doors = [];
+  gameplay.interiors = interiorAssetCompilerFixture().hut.gameplay!.interiors!;
+  gameplay.movementTransitions![0]!.applied[0]!.polygon = [
+    [15, 86],
+    [25, 86],
+    [25, 90],
+    [15, 90],
+  ];
+  fixture.document.map = "Interior passage state fixture";
+  return fixture;
+}
+
 export function terrainInteriorCompilerFixture() {
   const fixture = interiorAssetCompilerFixture();
   const gameplay = fixture.hut.gameplay!;
