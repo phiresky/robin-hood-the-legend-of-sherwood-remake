@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 BASE=ROOT/'level-editor/work/croisement03-refinement/restart2'
 C=BASE/'combined-trio-inferred-crown-candidate-v1'
-OUT=C/'editor-interaction-fixture-v4'
+OUT=C/'editor-interaction-fixture-v5'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main():
