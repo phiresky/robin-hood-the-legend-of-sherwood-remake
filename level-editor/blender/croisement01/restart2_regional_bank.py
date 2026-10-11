@@ -76,6 +76,17 @@ background=[o for o in collection.all_objects if o.type=='MESH' and o.get('sourc
 for i,j in np.argwhere(extension):
  hit,_,_,_=background_tree.ray_cast(Vector((xs[i],ys[j],5000)),Vector((0,0,-1)),10000);assert hit is not None
  z0[i,j]=hit.z;labels[i,j]=nodes.index('building-000')
+outer_skirt=np.zeros_like(closed)
+if a.revision>=16:
+ # Infer a soil transition beyond the bank footprint instead of retaining
+ # a vertical proxy wall. Existing wood contacts and source-ray caps still
+ # constrain the solve; the outer ring meets the available background.
+ expanded=closed.copy()
+ for _ in range(16):expanded=dilate(expanded)
+ outer_skirt=expanded&~closed;closed=expanded
+ for i,j in np.argwhere(outer_skirt):
+  hit,_,_,_=background_tree.ray_cast(Vector((xs[i],ys[j],5000)),Vector((0,0,-1)),10000)
+  z0[i,j]=float(hit.z) if hit is not None else 0.
 closed[[0,-1]]=False;closed[:,[0,-1]]=False
 filled=closed&~domain
 for _ in range(max(len(xs),len(ys))):
@@ -83,7 +94,9 @@ for _ in range(max(len(xs),len(ys))):
  if not len(pending):break
  for i,j in pending:
   near=[(labels[ii,jj],z0[ii,jj]) for ii,jj in [(i-1,j),(i+1,j),(i,j-1),(i,j+1)] if 0<=ii<len(xs) and 0<=jj<len(ys) and labels[ii,jj]>=0]
-  if near:labels[i,j]=collections.Counter(x[0] for x in near).most_common(1)[0][0];z0[i,j]=sum(x[1] for x in near)/len(near)
+  if near:
+   labels[i,j]=collections.Counter(x[0] for x in near).most_common(1)[0][0]
+   if not outer_skirt[i,j]:z0[i,j]=sum(x[1] for x in near)/len(near)
 assert not np.any(closed&(labels<0));domain=closed;boundary=domain&~erode(domain)
 z=z0.copy();fixed=boundary.copy()
 if a.revision>=6:
@@ -245,4 +258,4 @@ for label,bank in enumerate(banks):
  bank.data=mesh;mesh_reports.append(dict(node=bank['source_node'],vertices=len(verts),faces=len(polys),components=components,nonmanifold_edges=bad,degenerate_faces=deg))
 assert all(geom(o)==protected[o.get('source_node')] for o in collection.all_objects if o.type=='MESH' and o not in banks)
 bpy.data.orphans_purge(do_recursive=True);(worker/'modified').mkdir(parents=True);(worker/'inspection').mkdir();shutil.copy2(source/'modified/views.json',worker/'modified/views.json');(worker/'workspace.json').write_text(json.dumps(cfg,indent=2)+'\n');bpy.ops.wm.save_as_mainfile(filepath=str(worker/'model.blend'));assert sha(source/'model.blend')==source_hash
-(dest/'construction.json').write_text(json.dumps(dict(status='Private complete-bank hypothesis; root and user approval pending',source_sha256=source_hash,model_sha256=sha(worker/'model.blend'),wood_and_unrelated_geometry_unchanged=True,changed_nodes=nodes,grid_step=step,soil_bottom=soil_bottom,inferred='Broad regional slope for banks006/007 plus bounded background000 splice. Exterior000 planar geometry retained by exact clipping. Tree06 lowered along native camera rays; original proxy heights are weak priors, not observations. Unknown soil appearance, seams and topology require review.',root_constraints=root_constraints,background_region=list(region),preserved_background_polygons=len(preserved_background),preserved_exterior_corner_schema=exterior_schema,preserved_background_surface_sha256=hashlib.sha256(json.dumps([[list(v) for v in poly] for poly in preserved_background],separators=(',',':')).encode()).hexdigest(),boundary_visibility_conflicts=violations,filled_gap_grid_samples=int(filled.sum()),rounded_root_shoulder_grid_samples=int(extension.sum()),iterations=it+1,convergence=delta,max_raise=float(np.max((z-z0)[domain])),max_lower=float(np.max((z0-z)[domain])),topology=mesh_reports),indent=2)+'\n');print(worker)
+(dest/'construction.json').write_text(json.dumps(dict(status='Private complete-bank hypothesis; root and user approval pending',source_sha256=source_hash,model_sha256=sha(worker/'model.blend'),wood_and_unrelated_geometry_unchanged=True,changed_nodes=nodes,grid_step=step,outer_transition_width=(64 if a.revision>=16 else 0),outer_transition_samples=int(outer_skirt.sum()),soil_bottom=soil_bottom,inferred='Broad regional slope for banks006/007 plus bounded background000 splice. Exterior000 planar geometry retained by exact clipping. Tree06 lowered along native camera rays; original proxy heights are weak priors, not observations. Unknown soil appearance, seams and topology require review.',root_constraints=root_constraints,background_region=list(region),preserved_background_polygons=len(preserved_background),preserved_exterior_corner_schema=exterior_schema,preserved_background_surface_sha256=hashlib.sha256(json.dumps([[list(v) for v in poly] for poly in preserved_background],separators=(',',':')).encode()).hexdigest(),boundary_visibility_conflicts=violations,filled_gap_grid_samples=int(filled.sum()),rounded_root_shoulder_grid_samples=int(extension.sum()),iterations=it+1,convergence=delta,max_raise=float(np.max((z-z0)[domain])),max_lower=float(np.max((z0-z)[domain])),topology=mesh_reports),indent=2)+'\n');print(worker)
