@@ -21,8 +21,10 @@ degenerate cap-plane crash is fixed: its fresh export loads natively and passes
 traversals. The separate player-click walk/jump/walk check fails 8 of 130 cases;
 those routes still need repair. It retains 45 non-draft warnings and takes about
 five minutes.
-Croisement02 still fails on a triangular cap that collapses at native float
-precision; rotating its vertices cannot repair it. These results do not establish
+Croisement02's collapsing caps are traced to two fences. Staged asset repairs
+pass 20 moved/rotated native exports and 33,160 mesh-derived sight/projectile
+checks, with measured loss below 0.003% of footprint and 0.002% of volume.
+Publication and the full-scene retry are pending. These results do not establish
 full parity; see [the current evidence](map-compilation-evidence.md).
 
 **Matched runtime comparison (2026-10-11):** current code and the earlier

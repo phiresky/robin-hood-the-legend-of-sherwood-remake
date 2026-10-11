@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Mesh-derived fence cap repair candidates (2026-10-12)
+
+Croisement02's failure is reproduced on fence 94 `wood-52`, then on fence 95
+`wood-92` after substituting the first repair. These are very thin fragments of
+mesh cap decomposition, not missing terrain or gameplay definitions.
+`refinement/stage-wood-cap-slivers.mjs` stages an explicit asset-authoring repair
+only for mesh-derived draft wood definitions. It removes fragments narrower
+than 0.001 game units and refuses a candidate losing 0.01% or more of either
+footprint area or enclosed volume. It preserves retained volume IDs and validates
+references. Map compilation does not silently discard thin authored obstacles.
+
+Stage `wood-cap-slivers-Kml97q` retains 331/749 volumes for fences 94/95, removing
+184/384 microscopic fragments. Footprint losses are 0.002683%/0.002255%; enclosed
+volume losses are 0.001164%/0.000934%. Exact fragment measurements and pinned
+descriptor/model hashes are in the stage. All 20 exports at five rotations and
+two elevations pass native geometry construction.
+
+`refinement/check-wood-mesh-rays.mjs` obtains independent vertical intersection
+intervals from the pinned source meshes, unions overlapping shells, and samples
+solid crossings and open gaps. Native sight/projectile checks pass all 33,160
+directed queries across those placements. Initial probes entirely inside solids
+were corrected to cross a surface, as required by the blocking-query semantics;
+the engine was not changed. These samples do not certify every boundary or
+microscopic gap. Draft warnings remain, and publication/full-map verification
+are pending. Saved-scene candidate `saved-map-exports-oSnjn8` is running with both
+repairs; the first-fence-only candidate `saved-map-exports-YP5uhf` fails on fence 95.
+
 ## Stable cap vertices for clipped solids (2026-10-12)
 
 Fresh saved Croisement01 export `saved-map-exports-2Yh8ga` fails jump preparation
