@@ -369,6 +369,13 @@ not certification of every library asset or gameplay case. Best-effort exports
 warn about omissions and preserve initial states where possible; warnings are
 not evidence that an omitted feature works.
 
+**Open authoring gap — forced crouching:** the native motion-area format and
+runtime support a forced-crouch flag, including landing/transition behavior.
+`AssetWalkableSurface` currently has no corresponding authoring field and the
+compiler emits `flags: 0` for every area. This behavior still needs asset-local
+authoring, placement/assembly rules and native traversal coverage; ordinary
+walking and upright-headroom tests do not verify it.
+
 Spline-wall trimming now preserves disconnected closed mask contours as separate
 applications, including sloped and vertical boundaries. Moved, bent and rising
 compiler checks match separately authored islands; native character/projectile

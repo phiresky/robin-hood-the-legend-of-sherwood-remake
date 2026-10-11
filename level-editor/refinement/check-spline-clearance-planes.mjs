@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { wallSplineFixture } from "../shared/test-fixtures/wall-spline.ts";
 import { compileMap, packageCompiledMap } from "../app/src/map-compile.ts";
-import { serializeStoredMap, parseStoredMap } from "../shared/src/index.ts";
+import { serializeStoredMap, parseStoredMap, createTerrainGrid } from "../shared/src/index.ts";
+import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 import { splineCurve } from "../shared/src/spline-sampling.ts";
 import { sceneToGame } from "../shared/src/geometry.ts";
 
@@ -13,11 +14,13 @@ const output = await fs.mkdtemp("work/map-compile/spline-clearance-planes-");
 const results = [];
 const curved = process.argv.includes("--curved");
 const deck = process.argv.includes("--deck");
+const copies = process.argv.includes("--copied") ? 2 : 1;
 const zipRoundtrip = process.argv.includes("--zip-roundtrip");
 const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", import.meta.url))(
   "fflate",
 );
 assert.ok(!deck || curved, "--deck requires --curved");
+assert.ok(copies === 1 || deck, "--copied requires --deck");
 for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [0]) {
   const radians = (rotation * Math.PI) / 180;
   const direction = [Math.cos(radians), Math.sin(radians)];
@@ -44,6 +47,16 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
             250 + 50 * direction[0],
             elevation + rise / 2,
           ]);
+        }
+        if (copies === 2) {
+          bounds[2] = 1000;
+          document.size[0] = 1000;
+          document.terrain = createTerrainGrid(bounds, 100);
+          document.splines.push({
+            ...structuredClone(path),
+            id: `${path.id}-copy`,
+            points: path.points.map(([x, y, z]) => [x + 500, y, z]),
+          });
         }
         for (const vertex of document.terrain.vertices)
           vertex.position[2] = deck
@@ -97,45 +110,71 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
           ];
         const compiled = compileMap(document, bounds, assets);
         const layers = compiled.descriptor.asset_geometry.motion_data.layers;
-        if (deck && enabled)
-          assert.deepEqual(
-            layers.map((layer) => layer.length),
-            [1, 1, 0],
-            "Raised deck must compile into one connected region above the terrain",
-          );
+        let sector = 0;
+        const areas = layers.flatMap((entries, layer) =>
+          entries.map((area) => {
+            const entry = { area, layer, sector };
+            sector += 1 + area.obstacles.length;
+            return entry;
+          }),
+        );
         // The flat terrain has four corners; the curved deck has a sampled perimeter.
         // Plane ordering can place the sloped deck before or after the terrain.
-        const routeLayer = deck
-          ? layers.findIndex((layer) => layer[0]?.polygon.points.length > 4)
-          : 0;
-        assert.ok(routeLayer >= 0, "Compiled curved deck region must exist");
-        const curve = splineCurve(path, document.camera);
+        const candidates = deck
+          ? areas.filter(({ area }) => area.polygon.points.length > 4)
+          : areas;
+        if (deck && enabled)
+          assert.equal(
+            candidates.length,
+            copies,
+            "Each raised deck must remain connected independently",
+          );
         const probes = [];
-        for (let repeat = 0; repeat < 3; repeat++) {
-          for (const [offset, opening] of [
-            [-22, true],
-            [0, false],
-            [22, true],
-            [45, false],
-          ]) {
-            const fraction = (repeat * 100 + 50 + offset) / curve.getLength();
-            const centre = curve.getPointAt(fraction);
-            const tangent = sceneToGame(document.camera, curve.getTangentAt(fraction).toArray());
-            const dx = tangent[0],
-              dy = tangent[1] - tangent[2];
-            const length = Math.hypot(dx, dy);
-            const normal = [(-dy / length) * 20, (dx / length) * 20];
-            const [x, y, z] = sceneToGame(document.camera, centre.toArray());
-            probes.push({
-              layer: routeLayer,
-              start: [x - normal[0], y - z - normal[1]],
-              end: [x + normal[0], y - z + normal[1]],
-              reachable: enabled && opening,
-            });
+        for (const placedPath of document.splines) {
+          const curve = splineCurve(placedPath, document.camera);
+          for (let repeat = 0; repeat < 3; repeat++) {
+            for (const [offset, opening] of [
+              [-22, true],
+              [0, false],
+              [22, true],
+              [45, false],
+            ]) {
+              const fraction = (repeat * 100 + 50 + offset) / curve.getLength();
+              const centre = curve.getPointAt(fraction);
+              const tangent = sceneToGame(document.camera, curve.getTangentAt(fraction).toArray());
+              const dx = tangent[0],
+                dy = tangent[1] - tangent[2];
+              const length = Math.hypot(dx, dy);
+              const normal = [(-dy / length) * 20, (dx / length) * 20];
+              const [x, y, z] = sceneToGame(document.camera, centre.toArray());
+              const start = [x - normal[0], y - z - normal[1]];
+              const end = [x + normal[0], y - z + normal[1]];
+              const matching = candidates.filter(({ area }) =>
+                pointInGameplayPolygon(start, area.polygon.points),
+              );
+              assert.equal(
+                matching.length,
+                1,
+                "Crossing approach must belong to one authored floor",
+              );
+              const target = matching[0];
+              if (enabled && opening)
+                assert.ok(
+                  pointInGameplayPolygon(end, target.area.polygon.points),
+                  "Opening must connect both sides of this floor",
+                );
+              probes.push({
+                layer: target.layer,
+                sector: target.sector,
+                start,
+                end,
+                reachable: enabled && opening,
+              });
+            }
           }
         }
-        assert.equal(probes.length, 12);
-        const file = `clearance-${deck ? "deck-" : ""}${curved ? "curved-" : ""}${rotation}-${elevation}-${rise}-${enabled}.level.json`;
+        assert.equal(probes.length, 12 * copies);
+        const file = `clearance-${copies === 2 ? "copied-" : ""}${deck ? "deck-" : ""}${curved ? "curved-" : ""}${rotation}-${elevation}-${rise}-${enabled}.level.json`;
         const stored = serializeStoredMap(document, assets);
         let runtimeDescriptor = compiled.descriptor;
         if (zipRoundtrip) {
@@ -168,6 +207,7 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
           rotation,
           curved,
           deck,
+          copies,
           zip_roundtrip: zipRoundtrip,
           warnings: compiled.warnings,
           movement_probes: probes,
@@ -175,12 +215,11 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
             ? probes
                 .filter((probe) => probe.reachable)
                 .flatMap((probe) => [
-                  { ...probe, sector: routeLayer, max_length: 45 },
+                  { ...probe, max_length: 45 },
                   {
                     ...probe,
                     start: probe.end,
                     end: probe.start,
-                    sector: routeLayer,
                     max_length: 45,
                   },
                 ])

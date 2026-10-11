@@ -6,6 +6,19 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Curved spline opening traversal (2026-10-11)
 
+**Independent copied paths:** `--curved --deck --copied --rotated --zip-roundtrip`
+adds a second spline translated 500 units along X, sharing only the reusable
+asset definition. The verifier resolves each approach against its own compiled
+motion area and assigns sector numbers including intervening obstacle sectors.
+Layer numbers alone are insufficient: the copies use sectors 0/8, 0/9 or 1/12
+in these placements. Sixteen archives in
+`work/map-compile/spline-clearance-planes-tNInD9` preserve descriptors, warnings,
+scenes and pins through reopening/recompilation. Their extracted descriptors
+pass native construction, all 384 collision probes and 192 bounded graph routes.
+The complete sprite traversal audit is still pending. The verifier's previous
+32 straight/sloped descriptors remain unchanged (`spline-clearance-planes-IzkBXA`
+compared with `spline-clearance-planes-TT69Ak`).
+
 **Rising deck correction:** clearance pieces now additionally follow the affine
 mapping of each overlapping floor triangle from the same asset repetition. Only
 matching authored source planes participate. The source clearance is clipped
