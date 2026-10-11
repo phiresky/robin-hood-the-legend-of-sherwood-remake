@@ -1860,3 +1860,32 @@ test("delivered projected textures receive sampling policy on load and display c
   assert.equal(material.emissiveMap!.minFilter, THREE.NearestFilter);
   f.viewport.dispose();
 });
+
+test("aperture invalidation uses the incoming revision before reactive bindings publish it", async () => {
+  const f = await apertureDeliveredFixture();
+  const transform = { dx: 0, dy: 0, dz: 0, rot_deg: 0 };
+  const source = { id: "bank", role: "ground" as const, model: "bank.glb", model_scene: "bank", model_sha256: "a".repeat(64), descriptor_sha256: "b".repeat(64), resources: [] };
+  const document = { version: 1, map: "test", size: null, camera: { kind: "oblique-orthographic", elevation_deg: 35 }, sceneAssets: [source], groups: [{ id: "bank", transform }], objects: [] } as Level3D;
+  f.publish(document);
+  const manifest: import("./state-aperture-loader.ts").StateApertureManifest = {
+    version: 1, map: "test",
+    receivers: [{ asset: "bank", group: "bank", model_sha256: source.model_sha256, descriptor_sha256: source.descriptor_sha256, placement: transform, parts: [], replacement: source }],
+    endpoints: { initial: source, applied: source },
+    sites: [{ id: "site", patches: ["patch"], endpoint_position: [0, 0, 0] }],
+    controls: [{ id: "patch", mission: "test", family: "trap", patches: ["patch"], site: "site" }],
+  };
+  const errors: string[] = [];
+  Object.assign(f.viewport, { apertureManifest: manifest });
+  const bindings = (f.viewport as unknown as { bindings: { onError?: (error: string) => void } }).bindings;
+  bindings.onError = error => errors.push(error);
+  f.viewport.setDeliveredStateMode("physical-endpoint");
+  assert.equal(f.ground.visible, false);
+  const changed = structuredClone(document);
+  changed.groups[0]!.transform.dx = 1;
+  f.publish(changed, false, true);
+  assert.equal(f.delivery.ready, false, "incoming receiver edit must retire delivery even while bindings still expose the old document");
+  assert.equal(f.ground.visible, true);
+  assert.equal(f.root.parent, null);
+  assert.match(errors[0] ?? "", /Aperture receiver placement changed/);
+  f.viewport.dispose();
+});

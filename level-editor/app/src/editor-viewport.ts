@@ -870,14 +870,13 @@ export class EditorViewport {
       this.deliveryEndpointActive && this.deliveryEntitiesVisible;
     this.clippingBoundsDirty = true;
   }
-  private syncStateAperturePreview() {
+  private syncStateAperturePreview(document = this.bindings.document()) {
     const enabled = this.deliveryEndpointActive && this.deliveryEntitiesVisible;
     this.stateDelivery.physical.visible =
       enabled && !(this.deliveryFamily && this.aperturePreview?.handles(this.deliveryFamily));
     if (!this.aperturePreview) return;
     try {
       if (enabled && this.apertureManifest) {
-        const document = this.bindings.document();
         if (!document) throw new Error("Aperture map is unavailable");
         verifyStateApertureReceivers(this.apertureManifest, document);
       }
@@ -2525,7 +2524,8 @@ export class EditorViewport {
       this.partViews.delete(id);
     }
     this.syncDeliveredStaticPlacements(d);
-    this.syncStateAperturePreview();
+    // Revision callbacks can run before reactive document bindings expose d.
+    this.syncStateAperturePreview(d);
     if (!rebuildFraming) {
       // Incremental revisions still change lighting, casters, and terrain bounds.
       this.refreshSunLighting(d);
