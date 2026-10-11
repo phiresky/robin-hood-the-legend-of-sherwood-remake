@@ -1953,3 +1953,57 @@ test("physical loop static parts restore on native view and retire on incoming p
   delete (internals.loopClocks as { ready?: boolean }).ready;
   f.viewport.dispose();
 });
+
+test("source cover uses the existing placed roof control, with no second patch UI or clock", async () => {
+  const { sourceCoverFixture } = await import("./source-cover-visibility.fixture.ts");
+  const { c, source, cover, reader, document: example } = await sourceCoverFixture();
+  const ref = example.assetSources[0],
+    placed = example.groups[0];
+  const f = fixture(),
+    d = documentFixture();
+  d.groups = [placed];
+  d.assetSources = [ref];
+  d.objects[0]!.group = placed.id;
+  d.objects[0]!.node = "asset:" + ref.id + ":roof";
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+  roof.name = "actual-controlled-roof";
+  roof.userData.reveal_hide_when_applied = ["appearance-2"];
+  f.viewport.replaceMap(new THREE.Group(), null, new Map([[d.objects[0]!.node, roof]]));
+  f.publish(d);
+  const internal = f.viewport as any;
+  await internal.loopClocks.set(c.native, c.physical, source, [cover]);
+  await internal.nativeArt.set(c.native, source, reader);
+  internal.loopFocus = "animation-000";
+  internal.loopCoverVisibility = [cover];
+  const samples: any[] = [];
+  internal.loopClocks.attachPhysical(
+    cover.physical_target_id,
+    {
+      internallyPlaying: () => false,
+      sampleExternalTick: (tick: number, visible: boolean) => samples.push({ tick, visible }),
+    },
+    internal.loopClocks.physicalToken(cover.physical_target_id),
+  );
+  internal.loopClocks.seekPhysical(cover.physical_target_id, 9);
+  const shown = internal.objectsRoot.getObjectByName("actual-controlled-roof");
+  assert.ok(shown);
+  assert.equal(shown.visible, true);
+  f.viewport.setPatchRevealed("patch-002", false);
+  const coveredPixels = internal.nativeArt.pixels().data.slice();
+  f.viewport.setPatchRevealed("patch-002", true);
+  assert.equal(shown.visible, false);
+  assert.notDeepEqual(internal.nativeArt.loopDrawSnapshot().background.data, coveredPixels);
+  assert.deepEqual(samples.at(-1), { tick: 9, visible: true });
+  assert.equal(internal.nativeArt.loopDrawSnapshot().draws.length, 1);
+  f.viewport.setPatchRevealed("patch-002", false);
+  assert.equal(shown.visible, true);
+  assert.deepEqual(samples.at(-1), { tick: 9, visible: false });
+  assert.equal(internal.nativeArt.loopDrawSnapshot().draws.length, 0);
+  assert.deepEqual(internal.nativeArt.pixels().data, coveredPixels);
+  f.viewport.setPatchRevealed("patch-001", true);
+  assert.notDeepEqual(internal.nativeArt.pixels().data, coveredPixels);
+  assert.equal(shown.visible, true);
+  f.viewport.clearMap();
+  assert.equal(internal.loopClocks.ready, false);
+  f.viewport.dispose();
+});

@@ -47,7 +47,7 @@ export class ScenerySourceClocks {
     );
     if (matches.length !== 1) throw new Error("Missing or ambiguous scenery source clock");
     const row = matches[0]!;
-    if (!row.active) return -1;
+    if (!row.active || row.visible === false) return -1;
     if (!Number.isInteger(row.frame) || row.frame < 0 || row.frame >= count)
       throw new Error("Scenery resource frames differ from bound source clock");
     return row.frame;

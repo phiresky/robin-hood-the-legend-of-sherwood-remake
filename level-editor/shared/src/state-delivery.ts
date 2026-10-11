@@ -1,3 +1,7 @@
+import {
+  validateSourceCoverVisibility,
+  type SourceCoverVisibility,
+} from "./source-cover-visibility.ts";
 import { validateReviewedNodePoses, type ReviewedNodePose } from "./reviewed-node-poses.ts";
 import { validateMissionStateContract, type MissionStateContract } from "./mission-state.ts";
 import { safeLibraryPath } from "./projection-assets.ts";
@@ -358,6 +362,7 @@ export function stateDeliveryLoopsAfterTransition(
 
 /** Source artwork loop preview; independent ambient elements retain their own clocks. */
 export interface NativeLoopPreviewContract {
+  cover_visibility?: SourceCoverVisibility[];
   version: 1;
   scope: "controlled-native-loop-preview";
   native: NativeStatePresentationContract;
@@ -374,6 +379,10 @@ export function validateNativeLoopPreview(
   const contract = value as NativeLoopPreviewContract;
   if (contract.version !== 1 || contract.scope !== "controlled-native-loop-preview")
     throw new Error("Invalid native loop preview");
+  if (contract.cover_visibility !== undefined) {
+    validateSourceCoverVisibility(contract.cover_visibility);
+    if (!contract.physical) throw new Error("Cover visibility requires a physical loop");
+  }
   validateNativeStatePresentation(contract.native);
   const focus = contract.native.elements.find((e) => e.id === contract.focus_element_id);
   if (

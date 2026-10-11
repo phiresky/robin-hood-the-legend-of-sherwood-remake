@@ -1,4 +1,8 @@
 import {
+  verifySourceCoverPlacements,
+  type SourceCoverVisibility,
+} from "../../shared/src/source-cover-visibility.ts";
+import {
   prepareStateAperture,
   verifyStateApertureReceivers,
   type StateApertureManifest,
@@ -267,6 +271,10 @@ export class EditorViewport {
   setPatchRevealed(patch: string, revealed: boolean) {
     this.patchDisplay.set(patch, revealed);
     this.patchDisplay.apply(this.objectsRoot);
+    if (this.loopClocks.ready) {
+      this.sampleLoopClocks();
+      this.nativeSurface?.update(this.nativePreviewPixels());
+    }
   }
   patchPreviews(selection?: Selection) {
     const patches = new Set<string>();
@@ -1071,6 +1079,7 @@ export class EditorViewport {
     };
   }
   private readonly loopClocks = new SourceContractClockBinding();
+  private loopCoverVisibility: SourceCoverVisibility[] = [];
   private loopFocus: string | undefined;
   private loopStaticReplacements: StaticStateReplacement[] | undefined;
   private loopPhysicalVisible = true;
@@ -1078,9 +1087,39 @@ export class EditorViewport {
   private loopEpoch = 0;
   private sampleLoopClocks() {
     if (!this.loopClocks.ready || !this.loopFocus || !this.nativeArt.ready) return false;
+    if (this.loopCoverVisibility.length) {
+      try {
+        const document = this.bindings.document();
+        if (!document) throw new Error("Source cover has no displayed map");
+        verifySourceCoverPlacements(this.loopCoverVisibility, document);
+        for (const id of this.loopClocks.coverPatchIds())
+          this.loopClocks.setCoverRevealed(id, this.patchDisplay.isRevealed(id));
+      } catch (error) {
+        this.clearNativeArtPresentation();
+        throw error;
+      }
+    }
+    let artworkChanged = false;
+    const artworkBindings = this.nativeArt.coverArtworkBindings();
+    if (artworkBindings.length) {
+      try {
+        const document = this.bindings.document();
+        if (!document) throw new Error("Native cover artwork has no displayed map");
+        verifySourceCoverPlacements(artworkBindings, document);
+        for (const b of artworkBindings)
+          artworkChanged =
+            this.nativeArt.setCoverArtworkState(
+              b.placement.patch_id,
+              this.patchDisplay.isRevealed(b.placement.patch_id),
+            ) || artworkChanged;
+      } catch (error) {
+        this.clearNativeArtPresentation();
+        throw error;
+      }
+    }
     const rows = this.loopClocks.snapshot();
     this.scenery.sourceClocks.sample(rows);
-    return this.nativeArt.sampleExternalClocks(rows, this.loopFocus);
+    return this.nativeArt.sampleExternalClocks(rows, this.loopFocus) || artworkChanged;
   }
   /** Animated physical loops are separate from endpoint delivery and its clip rejection. */
   async setNativeLoopPresentation(
@@ -1105,10 +1144,23 @@ export class EditorViewport {
         verifyStaticReplacementRows(frozen.static_replacements, document);
       }
       if (
-        !(await this.loopClocks.set(frozen.native, frozen.physical!, resolvedSource)) ||
+        !(await this.loopClocks.set(
+          frozen.native,
+          frozen.physical!,
+          resolvedSource,
+          frozen.cover_visibility,
+        )) ||
         !current()
       )
         return false;
+      this.loopCoverVisibility = structuredClone(frozen.cover_visibility ?? []);
+      if (this.loopCoverVisibility.length) {
+        const document = this.bindings.document();
+        if (!document) throw new Error("Source cover has no displayed map");
+        verifySourceCoverPlacements(this.loopCoverVisibility, document);
+        for (const id of this.loopClocks.coverPatchIds())
+          this.loopClocks.setCoverRevealed(id, this.patchDisplay.isRevealed(id));
+      }
       this.loopFocus = frozen.focus_element_id;
       this.loopSequence = 0;
       this.stateMission = frozen.native.mission;
@@ -1223,6 +1275,7 @@ export class EditorViewport {
     this.loopClocks.clear();
     this.scenery.sourceClocks.clear();
     this.loopFocus = undefined;
+    this.loopCoverVisibility = [];
     this.loopSequence = 0;
     this.nativePatchFocus = undefined;
     this.nativeArt.clear();

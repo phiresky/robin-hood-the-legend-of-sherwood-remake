@@ -1,3 +1,7 @@
+import {
+  validateSourceCoverVisibility,
+  type SourceCoverVisibility,
+} from "./source-cover-visibility.ts";
 import { safeLibraryPath } from "./projection-assets.ts";
 
 export interface NativeImageResource {
@@ -81,6 +85,11 @@ export interface NativeStatePresentationContract {
   camera_elevation_deg: number;
   scope: "map-art-and-listed-effects";
   background: NativeImageResource;
+  /** Static cover artwork follows existing scenery appearance state, never animation time. */
+  cover_artwork?: {
+    bindings: Pick<SourceCoverVisibility, "source" | "placement">[];
+    variants: { applied: string[]; image: NativeImageResource }[];
+  };
   origin: [number, number];
   elements: NativePresentationElement[];
   background_states?: NativeBackgroundState[];
@@ -151,6 +160,40 @@ export function validateNativeStatePresentation(
     !Array.isArray(c.elements)
   )
     fail("invalid source binding");
+  if (c.cover_artwork) {
+    const { bindings, variants } = c.cover_artwork;
+    if (
+      !Array.isArray(bindings) ||
+      bindings.length < 1 ||
+      bindings.length > 4 ||
+      !Array.isArray(variants)
+    )
+      fail("invalid cover artwork");
+    for (const b of bindings)
+      validateSourceCoverVisibility([
+        { ...b, native_element_id: "art", physical_target_id: "art", visible_when: "applied" },
+      ]);
+    const ids = bindings.map((b) => b.placement.patch_id);
+    const seen = new Set<string>();
+    if (new Set(ids).size !== ids.length || variants.length !== 2 ** ids.length)
+      fail("incomplete cover artwork states");
+    for (const v of variants) {
+      if (
+        !Array.isArray(v.applied) ||
+        new Set(v.applied).size !== v.applied.length ||
+        v.applied.some((id) => !ids.includes(id)) ||
+        !resource(v.image) ||
+        v.image.width !== c.background.width ||
+        v.image.height !== c.background.height
+      )
+        fail("invalid cover artwork variant");
+      const key = [...v.applied].sort().join("|");
+      if (seen.has(key)) fail("duplicate cover artwork state");
+      seen.add(key);
+      if (!v.applied.length && v.image.sha256 !== c.background.sha256)
+        fail("initial cover artwork differs");
+    }
+  }
   const ids = new Set<string>(),
     sources = new Set<string>(),
     orders = new Set<number>();

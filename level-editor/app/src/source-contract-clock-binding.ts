@@ -1,3 +1,8 @@
+import {
+  validateSourceCoverVisibility,
+  type SourceCoverVisibility,
+} from "../../shared/src/source-cover-visibility.ts";
+import { missionStateDataHash } from "./mission-state-layer.ts";
 import { verifyNativePresentationSource } from "./native-state-presentation.ts";
 import { resolveMissionStateTargets, type MissionStateSource } from "./mission-state-layer.ts";
 import type { MissionStateContract } from "../../shared/src/mission-state.ts";
@@ -30,6 +35,8 @@ export interface PhysicalTickConsumer {
 
 /** Exact loop-contract linkage. Resource decoding begins only after set() publishes every identity. */
 export class SourceContractClockBinding {
+  private covers: SourceCoverVisibility[] = [];
+  private coverStates = new Map<string, boolean>();
   private readonly clocks = new SourceAnimationClocks();
   private request = 0;
   private disposed = false;
@@ -48,11 +55,14 @@ export class SourceContractClockBinding {
     this.handles.clear();
     this.physicalIds.clear();
     this.consumers.clear();
+    this.covers = [];
+    this.coverStates.clear();
   }
   async set(
     native: NativeStatePresentationContract,
     physical: MissionStateContract,
     source: MissionStateSource,
+    coverVisibility: readonly SourceCoverVisibility[] = [],
   ) {
     this.clear();
     const request = this.request,
@@ -61,6 +71,26 @@ export class SourceContractClockBinding {
       s = structuredClone(source);
     const current = () => !this.disposed && request === this.request;
     try {
+      const covers = structuredClone(coverVisibility);
+      validateSourceCoverVisibility(covers);
+      for (const cover of covers) {
+        const patch = s.level.patches?.[cover.source.index];
+        const target = p.targets.find((t) => t.id === cover.physical_target_id);
+        const element = n.elements.find((e) => e.id === cover.native_element_id);
+        if (
+          !patch ||
+          (await missionStateDataHash(patch)) !== cover.source.sha256 ||
+          !patch.start_animation_valid ||
+          patch.transition_animation_valid ||
+          patch.end_animation_valid ||
+          !target ||
+          !element ||
+          element.source.kind !== "map-animation" ||
+          target.source_kind !== "map-animation" ||
+          target.target_index !== element.source.index
+        )
+          throw new Error("Source cover patch or loop identity differs");
+      }
       await verifyNativePresentationSource(n, s);
       await resolveMissionStateTargets(p, s);
       if (!current()) return false;
@@ -126,6 +156,8 @@ export class SourceContractClockBinding {
         this.handles.set(e.id, handle);
         this.clocks.setState(handle, { active: e.active, playing: false });
       }
+      this.covers = structuredClone(covers);
+      for (const c of covers) this.coverStates.set(c.placement.patch_id, false);
       this.native = n;
       this.physical = p;
       this.physicalIds = physicalIds;
@@ -185,6 +217,9 @@ export class SourceContractClockBinding {
         id: e.id,
         source: Object.freeze({ ...e.source }),
         ...cursor,
+        ...(this.covers.some((c) => c.native_element_id === e.id)
+          ? { visible: this.coverVisible(e.id) }
+          : {}),
         frame: e.frames.length ? nativePresentationFrame(e, cursor.tick) : -1,
       });
     });
@@ -221,6 +256,25 @@ export class SourceContractClockBinding {
       this.disposed = true;
     }
   }
+  coverPatchIds() {
+    return [...this.coverStates.keys()];
+  }
+  setCoverRevealed(patchId: string, revealed: boolean) {
+    if (
+      this.disposed ||
+      !this.ready ||
+      !this.coverStates.has(patchId) ||
+      typeof revealed !== "boolean"
+    )
+      throw new Error("Unknown or retired source cover");
+    if (this.coverStates.get(patchId) === revealed) return;
+    this.coverStates.set(patchId, revealed);
+    this.samplePhysical();
+  }
+  private coverVisible(nativeId: string) {
+    const cover = this.covers.find((c) => c.native_element_id === nativeId);
+    return !cover || this.coverStates.get(cover.placement.patch_id) === true;
+  }
   private assertExternalConsumers() {
     for (const consumer of this.consumers.values())
       if (consumer.internallyPlaying())
@@ -228,7 +282,10 @@ export class SourceContractClockBinding {
   }
   private physicalVisible(id: string) {
     const e = this.native!.elements.find((e) => e.id === this.physicalIds.get(id))!;
-    return this.clocks.read(this.physicalToken(id)).active || !!e.initial_frame;
+    return (
+      this.coverVisible(e.id) &&
+      (this.clocks.read(this.physicalToken(id)).active || !!e.initial_frame)
+    );
   }
   private physicalSampleTick(id: string) {
     const timing = this.physical?.targets.find((t) => t.id === id)?.actions[0]?.timing;

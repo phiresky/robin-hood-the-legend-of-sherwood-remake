@@ -137,6 +137,17 @@ export async function verifyNativePresentationSource(
     (await missionStateDataHash(source.level)) !== contract.level_data_sha256
   )
     throw new Error("Native artwork preview source or camera changed");
+  for (const binding of contract.cover_artwork?.bindings ?? []) {
+    const patch = source.level.patches[binding.source.index];
+    if (
+      !patch ||
+      (await missionStateDataHash(patch)) !== binding.source.sha256 ||
+      !patch.start_animation_valid ||
+      patch.transition_animation_valid ||
+      patch.end_animation_valid
+    )
+      throw new Error("Native cover artwork source changed");
+  }
   const targets = source.data.targets;
   if (!Array.isArray(targets)) throw new Error("Native artwork preview has no mission targets");
   const seenAnimations = new Set<number>();
@@ -269,6 +280,8 @@ export class NativeStatePresentation {
   private images = new Map<string, NativePixels>();
   private contract: NativeStatePresentationContract | undefined;
   private offsets = new Map<string, number>();
+  private coverApplied = new Set<string>();
+  private visibleElements = new Map<string, boolean>();
   private activeElements = new Map<string, boolean>();
   private verifiedDisjointPair: [string, string] | undefined;
   private patches = new Map<string, { phase: NativeBackgroundPhase; offset: number }>();
@@ -298,6 +311,8 @@ export class NativeStatePresentation {
     this.contract = undefined;
     this.offsets.clear();
     this.activeElements.clear();
+    this.visibleElements.clear();
+    this.coverApplied.clear();
     this.backgrounds.clear();
     this.patches.clear();
     this.verifiedDisjointPair = undefined;
@@ -338,7 +353,11 @@ export class NativeStatePresentation {
         ...s.final,
       ]),
     ];
-    for (const resource of [frozen.background, ...frames]) {
+    for (const resource of [
+      frozen.background,
+      ...(frozen.cover_artwork?.variants.map((v) => v.image) ?? []),
+      ...frames,
+    ]) {
       const prior = resources.get(resource.path);
       if (
         prior &&
@@ -427,6 +446,30 @@ export class NativeStatePresentation {
     this.revision++;
     return true;
   }
+  coverArtworkBindings() {
+    return this.contract?.cover_artwork?.bindings ?? [];
+  }
+  setCoverArtworkState(id: string, applied: boolean) {
+    if (!this.contract?.cover_artwork?.bindings.some((b) => b.placement.patch_id === id))
+      throw new Error("Unknown native cover artwork state");
+    if (this.coverApplied.has(id) === applied) return false;
+    if (applied) this.coverApplied.add(id);
+    else this.coverApplied.delete(id);
+    this.revision++;
+    return true;
+  }
+  private currentBackground() {
+    if (!this.contract) throw new Error("Native artwork preview is not loaded");
+    const art = this.contract.cover_artwork;
+    const resource = art
+      ? art.variants.find(
+          (v) =>
+            v.applied.length === this.coverApplied.size &&
+            v.applied.every((id) => this.coverApplied.has(id)),
+        )!.image
+      : this.contract.background;
+    return this.images.get(resource.path)!;
+  }
   setPlaying(value: boolean) {
     if (this.externalClock) throw new Error("External source clock owns playback");
     this.playing = value;
@@ -500,7 +543,9 @@ export class NativeStatePresentation {
     }
     const selected = byId.get(focus);
     if (!selected) throw new Error("Unknown loop clock focus");
-    const signature = JSON.stringify(rows.map((r) => [r.id, r.tick, r.active, r.playing]));
+    const signature = JSON.stringify(
+      rows.map((r) => [r.id, r.tick, r.active, r.playing, r.visible]),
+    );
     if (signature === this.externalSignature) return false;
     this.externalClock = true;
     this.externalSignature = signature;
@@ -510,6 +555,7 @@ export class NativeStatePresentation {
     for (const r of rows) {
       this.offsets.set(r.id, r.tick - this.currentTick);
       this.activeElements.set(r.id, r.active);
+      this.visibleElements.set(r.id, r.visible !== false);
     }
     this.revision++;
     return true;
@@ -552,6 +598,7 @@ export class NativeStatePresentation {
     const draws: NativeLoopDrawSnapshot["draws"] = [];
     const orderOnly: NativePresentationElement[] = [];
     for (const original of contract.elements) {
+      if (this.visibleElements.get(original.id) === false) continue;
       const active = this.activeElements.get(original.id) ?? original.active;
       const element =
         !active && original.initial_frame
@@ -579,7 +626,7 @@ export class NativeStatePresentation {
       revision: this.revision,
       mission: contract.mission,
       origin: [...contract.origin],
-      background: this.images.get(contract.background.path)!,
+      background: this.currentBackground(),
       orderOnly,
       draws,
     };
@@ -587,7 +634,7 @@ export class NativeStatePresentation {
   pixels(): NativePixels {
     if (!this.contract) throw new Error("Native artwork preview is not loaded");
     if (this.cached?.revision === this.revision) return this.cached.pixels;
-    const background = this.images.get(this.contract.background.path)!;
+    const background = this.currentBackground();
     const pixels = {
       width: background.width,
       height: background.height,
@@ -624,14 +671,14 @@ export class NativeStatePresentation {
           stamp.shadow_key,
         );
     }
-    const elements: Omit<NativePresentationElement, "source">[] = this.contract.elements.map(
-      (e) => {
+    const elements: Omit<NativePresentationElement, "source">[] = this.contract.elements
+      .filter((e) => this.visibleElements.get(e.id) !== false)
+      .map((e) => {
         const active = this.activeElements.get(e.id) ?? e.active;
         return !active && e.initial_frame
           ? { ...e, active: true, frames: [e.initial_frame], loop: false }
           : { ...e, active };
-      },
-    );
+      });
     for (const state of [...(this.contract.patch_states ?? [])].sort(
       (a, b) => a.creation_order - b.creation_order,
     )) {
