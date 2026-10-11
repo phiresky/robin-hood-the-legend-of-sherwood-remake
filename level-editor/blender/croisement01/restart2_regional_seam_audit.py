@@ -17,10 +17,13 @@ acquire(slots=2);bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'))
 nodes=set(json.loads((w.parents[1]/'construction.json').read_text())['changed_nodes'])
 objects=[o for o in bpy.context.scene.objects if o.type=='MESH' and o.get('source_node') in nodes]
 assert len(objects)==len(nodes)
-points=[];faces=[]
+points=[];faces=[];upward_audit=[]
 for o in objects:
     offset=len(points);points.extend(o.matrix_world@v.co for v in o.data.vertices)
     faces.extend(tuple(offset+i for i in f.vertices) for f in o.data.polygons)
+    upper=[f for f in o.data.polygons if all((o.matrix_world@o.data.vertices[k].co).z>-.999 for k in f.vertices)]
+    downward=[f.index for f in upper if (o.matrix_world.to_3x3().inverted().transposed()@f.normal).z<-.1]
+    upward_audit.append(dict(node=o.get('source_node'),upper_faces=len(upper),downward_upper_faces=downward))
 mesh=bpy.data.meshes.new('Private spatial seam audit');mesh.from_pydata(points,[],faces);mesh.update()
 bm=bmesh.new();bm.from_mesh(mesh);before=len(bm.verts)
 bmesh.ops.remove_doubles(bm,verts=list(bm.verts),dist=.0001)
@@ -30,7 +33,7 @@ for e in bm.edges:
     if e.is_boundary:boundary.append(row)
     elif not e.is_manifold:multi.append(row)
 result=dict(status='DIAGNOSTIC_NOT_APPROVAL',model_sha256=sha(w/'model.blend'),nodes=sorted(nodes),
-            input_vertices=before,welded_vertices=len(bm.verts),weld_distance=.0001,
+            upper_surface_winding=upward_audit,input_vertices=before,welded_vertices=len(bm.verts),weld_distance=.0001,
             boundary_edges=boundary,nonmanifold_nonboundary_edges=multi,
             degenerate_faces=sum(f.calc_area()<1e-8 for f in bm.faces),
             limitations=['Terrain has intentional original outer boundaries; boundary count alone is not a defect classification.',

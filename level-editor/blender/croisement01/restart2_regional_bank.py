@@ -178,7 +178,11 @@ for label,bank in enumerate(banks):
  if bank['source_node']=='building-000':
   for poly in preserved_background:
    offset=len(verts);verts.extend(tuple(v[:3]) for v in poly);polys.append(tuple(range(offset,len(verts))))
- mesh=bpy.data.meshes.new('Complete inferred bank surface');mesh.from_pydata(verts,[],polys);mesh.update();bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));bad=sum(not e.is_manifold for e in bm.edges);deg=sum(f.calc_area()<1e-8 for f in bm.faces);bm.to_mesh(mesh);bm.free();inverse=bank.matrix_world.inverted()
+ mesh=bpy.data.meshes.new('Complete inferred bank surface');mesh.from_pydata(verts,[],polys);mesh.update();bm=bmesh.new();bm.from_mesh(mesh)
+ # Open bank owners share a shell; per-owner normal recalculation may invert
+ # an entire top sheet. The constructed top/bottom winding is authoritative.
+ if a.revision<10:bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces))
+ bad=sum(not e.is_manifold for e in bm.edges);deg=sum(f.calc_area()<1e-8 for f in bm.faces);bm.to_mesh(mesh);bm.free();inverse=bank.matrix_world.inverted()
  for v in mesh.vertices:v.co=inverse@v.co
  # Supply the same heightfield normal on both owners' shared border.
  # Closed underground side faces must not pull top shading toward vertical.

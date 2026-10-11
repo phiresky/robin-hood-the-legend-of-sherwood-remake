@@ -10,7 +10,7 @@ from render_slots import acquire,release
 from evidence_io import sha
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('workspace',type=Path);p.add_argument('--hide-terrain',action='store_true');p.add_argument('--all-views',action='store_true');p.add_argument('--overlay-worker',type=Path);p.add_argument('--overlay-asset');p.add_argument('--color-terrain-owner',action='store_true');p.add_argument('--context-node',action='append',default=[]);p.add_argument('--scale',type=float,default=160);p.add_argument('--wood-node',action='append',default=[]);p.add_argument('--output-name',default='root-contact-detail');a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);w=a.workspace.resolve();out=w/'inspection'/a.output_name
+ p=argparse.ArgumentParser();p.add_argument('workspace',type=Path);p.add_argument('--hide-terrain',action='store_true');p.add_argument('--flat-terrain',action='store_true');p.add_argument('--all-views',action='store_true');p.add_argument('--overlay-worker',type=Path);p.add_argument('--overlay-asset');p.add_argument('--color-terrain-owner',action='store_true');p.add_argument('--context-node',action='append',default=[]);p.add_argument('--scale',type=float,default=160);p.add_argument('--wood-node',action='append',default=[]);p.add_argument('--output-name',default='root-contact-detail');a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);w=a.workspace.resolve();out=w/'inspection'/a.output_name
  if Path(a.output_name).name!=a.output_name or a.scale<=0:raise ValueError('Invalid detail output or scale')
  if out.exists():raise FileExistsError(out)
  acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'));cfg=json.loads((w/'workspace.json').read_text())
@@ -35,12 +35,14 @@ def main():
  scene.world=bpy.data.worlds.new('Contact ambient');scene.world.use_nodes=True;scene.world.node_tree.nodes['Background'].inputs['Color'].default_value=(.3,.3,.3,1)
  scene.view_settings.view_transform='Standard';scene.view_settings.look='None'
  mat=bpy.data.materials.new('Neutral archived support');mat.diffuse_color=(.3,.3,.3,1);mat.use_nodes=True;mat.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value=(.3,.3,.3,1)
+ if a.flat_terrain:
+  nt=mat.node_tree;nt.nodes.clear();emission=nt.nodes.new('ShaderNodeEmission');emission.inputs['Color'].default_value=(.3,.3,.3,1);output=nt.nodes.new('ShaderNodeOutputMaterial');nt.links.new(emission.outputs[0],output.inputs['Surface'])
  nodes={'ground'}|{f'building-{i:03d}' for i in list(range(10))+list(range(76,81))}|set(a.context_node)
  owner_colors={};owner_materials={}
  if a.color_terrain_owner:
   import colorsys
   for i,node in enumerate(sorted(nodes)):
-   color=(*colorsys.hsv_to_rgb(i/len(nodes),.65,.8),1);m=mat.copy();m.name='Diagnostic '+node;m.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value=color;owner_colors[node]=list(color);owner_materials[node]=m
+   color=(*colorsys.hsv_to_rgb(i/len(nodes),.65,.8),1);m=mat.copy();m.name='Diagnostic '+node;(m.node_tree.nodes.get('Principled BSDF') or m.node_tree.nodes.get('Emission')).inputs['Base Color' if not a.flat_terrain else 'Color'].default_value=color;owner_colors[node]=list(color);owner_materials[node]=m
  for obj in review_objects:
   target=obj.get('asset_group')==target_asset;terrain=(obj.get('source_node') in nodes) and not a.hide_terrain
   if obj.type!='MESH' or not(target or terrain):continue
@@ -62,5 +64,5 @@ def main():
  columns=4 if a.all_views else 2
  sheet=Image.new('RGB',(columns*384,768))
  for i,im in enumerate(images):sheet.paste(im,((i%columns)*384,(i//columns)*384))
- sheet.save(out/'sheet.png');(out/'evidence.json').write_text(json.dumps(dict(status='diagnostic; context is not approved final terrain',terrain_hidden=a.hide_terrain,overlay=overlay_proof,terrain_owner_colors=owner_colors,additional_context_nodes=a.context_node,additional_wood_nodes=a.wood_node,model_sha256=sha(w/'model.blend'),views_sha256=sha(camera_worker/'modified/views.json'),sheet_sha256=sha(out/'sheet.png'),camera_indices=indices,camera_direction_preserved=True,root_center=list(center),detail_scale=a.scale,terrain_material_override='neutral diffuse; saved asset materials preserved'),indent=2)+'\n');release()
+ sheet.save(out/'sheet.png');(out/'evidence.json').write_text(json.dumps(dict(status='diagnostic; context is not approved final terrain',terrain_hidden=a.hide_terrain,overlay=overlay_proof,terrain_owner_colors=owner_colors,additional_context_nodes=a.context_node,additional_wood_nodes=a.wood_node,model_sha256=sha(w/'model.blend'),views_sha256=sha(camera_worker/'modified/views.json'),sheet_sha256=sha(out/'sheet.png'),camera_indices=indices,camera_direction_preserved=True,root_center=list(center),detail_scale=a.scale,terrain_material_override=('unlit emission' if a.flat_terrain else 'neutral diffuse')+'; saved asset materials preserved'),indent=2)+'\n');release()
 if __name__=='__main__':main()
