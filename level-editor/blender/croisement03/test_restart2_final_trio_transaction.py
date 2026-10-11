@@ -5,6 +5,14 @@ SCRIPT=Path(__file__).with_name('restart2_apply_final_trio_transaction.py')
 spec=importlib.util.spec_from_file_location('c3_transaction',SCRIPT);tx=importlib.util.module_from_spec(spec);spec.loader.exec_module(tx)
 
 class TransactionTests(unittest.TestCase):
+ def test_frozen_postcheck_command_accepts_serialized_path_and_rejects_drift(self):
+  with tempfile.TemporaryDirectory(dir=tx.BASE)as name:
+   d=Path(name);snapshot=d/'snapshot.json';snapshot.write_text(json.dumps({'root':str(d/'copied compiler')}));pin={'path':str(snapshot),'sha256':tx.sha(snapshot)};folder=d/'transaction'
+   command=tx.validation_command({'compiler_snapshot':pin},folder)
+   self.assertEqual(command,['node',str(d/'copied compiler/level-editor/blender/croisement03/restart2_run_frozen_compiler.mjs'),str(snapshot),str(folder/'installed-strict-validation.json'),'validate',str(tx.LIB/'scenes/croisement03.rhlos-map.json'),str(tx.LIB),str(folder/'same-compiler-baseline.json')])
+   self.assertEqual(tx.read(str(snapshot)),tx.read(snapshot))
+   snapshot.write_text(json.dumps({'root':str(d/'different compiler')}))
+   with self.assertRaisesRegex(RuntimeError,'Pin changed'):tx.validation_command({'compiler_snapshot':pin},folder)
  def test_replacement_deletion_creation_rollback(self):
   with tempfile.TemporaryDirectory()as name:
    d=Path(name);old=d/'old';old.write_bytes(b'old');obsolete=d/'obsolete';obsolete.write_bytes(b'derivative');new=d/'new';source=d/'source';source.write_bytes(b'candidate')

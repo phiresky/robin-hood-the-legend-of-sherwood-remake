@@ -20,7 +20,7 @@ from asset_index import validate_asset_index
 PLANNER=HERE/'restart2_prepare_final_trio_transaction.py'
 VALIDATOR=HERE/'restart2_validate_final_trio.mjs'
 
-def read(p):return json.loads(p.read_text())
+def read(p):return json.loads(Path(p).read_text())
 def pin(p):return {'path':str(p),'sha256':sha(p)}
 def verify_records(rows,key):
  for row in rows:require(sha(Path(row['target']))==row[key],'Target drift: '+row['target'])
@@ -59,6 +59,13 @@ def prepare(folder,compiler_baseline=None,compiler_sha256=None):
  require(sha(folder/'plan.json')==read(folder/'dry-run.json')['plan']['sha256'],'Prepared plan drift')
  return plan
 
+def validation_command(plan,folder):
+ # Manifest paths are JSON strings, while CLI paths arrive as Path objects.
+ if plan.get('compiler_snapshot'):
+  snap=plan['compiler_snapshot'];core.verify_pin(snap);frozen=read(snap['path']);runner=Path(frozen['root'])/'level-editor/blender/croisement03/restart2_run_frozen_compiler.mjs'
+  return ['node',str(runner),snap['path'],str(folder/'installed-strict-validation.json'),'validate',str(LIB/'scenes/croisement03.rhlos-map.json'),str(LIB),str(folder/'same-compiler-baseline.json')]
+ return ['node',str(VALIDATOR),str(LIB/'scenes/croisement03.rhlos-map.json'),str(LIB),str(folder/'installed-strict-validation.json'),str(folder/'same-compiler-baseline.json')]
+
 def main():
  ap=argparse.ArgumentParser();ap.add_argument('--output',type=Path,required=True);mode=ap.add_mutually_exclusive_group();mode.add_argument('--apply',action='store_true');mode.add_argument('--rollback',action='store_true');ap.add_argument('--root-reviewed',action='store_true');ap.add_argument('--readers-quiescent',action='store_true');ap.add_argument('--editor-proof',type=Path);ap.add_argument('--editor-sha256');ap.add_argument('--compiler-baseline',type=Path);ap.add_argument('--compiler-sha256');args=ap.parse_args();folder=args.output.resolve()
  require(folder.parent==RUNS,'Run directory outside C3 transaction scope')
@@ -94,11 +101,7 @@ def main():
     verify_records(plan['records'],'new_sha256')
     for item in plan['protected']:core.verify_pin(item)
     validate_asset_index(ASSETS,read(ASSETS/'index.json'))
-    if plan.get('compiler_snapshot'):
-     snap=plan['compiler_snapshot'];core.verify_pin(snap);frozen=read(snap['path']);runner=Path(frozen['root'])/'level-editor/blender/croisement03/restart2_run_frozen_compiler.mjs'
-     command=['node',str(runner),snap['path'],str(folder/'installed-strict-validation.json'),'validate',str(LIB/'scenes/croisement03.rhlos-map.json'),str(LIB),str(folder/'same-compiler-baseline.json')]
-    else:command=['node',str(VALIDATOR),str(LIB/'scenes/croisement03.rhlos-map.json'),str(LIB),str(folder/'installed-strict-validation.json'),str(folder/'same-compiler-baseline.json')]
-    subprocess.run(command,cwd=ROOT,check=True)
+    subprocess.run(validation_command(plan,folder),cwd=ROOT,check=True)
    journal=protocol.commit(plan['records'],folder/'transaction',plan_hash,precommit,postcheck)
    dump(folder/'result.json',{'status':'INSTALLED_LIVE_EDITOR_PROOF_PENDING','plan':authority['plan'],'journal':pin(folder/'transaction/journal.json'),'editor':proof,'canonical_map_sha256':sha(LIB/'scenes/croisement03.rhlos-map.json'),'compiler_scope':plan['compiler_scope'],'latest_compiler_verified':plan['compiler_scope']!='IMMUTABLE_SNAPSHOT_ASSET_ONLY'})
   except BaseException:
