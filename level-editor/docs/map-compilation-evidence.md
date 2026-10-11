@@ -4,6 +4,23 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Split York component bindings staged (2026-10-12)
+
+`refinement/stage-york-component-gameplay.mjs` stages asset-local bindings for
+four assets whose visual parts were split into separately named components.
+Sight ordering follows each collision-bearing component. Gatehouse movement
+clearances retain their geometry and bind to each replacement structural piece;
+storehouse rooms, doors and masks bind to their enclosing wall component.
+Descriptor hashes guard the reviewed inputs, and all four gameplay definitions
+validate. Stage `york-component-gameplay-VTkqw6` is not yet published or certified;
+saved-scene export `saved-map-exports-i9U8hr` has passed validation and is still
+constructing geometry.
+
+Fresh inventory `gameplay-coverage-Ppt9f2` finds 1,278 indexed assets, 21 missing
+definitions and zero missing definitions among placed assets. Nineteen unused
+assets have candidate owners; seventeen have state dependencies. Definition
+presence does not certify valid references, accurate collision or playable maps.
+
 ## Export-time climbing footprint compensation (2026-10-12)
 
 Climbing floors now prepare clearance with the full native movement box when
