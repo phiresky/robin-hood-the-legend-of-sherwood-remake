@@ -469,6 +469,7 @@ fn legacy_blocked_box_reset_requires_perform_motion_execute_arm() {
                 None,
                 None,
                 0,
+                None,
             ),
             expected,
             "row {row}"
@@ -510,6 +511,7 @@ fn legacy_blocked_box_reset_recognizes_hidden_stop_movement_rewrite() {
                 Some(prior_walking),
                 Some(prior_last_processed),
                 frame_count,
+                None,
             ),
             expected,
             "last_processed={last_processed} moved={moved} prior={prior_last_processed}"
@@ -597,8 +599,40 @@ fn legacy_blocked_box_reset_recognizes_motion_completed_within_tolerance() {
                 None,
                 prior_processed,
                 0,
+                None,
             ),
             expected,
+        );
+    }
+}
+
+#[test]
+fn hidden_motion_stop_uses_retained_sprite_action_after_actor_replacement() {
+    let actor = trace_actor_order(
+        robin_engine::order::OrderType::TransitionWaitingUprightWaitingAlerted,
+        false,
+        robin_engine::sprite::MotionState::InProgress,
+        824,
+    );
+    let stop = robin_engine::order::OrderType::TransitionRunningUprightWaitingUpright as u32;
+    for (last_action, expected) in [(Some(stop), true), (Some(141), false), (None, false)] {
+        assert_eq!(
+            original_reset_blocked_box_this_frame(
+                &actor,
+                EntityId::new(56, robin_engine::element::EntityIdKind::Soldier),
+                806,
+                false,
+                Some(803),
+                Some(LegacyStoppableMotionOrder {
+                    id: 803,
+                    playing_source_animation: true,
+                    stop_animation: stop,
+                }),
+                Some(793),
+                0,
+                last_action,
+            ),
+            expected
         );
     }
 }

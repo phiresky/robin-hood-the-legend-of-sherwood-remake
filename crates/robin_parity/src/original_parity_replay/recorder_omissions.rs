@@ -317,6 +317,7 @@ pub(super) fn original_reset_blocked_box_this_frame(
     prior_stoppable_motion_order: Option<LegacyStoppableMotionOrder>,
     prior_last_processed_order_id: Option<u32>,
     sprite_frame_count: u16,
+    sprite_last_action: Option<u32>,
 ) -> bool {
     let Some(sequence) = actor.sequence_element.as_ref() else {
         return false;
@@ -343,12 +344,16 @@ pub(super) fn original_reset_blocked_box_this_frame(
         .is_some_and(|(stoppable_order, prior_last_processed_order_id)| {
             (stoppable_order.id == prior_last_processed_order_id
                 || (stoppable_order.playing_source_animation && sprite_frame_count == 0))
-                && actor.animation == stoppable_order.stop_animation
+                && (actor.animation == stoppable_order.stop_animation
+                    || sprite_last_action == Some(stoppable_order.stop_animation))
         })
         && sequence.movement.is_none()
         && current_order_id
             .is_some_and(|current_order_id| current_order_id != last_processed_order_id)
         && !moved_this_frame;
+    // An immediately installed replacement can change the actor animation
+    // before it executes. The sprite retains the motion animation that actually
+    // ran, so its recorded last action also proves the stop handoff.
     // The same stop-animation identity can come from an action-only
     // transition installed by the replacement sequence. Its first action
     // update retains the 0xFFFF frame-count sentinel; motion initialization

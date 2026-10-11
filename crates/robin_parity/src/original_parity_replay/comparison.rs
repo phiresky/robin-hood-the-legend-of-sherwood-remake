@@ -667,6 +667,10 @@ impl FrameComparison<'_> {
                             .get(&expected.creation_order)
                             .map(|shadow| shadow.last_processed_order_id),
                         expected.sprite_frame_count,
+                        expected_runtime
+                            .pointer("/sprite/last_action")
+                            .and_then(serde_json::Value::as_u64)
+                            .and_then(|action| u32::try_from(action).ok()),
                     )
                 });
             let current_motion_order_id = expected
