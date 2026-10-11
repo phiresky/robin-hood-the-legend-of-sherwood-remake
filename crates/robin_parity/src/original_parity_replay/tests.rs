@@ -638,6 +638,52 @@ fn hidden_motion_stop_uses_retained_sprite_action_after_actor_replacement() {
 }
 
 #[test]
+fn sword_motion_initialization_is_visible_even_without_displacement() {
+    use robin_engine::order::OrderType as OT;
+    let pc = EntityId::new(47, robin_engine::element::EntityIdKind::Pc);
+    for postponed in [false, true] {
+        let mut actor = trace_actor_order(
+            if postponed {
+                OT::BeingHitSword
+            } else {
+                OT::WalkingWithSword
+            },
+            !postponed,
+            robin_engine::sprite::MotionState::InProgress,
+            if postponed { 1433 } else { 1431 },
+        );
+        if postponed {
+            actor.sequence_element.as_mut().unwrap().postponed = Some(
+                serde_json::from_value(serde_json::json!({"command": 20, "id": 763, "state": 4}))
+                    .unwrap(),
+            );
+        }
+        for (processed, count, action, expected) in [
+            (1425, 0, OT::StrafingRightSword, true),
+            (1431, 0, OT::StrafingRightSword, false),
+            (1425, u16::MAX, OT::StrafingRightSword, false),
+            (1425, 0, OT::WaitingSword, false),
+        ] {
+            assert_eq!(
+                original_reset_blocked_box_this_frame(
+                    &actor,
+                    pc,
+                    1431,
+                    false,
+                    None,
+                    None,
+                    Some(processed),
+                    count,
+                    Some(action as u32),
+                ),
+                expected,
+                "postponed={postponed} processed={processed} count={count}"
+            );
+        }
+    }
+}
+
+#[test]
 fn legacy_blocked_box_shadow_tracks_resets_and_revalidation() {
     let tuple = LegacyBlockedBoxTuple {
         min_x: 1,

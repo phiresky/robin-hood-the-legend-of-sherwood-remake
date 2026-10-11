@@ -332,6 +332,39 @@ pub(super) fn original_reset_blocked_box_this_frame(
                 .and_then(serde_json::Value::as_u64)
                 .and_then(|order_id| u32::try_from(order_id).ok())
         });
+    // Sword movement chooses a directional sprite before motion processing.
+    // A zero-distance first sprite can return IN_PROGRESS after initialization,
+    // and damage can postpone that movement before the snapshot. The retained
+    // directional sprite plus a new processed ID proves the reset in both cases.
+    let sword_motion_sprite = sprite_last_action.is_some_and(|action| {
+        matches!(
+            robin_engine::order::OrderType::try_from(action),
+            Ok(robin_engine::order::OrderType::WalkingSword
+                | robin_engine::order::OrderType::WalkingBackwardsSword
+                | robin_engine::order::OrderType::StrafingRightSword
+                | robin_engine::order::OrderType::StrafingLeftSword)
+        )
+    });
+    let live_sword_motion = matches!(
+        robin_engine::order::OrderType::try_from(actor.animation),
+        Ok(robin_engine::order::OrderType::WalkingWithSword
+            | robin_engine::order::OrderType::RunningWithSword)
+    ) && original_motion_executor_order_id(actor, entity_id)
+        == Some(last_processed_order_id);
+    let postponed_movement = sequence.postponed.as_ref().is_some_and(|postponed| {
+        postponed
+            .to_json()
+            .get("command")
+            .and_then(serde_json::Value::as_u64)
+            == Some(robin_engine::element::Command::Move as u64)
+    }) && current_order_id.is_some_and(|id| id != last_processed_order_id);
+    if sword_motion_sprite
+        && sprite_frame_count == 0
+        && prior_last_processed_order_id.is_some_and(|id| id != last_processed_order_id)
+        && (live_sword_motion || postponed_movement)
+    {
+        return true;
+    }
     // Stopping movement rewrites the sole live walking/running order in place and
     // assigns a new ID. The rewritten transition may execute and then be replaced
     // before frame recording, leaving its new ID only in last_processed. The
