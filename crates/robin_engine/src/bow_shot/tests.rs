@@ -3185,6 +3185,15 @@ fn leaning_out_bow_transitions_update_posture_like_soldier_execute() {
         engine.get_entity(soldier).unwrap().element_data().posture(),
         Posture::LeaningOut
     );
+    let position = engine
+        .get_entity(soldier)
+        .unwrap()
+        .element_data()
+        .sprite
+        .position_iface
+        .v48_serialized_state();
+    assert_eq!(position.posture, Posture::LeaningOut);
+    assert_eq!(position.old_posture, Posture::Upright);
     assert_eq!(
         engine
             .get_entity(soldier)
@@ -3205,6 +3214,15 @@ fn leaning_out_bow_transitions_update_posture_like_soldier_execute() {
         engine.get_entity(soldier).unwrap().element_data().posture(),
         Posture::Upright
     );
+    let position = engine
+        .get_entity(soldier)
+        .unwrap()
+        .element_data()
+        .sprite
+        .position_iface
+        .v48_serialized_state();
+    assert_eq!(position.posture, Posture::Upright);
+    assert_eq!(position.old_posture, Posture::LeaningOut);
     assert_eq!(
         engine
             .get_entity(soldier)
@@ -3214,6 +3232,29 @@ fn leaning_out_bow_transitions_update_posture_like_soldier_execute() {
             .action_state,
         ActionState::AimingWithBow
     );
+}
+
+#[test]
+fn unequipping_bow_publishes_upright_position_from_leaning_out() {
+    let mut soldier = make_soldier(0.0, 0.0);
+    soldier.set_posture(Posture::LeaningOut);
+    let mut engine = crate::engine::EngineInner::new();
+    let soldier = engine.add_test_entity(soldier);
+    apply_bow_transition_state_side_effect(
+        &mut engine,
+        soldier,
+        OrderType::TransitionUnequipBow,
+        SpriteMotionState::Start,
+    );
+    let position = engine
+        .get_entity(soldier)
+        .unwrap()
+        .element_data()
+        .sprite
+        .position_iface
+        .v48_serialized_state();
+    assert_eq!(position.posture, Posture::Upright);
+    assert_eq!(position.old_posture, Posture::LeaningOut);
 }
 
 #[test]

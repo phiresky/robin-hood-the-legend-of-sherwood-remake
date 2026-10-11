@@ -312,7 +312,9 @@ pub(crate) fn apply_bow_transition_state_side_effect(
                 SpriteMotionState::Done | SpriteMotionState::Terminated
             ) =>
         {
-            engine.publish_entity_order_posture(entity_id, Posture::LeaningOut);
+            // Completion changes the position interface too; logical-only
+            // publication leaves the sprite using its previous posture.
+            engine.set_entity_posture(entity_id, Posture::LeaningOut);
             Some(ActionState::AimingWithBowDown)
         }
         OrderType::TransitionRaisingBowLeaningOut
@@ -321,14 +323,14 @@ pub(crate) fn apply_bow_transition_state_side_effect(
                 SpriteMotionState::Done | SpriteMotionState::Terminated
             ) =>
         {
-            engine.publish_entity_order_posture(entity_id, Posture::Upright);
+            engine.set_entity_posture(entity_id, Posture::Upright);
             Some(ActionState::AimingWithBow)
         }
         OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous
             if motion == SpriteMotionState::Start =>
         {
             if order_type == OrderType::TransitionUnequipBow {
-                engine.publish_entity_order_posture(entity_id, Posture::Upright);
+                engine.set_entity_posture(entity_id, Posture::Upright);
             }
             Some(ActionState::Waiting)
         }
