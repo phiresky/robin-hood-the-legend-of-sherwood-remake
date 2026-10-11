@@ -28,7 +28,11 @@ Native ordinary-sector route sampling passes 16 collision-connected routes, and
 complete-character jump dispatch and landing passes all 130 sampled traversals
 (`route-sampling-report.json` and `actor-jump-landing-report.json` in that export).
 The jump check dispatches prepared jumps directly; it does not verify player-click
-approaches, rendering, or clearance between samples. The earlier cap-repaired
+approaches, rendering, or clearance between samples. The separate player-click
+walk/jump/walk check fails 8 of 130 cases (`actor-jump-click-report.json`): lines
+5, 9, 11 and 21 have stalled routes or a landing approach that cannot fit the
+actor. These failures remain unresolved; direct dispatch success does not
+establish ordinary player-controlled traversal. The earlier cap-repaired
 batch `saved-map-exports-AeJzeU` remains running on its older compiler snapshot.
 
 Jump-clearance checking now rejects spatially distant prisms before searching the
@@ -38,7 +42,9 @@ exact before/after scene timing comparison is not yet complete.
 
 Fresh Croisement02 still fails cap preparation: a triangular volume has two XY
 vertices that collapse together in native binary32. Cyclic rotation cannot repair
-this case. The compiler now identifies the owning placement and part/volume in
+this case. The failing owner is `croisement02-east-upright-rail-fence-94`, volume
+`wood-52`; its authored collision contains 515 mesh-derived capped pieces.
+The compiler now identifies the owning placement and part/volume in
 this error; an asset or export-geometry repair remains necessary. No obstacle is
 silently omitted to pass this check.
 
