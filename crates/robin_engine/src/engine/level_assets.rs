@@ -319,6 +319,8 @@ pub struct LevelScriptAssets {
 pub struct LevelEntityAssets {
     /// Number of authored mobile elements required by compatible snapshots.
     pub mobile_element_count: usize,
+    /// Authored hero slots, including unfilled slots, following mobile masters.
+    pub legacy_beam_me_count: usize,
     /// Patch index to optional FX actor handle, in proto-then-mission order.
     pub patch_animation_entities: std::sync::Arc<Vec<Option<i32>>>,
     /// Scroll entity IDs in authored creation order.

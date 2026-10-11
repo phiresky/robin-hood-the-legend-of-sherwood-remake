@@ -658,9 +658,8 @@ impl NativeContext<'_, '_> {
 
             // --- entity handle / script lookup ---
             // Handles are opaque non-null VM values with 0-based payload indices.
-            // The original game appends its separate mobile-master array after the normal
-            // script-element array. Rust exposes the first masked child as
-            // the opaque handle while retaining the original script index.
+            // A mobile occupies its authored script slot and also accepts the
+            // legacy appended mobile-array alias. Both resolve to its first child.
             GetActorScript => {
                 let idx = stack.pop_i32();
                 let script_count = self.standard_actor_script_count();
@@ -669,8 +668,8 @@ impl NativeContext<'_, '_> {
                 } else if idx < 0 {
                     panic!("GetActorScript: negative actor ID {idx}");
                 } else if (idx as usize) < script_count {
-                    if self.entities.id_at_legacy_slot(idx as u32).is_some() {
-                        Self::actor_handle_from_index(idx as usize)
+                    if let Some(owner) = self.actor_for_script_index(idx as usize) {
+                        Self::actor_handle(owner)
                     } else {
                         // The original game returns the indexed script element
                         // directly; in-range empty entries are valid

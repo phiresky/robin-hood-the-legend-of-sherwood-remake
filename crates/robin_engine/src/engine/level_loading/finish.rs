@@ -11,6 +11,7 @@ impl EngineInner {
         loaded: &crate::level_data::LoadedLevel,
     ) -> Result<(), EngineError> {
         assets.entities.mobile_element_count = loaded.mission.mobile_elements.len();
+        assets.entities.legacy_beam_me_count = loaded.mission.beam_mes.len();
         // Spawn the masked child sprites owned by mission mobile elements.
         // Released data contains only the five chariot profiles. The mobile
         // master is simulation-only, matching the original game: only its child

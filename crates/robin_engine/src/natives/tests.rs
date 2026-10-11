@@ -1572,7 +1572,7 @@ fn mobile_fx(mobile_index: u16) -> Entity {
 }
 
 #[test]
-fn mobile_master_is_appended_to_script_actor_indices() {
+fn mobile_master_has_a_script_slot_and_an_appended_alias() {
     let mut host = NativeTestHost::new();
     host.entities
         .push(Some(Entity::Fx(crate::element::ElementFx {
@@ -1594,7 +1594,7 @@ fn mobile_master_is_appended_to_script_actor_indices() {
     reverse.push_i32(handle);
     assert_eq!(
         call_host_native(&mut host, NativeFn::GetActorIndex, &mut reverse),
-        0
+        1
     );
 
     let mut is_cart = NativeStack::default();
@@ -1627,6 +1627,54 @@ fn mobile_activation_yields_the_canonical_master_operation() {
             active: false
         })
     ));
+}
+
+#[test]
+fn mobile_script_slot_precedes_filled_and_empty_hero_slots() {
+    let mut host = NativeTestHost::new();
+    host.bindings.legacy_beam_me_count = 2;
+    host.entities.push(Some(native_test_soldier()));
+    host.entities.push(Some(native_test_pc(vec![], vec![])));
+    host.entities.push(None);
+    host.entities.push(Some(mobile_fx(0)));
+    host.entities.push(Some(mobile_fx(0)));
+
+    for (index, entity_slot) in [
+        (0, Some(0)),
+        (1, Some(3)),
+        (2, Some(1)),
+        (3, None),
+        (4, Some(3)),
+    ] {
+        let mut args = NativeStack::default();
+        args.push_i32(index);
+        let handle = call_host_native(&mut host, NativeFn::GetActorScript, &mut args);
+        assert_eq!(
+            handle,
+            entity_slot.map_or(0, ScriptHandleCodec::actor_handle_from_index)
+        );
+        if let Some(slot) = entity_slot {
+            let mut reverse = NativeStack::default();
+            reverse.push_i32(handle);
+            let expected = match slot {
+                1 => 2,
+                3 => 1,
+                _ => 0,
+            };
+            assert_eq!(
+                call_host_native(&mut host, NativeFn::GetActorIndex, &mut reverse),
+                expected
+            );
+        }
+    }
+    assert_eq!(
+        call_host_native(
+            &mut host,
+            NativeFn::GetNumberOfActorsInEngine,
+            &mut NativeStack::default()
+        ),
+        4
+    );
 }
 
 #[test]

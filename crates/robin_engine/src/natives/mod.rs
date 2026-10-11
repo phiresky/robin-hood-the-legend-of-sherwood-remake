@@ -745,35 +745,63 @@ impl NativeContext<'_, '_> {
         })
     }
 
-    /// Mobile masters are appended after the normal script-element array in
-    /// the original game. Rust stores only their masked child FX entities, created at the
-    /// same boundary. Return that boundary so script indices remain those of
-    /// the original arrays rather than leaking the child entity slot layout.
+    /// Script registration places one mobile master before the hero slots.
+    /// The entity arena keeps the hero slots before the masked child sprites;
+    /// translate this boundary instead of exposing render allocation order.
+    fn mobile_script_layout(&self) -> Option<(usize, usize, usize)> {
+        if self.call_frame.initializing_actor_script_count().is_some() {
+            return None;
+        }
+        let mut first_child = None;
+        let mut count = 0;
+        for (id, entity) in self.entities.occupied() {
+            if let Some(index) = entity.as_fx().and_then(|fx| fx.fx.mobile_index) {
+                first_child.get_or_insert(id.index() as usize);
+                count = count.max(usize::from(index) + 1);
+            }
+        }
+        let first_child = first_child?;
+        let first_master = first_child
+            .checked_sub(self.bindings.legacy_beam_me_count)
+            .expect("hero slots must precede mobile child sprites");
+        Some((first_master, first_child, count))
+    }
+
     fn standard_actor_script_count(&self) -> usize {
         if let Some(count) = self.call_frame.initializing_actor_script_count() {
             return count;
         }
-        self.entities
-            .occupied()
-            .find_map(|(id, entity)| {
-                entity
-                    .as_fx()
-                    .is_some_and(|fx| fx.fx.mobile_index.is_some())
-                    .then_some(id.index() as usize)
+        self.mobile_script_layout()
+            .map_or(self.entities.len(), |(_, first_child, count)| {
+                first_child + count
             })
-            .unwrap_or(self.entities.len())
+    }
+
+    fn actor_for_script_index(&self, index: usize) -> Option<EntityId> {
+        let mut entity_index = index;
+        if let Some((first_master, _, count)) = self.mobile_script_layout() {
+            if (first_master..first_master + count).contains(&index) {
+                return self.mobile_owner_id((index - first_master) as i32);
+            }
+            if index >= first_master + count {
+                entity_index -= count;
+            }
+        }
+        self.entities.id_at_legacy_slot(entity_index as u32)
     }
 
     fn actor_script_index(&self, handle: i32) -> Option<usize> {
         let entity_index = Self::actor_handle_index(handle)?;
         let (_, entity) = self.entities.get_legacy_slot(entity_index as u32)?;
-        if let Some(mobile_index) = entity.as_fx().and_then(|fx| fx.fx.mobile_index) {
-            // The original does not add the normal-array length here: after
-            // its first Find fails it returns the raw mobile-array index.
-            Some(usize::from(mobile_index))
-        } else {
-            Some(entity_index)
+        if let Some((first_master, first_child, count)) = self.mobile_script_layout() {
+            if let Some(index) = entity.as_fx().and_then(|fx| fx.fx.mobile_index) {
+                return Some(first_master + usize::from(index));
+            }
+            if (first_master..first_child).contains(&entity_index) {
+                return Some(entity_index + count);
+            }
         }
+        Some(entity_index)
     }
 
     /// Add a sequence element to the current recording session.

@@ -17,6 +17,7 @@ pub struct AttachedScriptBindings {
     pub script_point_count: usize,
     pub script_building_count: usize,
     pub script_hiking_path_count: usize,
+    pub legacy_beam_me_count: usize,
     pub location_positions: Arc<Vec<(f32, f32)>>,
     pub location_layers: Arc<Vec<u16>>,
     pub location_sectors: Arc<Vec<u16>>,

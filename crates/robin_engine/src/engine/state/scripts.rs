@@ -188,6 +188,7 @@ impl ScriptRuntime {
             script_point_count: assets.scripts.point_count,
             script_building_count: assets.scripts.building_count,
             script_hiking_path_count: assets.scripts.hiking_path_count,
+            legacy_beam_me_count: assets.entities.legacy_beam_me_count,
             location_positions: assets.scripts.location_positions.clone(),
             location_layers: assets.scripts.location_layers.clone(),
             location_sectors: assets.scripts.location_sectors.clone(),
