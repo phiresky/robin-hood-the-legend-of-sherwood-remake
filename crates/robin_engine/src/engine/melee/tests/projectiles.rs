@@ -43,12 +43,20 @@ fn lying_arrow_victim_speaks_before_posture_termination() {
             engine.orders.sequence_manager.start_sequence_level(id);
             id
         };
+        let next_order = engine.orders.next_order_id;
         engine.dispatch_receive_damage(
             TickCtx::new(&sim, &assets),
             &mut Vec::new(),
             victim,
             SequenceElementRef::new(sequence, 0),
         );
+        if victim == lying {
+            assert_eq!(
+                engine.orders.next_order_id,
+                next_order + 1,
+                "terminated arrow reaction still allocates its unused order"
+            );
+        }
     }
 
     assert_eq!(

@@ -1461,7 +1461,7 @@ impl EngineInner {
         };
 
         let mut removed: Vec<EntityId> = Vec::new();
-        for opp_id in opponents {
+        for opp_id in opponents.into_iter().rev() {
             let dist = entity_distance(&self.world.entities, entity_id, opp_id);
             let opp_uber = self
                 .world
@@ -1484,6 +1484,10 @@ impl EngineInner {
                     opp_id
                 ));
                 assert!(self.delete_opponent(tcx, opp_id, entity_id));
+                // Evaluate each removed opponent immediately, in reverse list
+                // order. Its queued commands and order allocations must precede
+                // removal of the next opponent and evaluation of the owner.
+                self.evaluate_opponents(tcx, opp_id);
                 removed.push(opp_id);
             }
         }
@@ -1508,9 +1512,6 @@ impl EngineInner {
             removed.len(),
             remaining
         );
-        for opp_id in &removed {
-            self.evaluate_opponents(tcx, *opp_id);
-        }
         self.evaluate_opponents(tcx, entity_id);
     }
 

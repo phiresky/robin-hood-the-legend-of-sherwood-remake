@@ -4141,3 +4141,28 @@ fn player_selected_attacker_does_not_queue_automatic_taunt_after_damage() {
         );
     }
 }
+
+#[test]
+fn distant_opponents_queue_quit_in_reverse_list_order_before_owner() {
+    use crate::profiles::Action;
+    let sim = crate::sim_rng::test_context();
+    let assets = action_test_assets([Action::NoAction; 3]);
+    let mut engine = make_engine();
+    let owner = engine.add_test_entity(make_pc(WorldPoint3D::ZERO, None));
+    let first = engine.add_test_entity(make_pc(WorldPoint3D::new(1000.0, 0.0, 0.0), None));
+    let second = engine.add_test_entity(make_pc(WorldPoint3D::new(2000.0, 0.0, 0.0), None));
+    engine.human_mut(owner).opponents = vec![first, second].into();
+    for opponent in [first, second] {
+        engine.human_mut(opponent).opponents = vec![owner].into();
+    }
+    engine.quit_swordfight_with_far_opponents(TickCtx::new(&sim, &assets), owner);
+    let quit_owners: Vec<_> = engine
+        .orders
+        .sequence_manager
+        .sequences_iter()
+        .flat_map(|sequence| sequence.elements.iter())
+        .filter(|element| element.command == Command::QuitSwordfight)
+        .map(|element| element.owner.unwrap())
+        .collect();
+    assert_eq!(quit_owners, vec![second, first, owner]);
+}

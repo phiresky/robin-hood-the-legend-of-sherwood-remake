@@ -124,6 +124,7 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
         .sequence_manager
         .start_sequence_level(sequence);
 
+    let next_order = engine.orders.next_order_id;
     engine.dispatch_receive_damage(
         TickCtx::new(&crate::sim_rng::test_context(), &assets),
         &mut Vec::new(),
@@ -131,6 +132,11 @@ fn piercing_damage_on_ladder_applies_damage_before_fall_translation() {
         SequenceElementRef::new(sequence, 0),
     );
 
+    assert_eq!(
+        engine.orders.next_order_id,
+        next_order + 2,
+        "arrow fallback consumes its unused reaction ID before the fall order"
+    );
     assert_eq!(engine.ent(victim).human_life_points(), 80);
     assert_eq!(
         engine

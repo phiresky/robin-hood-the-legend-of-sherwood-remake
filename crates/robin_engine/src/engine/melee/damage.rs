@@ -2043,6 +2043,12 @@ impl EngineInner {
         // damage-immunity arm: piercing damage has already subtracted
         // life and applied concussion when Original gets here.
         if matches!(pre_posture, Posture::OnLadder | Posture::OnWall) {
+            if is_arrow_damage {
+                // Arrow translation allocates its ordinary reaction before
+                // dispatching the ladder fallback, which allocates another.
+                // Preserve that unused ID so later orders keep their identities.
+                self.orders.allocate_order_id();
+            }
             self.translate_ladder_wall_fall(tcx, victim_id, damage_element);
             return;
         }
@@ -2118,6 +2124,11 @@ impl EngineInner {
                 self.set_entity_posture(victim_id, Posture::Dead);
             }
             if !is_rider || !post_dead {
+                if is_arrow_damage {
+                    // The ordinary arrow reaction was allocated even when this
+                    // posture makes translation terminate without installing it.
+                    self.orders.allocate_order_id();
+                }
                 let (dseq, didx) = damage_element;
                 self.element_terminated(tcx, &mut Vec::new(), SequenceElementRef::new(dseq, didx));
                 return;
