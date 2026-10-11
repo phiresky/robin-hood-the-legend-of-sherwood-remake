@@ -4,6 +4,38 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Overlapping joined floors (2026-10-11)
+
+A newly authored assembly reproduces a silent layer collision: one floor stays
+level while another starts at the same height, ramps up and ends over the first.
+Joining each walkway previously assigned its minimum input layer to the entire
+region. Both regions could therefore occupy one layer despite overlapping at
+different heights; the subsequent layer-order pass skipped that pair.
+
+Export now separates different ordinary regions that share a layer but overlap
+at distinct receiving heights, before ordering their layers. Each joined region
+retains all of its pieces and one navigation sector. Nonconflicting regions may
+continue sharing a layer; lifts keep their separate allocation. Preparation uses
+placed receiving geometry and remains entirely in the compiler.
+
+The assembly regression covers both region input orders. A complete asset
+compiler regression uses three joined surfaces above a separate lower floor,
+verifies their distinct ordered layers and preserves both sectors without adding
+a lift. Disabling only the new separation call makes that regression fail its
+upper-layer assertion; enabling it passes. This proves the compiler correction,
+not native traversal of every overlapping arrangement.
+
+Four fresh editable spline ZIP round trips in
+`work/map-compile/spline-mask-floor-routes-FYxqkS` pass, and the existing native
+complete-sprite audit passes all 16 normal PC walks on their extracted descriptors.
+The saved Derby export `work/map-compile/saved-map-exports-y68SMM` is identical to
+the preceding descriptor, including warnings. Its authored seam conflicts remain
+open. Self-overlap within a single joined region and cyclic ordering are not
+resolved by separating different regions. No production engine code changed.
+All 164 compiler/layer-order tests, TypeScript checking, lint, changed-file
+formatting, workspace Rust formatting and the game binary build pass. The
+assembly and spline app regressions also pass.
+
 ## Click ordering on raised spline floors (2026-10-11)
 
 Full actor movement exposed a defect that the receiver-only checks below did not
@@ -36,7 +68,8 @@ from the compiler to follow the corrected layer references; all 72 enabled
 asset-map integration tests pass (seven external-data audits are ignored).
 
 These probes cover two lanes in both directions per assembly, not every point
-on the floors. Collapsed movement-fragment warnings remain. Same-layer overlaps
+on the floors. Collapsed movement-fragment warnings remain. The later joined-floor
+correction above separates overlapping regions sharing an initial layer; self-overlap
 and cyclic receiving-height arrangements require further authoring/export work;
 this correction does not establish complete navigation parity.
 
@@ -69,6 +102,27 @@ integration binary; no runtime code changed for conflict isolation. All 162
 targeted compiler/layer-order tests, TypeScript checking, lint and changed-file
 formatting pass, as does the game binary build. The workspace Rust formatting check reports unrelated concurrent
 archery, purse, projectile-test and replay-comparison edits.
+
+Further source-stage capture in `work/map-compile/receiving-seam-sources-7xzO95`
+identifies the affected placements: the keep/hall bridge against the upper east
+curtain, and internal ramp/landing pairs in the east-bailey west and east curtain
+assets. The latter outlines already contain the small overlap before final
+contour rounding. Their precise world-plane reprojection matches those source
+outlines, so enabling fractional movement preservation alone cannot resolve
+them. The bridge/curtain contact also produces an almost collinear clipping
+sliver. Asset seam geometry and the clipping artifact need separate treatment.
+
+Conflict warnings now name the final exported layers, rather than temporary
+pre-sort layer IDs, and include projected overlap locations (up to four per
+conflicting group, with a count for additional overlaps). These are diagnostic
+bounding-box centers, not suggested actor positions. The upper-floor regression
+also checks that warning layer IDs follow the exported remapping.
+
+`work/map-compile/saved-map-exports-sahWm7` verifies those warnings against a
+fresh Derby export: layers 28/29/30 report overlaps near (970.41, 1056.40) and
+(1213.55, 1152.97); layers 31/32 report (1711.50, 1380.00). Excluding diagnostic
+warnings, its descriptor is identical to `saved-map-exports-qz6YDk`. The 162
+targeted tests, TypeScript check, lint and changed-file formatting pass.
 
 ## Point masks on rising spline floors (2026-10-11)
 

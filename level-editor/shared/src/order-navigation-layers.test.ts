@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { NavigationRegion } from "./assemble-navigation-regions.ts";
 import type { HeightPlane } from "./gameplay-plane.ts";
 import { orderNavigationLayers } from "./order-navigation-layers.ts";
+import { assembleNavigationRegions, type NavigationPiece } from "./assemble-navigation-regions.ts";
 
 function region(layer: number, plane: HeightPlane, x = 100): NavigationRegion {
   const polygon: [number, number][] = [
@@ -75,7 +76,8 @@ test("a crossing pair cannot put an unambiguous upper floor below it", () => {
   orderNavigationLayers([upper, ramp, landing], warnings);
   assert.deepEqual([ramp.layer, landing.layer, upper.layer], [0, 1, 2]);
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0]!, /^Navigation layers 1, 2:/);
+  assert.match(warnings[0]!, /^Navigation layers 0, 1:/);
+  assert.match(warnings[0]!, /layers 1\/0 near projected \(150\.00, 150\.00\)/);
 });
 
 test("independent crossing pairs report only their own conflicting layers", () => {
@@ -94,4 +96,44 @@ test("independent crossing pairs report only their own conflicting layers", () =
   assert.equal(warnings.length, 2);
   assert.match(warnings[0]!, /^Navigation layers 0, 1:/);
   assert.match(warnings[1]!, /^Navigation layers 2, 3:/);
+});
+
+test("a joined ramp starting on the ground receives a separate layer above another floor", () => {
+  for (const reverse of [false, true]) {
+    const piece = (
+      name: string,
+      layer: number,
+      plane: HeightPlane,
+      x0: number,
+      x1: number,
+    ): NavigationPiece => ({
+      navigationRegion: name,
+      layer,
+      plane,
+      blockers: [],
+      polygon: [
+        [x0, 100],
+        [x1, 100],
+        [x1, 200],
+        [x0, 200],
+      ],
+    });
+    const pieces = [
+      piece("lower", 0, [0, 0, 0], 100, 300),
+      piece("upper", 0, [0, 0, 0], 0, 50),
+      piece("upper", 1, [2, 0, -100], 50, 100),
+      piece("upper", 2, [0, 0, 100], 100, 200),
+    ];
+    if (reverse) pieces.reverse();
+    const regions = assembleNavigationRegions(pieces, []);
+    const warnings: string[] = [];
+    orderNavigationLayers(regions, warnings);
+    const lower = regions.find((r) => r.pieces[0]!.navigationRegion === "lower")!;
+    const upper = regions.find((r) => r.pieces[0]!.navigationRegion === "upper")!;
+    assert.equal(lower.layer, 0);
+    assert.equal(upper.layer, 1);
+    assert.ok(upper.pieces.every((p) => p.layer === upper.layer));
+    assert.equal(upper.pieces.length, 3);
+    assert.deepEqual(warnings, []);
+  }
 });

@@ -2458,6 +2458,55 @@ test("ordinary local navigation regions join height planes without lift behavior
   assert.equal(compileAssetGameplay(document, assets, bounds).motion_data.layers.flat().length, 2);
 });
 
+test("joined floors export distinct layers when a raised end overlaps a separate ground floor", () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  document.groups[0]!.transform.dz = 40;
+  const surface = (
+    id: string,
+    navigationRegion: string,
+    x0: number,
+    x1: number,
+    z0: number,
+    z1: number,
+  ): AssetWalkableSurface => ({
+    id,
+    navigationRegion,
+    node: "building-999",
+    polygon: [
+      [x0, 100 + z0],
+      [x1, 100 + z1],
+      [x1, 200 + z1],
+      [x0, 200 + z0],
+    ],
+    height: [z0, z1, z1, z0],
+  });
+  hut.gameplay!.collision = "none";
+  hut.gameplay!.doors = [];
+  hut.gameplay!.surfaces = [
+    surface("lower-floor", "lower", 0, 200, 0, 0),
+    surface("start", "upper", 250, 300, 0, 0),
+    surface("ramp", "upper", 200, 250, 100, 0),
+    surface("deck", "upper", 100, 200, 100, 100),
+  ];
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  const bindings = new Map<string, { layer: number; count: number }>();
+  for (const obstacle of compiled.sight_obstacles) {
+    if (!obstacle.projection_area) continue;
+    const key = JSON.stringify(obstacle.projection_area);
+    const binding = bindings.get(key) ?? { layer: obstacle.projection_area[1], count: 0 };
+    binding.count++;
+    bindings.set(key, binding);
+  }
+  assert.equal(bindings.size, 2);
+  const lower = [...bindings.values()].find((binding) => binding.count === 1)!;
+  const upper = [...bindings.values()].find((binding) => binding.count === 3)!;
+  assert.ok(lower);
+  assert.ok(upper);
+  assert.ok(upper.layer > lower.layer);
+  assert.equal(compiled.motion_data.layers.flat().length, 2);
+  assert.equal(compiled.lifts?.length ?? 0, 0);
+});
+
 test("multi-plane regions retain independent sectors after rotation and duplication", () => {
   const { document, assets } = multiPlaneRegionCompilerFixture();
   const part = document.objects.find((p) => p.group)!;

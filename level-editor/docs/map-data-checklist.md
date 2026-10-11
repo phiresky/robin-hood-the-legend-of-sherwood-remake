@@ -84,12 +84,25 @@ rising floor ordered below terrain despite valid direct paths. Export now orders
 overlapping navigation layers by receiving height before assigning references.
 Four editable ZIP round trips, 16 complete-sprite PC walks, 16 direct routes and
 88 sampled routes pass; per-tick checks cover receiver, height and collision.
-Conflicting height order warns without dropping geometry. Same-layer overlaps,
+Conflicting height order warns without dropping geometry. Self-overlapping regions,
 cyclic ordering and full rendered coverage remain open. No production runtime
 changes were needed; see [click-order evidence](map-compilation-evidence.md#click-ordering-on-raised-spline-floors-2026-10-11).
 Conflicts are isolated to their connected groups so that unrelated and clearly
 higher layers still receive the correct order. Derby's reported conflicts trace
 to three small ramp/landing overlaps; their geometry still needs resolution.
+Warnings report exported layer IDs and projected overlap locations. Two seams
+are internal to the east-bailey curtain assets; the third is the keep/hall bridge
+against the upper east curtain. Fractional movement preservation alone does not
+resolve the authored overlaps.
+
+**Overlapping joined floors (2026-10-11):** separate regions sharing an initial
+layer now receive distinct layers when their placed floors overlap at different
+heights. This fixes a new ramp assembly whose raised end otherwise shared the
+lower floor's layer. Joined pieces remain one sector, and nonconflicting regions
+can still share layers. Assembly and full compiler regressions pass, alongside
+four spline ZIP round trips and 16 native spline walks. Dedicated native traversal
+of the new overlapping assembly and self-overlap within one region remain open;
+see [joined-floor evidence](map-compilation-evidence.md#overlapping-joined-floors-2026-10-11).
 
 **Authored occupancy triggers (2026-10-11):** eight new map exports place two
 independent reusable trigger assets at 0/37/90/180 degrees and elevations 0/40.

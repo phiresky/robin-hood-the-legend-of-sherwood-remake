@@ -1,14 +1,18 @@
 import type { NavigationRegion } from "./assemble-navigation-regions.ts";
 import { planeHeight } from "./gameplay-plane.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
+import { separateOverlappingNavigationLayers } from "./separate-overlapping-navigation-layers.ts";
 
 /** Prepare bottom-to-top click precedence from overlapping receiving geometry. */
 export function orderNavigationLayers(regions: NavigationRegion[], warnings: string[]): void {
+  separateOverlappingNavigationLayers(regions);
   const layers = [
     ...new Set(regions.filter((region) => !region.lift).map((region) => region.layer)),
   ].sort((a, b) => a - b);
   const edges = new Map(layers.map((layer) => [layer, new Set<number>()]));
   const incoming = new Map(layers.map((layer) => [layer, 0]));
+  const contacts: { layers: [number, number]; point: [number, number] }[] = [];
+  const conflicts: number[][] = [];
   const pieces = regions
     .filter((region) => !region.lift)
     .flatMap((region) =>
@@ -50,6 +54,20 @@ export function orderNavigationLayers(regions: NavigationRegion[], warnings: str
         }
       if (above) add(other.layer, current.layer);
       if (below) add(current.layer, other.layer);
+      if (above || below) {
+        const points = overlap.flatMap((polygon) => polygon[0]!);
+        contacts.push({
+          layers: [current.layer, other.layer],
+          point: [
+            (Math.min(...points.map((point) => point[0])) +
+              Math.max(...points.map((point) => point[0]))) /
+              2,
+            (Math.min(...points.map((point) => point[1])) +
+              Math.max(...points.map((point) => point[1]))) /
+              2,
+          ],
+        });
+      }
     }
     active.push(current);
   }
@@ -86,9 +104,7 @@ export function orderNavigationLayers(regions: NavigationRegion[], warnings: str
               component.every((layer) => !edges.get(other)!.has(layer)),
           ),
         )!;
-      warnings.push(
-        `Navigation layers ${group.join(", ")}: crossing receiving heights prevent consistent click ordering; these layers retain their previous relative order.`,
-      );
+      conflicts.push(group);
     } else group = [next];
     ordered.push(...group);
     for (const layer of group) pending.delete(layer);
@@ -98,6 +114,20 @@ export function orderNavigationLayers(regions: NavigationRegion[], warnings: str
   // Preserve the reserved empty ground layer when no ordinary region owns it.
   const offset = layers.includes(0) ? 0 : 1;
   const remap = new Map(ordered.map((layer, index) => [layer, index + offset]));
+  for (const group of conflicts) {
+    const overlaps = contacts.filter((contact) =>
+      contact.layers.every((layer) => group.includes(layer)),
+    );
+    const locations = overlaps
+      .slice(0, 4)
+      .map(
+        (contact) =>
+          `layers ${contact.layers.map((layer) => remap.get(layer)!).join("/")} near projected (${contact.point.map((n) => n.toFixed(2)).join(", ")})`,
+      );
+    warnings.push(
+      `Navigation layers ${group.map((layer) => remap.get(layer)!).join(", ")}: crossing receiving heights prevent consistent click ordering; these layers retain their previous relative order. Conflicting overlaps: ${locations.join("; ")}${overlaps.length > 4 ? `; ${overlaps.length - 4} more` : ""}.`,
+    );
+  }
   for (const region of regions)
     if (!region.lift) {
       region.layer = remap.get(region.layer)!;
