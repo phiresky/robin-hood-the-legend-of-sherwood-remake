@@ -495,6 +495,14 @@ export function createJumpClearance(
           padding +
           Math.max(0, shift?.[1] ?? 0);
         for (const prism of prisms) {
+          // Reject distant geometry before searching the flight's plane bounds.
+          if (
+            maxX < prism.bounds[0] ||
+            maxY < prism.bounds[1] ||
+            minX > prism.bounds[2] ||
+            minY > prism.bounds[3]
+          )
+            continue;
           const bound = planeBounds?.find((bound) =>
             bound.plane.every((value, axis) => value === prism.top[axis]),
           );
@@ -506,13 +514,6 @@ export function createJumpClearance(
             continue;
           if (minimumZ !== undefined && minimumZ >= prism.maximumZ - EPSILON) continue;
           if (maximumZ !== undefined && maximumZ + body.height <= prism.minimumZ + EPSILON)
-            continue;
-          if (
-            maxX < prism.bounds[0] ||
-            maxY < prism.bounds[1] ||
-            minX > prism.bounds[2] ||
-            minY > prism.bounds[3]
-          )
             continue;
           if (sloped || parameters) {
             const range = ribbonParameterRange(
