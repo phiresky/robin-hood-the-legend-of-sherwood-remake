@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Mask coverage beyond walking boundaries (2026-10-12)
+
+Mask layer binding now considers projected mask coverage when the authored
+receiving probes lie outside all walking areas. The authored height must still
+match a receiving plane, the projected coverage must overlap its navigation
+polygon, and the resulting layer must be unique. This derives the association
+from placed asset geometry without moving the mask or reading a source level.
+Incorrect heights, distant coverage and competing layers remain errors.
+
+Fresh published Croisement02 export `saved-map-exports-XFMJuA` contains 53 masks
+instead of 52: shrub 77's canopy now binds despite its root being outside the
+walking boundary. Compared with `saved-map-exports-2evInr`, only masks and warnings
+change. Native construction passes; all 158 compiler tests and 75 packaging tests
+pass, together with typechecking, lint and formatting. The focused regression
+also checks raised placement and rejects ambiguous layers. Actual rendered
+occlusion and cropped-frame roots still need verification.
+
+Current York export `saved-map-exports-YR17Lo` completes in about 565 seconds and
+passes native construction. It differs from the earlier `saved-map-exports-i9U8hr`
+only in sight obstacles; this is not an exact-output timing comparison. Both runs
+precede the mask coverage change above, and full York gameplay remains unverified.
+
 ## Croisement02 exports after the remaining wood cap repairs (2026-10-12)
 
 Stage `wood-cap-slivers-nv199T` repairs supplemental wood 09/44 with the same

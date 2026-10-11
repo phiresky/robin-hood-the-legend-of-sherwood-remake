@@ -33,6 +33,11 @@ authorized destinations rather than raw clicks. Isolated stump tests still repor
 30 of 640 cases with launch or selection-identity problems. These results do not establish
 full parity; see [the current evidence](map-compilation-evidence.md).
 
+**Mask binding update:** coverage-based layer binding restores Croisement02 shrub
+77's missing mask. The fresh 53-mask export loads natively and changes only masks
+and warnings relative to the previous export. Compiler/packaging tests pass;
+rendered occlusion is still unverified.
+
 **Matched runtime comparison (2026-10-11):** current code and the earlier
 post-solver-removal baseline pass 9,720 stock frames across H07/H01/S01 using
 identical benchmark code, game data and CPU affinity. Both show similarly large

@@ -2504,6 +2504,40 @@ function compileAssetGameplayAttempt(
             .map((area) => area.layer),
         ),
       ]);
+    if (!segmentError && !receivingLayers.size) {
+      // A canopy can cover playable pixels while its root lies beyond the
+      // walking boundary. Its authored receiving height still selects the
+      // plane; projected coverage supplies the spatial connection to that layer.
+      let minX = Infinity,
+        minY = Infinity,
+        maxX = -Infinity,
+        maxY = -Infinity;
+      for (const triangle of mask.triangles)
+        for (const vertex of triangle) {
+          const [x, y] = project(vertex);
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
+      if (minX < maxX && minY < maxY) {
+        const coverage: Point[] = [
+          [minX, minY],
+          [maxX, minY],
+          [maxX, maxY],
+          [minX, maxY],
+        ];
+        receivingLayers = new Set(
+          areas
+            .filter(
+              (area) =>
+                receivingPoints(area.plane).length > 0 &&
+                polygonClipping.intersection([area.polygon], [coverage]).length > 0,
+            )
+            .map((area) => area.layer),
+        );
+      }
+    }
     if (segmentError || receivingLayers.size !== 1) {
       if (options.bestEffort) {
         warnings.push(

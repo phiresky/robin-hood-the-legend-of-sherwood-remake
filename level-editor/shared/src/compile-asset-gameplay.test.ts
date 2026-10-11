@@ -793,6 +793,70 @@ test("excess movement controls retain initial barriers in best-effort exports", 
   assert.deepEqual(assets, originalAssets);
 });
 
+test("masks covering playable pixels bind even when their roots lie outside walking areas", () => {
+  for (const elevation of [0, 40]) {
+    const { document, assets, hut } = maskAssetCompilerFixture();
+    document.objects = document.objects.filter((part) => part.group === "hut-a");
+    document.groups = document.groups.filter((group) => group.id === "hut-a");
+    document.groups[0]!.transform.dz = elevation;
+    const gameplay = hut.gameplay!;
+    gameplay.collision = "none";
+    gameplay.doors = [];
+    gameplay.movementTransitions = [];
+    gameplay.surfaces = [
+      {
+        ...gameplay.surfaces[0]!,
+        polygon: [
+          [0, 0],
+          [90, 0],
+          [90, 20],
+          [0, 20],
+        ],
+      },
+    ];
+    gameplay.masks = [gameplay.masks![0]!];
+    const mask = gameplay.masks[0]!;
+    mask.obstacles = [];
+    const compiled = compileAssetGameplay(document, assets, bounds);
+    assert.equal(compiled.masks!.length, 1);
+    assert.ok(compiled.masks![0]!.mask_data.length > 0);
+    gameplay.surfaces.push({
+      ...structuredClone(gameplay.surfaces[0]!),
+      id: "upper",
+      polygon: [
+        [0, 0],
+        [90, 0],
+        [90, 40],
+        [0, 40],
+      ],
+      height: 10,
+    });
+    mask.receiverPoints = [
+      [45, 45, 0],
+      [45, 45, 10],
+    ];
+    assert.throws(
+      () => compileAssetGameplay(document, assets, bounds),
+      /receiving anchor.*found 2/,
+    );
+    gameplay.surfaces.pop();
+    delete mask.receiverPoints;
+    mask.anchor[2] += 1;
+    assert.throws(
+      () => compileAssetGameplay(document, assets, bounds),
+      /receiving anchor.*found 0/,
+    );
+    mask.anchor[2] -= 1;
+    mask.triangles = mask.triangles.map(
+      (triangle) => triangle.map(([x, y, z]) => [x + 200, y, z]) as typeof triangle,
+    );
+    assert.throws(
+      () => compileAssetGameplay(document, assets, bounds),
+      /receiving anchor.*found 0/,
+    );
+  }
+});
+
 test("mask receiving segments bind slopes without moving their pixels or boundary rules", () => {
   const { document, assets, hut } = maskAssetCompilerFixture();
   const gameplay = hut.gameplay!;
