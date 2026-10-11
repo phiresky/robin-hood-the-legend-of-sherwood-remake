@@ -22,10 +22,25 @@ authored receiving floor at the correct height, and crosses no collision. Every
 route reaches its target, settles its order queue and stays within twice the
 straight-line distance. The batch's `joined-floor-actor-report.json` records completion.
 This verifies upper-floor traversal in both directions, not actor navigation
-under the deck, self-overlapping regions, group avoidance or rendered appearance.
+under the deck in that batch, self-overlapping regions, group avoidance or rendered appearance.
 The existing native collision-connected path sampler passes eight routes per
 export, 64 distinct routes across the eight files. The per-copy manifest repeats
 each file; those duplicate sampling passes are not counted as additional coverage.
+
+The `--under-deck` batch extends the lower floor past both sides of the deck and
+places two lower-floor lanes across it. Source and destination clicks remain
+outside the upper floor's projected boundary. It also recenters the copied parts
+so every rotated floor fits the export frame. All eight ZIP round trips in
+`work/map-compile/under-deck-routes-Pb6QeB` pass. Reusing the compiled floor-click
+harness with those manifest-selected lower layers passes 64 directed actor walks:
+the character keeps the lower sector, receiver and height while crossing beneath
+the elevated surface. The existing test entry point retains its upper-region
+name, but its assertions use each manifest entry's requested layer; no assertion
+was disabled or relaxed. Its `joined-floor-actor-report.json` records all 64 walks.
+These fixtures contain receiving floors without solid ceilings or rendered
+rasters, so this does not certify headroom collision or visual occlusion.
+Script lint/format checks and the game binary build pass. The preceding native
+test build and full Rust formatting check also pass.
 
 A newly authored assembly reproduces a silent layer collision: one floor stays
 level while another starts at the same height, ramps up and ends over the first.

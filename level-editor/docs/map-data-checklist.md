@@ -103,8 +103,10 @@ can still share layers. Assembly and full compiler regressions pass, alongside
 four spline ZIP round trips and 16 native spline walks. The dedicated overlapping
 assembly additionally passes eight editable ZIP round trips and 64 normal PC
 walks across two copies, four rotations and two elevations, checking layer, sector,
-height and collision on every tick. Under-deck actor traversal, self-overlap
-within one region, group avoidance and rendered appearance remain open;
+height and collision on every tick. Eight additional under-deck ZIP round trips
+and 64 lower-floor walks pass with the same layer/sector/receiver checks.
+Solid-ceiling headroom, self-overlap within one region, group avoidance and
+rendered appearance remain open;
 see [joined-floor evidence](map-compilation-evidence.md#overlapping-joined-floors-2026-10-11).
 
 **Authored occupancy triggers (2026-10-11):** eight new map exports place two

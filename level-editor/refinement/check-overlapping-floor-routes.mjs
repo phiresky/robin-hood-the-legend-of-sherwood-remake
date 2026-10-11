@@ -13,13 +13,16 @@ import { compileMap, packageCompiledMap } from "../app/src/map-compile.ts";
 const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", import.meta.url))(
   "fflate",
 );
-const output = await fs.mkdtemp("work/map-compile/overlapping-floor-routes-");
+const underDeck = process.argv.includes("--under-deck");
+const output = await fs.mkdtemp(
+  `work/map-compile/${underDeck ? "under-deck" : "overlapping-floor"}-routes-`,
+);
 console.log(output);
 const results = [];
 const report = (complete) =>
   fs.writeFile(
     `${output}/diagnostics.json`,
-    JSON.stringify({ complete, scope: "overlapping-joined-floors", results }),
+    JSON.stringify({ complete, scope: "overlapping-joined-floors", underDeck, results }),
   );
 await report(false);
 for (const rotation of [0, 37, 90, 180])
@@ -46,7 +49,15 @@ for (const rotation of [0, 37, 90, 180])
       surface("ramp", "upper", 200, 300, 60, 20),
       surface("deck", "upper", 100, 200, 60, 60),
     ];
+    if (underDeck)
+      hut.gameplay.surfaces[0].polygon = [
+        [100, 0],
+        [200, 0],
+        [200, 440],
+        [100, 440],
+      ];
     document.objects = document.objects.filter((o) => o.group);
+    if (underDeck) Object.assign(document.objects[0].transform, { dx: 0, dy: 0 });
     document.groups[0].transform = { dx: 1100, dy: 900, dz: elevation, rot_deg: rotation };
     const group = structuredClone(document.groups[0]);
     group.id = "copy";
@@ -88,12 +99,19 @@ for (const rotation of [0, 37, 90, 180])
       const matrix = partMatrix(document.camera, document, object);
       const world = (p) =>
         sceneToGame(document.camera, applyAffineMatrix(matrix, gameToScene(document.camera, ...p)));
-      const lanes = [130, 170].map((y) =>
-        [
-          [350, y + 20, 20],
-          [150, y + 60, 60],
-        ].map(world),
-      );
+      const lanes = underDeck
+        ? [130, 170].map((x) =>
+            [
+              [x, 40, 20],
+              [x, 400, 20],
+            ].map(world),
+          )
+        : [130, 170].map((y) =>
+            [
+              [350, y + 20, 20],
+              [150, y + 60, 60],
+            ].map(world),
+          );
       const goal = lanes[0][1];
       const projected = [goal[0], goal[1] - goal[2]];
       const layers = new Set(
