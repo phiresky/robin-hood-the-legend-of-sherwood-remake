@@ -28,6 +28,17 @@ combinations, transition suppression and reset. Two changing-pixel probes check
 30 rendered colors and 60 sprite occlusion results. This assigns control flags
 directly; actor activation and full-scene compositing remain unverified.
 
+**Authored occupancy triggers (2026-10-11):** eight new map exports place two
+independent reusable trigger assets at 0/37/90/180 degrees and elevations 0/40.
+All ZIP extraction/editor reopen/recompile checks pass. Normal native player
+movement passes 64 enter/leave walks: two PCs are tracked independently, the
+state stays applied until the last exit, and initial/applied sight obstacles
+switch without affecting the other copy. Positions retain their authored height.
+Trigger polygons come from asset metadata; test PCs exist only in the native
+harness. This does not add triggers to assets with empty polygons, invent mission
+scripts, or certify NPC/carried-actor behavior or rendered activation. See the
+[occupancy-trigger evidence](map-compilation-evidence.md#authored-occupancy-trigger-round-trips-2026-10-11).
+
 **Hall/walkway dependency (2026-10-11):** the hall's reveal waypoint belongs on
 the separate east-bailey west-curtain walkway. A flat-ground-only scene cannot
 bind it correctly. Joining those reusable assets restores the control without

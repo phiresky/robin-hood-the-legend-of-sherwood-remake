@@ -24,6 +24,10 @@ mod compiled_posture_closure {
     include!("compiled_posture_closure.rs");
 }
 
+mod compiled_trigger_occupancy {
+    include!("compiled_trigger_occupancy.rs");
+}
+
 #[test]
 fn exported_floor_flags_require_crouching_only_in_the_authored_room() {
     let bytes = include_bytes!(concat!(

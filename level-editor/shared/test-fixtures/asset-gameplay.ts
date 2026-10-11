@@ -582,6 +582,25 @@ export function sightTransitionCompilerFixture() {
   return fixture;
 }
 
+export function automaticTriggerCompilerFixture() {
+  const fixture = sightTransitionCompilerFixture();
+  const gameplay = fixture.hut.gameplay!;
+  fixture.hut.parts[0]!.obstacle_local_game!.solid = false;
+  gameplay.volumes![0]!.shape.solid = false;
+  const transition = gameplay.movementTransitions![0]!;
+  transition.initial = [];
+  transition.applied = [];
+  transition.applyPolygon = [
+    [25, 20],
+    [65, 20],
+    [65, 80],
+    [25, 80],
+  ];
+  transition.noApplyPolygon = [];
+  fixture.document.map = "Asset occupancy trigger";
+  return fixture;
+}
+
 export function preservedStateBoundaryCompilerFixture() {
   const fixture = preservedBoundaryCompilerFixture();
   const gameplay = fixture.hut.gameplay!;

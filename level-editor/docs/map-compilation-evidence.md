@@ -176,6 +176,30 @@ used 500 units of padding, so it did not exercise this position. Do not treat th
 wider run as a complete parity pass or attribute the receiver failure to bounded
 clearance. No forbidden routes were skipped.
 
+## Authored occupancy-trigger round trips (2026-10-11)
+
+`node refinement/check-automatic-triggers.mjs` creates eight new editor maps
+using two copies of a reusable asset with an explicitly authored apply polygon
+and initial/applied sight volumes. Four rotations and elevations 0/40 pass ZIP
+packaging, descriptor/warning extraction and pinned editor reopen/recompile
+equality. Current output: `work/map-compile/automatic-triggers-vJ3tu7`.
+The diagnostic rasters are blank and do not establish rendering.
+
+The native `exported_asset_triggers_track_players_until_last_exit` audit passes
+64 complete PC walks from those ZIP-extracted descriptors. For each copy, two PCs
+enter separately and then leave separately. Actual movement crosses the exported
+patch lines; the audit never directly applies or resets the control. Occupant
+membership/count and applied state must follow 1/2/1/0 occupants, whole-world
+sight state must match the expected control state, and the other copy must remain
+unapplied/unoccupied. Final elevation is checked after every walk. These actors
+are harness inputs, not mission content inserted into the exported map.
+
+Set `ROBIN_ASSET_MAP_DIAGNOSTICS` to the absolute output directory and
+`ROBIN_CLIMB_RHS` to a complete character sprite, then run the named ignored
+`robin_engine` library test. The passing run took 0.10 seconds and wrote
+`actor-trigger-report.json`. Actor-triggered rendering, NPC exclusion, carried
+actors and occupied control deactivation remain separate coverage gaps.
+
 ## Independent rendered reveal-state round trip (2026-10-11)
 
 The browser fixture now hashes every appearance state's color and depth before
