@@ -35,6 +35,12 @@ source. Fresh hall/walkway exports now reach clearance checking at all four
 rotations. Their gameplay geometry is unchanged and passes 160 native direct
 vertical jumps plus 160 click-driven routes. Solid-intersection warnings remain
 unresolved, including supporting-wall contacts. No runtime changes were needed.
+Contact warnings now identify the placed asset part/volume, directed edge and
+affected percentage ranges. Repeated hits are merged per blocker/direction;
+copied instances retain distinct identities. Fresh hall/walkway diagnostics
+are in `work/map-compile/hall-walkway-connection-AmwMS8`, with unchanged gameplay
+geometry. These are conservative clearance contacts, not a certification that
+the rendered character intersects each named part.
 
 **Rendered reveal round trip (2026-10-11):** two independent hall/walkway pairs
 at 37 degrees now pass a 5000×5000 browser export/reopen/rebake check. Both reveal

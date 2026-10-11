@@ -228,6 +228,22 @@ contacts still require review against the visual/body envelope; they were not
 silently exempted. Sampled arrival success does not certify a clear whole-span
 flight, and no asset or production runtime was changed.
 
+Follow-up diagnostics retain asset ownership while preparing flight obstacles,
+including temporarily activated state volumes. During the compiled-pair audit,
+contacts are grouped by placed part/volume and source edge; overlapping parameter
+ranges are merged and reported as percentages. Contact collection is inactive
+during automatic connection searching. A copied-asset regression verifies that
+each pair names only its own blocking volume and reports both directions.
+All 256 selected jump/compiler/export tests pass.
+
+`hall-walkway-connection-AmwMS8` contains eight fresh editor round trips. Each
+descriptor is identical to `hall-walkway-connection-7YWoTu` after removing warning
+strings. The 37-degree joined scene produces 24 detailed contact warnings. For
+example, one copy's first jump reports `building-090` over edge 1's 41–100% span,
+`building-091` over 0–28%, and `building-102` over 27–53%; the supporting
+`building-086` is reported over both full spans. These identify what to inspect,
+not a proven visual collision: the animated body/anchor distinction remains open.
+
 ## Authored occupancy-trigger round trips (2026-10-11)
 
 `node refinement/check-automatic-triggers.mjs` creates eight new editor maps

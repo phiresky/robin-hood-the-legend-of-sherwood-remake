@@ -472,6 +472,7 @@ function compileAssetGameplayAttempt(
     polygon: Point[];
   }[] = [];
   const sight: SightObstacle[] = [];
+  const sightLabels = new Map<number, string>();
   const sightJoins: import("./assemble-sight-volumes.ts").PlacedSightJoin[] = [];
   const sightOrders = new Map<number, number>();
   const sightCaps: import("./assemble-sight-volumes.ts").PlacedSightCap[] = [];
@@ -668,6 +669,7 @@ function compileAssetGameplayAttempt(
           material_indices: [],
         });
         partSight.set(node, sight.at(-1)!);
+        sightLabels.set(sight.length - 1, `${placement.id}/${node}`);
         const order = queryOrder.get(node);
         if (order !== undefined) sightOrders.set(sight.length - 1, order);
         for (const cap of placement.descriptor.parts.find((p) => p.node === node)
@@ -701,6 +703,7 @@ function compileAssetGameplayAttempt(
         }),
       };
       sight.push(shape);
+      sightLabels.set(sight.length - 1, `${placement.id}/${volume.id}`);
       partSight.set(volume.id, shape);
       const order = queryOrder.get(volume.id);
       if (order !== undefined) sightOrders.set(sight.length - 1, order);
@@ -2488,16 +2491,26 @@ function compileAssetGameplayAttempt(
     transitions.flatMap((transition) => [...transition.initialSight, ...transition.appliedSight]),
   );
   const jumpReceivers = new Map<string, JumpReceivingSurface>(generatedLandings);
+  const flightObstacles = sight.map((shape, index) =>
+    changingSight.has(index) && shape.initial_active === false
+      ? { ...shape, initial_active: true }
+      : shape,
+  );
+  const flightLabels = new Map(
+    flightObstacles.map((shape, index) => [shape, sightLabels.get(index)]),
+  );
+  let auditContacts: Map<string, [number, number][]> | undefined;
   const flightClearance =
     jumpPairs.length || jumpSegments.length
-      ? createJumpClearance(
-          sight.map((shape, index) =>
-            changingSight.has(index) && shape.initial_active === false
-              ? { ...shape, initial_active: true }
-              : shape,
-          ),
-          jumpReceivers,
-        )
+      ? createJumpClearance(flightObstacles, jumpReceivers, ({ obstacle, range, reverse }) => {
+          if (!auditContacts) return;
+          const label = flightLabels.get(obstacle);
+          if (!label) throw new Error("Jump collision obstacle has no asset owner");
+          const key = `${label}, edge ${reverse ? 2 : 1}`;
+          const ranges = auditContacts.get(key) ?? [];
+          ranges.push(range);
+          auditContacts.set(key, ranges);
+        })
       : undefined;
   const walkingClearance = createJumpWalkingClearance(jumpWalkAreas, generatedLandings);
   const assembledJumps = assembleJumpSegments(
@@ -2618,12 +2631,23 @@ function compileAssetGameplayAttempt(
     }
     return { line1: lines[0]!, line2: lines[1]!, jump_long: pair.long };
   });
-  for (const [index, pair] of compiledJumpPairs.entries())
+  for (const [index, pair] of compiledJumpPairs.entries()) {
+    auditContacts = new Map();
     for (const issue of auditCompiledJump(pair, flightClearance!, [
       jumpPairs[index]!.edges[0]!.zone,
       jumpPairs[index]!.edges[1]!.zone,
     ]))
       warnings.push(`Jump ${jumpPairs[index]!.id}: ${issue}.`);
+    for (const [label, ranges] of auditContacts) {
+      const spans = mergeIntervals(ranges).map(
+        ([a, b]) => `${Math.floor(a * 100)}–${Math.ceil(b * 100)}%`,
+      );
+      warnings.push(
+        `Jump ${jumpPairs[index]!.id}: possible contact with ${label} at ${spans.join(", ")} of its span.`,
+      );
+    }
+    auditContacts = undefined;
+  }
   // Runtime construction order is motion, materials, projection planes, then buildings.
   // Motion adds an out-of-map sector; each door also consumes a constructor slot.
   // Physical endpoints reach the runtime unchanged. Rounding before binding

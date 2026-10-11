@@ -2646,6 +2646,53 @@ test("jump pairs rebuild crossed destination links and preserve height after dup
     20,
   );
 });
+test("jump contact warnings name the blocking asset copy and directed span", () => {
+  const { document, assets, hut } = jumpAssetCompilerFixture();
+  const gameplay = hut.gameplay!;
+  gameplay.movementSolids = [];
+  for (const edge of gameplay.jumpPairs![0]!.edges) [edge.a, edge.b] = [edge.b, edge.a];
+  const {
+    projection_area: _projection,
+    material_indices: _materials,
+    ...shape
+  } = hut.parts[0]!.obstacle_local_game!;
+  gameplay.volumes = [
+    {
+      id: "flight-wall",
+      node: "building-999",
+      shape: {
+        ...shape,
+        points: [
+          [90, 20],
+          [100, 20],
+          [100, 190],
+          [90, 190],
+        ].map(([x, y]) => ({
+          x: x!,
+          y: y!,
+          z_bottom: 0,
+          z_top: 200,
+        })),
+      },
+    },
+  ];
+  const body = structuredClone(document.objects.find((object) => object.group === "hut-a")!);
+  body.id = "copy-body";
+  body.group = "copy";
+  document.objects.push(body);
+  document.groups.push({ id: "copy", transform: { ...IDENTITY_TRANSFORM, dx: 700, dy: 300 } });
+  const result = compileAssetGameplay(document, assets, bounds);
+  const contacts = result.warnings!.filter((warning) => warning.includes("possible contact with"));
+  assert.equal(contacts.length, 4);
+  for (const id of ["hut-a/hut", "copy/hut"])
+    for (const edge of [1, 2])
+      assert.ok(
+        contacts.includes(
+          `Jump ${id}/wall-jump: possible contact with ${id}/flight-wall, edge ${edge} at 0–100% of its span.`,
+        ),
+      );
+});
+
 test("parallel authored jump spans stay aligned after fractional placement and rotation", () => {
   for (const angle of [0, 37, 83, 143]) {
     const { document, assets } = jumpAssetCompilerFixture();
