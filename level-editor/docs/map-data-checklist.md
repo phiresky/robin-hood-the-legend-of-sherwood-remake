@@ -11,6 +11,13 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**Matched runtime comparison (2026-10-11):** current code and the earlier
+post-solver-removal baseline pass 9,720 stock frames across H07/H01/S01 using
+identical benchmark code, game data and CPU affinity. Both show similarly large
+timing variation; these runs do not isolate a consistent current-code regression.
+The frame-5 freeze does not recur. A universal 1 ms budget and full rendering
+costs remain unverified; detailed measurements are in the runtime inventory.
+
 **Rendered reveal round trip (2026-10-11):** two independent hall/walkway pairs
 at 37 degrees now pass a 5000×5000 browser export/reopen/rebake check. Both reveal
 regions change color and depth independently; all applied-state PNG pixels,

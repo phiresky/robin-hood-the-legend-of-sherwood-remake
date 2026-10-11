@@ -1,5 +1,42 @@
 # Runtime changes introduced or extended for map compilation
 
+**2026-10-11 — matched baseline comparison:** the optimized stock benchmark now
+has a same-machine comparison against `2b9dff95a`, the earlier revision after
+solver removal. Both binaries use byte-identical benchmark functions, Cargo
+configuration, lockfile and toolchain, the same stock GOG installation, copied
+core overlay and empty mods directory, with execution pinned to CPU 2. All builds
+from this investigation finished before measurement; unrelated host activity was
+not controlled. The current production sources match
+`c2d04e8d4`; benchmark-only install isolation was committed as `b95259d86`.
+
+The first baseline/current/current/baseline sequence passes 2,160 frames. A
+follow-up warms each binary once, then repeats that sequence three times:
+another 7,560 frames pass, including warmups. Each run covers 180 frames in each
+of H07, H01 and S01 with three PCs; prepared node counts remain 891/633/891.
+Frame zero is excluded from timing distributions. Across the six measured runs
+per binary in the follow-up, advancing-thread CPU times are:
+
+| Mission | Baseline median of run medians (range) | Current median of run medians (range) |
+| --- | ---: | ---: |
+| H07_Not_MK | 1.810 ms (1.265–5.093) | 2.002 ms (1.064–5.198) |
+| H01_Lin_VL | 0.354 ms (0.265–1.226) | 0.319 ms (0.225–1.158) |
+| S01_Not_VL | 1.146 ms (0.752–3.551) | 1.119 ms (0.730–3.577) |
+
+Both revisions show large variation. This evidence does not isolate a consistent
+current-code regression or establish a causal speedup. It does demonstrate that
+the previous slow observations cannot by themselves be attributed to the newer
+map-loading changes: the earlier baseline also exhibits them. No frame-5 freeze
+recurs in these runs. A universal approximately 1 ms budget, full frame/rendering
+costs, hashing, and every mission remain uncertified. Do not add speculative
+runtime optimizations or restore geometric solvers on the basis of these timings.
+
+Artifacts under `work/map-compile/performance-comparison-20261011/` include
+`comparison-inputs.json`, `install-hashes.json`, `compare.py`, both result JSONs
+(`comparison-results.json`, `warm-comparison-results.json`), binary hashes, and
+all 18 per-run logs. The first two baseline build attempts ended with SIGTERM;
+host journals and the kernel log were inaccessible inside the sandbox, so their
+cause is unknown. The terminal-session retry completed successfully in 8m29s.
+
 **2026-10-10 — publication check:** a fresh direct run of the same optimized
 test binary completes all 540 stock frames. Median advancing-thread CPU times
 are 4.417 / 1.004 / 3.026 ms for H07 / H01 / S01 respectively; wall medians are
