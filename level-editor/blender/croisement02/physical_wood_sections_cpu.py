@@ -105,8 +105,9 @@ def safe_surface(volume, axes, voxel, method='tetra'):
     raise ValueError('No numerically stable CPU isosurface: '+str(failures))
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('--tree',type=int,choices=[32,38],default=32);p.add_argument('--voxel',type=float,default=1.5);p.add_argument('--output',type=Path,required=True);p.add_argument('--source-box',type=int,nargs=4,metavar=('LEFT','TOP','RIGHT','BOTTOM'));p.add_argument('--diagonal-connectivity',action='store_true');p.add_argument('--surface-method',choices=['tetra','marching-cubes'],default='tetra');p.add_argument('--construction-mask',type=Path);a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--tree',type=int,choices=[32,38],default=32);p.add_argument('--voxel',type=float,default=1.5);p.add_argument('--output',type=Path,required=True);p.add_argument('--source-box',type=int,nargs=4,metavar=('LEFT','TOP','RIGHT','BOTTOM'));p.add_argument('--diagonal-connectivity',action='store_true');p.add_argument('--surface-method',choices=['tetra','marching-cubes'],default='tetra');p.add_argument('--construction-mask',type=Path);p.add_argument('--minimum-disc-radius',type=float,default=0.,help='Private inferred thin-twig radius floor in world units; source ownership stays unchanged');a=p.parse_args()
  if a.output.exists():raise FileExistsError(a.output)
+ if not np.isfinite(a.minimum_disc_radius) or not 0<=a.minimum_disc_radius<=.75:raise ValueError('Thin-twig radius floor must be between zero and .75 world units')
  box=tuple(a.source_box) if a.source_box else CONFIG[a.tree][2]
  if box[2]<=box[0] or box[3]<=box[1]:raise ValueError('Source box must have positive area')
  observed,sourcepath=source(a.tree,box)
@@ -118,6 +119,7 @@ def main():
   extra=np.argwhere(construction & ~observed)[:,::-1]+np.array(box[:2])
   construction_record=dict(path=str(a.construction_mask.resolve()),sha256=hashlib.sha256(a.construction_mask.read_bytes()).hexdigest(),inferred_extra_pixels=extra.tolist(),scope='Geometry construction only; source ownership mask is unchanged')
  labels,count=label(construction,np.ones((3,3)) if a.diagonal_connectivity else None);sizes=np.bincount(labels.ravel());sizes[0]=0;body=binary_fill_holes(labels==int(np.argmax(sizes)));coverage=dict(observed_pixels=int(observed.sum()),main_body_observed_pixels=int((body&observed).sum()),unresolved_disconnected_pixels=int((observed&~body).sum()));centers,radii,contour,native=medial_discs(body,box[:2]);print('Inscribed round sections:',len(radii),flush=True);ground=next(r['ground_y'] for r in json.load(open(OUT/'forest-v4-sources/manifest.json')) if r['mask']==a.tree)
+ inferred_radius_count=int(np.count_nonzero(radii<a.minimum_disc_radius));radii=np.maximum(radii,a.minimum_disc_radius)
  world=np.column_stack((centers[:,0],np.full(len(centers),-ground/SIN),(ground-centers[:,1])/COS))
  # Raise source silhouettes out of the floor along their own camera rays.
  lift=np.maximum(0,radii*COS+.25-world[:,2]);world+=lift[:,None]/SIN*RAY
@@ -148,6 +150,7 @@ def main():
  theoretical=np.concatenate([np.max(radii[None,:]-np.linalg.norm(chunk[:,None,:]-centers[None,:,:],axis=2),axis=1) for chunk in np.array_split(native,max(1,int(np.ceil(len(native)/256))))])
  report=dict(status='CPU volume proposal only; no Blender model or canonical changes',tree=a.tree,source_box=list(box),construction_connectivity=8 if a.diagonal_connectivity else 4,source_mask=str(sourcepath),source_sha256=hashlib.sha256(sourcepath.read_bytes()).hexdigest(),coverage=coverage,medial_discs=len(radii),theoretical_body_centers_covered=int((theoretical>=-1e-6).sum()),body_centers=len(native),voxel=a.voxel,surface_method=a.surface_method,vertices=len(vertices),faces=len(faces),sections=sections,source_ground=projection_coverage(vertices,faces,body,box[:2]),precision=precision,permitted_references=['leicester-southeast-cottage-tree','leicester-moat-bank-tree'],limitations=['The preview mesh uses a small grid relaxation; theoretical disc coverage is not saved mesh source coverage.','Retained upper limbs are not attached in this preview.','Private inferred front depth changed; native rays and source ownership remain the eventual constraints.'])
  report['construction_mask']=construction_record
+ report['thin_twig_radius_floor']=dict(radius=a.minimum_disc_radius,affected_discs=inferred_radius_count,scope='Subpixel inferred twig volume only; no source pixels changed and no geometry approval implied')
  report['observed_source_ground']=projection_coverage(vertices,faces,observed,box[:2])
  report['permitted_reference_evidence']=reference_bindings()
  (a.output/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2))
