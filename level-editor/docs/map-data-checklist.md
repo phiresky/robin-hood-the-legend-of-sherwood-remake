@@ -468,6 +468,17 @@ the initially usable and switched openings, with the expected corridor,
 destination posture, height and sector. Changing one copy leaves the other
 copy's availability unchanged. Evidence:
 `work/map-compile/alternating-posture-passages-XgD0Q0/actor-posture-report.json`.
+The same eight ZIP-extracted descriptors also pass 64 three-PC group clicks
+(192 actor crossings) through both copies, in both directions and both obstacle
+states. Normal player dispatch selects the routes and authorizes formation
+slots. The audit checks valid starting footprints, settled arrival within 25
+units of the click, destination sector/posture/height, and clear, non-overlapping
+final footprints. Exact formation offsets are not required because obstacle
+authorization can move individual slots. This does not certify collision between
+actors during traversal, mid-crossing state changes, or rendering. Reproduce
+with `exported_posture_openings_support_player_formations`, using the same
+diagnostics directory and character sprite as the single-PC audit; evidence:
+`work/map-compile/alternating-posture-passages-XgD0Q0/actor-formation-report.json`.
 Virtual-room entrances now prepare their outdoor leg against the outdoor area's
 state word and retained permanent cuts; the virtual interior has no motion-area
 state word. Compiler and ZIP checks cover permanent blocking and warning output,

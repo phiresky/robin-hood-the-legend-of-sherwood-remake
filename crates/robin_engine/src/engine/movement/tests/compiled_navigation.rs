@@ -114,6 +114,188 @@ fn exported_posture_passage_zips_support_native_player_routes() {
     })).unwrap()).unwrap();
 }
 
+#[test]
+#[ignore = "requires alternating posture ZIP diagnostics and ROBIN_CLIMB_RHS"]
+fn exported_posture_openings_support_player_formations() {
+    let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["complete"], true);
+    let sprite = exported_stairs::complete_climb_sprite();
+    let mut crossings = 0;
+    for entry in manifest["results"].as_array().unwrap() {
+        assert_eq!(entry["alternating"], true);
+        let file = entry["file"].as_str().unwrap();
+        let bytes = std::fs::read(directory.join(file)).unwrap();
+        let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let dimensions = (
+            descriptor["walkable_polygon"][2][0].as_f64().unwrap() as f32 + 1.,
+            descriptor["walkable_polygon"][2][1].as_f64().unwrap() as f32 + 1.,
+        );
+        for changed in [false, true] {
+            for reverse in [false, true] {
+                for copy in 0..2 {
+                    let (mut engine, mut assets) =
+                        compiled_walkway_with_dimensions(&bytes, dimensions);
+                    let sim = crate::sim_rng::test_context();
+                    if changed {
+                        engine.apply_patch(
+                            TickCtx::new(&sim, &assets),
+                            crate::patch::PatchIndex::new(copy).unwrap(),
+                        );
+                    }
+                    let doors = &engine.script_domains.interactables.doors;
+                    let door = doors
+                        .iter()
+                        .find(|door| {
+                            let other_copy = door.sector_out_index != doors[0].sector_out_index
+                                || door.sector_in_index != doors[0].sector_in_index;
+                            other_copy == (copy != 0) && !door.passage_blocked
+                        })
+                        .unwrap()
+                        .clone();
+                    let (start, end, source, destination, layer) = if reverse {
+                        (
+                            door.point_in,
+                            door.point_out,
+                            door.sector_in_index.unwrap(),
+                            door.sector_out_index.unwrap(),
+                            door.layer_in,
+                        )
+                    } else {
+                        (
+                            door.point_out,
+                            door.point_in,
+                            door.sector_out_index.unwrap(),
+                            door.sector_in_index.unwrap(),
+                            door.layer_out,
+                        )
+                    };
+                    let direction = (end - start).scale(1. / (end - start).length());
+                    let center = |index: crate::fast_find_grid::SectorIndex| {
+                        let points =
+                            &engine.world.fast_grid.level.sectors[usize::from(index)].points;
+                        MapPoint::new(
+                            points.iter().map(|p| p.x).sum::<f32>() / points.len() as f32,
+                            points.iter().map(|p| p.y).sum::<f32>() / points.len() as f32,
+                        )
+                    };
+                    let source_center = center(source);
+                    let goal = center(destination);
+                    let handle = crate::position_interface::SectorHandle::from_number(
+                        engine.world.fast_grid.level.sectors[usize::from(source)].sector_number,
+                    )
+                    .with_arena_index(source);
+                    let mut owners = vec![];
+                    for offset in [-14., 0., 14.] {
+                        let position = source_center + direction.scale(offset);
+                        assert!(
+                            engine.world.fast_grid.is_reachable_thick(
+                                position,
+                                position,
+                                layer,
+                                crate::coordinates::MoveBoxHalfDiagonal::new(6., 3.),
+                            ),
+                            "invalid formation start in {file}: {position:?}"
+                        );
+                        let owner = walking_pc(&mut engine, &mut assets, position, layer, handle);
+                        let element = engine.ent_mut(owner).element_data_mut();
+                        let iface = element.sprite.position_iface.clone();
+                        element.sprite = sprite.clone();
+                        element.sprite.position_iface = iface;
+                        let receiver =
+                            engine.get_projection_area_index(&assets, handle, layer, position);
+                        engine.set_obstacle_and_material(&assets, owner, receiver);
+                        owners.push(owner);
+                    }
+                    engine.perform_group_move(
+                        TickCtx::new(&sim, &assets),
+                        &owners,
+                        goal,
+                        false,
+                        false,
+                        None,
+                        None,
+                        None,
+                        &[],
+                        &[],
+                    );
+                    let expected = if engine.world.fast_grid.level.sectors[usize::from(destination)]
+                        .force_crouched
+                    {
+                        Posture::Crouched
+                    } else {
+                        Posture::Upright
+                    };
+                    let mut arrived = false;
+                    for _ in 0..1200 {
+                        engine.control.frame_counter += 1;
+                        engine.t_hourglass_phase_sequences(&assets);
+                        engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
+                        engine.t_tick_actor_owner_envelopes(&assets);
+                        arrived = owners.iter().all(|&owner| {
+                            let element = engine.ent(owner).element_data();
+                            let settled = engine
+                                .entities()
+                                .current_element_for_actor(owner)
+                                .and_then(|(id, index)| engine.seq().get_element(id, index))
+                                .is_none_or(|selected| {
+                                    selected.orders.is_empty() || selected.command == Command::Wait
+                                });
+                            element.sector().and_then(|sector| sector.arena_index())
+                                == Some(destination)
+                                && element.posture() == expected
+                                && (element.position_map() - goal).length() < 25.
+                                && settled
+                        });
+                        if arrived {
+                            break;
+                        }
+                    }
+                    assert!(
+                        arrived,
+                        "{file}: formation failed copy={copy} changed={changed} reverse={reverse}; positions={:?}",
+                        owners
+                            .iter()
+                            .map(|&owner| engine.ent(owner).element_data().position_map())
+                            .collect::<Vec<_>>()
+                    );
+                    // Obstacle authorization may shift individual formation slots.
+                    // Require clear, separate footprints rather than exact offsets.
+                    for (index, &owner) in owners.iter().enumerate() {
+                        let position = engine.ent(owner).element_data().position_map();
+                        assert!(engine.world.fast_grid.is_reachable_thick(
+                            position,
+                            position,
+                            layer,
+                            crate::coordinates::MoveBoxHalfDiagonal::new(6., 3.),
+                        ));
+                        for &other in &owners[index + 1..] {
+                            let delta = position - engine.ent(other).element_data().position_map();
+                            assert!(
+                                delta.x.abs() >= 12. || delta.y.abs() >= 6.,
+                                "formation footprints overlap in {file}"
+                            );
+                        }
+                    }
+                    for owner in owners {
+                        assert!(
+                            (engine.ent(owner).element_data().position().z
+                                - entry["height"].as_f64().unwrap() as f32)
+                                .abs()
+                                < 0.001
+                        );
+                        crossings += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(crossings, 192);
+    std::fs::write(directory.join("actor-formation-report.json"), serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"crossings":crossings,"scope":"three-player-group-movement-through-alternating-posture-openings"})).unwrap()).unwrap();
+}
+
 fn audit_posture_passages(bytes: &[u8], height: f32, expected_doors: usize) -> usize {
     audit_posture_passages_with_controls(bytes, height, expected_doors, false, false)
 }
