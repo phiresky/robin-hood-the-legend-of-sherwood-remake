@@ -6,7 +6,7 @@ from mathutils import Vector
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'));sys.path.insert(0,str(Path(__file__).parent))
 from render_slots import acquire
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';src=R/'tree05-v8';dest=R/'tree05-basal-depth-v3';w=src/'assets/croisement01-tree-05';out=dest/'assets/croisement01-tree-05';assert not dest.exists();acquire(slots=2)
+R=ROOT/'level-editor/work/croisement01-refinement/restart2';src=R/'tree05-v8';dest=R/'tree05-basal-depth-v6';w=src/'assets/croisement01-tree-05';out=dest/'assets/croisement01-tree-05';assert not dest.exists();acquire(slots=2)
 for f in src.iterdir():
  if f.is_file():dest.mkdir(exist_ok=True);shutil.copy2(f,dest/f.name)
 out.mkdir(parents=True)
@@ -26,6 +26,10 @@ for context in b.objects:
  if context is None or context.type!='MESH' or context.get('source_node') not in [f'building-{i:03d}' for i in range(10)]:continue
  off=len(vertices);vertices.extend(context.matrix_world@v.co for v in context.data.vertices);faces.extend(tuple(off+k for k in f.vertices) for f in context.data.polygons)
 soil=BVHTree.FromPolygons(vertices,faces)
+collection=bpy.data.collections[cfg['collection_name']]
+for context in b.objects:
+ if context is not None and context.type=='MESH' and context.get('source_node') in ['building-000',*[f'building-{i:03d}' for i in range(2,8)]]:
+  target=next(x for x in collection.all_objects if x.get('source_node')==context.get('source_node'));assert target.matrix_world==context.matrix_world;target.data=context.data.copy()
 for context in b.objects:
  if context is not None:bpy.data.objects.remove(context,do_unlink=True)
 import restart2_tree05 as helper
@@ -34,12 +38,13 @@ helper.DENSE=True
 if 'defer_union' in o:del o['defer_union']
 roots=[]
 for tipx,tipy in [(302,-420),(329,-406),(354,-425)]:
- centers=[Vector((329,-477,82))];radii=[11]
+ centers=[Vector((329,-477,65))];radii=[8]
  for t in np.linspace(.04,1,25):
-  radius=float(np.interp(t,[0,.32,.68,1],[11,8,4,.5]))
+  radius=float(np.interp(t,[0,.32,.68,1],[8,5,2,.4]))
   x=329+(tipx-329)*t;y=-477+(tipy+477)*t;hit,_,_,_=soil.ray_cast(Vector((x,y,2000)),Vector((0,0,-1)),4000);assert hit is not None
-  weight=min(1,t/.2);z=(1-weight)*82+weight*(hit.z-radius-1);centers.append(Vector((x,y,z)));radii.append(radius)
+  z=65-12*math.sin(float(t)*math.pi/2);centers.append(Vector((x,y,z)));radii.append(radius)
  root=helper.tube('Inferred rear subsurface root',centers,radii);union(o,root);roots.append(dict(centers=[list(p) for p in centers],radii=radii))
+bpy.ops.wm.save_as_mainfile(filepath=str(out/'geometry-before-projection.blend'))
 from refinement_workspace import _reproject
 _reproject(cfg,out/'projection-new-roots')
 bpy.ops.wm.save_as_mainfile(filepath=str(out/'model.blend'));report=dict(status='PRIVATE_REAR_ROOT_HYPOTHESIS_REQUIRES_TOPOLOGY_SOURCE_AND_CONTACT_REVIEW',source_sha256=sha(w/'model.blend'),model_sha256=sha(out/'model.blend'),roots=roots,scope='Three inferred posterior roots extend under the private bank rather than stretching the original source-facing flare. Source ownership unchanged; new unseen root surfaces neutral. Bank still needs separate geometry approval.');(dest/'construction.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report))

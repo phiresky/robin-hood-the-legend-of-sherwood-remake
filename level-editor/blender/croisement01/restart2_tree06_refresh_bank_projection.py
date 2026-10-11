@@ -1,12 +1,12 @@
 """Refresh native wood source projection against the reviewed private bank context."""
-import json,hashlib,sys,shutil
+import argparse,json,hashlib,sys,shutil
 from pathlib import Path
 import bpy
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'));sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'));sys.path.insert(0,str(Path(__file__).parent))
 from render_slots import acquire
 from review_evidence import sha
 from refinement_workspace import _reproject,_geometry
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';source=R/'tree06-v13/assets/croisement01-tree-06';bank=R/'tree05-regional-banks-v15/assets/croisement01-tree-05/model.blend';out=R/'tree06-native-bank-projection-v2/assets/croisement01-tree-06';assert not out.exists();acquire(slots=2);out.mkdir(parents=True);(out/'inspection').mkdir();(out/'modified').mkdir();shutil.copy2(source/'modified/views.json',out/'modified/views.json');cfg=json.loads((source/'workspace.json').read_text());(out/'workspace.json').write_text(json.dumps(cfg,indent=2)+'\n');bpy.ops.wm.open_mainfile(filepath=str(source/'model.blend'));bpy.context.preferences.filepaths.save_version=0
+p=argparse.ArgumentParser();p.add_argument('--tree',type=int,choices=[5,6],default=6);a=p.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);R=ROOT/'level-editor/work/croisement01-refinement/restart2';source=R/('tree06-v13/assets/croisement01-tree-06' if a.tree==6 else 'tree05-basal-depth-v6/assets/croisement01-tree-05');bank=R/'tree05-regional-banks-v15/assets/croisement01-tree-05/model.blend';out=R/f'tree{a.tree:02d}-native-bank-projection-v2/assets/croisement01-tree-{a.tree:02d}';assert not out.exists();acquire(slots=2);out.mkdir(parents=True);(out/'inspection').mkdir();(out/'modified').mkdir();shutil.copy2(source/'modified/views.json',out/'modified/views.json');cfg=json.loads((source/'workspace.json').read_text());(out/'workspace.json').write_text(json.dumps(cfg,indent=2)+'\n');bpy.ops.wm.open_mainfile(filepath=str(source/'model.blend'));bpy.context.preferences.filepaths.save_version=0
 collection=bpy.data.collections[cfg['collection_name']];protected={o.name:_geometry(o) for o in collection.all_objects if o.type=='MESH' and o.get('asset_group')==cfg['asset_id']};before=sha(source/'model.blend');nodes=['building-000',*[f'building-{i:03d}' for i in range(2,8)]]
 with bpy.data.libraries.load(str(bank),link=False) as (a,b):b.objects=a.objects
 replaced=[]
