@@ -112,6 +112,13 @@ two policies. Automatic posture selection, self-overlap within one region,
 group avoidance and rendered appearance remain open;
 see [joined-floor evidence](map-compilation-evidence.md#overlapping-joined-floors-2026-10-11).
 
+Shared layers can also create a false cycle when disjoint lower and raised
+regions lie on opposite sides of a middle floor. Export now separates those
+groups when their individual regions have a consistent height order. Eight ZIP
+round trips and 64 native walks pass across copied/rotated/elevated three-level
+assemblies; Derby's real seam warnings remain unchanged. See
+[middle-floor evidence](map-compilation-evidence.md#shared-layers-around-a-middle-floor-2026-10-11).
+
 **Authored occupancy triggers (2026-10-11):** eight new map exports place two
 independent reusable trigger assets at 0/37/90/180 degrees and elevations 0/40.
 All ZIP extraction/editor reopen/recompile checks pass. Normal native player

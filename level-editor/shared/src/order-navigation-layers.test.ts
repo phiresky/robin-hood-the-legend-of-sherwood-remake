@@ -68,6 +68,46 @@ test("an empty ground slot and reserved lift layers remain available", () => {
   assert.equal(lift.layer, 900);
 });
 
+test("disjoint regions sharing a layer can lie on opposite sides of a middle floor", () => {
+  for (const reverse of [false, true]) {
+    const piece = (
+      name: string,
+      layer: number,
+      plane: HeightPlane,
+      x0: number,
+      x1: number,
+    ): NavigationPiece => ({
+      navigationRegion: name,
+      layer,
+      plane,
+      blockers: [],
+      polygon: [
+        [x0, 100],
+        [x1, 100],
+        [x1, 200],
+        [x0, 200],
+      ],
+    });
+    const pieces = [
+      piece("lower", 0, [0, 0, 0], 100, 200),
+      piece("upper", 0, [0, 0, 0], 600, 700),
+      piece("upper", 3, [-0.8, 0, 480], 500, 600),
+      piece("upper", 2, [0, 0, 80], 400, 500),
+      piece("middle", 1, [0, 0, 40], 100, 500),
+    ];
+    if (reverse) pieces.reverse();
+    const regions = assembleNavigationRegions(pieces, []);
+    const warnings: string[] = [];
+    orderNavigationLayers(regions, warnings);
+    const layer = (name: string) =>
+      regions.find((r) => r.pieces[0]!.navigationRegion === name)!.layer;
+    assert.ok(layer("lower") < layer("middle"));
+    assert.ok(layer("middle") < layer("upper"));
+    assert.equal(regions.length, 3);
+    assert.deepEqual(warnings, []);
+  }
+});
+
 test("a crossing pair cannot put an unambiguous upper floor below it", () => {
   const upper = region(0, [0, 0, 200]);
   const ramp = region(1, [1, 0, -150]);

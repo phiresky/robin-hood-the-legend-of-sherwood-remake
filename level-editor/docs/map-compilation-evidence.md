@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Shared layers around a middle floor (2026-10-11)
+
+A valid three-level assembly exposed a false ordering cycle: a lower floor and
+an unrelated ramp/deck retained the same initial layer because both start at
+the same height. A middle-height floor overlapped the lower floor at one end and
+the raised deck at the other. The layer graph demanded both directions even
+though the individual regions had a consistent lower/middle/upper order.
+
+Export now checks the region-level constraints of a conflicting layer group.
+When they are acyclic, it separates the shared layer IDs and recomputes ordering,
+preserving each region's connected pieces and sector. Each retry splits a shared
+group, so it cannot repeat indefinitely. Actual cycles between receiving regions
+retain their warnings instead of being hidden by arbitrary layer allocation.
+
+The new regression covers both region input orders. The full compiler suite and
+layer tests pass (165 tests), together with TypeScript checking, lint and formatting.
+`node refinement/check-overlapping-floor-routes.mjs --middle-floor` produces
+`work/map-compile/overlapping-floor-routes-CG8T3x`: eight editable ZIPs, two copies
+at four rotations and two elevations. All reopen/recompile comparisons and 64
+normal native upper-region walks pass, with per-tick layer, sector, receiver,
+height and collision checks. No geometry-specific export warnings remain in this
+batch. The saved Derby export `work/map-compile/saved-map-exports-C5YWGu` matches
+the preceding descriptor exactly, including its genuine seam-conflict warnings.
+No production engine code changed. Self-overlap and actual cyclic arrangements
+remain unresolved.
+
 ## Overlapping joined floors (2026-10-11)
 
 The dedicated export audit `node refinement/check-overlapping-floor-routes.mjs`

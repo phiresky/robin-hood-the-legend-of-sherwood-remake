@@ -2,16 +2,29 @@ import type { NavigationRegion } from "./assemble-navigation-regions.ts";
 import { planeHeight } from "./gameplay-plane.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { separateOverlappingNavigationLayers } from "./separate-overlapping-navigation-layers.ts";
+import {
+  separateContradictoryLayerGroups,
+  type NavigationLayerContact,
+} from "./separate-contradictory-layer-groups.ts";
 
 /** Prepare bottom-to-top click precedence from overlapping receiving geometry. */
 export function orderNavigationLayers(regions: NavigationRegion[], warnings: string[]): void {
   separateOverlappingNavigationLayers(regions);
+  while (!tryOrderNavigationLayers(regions, warnings)) {
+    // Each retry splits a shared layer; individual navigation regions stay intact.
+  }
+}
+
+function tryOrderNavigationLayers(regions: NavigationRegion[], warnings: string[]): boolean {
   const layers = [
     ...new Set(regions.filter((region) => !region.lift).map((region) => region.layer)),
   ].sort((a, b) => a - b);
   const edges = new Map(layers.map((layer) => [layer, new Set<number>()]));
   const incoming = new Map(layers.map((layer) => [layer, 0]));
-  const contacts: { layers: [number, number]; point: [number, number] }[] = [];
+  const contacts: (NavigationLayerContact & {
+    layers: [number, number];
+    point: [number, number];
+  })[] = [];
   const conflicts: number[][] = [];
   const pieces = regions
     .filter((region) => !region.lift)
@@ -19,6 +32,7 @@ export function orderNavigationLayers(regions: NavigationRegion[], warnings: str
       region.pieces.map((piece) => {
         const polygon = piece.receivingPolygon ?? piece.polygon;
         return {
+          region,
           layer: region.layer,
           plane: piece.plane,
           polygon,
@@ -57,6 +71,10 @@ export function orderNavigationLayers(regions: NavigationRegion[], warnings: str
       if (above || below) {
         const points = overlap.flatMap((polygon) => polygon[0]!);
         contacts.push({
+          a: current.region,
+          b: other.region,
+          above,
+          below,
           layers: [current.layer, other.layer],
           point: [
             (Math.min(...points.map((point) => point[0])) +
@@ -104,6 +122,7 @@ export function orderNavigationLayers(regions: NavigationRegion[], warnings: str
               component.every((layer) => !edges.get(other)!.has(layer)),
           ),
         )!;
+      if (separateContradictoryLayerGroups(regions, contacts, group)) return false;
       conflicts.push(group);
     } else group = [next];
     ordered.push(...group);
@@ -133,4 +152,5 @@ export function orderNavigationLayers(regions: NavigationRegion[], warnings: str
       region.layer = remap.get(region.layer)!;
       for (const piece of region.pieces) piece.layer = region.layer;
     }
+  return true;
 }

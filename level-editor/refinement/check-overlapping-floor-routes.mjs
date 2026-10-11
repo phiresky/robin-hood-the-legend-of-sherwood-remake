@@ -20,6 +20,8 @@ assert.ok(
   "Use headroom 20 (open) or 40 (blocked)",
 );
 const underDeck = process.argv.includes("--under-deck") || headroom !== undefined;
+const middleFloor = process.argv.includes("--middle-floor");
+assert.ok(!middleFloor || !underDeck, "Middle-floor and under-deck audits use separate assemblies");
 const output = await fs.mkdtemp(
   `work/map-compile/${underDeck ? "under-deck" : "overlapping-floor"}-routes-`,
 );
@@ -28,7 +30,14 @@ const results = [];
 const report = (complete) =>
   fs.writeFile(
     `${output}/diagnostics.json`,
-    JSON.stringify({ complete, scope: "overlapping-joined-floors", underDeck, headroom, results }),
+    JSON.stringify({
+      complete,
+      scope: "overlapping-joined-floors",
+      underDeck,
+      headroom,
+      middleFloor,
+      results,
+    }),
   );
 await report(false);
 for (const rotation of [0, 37, 90, 180])
@@ -55,6 +64,10 @@ for (const rotation of [0, 37, 90, 180])
       surface("ramp", "upper", 200, 300, 60, 20),
       surface("deck", "upper", 100, 200, 60, 60),
     ];
+    if (middleFloor) {
+      hut.gameplay.surfaces[0] = surface("lower", "lower", 0, 80, 20, 20);
+      hut.gameplay.surfaces.push(surface("middle", "middle", 0, 200, 40, 40));
+    }
     if (underDeck)
       hut.gameplay.surfaces[0].polygon = [
         [100, 0],
