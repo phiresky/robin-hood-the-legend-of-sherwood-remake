@@ -32,7 +32,7 @@ export default function StatePreview(props: {
     [patchStarted, setPatchStarted] = createSignal(false),
     [family, setFamily] = createSignal(""),
     [status, setStatus] = createSignal(""),
-    [mode, setMode] = createSignal<"art" | "initial" | "applied">("art"),
+    [mode, setMode] = createSignal<"art" | "initial" | "applied" | "motion">("art"),
     [tick, setTick] = createSignal(0),
     [playing, setPlaying] = createSignal(false);
   const [actorSource, setActorSource] = createSignal<MissionStateSource | null>(null),
@@ -129,7 +129,7 @@ export default function StatePreview(props: {
       ),
     );
   };
-  function applyMode(view: "art" | "initial" | "applied", familyId: string) {
+  function applyMode(view: "art" | "initial" | "applied" | "motion", familyId: string) {
     if (loopContract() || patchContract())
       props.viewport.setStatePresentationMode(
         view === "initial" && (loopContract()?.physical || actorSource())
@@ -139,7 +139,8 @@ export default function StatePreview(props: {
     else if (view === "art") props.viewport.setDeliveredStateMode("native-art");
     else {
       props.viewport.setDeliveredStateMode("physical-endpoint");
-      props.viewport.selectDeliveredEndpoint(familyId, view === "initial" ? "initial" : "applied");
+      props.viewport.selectDeliveredEndpoint(familyId, view === "applied" ? "applied" : "initial");
+      if (view === "motion") props.viewport.setDeliveredStateMode("physical-motion");
     }
     if (!loopContract()) setPlaying(false);
   }
@@ -452,6 +453,12 @@ export default function StatePreview(props: {
                 value={family()}
                 onChange={(event) => {
                   props.viewport.setDeliveredStatePlaying(false);
+                  if (
+                    mode() === "motion" &&
+                    !contract()?.families.find((f) => f.id === event.currentTarget.value)?.physical
+                      .motion
+                  )
+                    setMode("art");
                   setFamily(event.currentTarget.value);
                   setTick(0);
                 }}
@@ -473,7 +480,7 @@ export default function StatePreview(props: {
               value={mode()}
               onChange={(event) => {
                 if (!loopContract()) props.viewport.setDeliveredStatePlaying(false);
-                setMode(event.currentTarget.value as "art" | "initial" | "applied");
+                setMode(event.currentTarget.value as "art" | "initial" | "applied" | "motion");
               }}
             >
               <option value="art">Original artwork</option>
@@ -485,19 +492,30 @@ export default function StatePreview(props: {
               <Show when={contract()}>
                 <option value="initial">3D initial</option>
                 <option value="applied">3D final</option>
+                <Show when={current()?.physical.motion}>
+                  <option value="motion">3D motion</option>
+                </Show>
               </Show>
             </select>
           </label>
           <Show
             when={
               mode() !== "art" &&
+              mode() !== "motion" &&
               !!current() &&
               !Array.isArray(current()!.physical[mode() === "initial" ? "initial" : "applied"])
             }
           >
             <p class="hint">No object is present in this state.</p>
           </Show>
-          <Show when={mode() === "art" || !!loopContract()?.physical || !!actorSource()}>
+          <Show
+            when={
+              mode() === "art" ||
+              mode() === "motion" ||
+              !!loopContract()?.physical ||
+              !!actorSource()
+            }
+          >
             <div class="actions">
               <button type="button" onClick={play}>
                 {playing() ? "Pause" : "Play"}

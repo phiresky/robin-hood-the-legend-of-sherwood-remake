@@ -360,3 +360,127 @@ test("nonintegrating branch hides initial rig, advances one clock and restores i
   assert.equal(p.ready, false);
   assert.equal(p.native.ready, false);
 });
+
+async function motionFixture() {
+  const f = await fixture();
+  const row = {
+    integrate_in_background: false,
+    definitive: true,
+    start_animation_valid: false,
+    transition_animation_valid: true,
+    end_animation_valid: false,
+    element_fx: {
+      sprite: { position_x: 0, position_y: 0, elevation: 1, profile_name: "gate" },
+      active: true,
+      display_polyline: [],
+    },
+  };
+  const profile = { name: "gate", center_x: 0, center_y: 0 };
+  const profileBytes = new TextEncoder().encode(JSON.stringify(profile));
+  f.source.data.mission_patches = [row];
+  f.contract.native.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  f.contract.native.elements = [];
+  f.contract.native.patch_states = [
+    {
+      id: "gate",
+      source: { kind: "mission-patch", index: 0, sha256: await missionStateDataHash(row) },
+      profile: {
+        path: "profile.json",
+        sha256: await missionStateDataHash(profile),
+        name: "gate",
+        center: [0, 0],
+      },
+      integrate_in_background: false,
+      elevation: 1,
+      layer: "ordered",
+      display_position: [0, 0],
+      sort_position: [0, 0],
+      display_order: 1,
+      creation_order: 1,
+      polyline: [],
+      definitive: true,
+      initial: [],
+      transition: Array.from({ length: 45 }, () => ({ ...f.contract.native.background, delay: 1 })),
+      final: [],
+      initial_loop: true,
+      final_loop: true,
+    },
+  ];
+  const family = f.contract.families[0]!;
+  family.element_ids = [];
+  family.patch_ids = ["gate"];
+  family.body_terminal_tick = 89;
+  family.physical.motion = {
+    kind: "native-patch-translation",
+    patch_id: "gate",
+    source_motion_sha256: "b".repeat(64),
+    translation_frames: Array.from({ length: 45 }, (_, i) => [0, i, 0]),
+  };
+  for (const endpoint of [family.physical.initial, family.physical.applied]) {
+    assert.ok(Array.isArray(endpoint));
+    endpoint[0]!.position = [20, 30, 40];
+  }
+  return {
+    ...f,
+    read: async (resource: { path: string }) =>
+      resource.path === "profile.json" ? profileBytes : f.read(),
+  };
+}
+
+test("reviewed physical motion follows all native frame boundaries, terminal pose, reset and disposal", async () => {
+  const f = await motionFixture();
+  f.template.position.set(2, 3, 4);
+  f.template.rotation.y = 0.7;
+  f.template.scale.set(2, 3, 4);
+  const p = new StateDelivery(() => ({ load: async () => f.template, dispose() {} }));
+  await p.set(f.contract, f.source, f.library, f.read);
+  p.selectMode("physical-motion");
+  const [covered, raised] = p.physical.children;
+  const local = covered!.children[0]!;
+  const matrix = local.matrix.clone();
+  assert.deepEqual(local.position.toArray(), [22, 33, 44]);
+  assert.equal(p.familyTick("trap"), undefined);
+  p.activate("trap");
+  p.setPlaying(true);
+  for (let tick = 0; tick < 92; tick++) {
+    assert.equal(p.familyTick("trap"), tick);
+    assert.equal(covered!.visible, tick < 89);
+    assert.equal(raised!.visible, tick >= 89);
+    assert.equal(covered!.position.y, tick < 89 ? Math.floor(tick / 2) : 0);
+    assert.deepEqual(raised!.position.toArray(), [0, 0, 0]);
+    assert.deepEqual(local.position.toArray(), [22, 33, 44]);
+    assert.equal(local.rotation.y, 0.7);
+    assert.deepEqual(local.scale.toArray(), [2, 3, 4]);
+    assert.deepEqual(local.matrix, matrix);
+    p.advance(1 / 25);
+  }
+  p.reset("trap");
+  assert.equal(covered!.visible, true);
+  assert.equal(raised!.visible, false);
+  assert.deepEqual(covered!.position.toArray(), [0, 0, 0]);
+  p.seekFamily("trap", 76);
+  assert.equal(covered!.position.y, 38);
+  p.seekFamily("trap", 0);
+  assert.equal(covered!.position.y, 0);
+  p.selectMode("physical-endpoint");
+  p.selectEndpoint("trap", "applied");
+  assert.throws(() => p.setPlaying(true), /no transition playback/);
+  assert.deepEqual(raised!.position.toArray(), [0, 0, 0]);
+  p.dispose();
+  assert.equal(p.physical.children.length, 0);
+});
+
+test("motion rejects missing review bindings and invalid pose tables before loading", async () => {
+  const f = await fixture();
+  const p = new StateDelivery(() => ({ load: async () => f.template, dispose() {} }));
+  await p.set(f.contract, f.source, f.library, f.read);
+  assert.throws(() => p.selectMode("physical-motion"), /no reviewed/);
+  p.dispose();
+  const m = await motionFixture();
+  m.contract.families[0]!.physical.motion!.translation_frames.pop();
+  const invalid = new StateDelivery(() => {
+    throw new Error("must not load");
+  });
+  await assert.rejects(invalid.set(m.contract, m.source, m.library, m.read), /invalid reviewed/);
+  invalid.dispose();
+});

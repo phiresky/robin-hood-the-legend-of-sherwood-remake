@@ -999,7 +999,8 @@ export class EditorViewport {
     if (!this.stateDelivery.ready) throw new Error("State delivery is not ready");
     this.setStatePresentationMode(mode === "native-art" ? "native-art" : "physical");
     this.stateDelivery.selectMode(mode);
-    this.deliveryEndpointActive = mode === "physical-endpoint";
+    this.syncDeliveredMotionPose();
+    this.deliveryEndpointActive = mode !== "native-art";
     this.stateDelivery.physical.visible =
       this.deliveryEndpointActive && this.deliveryEntitiesVisible;
     this.syncRefinedMissionTargets();
@@ -1016,14 +1017,23 @@ export class EditorViewport {
   }
   seekDeliveredState(family: string, tick: number) {
     this.stateDelivery.seekFamily(family, tick);
+    this.syncDeliveredMotionPose();
     this.nativeSurface?.update(this.stateDelivery.native.pixels());
   }
   resetDeliveredState(family: string) {
     this.stateDelivery.reset(family);
+    this.syncDeliveredMotionPose();
     if (this.aperturePreview?.handles(family))
       this.aperturePreview.selectEndpoint(family, "initial");
     this.syncRefinedMissionTargets();
     this.nativeSurface?.update(this.stateDelivery.native.pixels());
+  }
+  private syncDeliveredMotionPose() {
+    const endpoint = this.stateDelivery.motionEndpoint;
+    if (!endpoint) return;
+    this.deliveryEndpoint = endpoint;
+    this.syncRefinedMissionTargets();
+    this.clippingBoundsDirty = true;
   }
   activateDeliveredState(family: string) {
     this.seekDeliveredState(family, 0);
@@ -1827,6 +1837,8 @@ export class EditorViewport {
           this.nativeSurface.update(this.nativePreviewPixels());
         return;
       }
+      if (this.stateDelivery.mode === "physical-motion" && this.stateDelivery.advance(elapsed))
+        this.syncDeliveredMotionPose();
       if (this.missionStates.advance(elapsed)) this.clippingBoundsDirty = true;
       this.flushTerrainPreview();
       this.flushSplinePreview();

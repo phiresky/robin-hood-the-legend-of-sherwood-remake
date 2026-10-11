@@ -3,6 +3,7 @@ import { safeLibraryPath } from "./projection-assets.ts";
 import type { SceneAssetSource, Level3D, GameTransform } from "./level3d.ts";
 import {
   validateNativeStatePresentation,
+  nativePresentationFrame,
   type NativeStatePresentationContract,
 } from "./native-state-presentation.ts";
 
@@ -30,6 +31,16 @@ export interface StaticStateReplacement {
   group_transform?: GameTransform;
 }
 
+/** Reviewed Y-up offsets sampled at the bound patch's exact frame boundaries.
+ * The applied model already contains its terminal pose and receives no offset.
+ */
+export interface PhysicalPatchTranslation {
+  kind: "native-patch-translation";
+  patch_id: string;
+  source_motion_sha256: string;
+  translation_frames: [number, number, number][];
+}
+
 /** Exact artwork transitions and independently reviewed physical endpoints. */
 export interface StateDeliveryContract {
   version: 1;
@@ -43,7 +54,11 @@ export interface StateDeliveryContract {
     hidden_initial_element_ids?: string[];
     /** Terminal entry of the last visible target; receiver completion retains its own clock. */
     body_terminal_tick: number;
-    physical: { initial: PhysicalEndpoint; applied: PhysicalEndpoint };
+    physical: {
+      initial: PhysicalEndpoint;
+      applied: PhysicalEndpoint;
+      motion?: PhysicalPatchTranslation;
+    };
     static_replacements?: { initial: StaticStateReplacement[]; applied: StaticStateReplacement[] };
   }[];
 }
@@ -130,6 +145,32 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
       members.add(id);
     }
     if (!family.physical) fail("missing physical endpoints");
+    const motion = family.physical.motion;
+    if (motion !== undefined) {
+      const patch = c.native.patch_states?.find((p) => p.id === motion?.patch_id);
+      if (
+        !motion ||
+        motion.kind !== "native-patch-translation" ||
+        !hash(motion.source_motion_sha256) ||
+        family.patch_ids?.length !== 1 ||
+        family.patch_ids[0] !== motion.patch_id ||
+        family.element_ids.length ||
+        family.hidden_initial_element_ids?.length ||
+        !patch?.definitive ||
+        !patch.transition.length ||
+        !Array.isArray(motion.translation_frames) ||
+        motion.translation_frames.length !== patch.transition.length ||
+        motion.translation_frames.some(
+          (v) => !Array.isArray(v) || v.length !== 3 || !v.every(Number.isFinite),
+        ) ||
+        motion.translation_frames[0]?.some((v) => v !== 0) ||
+        !Array.isArray(family.physical.initial) ||
+        family.physical.initial.length !== 1 ||
+        !Array.isArray(family.physical.applied) ||
+        family.physical.applied.length !== 1
+      )
+        fail("invalid reviewed patch translation");
+    }
     if (family.static_replacements !== undefined) {
       const transform = (t: unknown): t is GameTransform => {
         if (!t || typeof t !== "object") return false;
@@ -196,6 +237,24 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
       }
     }
   }
+}
+
+/** Sample the native presentation timeline; callers own the clock and reset state. */
+export function physicalPatchPose(contract: StateDeliveryContract, id: string, tick?: number) {
+  const family = contract.families.find((f) => f.id === id);
+  const motion = family?.physical.motion;
+  if (!family || !motion) throw new Error(`Missing physical motion: ${id}`);
+  if (tick !== undefined && (!Number.isSafeInteger(tick) || tick < 0))
+    throw new Error("Invalid physical motion tick");
+  if (tick === undefined)
+    return { endpoint: "initial" as const, translation: [0, 0, 0] as [number, number, number] };
+  if (tick >= family.body_terminal_tick)
+    return { endpoint: "applied" as const, translation: [0, 0, 0] as [number, number, number] };
+  const patch = contract.native.patch_states!.find((p) => p.id === motion.patch_id)!;
+  const frame = nativePresentationFrame({ frames: patch.transition, loop: false }, tick);
+  const translation = motion.translation_frames[frame];
+  if (!translation) throw new Error("Missing reviewed physical pose");
+  return { endpoint: "initial" as const, translation };
 }
 
 /** Reject edited or unrelated placements before any visible node is suppressed. */

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import {
   validateStateDelivery,
   physicalEndpointSources,
+  physicalPatchPose,
   type StateDeliveryContract,
 } from "../../shared/src/state-delivery.ts";
 import { NativeStatePresentation, type NativeResourceReader } from "./native-state-presentation.ts";
@@ -9,15 +10,16 @@ import type { MissionStateSource } from "./mission-state-layer.ts";
 import { SceneAssetLoader, captureLoadedStateAppearance } from "./scene-assets.ts";
 import { disposeObjectResources } from "./resources.ts";
 
-export type StateDeliveryMode = "native-art" | "physical-endpoint";
+export type StateDeliveryMode = "native-art" | "physical-endpoint" | "physical-motion";
 type Family = StateDeliveryContract["families"][number];
-/** One containing renderer owns the clock. Physical endpoints never interpolate into motion. */
+/** One containing renderer owns the clock. Only explicitly reviewed patch poses support physical motion. */
 export class StateDelivery {
   readonly native = new NativeStatePresentation();
   readonly physical = new THREE.Group();
   private contract: StateDeliveryContract | undefined;
   private roots = new Map<string, { initial: THREE.Group; applied: THREE.Group }>();
   private starts = new Map<string, number>();
+  private selectedFamily: string | undefined;
   private epoch = 0;
   private disposed = false;
   private cleanup: (() => void) | undefined;
@@ -49,6 +51,7 @@ export class StateDelivery {
     this.physical.visible = false;
     this.roots.clear();
     this.starts.clear();
+    this.selectedFamily = undefined;
     this.contract = undefined;
     this.currentMode = "native-art";
     this.cleanup?.();
@@ -138,19 +141,31 @@ export class StateDelivery {
     return family;
   }
   selectMode(mode: StateDeliveryMode) {
-    if (!this.ready || !["native-art", "physical-endpoint"].includes(mode))
+    if (!this.ready || !["native-art", "physical-endpoint", "physical-motion"].includes(mode))
       throw new Error("State delivery mode is unavailable");
+    if (mode === "physical-motion" && !this.family(this.selectedFamily!).physical.motion)
+      throw new Error("Selected family has no reviewed physical motion");
+    const previousPose = this.motionEndpoint;
     this.currentMode = mode;
-    this.physical.visible = mode === "physical-endpoint";
+    this.physical.visible = mode !== "native-art";
+    if (mode === "physical-motion") this.sampleMotion();
+    else if (previousPose && this.selectedFamily)
+      this.selectEndpoint(this.selectedFamily, previousPose);
     if (mode === "physical-endpoint") this.native.setPlaying(false);
   }
   selectEndpoint(id: string, endpoint: "initial" | "applied") {
-    this.family(id);
+    const family = this.family(id);
+    if (this.mode === "physical-motion" && !family.physical.motion)
+      throw new Error("Selected family has no reviewed physical motion");
     if (!["initial", "applied"].includes(endpoint)) throw new Error("Unknown physical endpoint");
+    this.selectedFamily = id;
     for (const [key, pair] of this.roots) {
+      pair.initial.position.set(0, 0, 0);
+      pair.applied.position.set(0, 0, 0);
       pair.initial.visible = key === id && endpoint === "initial";
       pair.applied.visible = key === id && endpoint === "applied";
     }
+    this.sampleMotion();
   }
   seekFamily(id: string, tick: number) {
     const family = this.family(id);
@@ -161,6 +176,7 @@ export class StateDelivery {
     for (const patch of family.patch_ids ?? []) this.native.setPatchState(patch, "forward", tick);
     for (const background of family.background_ids)
       this.native.setBackgroundState(background, "forward", tick);
+    this.sampleMotion();
   }
   activate(id: string) {
     this.seekFamily(id, 0);
@@ -173,6 +189,7 @@ export class StateDelivery {
     for (const patch of family.patch_ids ?? []) this.native.setPatchState(patch, "initial");
     for (const background of family.background_ids)
       this.native.setBackgroundState(background, "initial");
+    this.sampleMotion();
   }
   familyTick(id: string): number | undefined {
     this.family(id);
@@ -181,12 +198,35 @@ export class StateDelivery {
   }
   setPlaying(playing: boolean) {
     if (!this.ready) throw new Error("State delivery is not ready");
-    if (playing && this.mode !== "native-art")
+    if (playing && this.mode === "physical-endpoint")
       throw new Error("Physical endpoints have no transition playback");
     this.native.setPlaying(playing);
   }
+  private sampleMotion() {
+    if (this.mode !== "physical-motion" || !this.selectedFamily) return;
+    const pose = physicalPatchPose(
+      this.contract!,
+      this.selectedFamily,
+      this.familyTick(this.selectedFamily),
+    );
+    const pair = this.roots.get(this.selectedFamily)!;
+    pair.initial.position.fromArray(pose.translation);
+    pair.applied.position.set(0, 0, 0);
+    pair.initial.visible = pose.endpoint === "initial";
+    pair.applied.visible = pose.endpoint === "applied";
+  }
+  get motionEndpoint(): "initial" | "applied" | undefined {
+    if (this.mode !== "physical-motion" || !this.selectedFamily) return undefined;
+    return physicalPatchPose(
+      this.contract!,
+      this.selectedFamily,
+      this.familyTick(this.selectedFamily),
+    ).endpoint;
+  }
   advance(seconds: number) {
-    return this.native.advance(seconds);
+    const changed = this.native.advance(seconds);
+    if (changed) this.sampleMotion();
+    return changed;
   }
   dispose() {
     if (this.disposed) return;
