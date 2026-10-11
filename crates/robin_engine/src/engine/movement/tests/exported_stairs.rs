@@ -2029,6 +2029,44 @@ fn audit_changing_climbs(sprite: Option<&crate::sprite::Sprite>) {
         "/tests/fixtures/asset-changing-climbs.levels.json"
     )))
     .unwrap();
+    audit_changing_climb_fixtures(&fixtures, sprite);
+}
+
+#[test]
+#[ignore = "requires changing-climb exports via ROBIN_ASSET_MAP_DIAGNOSTICS and ROBIN_CLIMB_RHS"]
+fn exported_climb_angles_preserve_barriers_through_apply_reset() {
+    let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap()).unwrap();
+    assert_eq!(manifest["complete"], true);
+    let fixtures: Vec<serde_json::Value> = manifest["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| {
+            serde_json::from_slice(
+                &std::fs::read(directory.join(entry["file"].as_str().unwrap())).unwrap(),
+            )
+            .unwrap()
+        })
+        .collect();
+    assert!(!fixtures.is_empty());
+    let sprite = complete_climb_sprite();
+    audit_changing_climb_fixtures(&fixtures, Some(&sprite));
+    std::fs::write(
+        directory.join("climb-barrier-state-report.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "complete": true,
+            "fixtures": fixtures.len(),
+            "directed_state_checks": fixtures.len() * 6,
+            "states": ["initial", "applied", "reset"]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+fn audit_changing_climb_fixtures(fixtures: &[serde_json::Value], sprite: Option<&crate::sprite::Sprite>) {
     for (rotation, fixture) in fixtures.iter().enumerate() {
         let lift_type = &fixture["asset_geometry"]["lifts"][0]["lift_type"];
         let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(fixture).unwrap());
@@ -2081,10 +2119,13 @@ fn audit_changing_climbs(sprite: Option<&crate::sprite::Sprite>) {
                     Some(sprite),
                 );
                 if applied {
+                    // A narrow climb may lose its authorized entrance when
+                    // the barrier closes, rejecting movement before dispatch.
                     assert!(
-                        result
-                            .as_ref()
-                            .is_err_and(|error| error.starts_with("lift route stalled")),
+                        result == Ok(false)
+                            || result
+                                .as_ref()
+                                .is_err_and(|error| error.starts_with("lift route stalled")),
                         "closed climb type={lift_type}, rotation={rotation}, entrance={entrance}: {result:?}"
                     );
                 } else {

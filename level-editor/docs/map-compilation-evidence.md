@@ -4,6 +4,51 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Export-time climbing footprint compensation (2026-10-12)
+
+Climbing floors now prepare clearance with the full native movement box when
+projection leaves either authored approach outside the usable center region.
+Already usable floors keep their existing representation. Permanent collision
+and piecewise floor heights still exclude this preparation; switchable barriers
+retain their separately compiled collision states. A geometric regression checks
+that admitted full-box centers remain physically supported after inverse projection.
+No production runtime code changes are involved.
+
+`work/map-compile/climb-angle-routes-gAccNf` contains 1,080 fresh descriptors for
+the same three variants and 360 integer rotations as the failing audit below.
+All 2,160 complete-sprite prepared native routes now pass, with zero permission
+skips. The compiler/physical-floor suites pass 174 tests, clearance passes seven,
+packaging passes 75, and app typechecking passes. This is descriptor traversal
+coverage, not editable ZIP, normal player-click or rendered verification.
+The separate synthetic screen-space rotation failure remains unresolved.
+
+`refinement/check-climb-angle-exports.mjs` reproduces the full descriptor set;
+`--narrow` selects the eight previously failing angles. Native audits consume its
+manifest through `ROBIN_ASSET_MAP_DIAGNOSTICS`, with `ROBIN_CLIMB_RHS` supplying
+the complete actor sprite. Barrier-state verification is a separate native test,
+`exported_climb_angles_preserve_barriers_through_apply_reset`.
+Its targeted set `climb-angle-routes-El7muA` passes 144 directed state checks:
+each of 24 descriptors traverses both ways initially, rejects traversal when
+closed, then traverses again after reset. Closed cases verify collision and graph
+rejection plus either a disabled entrance or stalled actor. The existing changing
+climb actor-traversal/reset fixture also passes.
+
+The full-circle barrier audit remains failing: at 283 degrees, the ladder's
+closed state blocks the direct collision query but still admits a graph route.
+Baseline export `climb-angle-routes-i571vD` and changed export
+`climb-angle-routes-HogyvM` have identical descriptors for all three variants;
+the baseline fails the same native assertion. This is a pre-existing state/graph
+coverage gap, not a passing full-circle barrier result. The audit stops at its
+first failure, so later cases remain unverified. `--angle=283` reproduces the
+targeted export. Actual actor bypass at this angle has not yet been established.
+
+Saved-scene batch `saved-map-exports-OYnTc1` compiled Leicester, Lincoln and
+Nottingham but failed York validation: the west gatehouse retains a sight-order
+entry for `building-778`, whose mesh part was split into component identities.
+Its asset-local gameplay needs reconciliation with those components. Successful
+descriptor construction for the other three scenes does not establish gameplay
+parity, and the failed batch must not be counted as complete.
+
 ## Full-circle editor climb audit (2026-10-12, incomplete)
 
 `work/map-compile/climb-angle-routes-CiujW9` contains 1,080 fresh editor descriptors:

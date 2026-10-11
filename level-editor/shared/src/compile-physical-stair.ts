@@ -12,6 +12,8 @@ import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
 export interface PhysicalStairInput {
   /** Prepare native walking clearance for stair lifts, excluding ladders and walls. */
   prepareWalkingClearance?: boolean;
+  /** Preserve full-box climbing approaches when projection narrows the floor. */
+  prepareClimbingClearance?: boolean;
   surfaces: { polygon: Vec3[]; holes: Vec3[][] }[];
   /** Collision pieces already bound to the emitted motion area's obstacle IDs. */
   obstacles: { motionObstacle: number; polygon: Vec3[] }[];
@@ -57,16 +59,29 @@ export function compilePhysicalStairArea(input: PhysicalStairAreaInput): {
     polygon: obstacle.polygon,
   }));
   const floor = physicalStairFloor(input.surfaces);
+  const clearanceOptions = input.prepareClimbingClearance
+    ? {
+        movementHalf: half,
+        requiredCenters: input.doors.map((door): Point => [
+          door.inside[0],
+          door.inside[1] - door.inside[2],
+        ]),
+      }
+    : {};
   const roundedClearance =
-    input.prepareWalkingClearance && !floor.patches && collision.length === 0
-      ? projectStairClearance(navigation.boundary, floor.plane)
+    (input.prepareWalkingClearance || input.prepareClimbingClearance) &&
+    !floor.patches &&
+    (input.prepareClimbingClearance
+      ? collision.every((obstacle) => obstacle.stateId !== 0)
+      : collision.length === 0)
+      ? projectStairClearance(navigation.boundary, floor.plane, false, clearanceOptions)
       : undefined;
   // Keep established endpoints when integer clearance remains usable. Recover
   // subpixel precision only when rounding removes the walking center region.
   const preciseClearance =
     roundedClearance &&
     stairCenterRegion(roundedClearance, [half[0] - 0.99, half[1] - 0.99]).length < 3
-      ? projectStairClearance(navigation.boundary, floor.plane, true)
+      ? projectStairClearance(navigation.boundary, floor.plane, true, clearanceOptions)
       : undefined;
   const clearanceBoundary = preciseClearance ?? roundedClearance;
   const project = (point: Point): Point => {

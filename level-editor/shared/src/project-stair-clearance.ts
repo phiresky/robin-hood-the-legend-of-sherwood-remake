@@ -17,11 +17,13 @@ export function projectStairClearance(
   boundary: Point[],
   plane: HeightPlane,
   preservePrecision = false,
+  options: { movementHalf?: Readonly<Point>; requiredCenters?: Point[] } = {},
 ): Point[] | undefined {
   // Clipping can retain a nearly straight intermediate vertex. Remove noise
   // within two clipping-grid units before intersecting offset edge planes.
   boundary = simplifyMotionRing(boundary, 2 / 1048576);
   const [a, b, c] = plane;
+  const movementHalf = options.movementHalf ?? [half[0] - 1, half[1] - 1];
   if (Math.abs(1 - b) < 1e-6 || boundary.length < 3) return undefined;
   let projected: Point[] = boundary.map(([x, y]) => [x, y - a * x - b * y - c]);
   const planes = stairBoundaryPlanes(projected);
@@ -60,11 +62,11 @@ export function projectStairClearance(
       -ny,
       limit - Math.abs(nx) * half[0] - Math.abs(ny) * half[1],
     ]);
-    // Apply the same one-unit movement inset before and after projection.
-    // Endpoint boxes are larger, and therefore impose additional clearance.
+    // Walking uses its one-unit inset; climbing requires the full native box.
+    // Use the same footprint before and after projection.
     const physicalSupport =
-      Math.abs(nx - a * ny) * (half[0] - 1) + Math.abs((1 - b) * ny) * (half[1] - 1);
-    const nativeSupport = Math.abs(nx) * (half[0] - 1) + Math.abs(ny) * (half[1] - 1);
+      Math.abs(nx - a * ny) * movementHalf[0] + Math.abs((1 - b) * ny) * movementHalf[1];
+    const nativeSupport = Math.abs(nx) * movementHalf[0] + Math.abs(ny) * movementHalf[1];
     const correction = nativeSupport - physicalSupport;
     changed ||= Math.abs(correction) > 1e-6;
     // Integer output reserves half a unit per coordinate for rounding. Precise
@@ -80,7 +82,14 @@ export function projectStairClearance(
     const q = existingCenters[(i + 1) % existingCenters.length]!;
     return sum + p[0] * q[1] - q[0] * p[1];
   }, 0);
-  if (Math.abs(existingArea) > 1e-6) return undefined;
+  const centerPlanes = stairBoundaryPlanes(existingCenters);
+  if (
+    Math.abs(existingArea) > 1e-6 &&
+    (options.requiredCenters ?? []).every((p) =>
+      centerPlanes.every(([x, y, c]) => x * p[0] + y * p[1] + c >= -1e-6),
+    )
+  )
+    return undefined;
   const result: Point[] = [];
   for (const [i, first] of lines.entries()) {
     const second = lines[(i + 1) % lines.length]!;

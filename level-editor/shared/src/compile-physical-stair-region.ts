@@ -66,6 +66,7 @@ export function compilePhysicalStairRegion(input: PhysicalStairRegionInput): Phy
       points.map(([x, y]) => [x, y, planeHeight(plane, [x, y])]);
     const compiled = compilePhysicalStairArea({
       prepareWalkingClearance: input.prepareWalkingClearance,
+      prepareClimbingClearance: input.prepareClimbingClearance,
       surfaces: parts.map((part) => ({
         polygon: world(part.navigation.boundary, part.navigation.plane),
         holes: [],
@@ -192,6 +193,7 @@ export function compilePhysicalStairRegion(input: PhysicalStairRegionInput): Phy
   const changing = compilePhysicalTransitionObstacles(boundary, floor.holes, plane, blockers);
   const compiled = compilePhysicalStairArea({
     prepareWalkingClearance: input.prepareWalkingClearance,
+    prepareClimbingClearance: input.prepareClimbingClearance,
     surfaces,
     doors: input.doors,
     obstacles: changing.obstacles.map((obstacle) => ({

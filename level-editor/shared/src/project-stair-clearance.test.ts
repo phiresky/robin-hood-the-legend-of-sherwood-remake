@@ -56,6 +56,38 @@ test("projected stair collision admits only physically supported movement footpr
   assert.ok(corrected > 0, "at least one projected floor must require recovery");
 });
 
+test("climbing clearance connects required approaches while retaining full physical support", () => {
+  const boundary: Point[] = [
+    [1583.6691892687395, 1724.1330596156022],
+    [1629.254609392754, 1425.2746501880786],
+    [1689.0262912782587, 1428.2740790080425],
+    [1643.4408711542442, 1727.1324884355658],
+  ];
+  const plane: HeightPlane = [4.980973490458731, 0.7597570020669088, -9158.13641394186];
+  assert.equal(projectStairClearance(boundary, plane), undefined);
+  const compiled = projectStairClearance(boundary, plane, false, {
+    movementHalf: [6, 3],
+    requiredCenters: [
+      [1612, 1505],
+      [1660, 1267],
+    ],
+  });
+  assert.ok(compiled);
+  const fullFits = (center: Point, polygon: Point[]) =>
+    [-6, 6].every((x) =>
+      [-3, 3].every((y) => pointInGameplayPolygon([center[0] + x, center[1] + y], polygon)),
+    );
+  let checked = 0;
+  for (let x = 1570; x < 1700; x += 2)
+    for (let y = 1080; y < 1690; y += 2) {
+      if (!fullFits([x, y], compiled)) continue;
+      const world: Point = [x, (y + plane[0] * x + plane[2]) / (1 - plane[1])];
+      assert.ok(fullFits(world, boundary), `unsupported climbing center ${world}`);
+      checked++;
+    }
+  assert.ok(checked > 20);
+});
+
 test("subpixel clearance preserves usable centers on a nearly edge-on stair", () => {
   const vertices: Vec3[] = [
     [1075.2933405239062, 1039.2424001432735, 110.00101],
