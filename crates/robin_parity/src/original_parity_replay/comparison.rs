@@ -726,9 +726,11 @@ impl FrameComparison<'_> {
                     storage,
                 );
             }
-            if expected.actor.is_none() {
-                // Stationary sprites retain an unset box. The trace omits the
-                // bounds-set bit and translates its zero corners to a point.
+            if expected.actor.is_none() && self.constructor_storage.is_some() {
+                // Fresh stationary sprites retain an unset box. The trace omits
+                // its bounds-set bit and translates zero corners to a point.
+                // Loaded saves carry an explicit validity bit and can contain
+                // valid point boxes; preserve those recorded coordinates.
                 let point_box = expected_runtime
                     .pointer("/position/move_box")
                     .is_some_and(|b| b.get("min").zip(b.get("max")).is_some_and(|(a, b)| a == b));
@@ -748,6 +750,21 @@ impl FrameComparison<'_> {
                 project_missing_draw_view_sprite_cache(&mut expected_runtime);
             }
             canonicalize_authoritative_snapshot(&mut expected_runtime, entity_map)?;
+            if matches!(engine.get_entity(id), Some(Entity::Projectile(projectile))
+                if projectile.projectile.legacy_material_uninitialized)
+            {
+                // Free-flight arrow waypoints never initialized this storage.
+                // Old recordings can contain plausible material IDs as well as
+                // out-of-range residue. Provenance, not the recorded number,
+                // determines this intentional don't-care field. Impact materials
+                // and values restored from a save remain compared.
+                if let Some(position) = expected_runtime
+                    .get_mut("position")
+                    .and_then(serde_json::Value::as_object_mut)
+                {
+                    position.remove("material");
+                }
+            }
             let actual_runtime = engine.parity_entity_runtime_state(id, assets);
             collect_json_subset_differences(
                 &format!("{id_label:?}.runtime"),
