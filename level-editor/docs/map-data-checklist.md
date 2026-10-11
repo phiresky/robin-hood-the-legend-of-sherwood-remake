@@ -451,7 +451,19 @@ Native player movement passes all 32 directed crossings after opening the
 relevant asset control, checking independent copied availability, corridor
 adherence, final posture, height and sector. Evidence:
 `work/map-compile/closed-posture-passages-OuSqkE/actor-posture-report.json`.
-Closure during these posture-changing crossings remains open.
+Solid-barrier closure during these posture-changing crossings passes 32 native
+cases across the same eight ZIPs, both copies and both directions. The audit
+opens the reversible control, starts a full-sprite player crossing, then operates
+the control again after movement begins. It verifies that the restored solid
+barrier overlaps the actor, blocks the passage and marks the actor unreachable
+for crushing without changing the other copy's passage availability. A forced
+patch reset is deliberately not used: it restores state without actor
+invalidation/damage. Evidence:
+`work/map-compile/closed-posture-passages-OuSqkE/actor-posture-crushing-report.json`;
+reproduce with `exported_posture_barriers_crush_overlapping_crossings` and the
+same diagnostics/sprite environment as the crossing audit. This checks damage
+dispatch eligibility, not the death animation or final health. Non-overlapping
+closure and safe pause/resume during these posture crossings remain open.
 Generated posture passages also retain separate openings when changing
 obstacles give different parts of the same boundary different availability.
 Previously, choosing one static midpoint could leave the connection blocked in

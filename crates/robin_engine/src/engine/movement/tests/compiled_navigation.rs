@@ -20,6 +20,10 @@ mod exported_jumps {
     include!("exported_jumps.rs");
 }
 
+mod compiled_posture_closure {
+    include!("compiled_posture_closure.rs");
+}
+
 #[test]
 fn exported_floor_flags_require_crouching_only_in_the_authored_room() {
     let bytes = include_bytes!(concat!(
