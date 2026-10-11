@@ -11,7 +11,7 @@ for f in src.iterdir():
  if f.is_file():dest.mkdir(exist_ok=True);shutil.copy2(f,dest/f.name)
 out.mkdir(parents=True)
 for f in w.iterdir():
- if f.name in ['model.blend','inspection'] or f.name.endswith('.blend1'):continue
+ if f.suffix=='.blend' or f.name in ['model.blend','inspection'] or f.name.endswith('.blend1'):continue
  if f.is_dir():shutil.copytree(f,out/f.name,copy_function=os.link)
  else:shutil.copy2(f,out/f.name)
 cfg=json.loads((out/'workspace.json').read_text());cfg=json.loads(json.dumps(cfg).replace(str(w),str(out)));(out/'workspace.json').write_text(json.dumps(cfg,indent=2)+'\n');(out/'inspection').mkdir()
