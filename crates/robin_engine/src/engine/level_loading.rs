@@ -2736,6 +2736,9 @@ impl EngineInner {
     ) {
         // ── Part 2: Pathfinder graph ──
         let graph_started = web_time::Instant::now();
+        std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph)
+            .static_mut()
+            .legacy_shortcut_endpoints = motion_data.legacy_shortcut_endpoints;
         if !motion_data.graph_bytes.is_empty()
             && let Err(e) = std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph)
                 .load_from_proto_stream(self.world.fast_grid_mut(), &motion_data.graph_bytes)

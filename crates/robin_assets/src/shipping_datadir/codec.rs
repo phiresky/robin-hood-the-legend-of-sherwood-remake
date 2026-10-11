@@ -64,6 +64,8 @@ use super::*;
 // Datadir v21 / mission v12: raw sight obstacles retain initial physical activity.
 // Datadir v22 / mission v13: elevation lines retain optional fractional endpoints.
 // Datadir v23 / mission v14: lifts retain optional authored endpoint identities.
+// Datadir v24 / mission v15: motion data retains binary-level shortcut
+// semantics separately from exact clearance checks for authored geometry.
 // Release checklist: a version bump must ship with regenerated datadir.bin and
 // affected mission payloads, not just changed constants. Update the matching
 // magic tags and schema contract fixtures; package and validate the
@@ -73,10 +75,10 @@ use super::*;
 // format, not saves. Only incompatible encoded layouts or codec changes require
 // a bump; gameplay-only changes do not. Supporting an older layout requires an
 // explicit decoder/migration, since bitcode does not infer missing fields.
-pub(super) const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA23";
-pub(super) const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN14";
-pub const SHIPPING_DATADIR_VERSION: u32 = 23;
-pub const SHIPPING_MISSION_VERSION: u32 = 14;
+pub(super) const SHIPPING_DATADIR_MAGIC: [u8; 8] = *b"RHDDNA24";
+pub(super) const SHIPPING_MISSION_MAGIC: [u8; 8] = *b"RHMISN15";
+pub const SHIPPING_DATADIR_VERSION: u32 = 24;
+pub const SHIPPING_MISSION_VERSION: u32 = 15;
 
 /// Encode the versioned native-bitcode payload stored inside `datadir.bin`.
 pub fn encode_native(datadir: &ShippingDatadir) -> Vec<u8> {

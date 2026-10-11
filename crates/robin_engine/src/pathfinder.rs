@@ -480,6 +480,10 @@ pub struct SectorToArea {
 /// load-time geometry.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct PathGraphStatic {
+    /// Retain binary-level shortcut rounding without weakening exact clearance
+    /// checks for newly authored geometry.
+    #[serde(default)]
+    pub legacy_shortcut_endpoints: bool,
     /// All links in the graph.
     pub links: Vec<PathGraphLink>,
     /// All link configurations.
@@ -2098,9 +2102,18 @@ impl PathSearch<'_> {
             let middle = path[i + 1];
             let last = path[i + 2];
 
-            // Test the segment that will actually be emitted. Shortening its
-            // endpoints can round a corner contact into a false clearance.
-            let reachable = self.is_reachable_grid(grid, first, last);
+            let (test_first, test_last) = if self.graph.static_data.legacy_shortcut_endpoints {
+                // This inset is intentional compatibility behavior for binary
+                // levels. Removing it changes recorded waypoint selection.
+                let delta = last - first;
+                let inset = MapVec::new(delta.x * 0.5e-4, delta.y * 0.5e-4);
+                (first + inset, last - inset)
+            } else {
+                // Authored maps validate the segment that will be emitted;
+                // shortening it can round corner contact into false clearance.
+                (first, last)
+            };
+            let reachable = self.is_reachable_grid(grid, test_first, test_last);
             tracing::trace!(
                 index = i,
                 ?first,
@@ -2380,7 +2393,7 @@ mod tests {
             ),
             0,
         );
-        let graph = PathGraph::new();
+        let mut graph = PathGraph::new();
         let partition = PathPartition::from_graph(&graph);
         let mut scratch = PathSearchScratch::default();
         scratch.current_half_diagonal = MoveBoxHalfDiagonal::new(6., 3.);
@@ -2405,12 +2418,32 @@ mod tests {
             (path[2].y - path[0].y) * 0.5e-4,
         );
         assert!(search.is_reachable_grid(&grid, path[0] + delta, path[2] - delta));
+        let mut legacy_path = path.clone();
         search.smooth_path(&grid, &mut path);
         for segment in path.windows(2) {
             assert!(search.is_reachable_grid(&grid, segment[0], segment[1]));
         }
         assert_eq!(path.first(), Some(&MapPoint::new(2433., 296.)));
         assert_eq!(path.last(), Some(&MapPoint::new(2450., 331.)));
+        graph.static_mut().legacy_shortcut_endpoints = true;
+        let legacy_search = PathSearch {
+            graph: &graph,
+            partition: &partition,
+            number_of_attempts: 1,
+            scratch: &mut scratch,
+        };
+        legacy_search.smooth_path(&grid, &mut legacy_path);
+        assert_ne!(
+            legacy_path, path,
+            "binary-level routing retains its endpoint inset"
+        );
+        assert!(
+            legacy_path
+                .windows(2)
+                .any(|segment| { !legacy_search.is_reachable_grid(&grid, segment[0], segment[1]) })
+        );
+        assert_eq!(legacy_path.first(), path.first());
+        assert_eq!(legacy_path.last(), path.last());
     }
 
     #[test]

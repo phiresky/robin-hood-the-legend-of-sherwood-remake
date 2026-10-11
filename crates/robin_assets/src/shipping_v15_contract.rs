@@ -1,5 +1,5 @@
-//! Frozen v14 layout: runtime preparation must never change serialized field order.
-//! v14 retains authored lift endpoint identities in loaded levels.
+//! Frozen v15 layout: runtime preparation must never change serialized field order.
+//! v15 retains binary-level shortcut semantics in loaded motion data.
 use super::*;
 
 #[test]
@@ -31,7 +31,7 @@ fn aggregate_budget_rejects_small_parts_forming_an_oversized_bank() {
     assert!(bank.validate_resident_budget().is_err());
 }
 #[derive(Default, Debug, Serialize, Deserialize, bitcode::Encode, bitcode::Decode)]
-struct FrozenMissionV14 {
+struct FrozenMissionV15 {
     pub levels: BTreeMap<String, LoadedLevel>,
     pub scripts: BTreeMap<String, ScbFile>,
     pub rhs_files: BTreeMap<String, RhsData>,
@@ -46,9 +46,14 @@ struct FrozenMissionV14 {
 }
 
 #[test]
-fn v14_payload_matches_frozen_wire_and_preparation_is_consuming() {
+fn v15_payload_matches_frozen_wire_and_preparation_is_consuming() {
     let mut payload = ShippingMissionPayload::default();
     let mut level = LoadedLevel::empty();
+    level.proto.motion_data = Some(robin_engine::level_data::RawMotionData {
+        legacy_shortcut_endpoints: true,
+        layers: vec![],
+        graph_bytes: vec![],
+    });
     level
         .mission
         .record_names
@@ -81,12 +86,12 @@ fn v14_payload_matches_frozen_wire_and_preparation_is_consuming() {
         .audio_durations_ms
         .insert("sounds/example.wav".into(), 193);
     let mission = ShippingMission::from_payload(payload);
-    let frozen: FrozenMissionV14 =
+    let frozen: FrozenMissionV15 =
         serde_json::from_value(serde_json::to_value(&mission).unwrap()).unwrap();
     let encoded = encode_mission_native(&mission);
     assert_eq!(&encoded[..8], &SHIPPING_MISSION_MAGIC);
-    assert_eq!(&encoded[..8], b"RHMISN14");
-    assert_eq!(&encoded[8..12], &14u32.to_le_bytes());
+    assert_eq!(&encoded[..8], b"RHMISN15");
+    assert_eq!(&encoded[8..12], &15u32.to_le_bytes());
     assert_eq!(&encoded[12..], bitcode::encode(&frozen));
     let compressed = zstd_compress_with_window(&encoded, 30).unwrap();
     let decoded = decode_mission_compressed(&compressed).unwrap();

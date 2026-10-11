@@ -1642,6 +1642,7 @@ mod tests {
         graph_bytes.extend_from_slice(&0_u16.to_le_bytes());
         graph_bytes.extend_from_slice(&0_u16.to_le_bytes());
         loaded.proto.motion_data = Some(crate::level_data::RawMotionData {
+            legacy_shortcut_endpoints: false,
             layers: vec![vec![crate::level_data::RawMotionArea {
                 precise_polygon: Vec::new(),
                 is_lift: false,
