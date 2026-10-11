@@ -16,8 +16,8 @@ from evidence_io import sha
 from render_slots import acquire
 
 def main():
- if shutil.disk_usage(OUT).free<25*1024**3:raise ValueError('Disk floor25GiB')
- parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,default=1);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);dest=OUT/f'restart2/tree06-v{args.revision}';dest.mkdir(exist_ok=False);acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0;working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-06';wood_node='scenery-tree06-wood';crown_node='foliage-tree06-inferred-crown';name='Northwest Slender Forked Tree'
+ if shutil.disk_usage(OUT).free<10*1024**3+256*1024**2:raise ValueError('Disk reserve10GiB plus candidate output')
+ parser=argparse.ArgumentParser();parser.add_argument('--revision',type=int,default=1);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);dest=OUT/f'restart2/tree06-v{args.revision}';dest.mkdir(exist_ok=False);acquire(slots=2);bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement01-grouped.blend'));bpy.context.preferences.filepaths.save_version=0;working=bpy.data.collections['Croisement01 Working'];asset='croisement01-tree-06';wood_node='scenery-tree06-wood';crown_node='foliage-tree06-inferred-crown';name='Northwest Slender Forked Tree'
  native=json.loads((OUT/'baseline/masks/manifest.json').read_text())
  for row in native['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
  row=next(r for r in native['masks'] if r['index']==6);assert row['obstacle_indices']==[];alpha=Image.open(row['png']).convert('L');wood_source=OUT/('restart2/tree06-wood-source-v3' if args.revision>=10 else ('restart2/tree06-wood-source-v2' if args.revision>=7 else 'restart2/tree06-wood-source-v1'));wood=Image.open(wood_source/'wood-domain.png').convert('L')
@@ -49,6 +49,19 @@ def main():
  for sy in range(domain.shape[0]):
   if sy<140:domain[sy]&=(xx>=367)&(xx<=397)
   if sy>=360:domain[sy]=False
+ if args.revision>=12:
+  # The occluded middle stem contains isolated visible edge texels; those
+  # establish source color, not the full hidden trunk width. Interpolate the
+  # unseen section from complete observed sections on both sides.
+  for sy in range(140,240):
+   if np.count_nonzero(domain[sy])<20:domain[sy]=False
+ if args.revision>=13:
+  # Fill only the fitting silhouette, not source ownership, through the
+  # occluded stem. A lone bark edge cannot bound its opposite hidden side.
+  upper=np.flatnonzero(domain[140]);lower=np.flatnonzero(domain[240]);assert len(upper)>20 and len(lower)>20
+  for sy in range(141,240):
+   t=(sy-140)/100;lo=math.floor((1-t)*upper[0]+t*lower[0]);hi=math.ceil((1-t)*upper[-1]+t*lower[-1])
+   domain[sy,lo:hi+1]=True
  fit_native_width(body,domain,'west-cut',x0=334,y0=0)
  for label,branch in [('Left fork',[(381,170,8),(365,115,6),(358,70,5),(346,0,5),(340,-45,4)]),('Right fork',[(385,200,9),(401,130,6),(407,70,4),(416,-40,4)])]:
   coords=[point(x,y) for x,y,r in branch]+[Vector((branch[-1][0],base_y,690)),Vector((branch[-1][0]+(-40 if label.startswith('Left') else 40),base_y,780))];part=tube(label,coords,[r for x,y,r in branch]+[4,1]);domain=np.asarray(wood)>0
