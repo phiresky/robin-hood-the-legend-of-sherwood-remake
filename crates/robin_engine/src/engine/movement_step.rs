@@ -759,7 +759,13 @@ impl EngineInner {
             execute_order_initialising,
             decorative_building_trap_at_destination,
         ) {
-            self.publish_entity_order_posture(entity_id, posture);
+            if execute_order_initialising && posture == crate::element::Posture::Flying {
+                // The crenel transition explicitly enters free flight before
+                // its first sprite motion. Publish the position posture too.
+                self.set_entity_posture(entity_id, posture);
+            } else {
+                self.publish_entity_order_posture(entity_id, posture);
+            }
         }
         let elem = self
             .world

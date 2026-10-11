@@ -2645,10 +2645,9 @@ impl EngineInner {
                 return;
             };
             // Fried-psykokwack PCs short-circuit the whole hourglass
-            // tick; skip heals too.  Also skip inactive / dead /
-            // already-maxed PCs.
-            if !pc.element.active
-                || pc.pc.fried_psykokwack
+            // tick; skip heals too. Inactive PCs still reach this tail after
+            // the human tick, so heroes inside buildings can recover health.
+            if pc.pc.fried_psykokwack
                 || pc.pc.life_points <= 0
                 || pc.pc.life_points >= crate::pc_status::LIFEPOINTS_PC
             {

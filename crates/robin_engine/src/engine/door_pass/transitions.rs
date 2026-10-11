@@ -204,7 +204,8 @@ impl EngineInner {
                     point_out_probe,
                     "crenel climb-up transition",
                 );
-                self.set_entity_posture(entity_id, Posture::Flying);
+                // Free-flight posture was set when this transition started.
+                // DONE moves the actor without rewriting its old-posture latch.
                 if let Some(entity) = self.world.entities.get_mut(entity_id) {
                     if let Some(actor) = entity.actor_data_mut() {
                         actor.action_state = ActionState::Moving;

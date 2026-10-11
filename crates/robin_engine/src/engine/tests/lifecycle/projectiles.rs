@@ -3,6 +3,47 @@ use crate::engine::TickCtx;
 use crate::sequence::SequenceElementRef;
 
 #[test]
+fn inactive_pc_still_recovers_health_at_the_pc_hourglass_tail() {
+    let sim = crate::sim_rng::SimulationContext::with_seed_and_config(
+        1,
+        crate::engine::SimConfig {
+            difficulty: crate::player_profile::DifficultyLevel::Easy,
+            ..Default::default()
+        },
+    );
+    let mut engine = EngineInner::new();
+    let mut pc = make_test_pc(crate::element::Posture::Upright);
+    let Entity::Pc(data) = &mut pc else {
+        unreachable!()
+    };
+    data.element.active = false;
+    data.pc.life_points = 93;
+    let owner = engine.add_test_entity(pc);
+    engine.control.frame_counter = 899;
+    engine.tick_pc_auto_heal_for(&sim, owner);
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .life_points,
+        93
+    );
+    engine.control.frame_counter = 900;
+    engine.tick_pc_auto_heal_for(&sim, owner);
+    assert_eq!(
+        engine
+            .get_entity(owner)
+            .unwrap()
+            .pc_data()
+            .unwrap()
+            .life_points,
+        94
+    );
+}
+
+#[test]
 fn pc_auto_heal_and_projectile_damage_follow_cross_entity_creation_order() {
     // An arrow impact does not subtract life inline: it launches a damage
     // sequence element that only reaches the victim's Translate when the
