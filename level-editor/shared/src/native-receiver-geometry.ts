@@ -62,16 +62,16 @@ export function nativeReceiverGeometry(
   warnings: string[],
 ): SightObstacle["points"][] {
   // Boolean intersections can introduce edges shorter than binary32 precision.
-  // Remove consecutive identical native vertices before considering a split:
-  // splitting a simple floor would change its receiver identity along a jump.
+  // Receiver containment uses XY; height comes from the separately exported
+  // plane. Tiny height differences at identical native XY cannot form another
+  // polygon edge. Remove these vertices before considering a split, which would
+  // otherwise change one continuous floor's receiver identity during movement.
   points = points.filter((point, index) => {
     const previous = points[index - 1];
     return (
       !previous ||
       Math.fround(point.x) !== Math.fround(previous.x) ||
-      Math.fround(point.y) !== Math.fround(previous.y) ||
-      Math.fround(point.z_top) !== Math.fround(previous.z_top) ||
-      Math.fround(point.z_bottom) !== Math.fround(previous.z_bottom)
+      Math.fround(point.y) !== Math.fround(previous.y)
     );
   });
   const native = points.map(({ x, y }): Point => [Math.fround(x), Math.fround(y)]);

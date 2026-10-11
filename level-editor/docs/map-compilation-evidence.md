@@ -4,6 +4,37 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Continuous native receiver after XY vertex collapse (2026-10-11)
+
+The unpadded 90-degree/elevation-40 mismatch below came from one generated stair
+receiver being triangulated into three receivers. Consecutive vertices became
+identical in native binary32 XY, but their rounded heights differed by a few
+millionths. The old duplicate check retained the zero-length XY edge and therefore
+triggered triangulation. During traversal the cached and queried receiver IDs
+then disagreed despite referring to the same physical plane.
+
+Generated receivers now deduplicate consecutive native XY vertices, matching
+the containment polygon. Their separately exported height-plane anchors remain
+unchanged. Authored physical volumes are outside this cleanup. The regression
+retains the complete native XY outline, leaves its input untouched, and keeps one
+receiver. Existing pinched-notch tests still require triangulation where a real
+outline needs multiple polygons.
+
+Fresh ZIP artifacts: `work/map-compile/grounded-stair-placements-5MY5fu`.
+At 90 degrees, elevations 0/40 and two copies, all 32 routes pass in each of five
+native routing modes, with zero forbidden routes. These tests read the descriptor
+decoded from each ZIP. All 241 focused compiler/export tests, app type checking
+and scoped lint/format checks pass. This adds no runtime logic.
+
+The final eight-angle matrix, with elevations 0/40 and two copies, is
+`work/map-compile/grounded-stair-placements-DTOVqM`. Prepared, complete-sprite,
+discovered and hidden-selection routing each pass 256/256 routes with no forbidden
+routes. Ordinary clicks pass 252/256: the four covered 217-degree targets still
+require explicit hidden selection, which is exercised for exactly those four
+targets. The combined native invocation therefore reports four passing tests and
+one failing ordinary-click test; it is not an unconditional ordinary-click pass.
+Game build, Cargo formatting and diff checks pass.
+
 ## Bounded stair clearance restores nearby jump clicks (2026-10-11)
 
 The two 270-degree click failures below were caused by an acute offset corner in

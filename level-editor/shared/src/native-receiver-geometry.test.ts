@@ -74,6 +74,30 @@ test("duplicate native vertices retain one continuous roof receiver after rotati
   assert.deepEqual(points, before);
 });
 
+test("a sloped floor keeps one receiver when identical native XY has distinct rounded heights", () => {
+  const coordinates = [
+    [372.5209655761719, 484.2942316448725, 150.00101017117868],
+    [277.14363384246826, 532.2202323576998, 40.0009997984958],
+    [277.14276695251465, 532.2206679003185, 40.00000006126825],
+    [245.02531147003174, 511.04812719854556, 40.00000002416809],
+    [245.025315284729, 511.04812510138504, 40.00000460272784],
+    [341.81923484802246, 464.0549686038628, 150.00100971104055],
+    [341.81923484802246, 464.05496812529617, 150.00101018614822],
+  ];
+  const points = coordinates.map(([x, y, z]) => ({ x: x!, y: y!, z_top: z!, z_bottom: z! }));
+  const before = structuredClone(points);
+  assert.notEqual(Math.fround(points[3]!.z_top), Math.fround(points[4]!.z_top));
+  const warnings: string[] = [];
+  const result = nativeReceiverGeometry(points, "sloped floor", warnings);
+  assert.equal(result.length, 1);
+  assert.equal(result[0]!.length, 5);
+  const outline = (values: typeof points) =>
+    new Set(values.map(({ x, y }) => JSON.stringify([Math.fround(x), Math.fround(y)])));
+  assert.deepEqual(outline(result[0]!), outline(points));
+  assert.deepEqual(warnings, []);
+  assert.deepEqual(points, before);
+});
+
 test("a receiving sliver which collapses natively is omitted with an explicit warning", () => {
   const warnings: string[] = [];
   const points = surface([

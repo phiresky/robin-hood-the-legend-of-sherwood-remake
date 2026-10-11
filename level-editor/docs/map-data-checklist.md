@@ -37,10 +37,14 @@ Export now bounds that clearance by the projected floor plus the actor footprint
 no runtime behavior changed. Fresh ZIP round trips at 270 degrees and elevations
 0/40 also pass all 32 stair routes in each of five native routing modes.
 The opposing jump-edge warning remains, but does not itself prove failed traversal.
-The broader eight-angle matrix also exposes a pre-existing receiver-binding
-mismatch at 90 degrees/elevation 40 without map padding: two routes fail with
-identical descriptors before and after this fix. That placement remains an open
-parity issue; the earlier padded matrix does not cover it.
+The broader matrix also exposed a pre-existing receiver-binding mismatch at
+90 degrees/elevation 40 without map padding. Export was unnecessarily splitting
+one stair receiver when native XY vertices coincided but their heights differed
+slightly. Deduplicating that XY outline while retaining the separate height plane
+fixes the placement: fresh ZIPs pass all 32 routes in each of five native modes.
+The final unpadded eight-angle matrix passes 256/256 prepared, sprite, discovered
+and hidden-selection routes. Ordinary clicks pass 252/256, with the four covered
+217-degree targets requiring the explicit hidden-selection modifier.
 
 **Browser bake/reopen round trip (2026-10-10):** two independently placed
 east-hall assets on elevated editor terrain bake to a real 2000×2000 color/depth
