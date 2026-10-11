@@ -16,7 +16,7 @@ sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--export',type=Path,required=True);parser.add_argument('--asset',required=True);parser.add_argument('--views',type=Path,required=True);parser.add_argument('--output',type=Path,required=True)
+    parser=argparse.ArgumentParser();parser.add_argument('--export',type=Path,required=True);parser.add_argument('--asset',required=True);parser.add_argument('--views',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--reuse-from',type=Path)
     args=parser.parse_args(sys.argv[sys.argv.index('--')+1:]);args.output.mkdir(exist_ok=False)
     memory={k:int(v.split()[0])*1024 for k,v in (line.split(':',1) for line in Path('/proc/meminfo').read_text().splitlines())}
     assert memory['MemAvailable']>=6*1024**3 and shutil.disk_usage(args.output).free>=10*1024**3
@@ -45,17 +45,25 @@ def main():
         phase_rows.append(dict(phase=phase,tick=phase*4,maximum_key_evaluation_error=max(errors)))
     scene.render.engine='CYCLES';scene.cycles.samples=12;scene.cycles.transparent_max_bounces=512;scene.render.resolution_x=384;scene.render.resolution_y=384;scene.render.resolution_percentage=100;scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.view_settings.view_transform='Standard'
     camera_data=bpy.data.cameras.new('Saved source camera');camera_data.type='ORTHO';camera_data.clip_end=20000;camera=bpy.data.objects.new('Saved source camera',camera_data);scene.collection.objects.link(camera);scene.camera=camera
-    views=json.loads(args.views.read_text())['views'];images=[]
+    views=json.loads(args.views.read_text())['views'];images=[];recovered=[]
     for phase,indices in [(0,[0]),(7,range(8)),(14,[0])]:
         scene.frame_set(phase*4)
         for index in indices:
-            v=views[index];camera.matrix_world=Matrix(v['camera_matrix_world']);camera_data.ortho_scale=v['ortho_scale'];image=args.output/f'phase-{phase:02}-view-{index}.png';scene.render.filepath=str(image);bpy.ops.render.render(write_still=True);images.append(dict(phase=phase,view=index,path=str(image),sha256=sha(image)))
+            v=views[index];camera.matrix_world=Matrix(v['camera_matrix_world']);camera_data.ortho_scale=v['ortho_scale'];image=args.output/f'phase-{phase:02}-view-{index}.png'
+            prior=args.reuse_from/image.name if args.reuse_from else None
+            if prior and prior.exists():
+                assert Image.open(prior).size==(384,384)
+                shutil.copyfile(prior,image);recovered.append(dict(path=str(prior),sha256=sha(prior),scope='Recovered from the same owner interrupted render command; independent import/phase assertions rerun here.'))
+            else:
+                scene.render.filepath=str(image);bpy.ops.render.render(write_still=True)
+            images.append(dict(phase=phase,view=index,path=str(image),sha256=sha(image)))
+            (args.output/'capture-progress.json').write_text(json.dumps(dict(model_sha256=sha(model),views_sha256=sha(args.views),images=images,recovered=recovered),indent=2)+'\n')
     assert np.array_equal(np.asarray(Image.open(args.output/'phase-00-view-0.png')),np.asarray(Image.open(args.output/'phase-14-view-0.png')))
     sheet=Image.new('RGB',(1536,808),'#dddddd');draw=ImageDraw.Draw(sheet)
     for index in range(8):
         image=Image.open(args.output/f'phase-07-view-{index}.png');x=index%4*384;y=index//4*404;sheet.paste(image,(x,y+20),image);draw.text((x+4,y+3),f'Phase 7 / view {index}',fill='black')
     sheet.save(args.output/'eight-view.png')
-    result=dict(status='SAVED_IMPORT_AND_15_POSES_PASS_VISUAL_REVIEW_PENDING',asset_id=args.asset,export_sha256=sha(args.export),model_sha256=sha(model),views_sha256=sha(args.views),phase_rows=phase_rows,crown_meshes=len(crowns),static_wood_meshes=len(wood),native_loop_image_exact=True,images=images,limits=['Only this isolated derivative was imported; neighbor contacts/source mask ownership remain separate.','New inferred crown motion is unapproved.','Image view 0 reuses the asset own saved original-art camera.'])
+    result=dict(status='SAVED_IMPORT_AND_15_POSES_PASS_VISUAL_REVIEW_PENDING',asset_id=args.asset,export_sha256=sha(args.export),model_sha256=sha(model),views_sha256=sha(args.views),phase_rows=phase_rows,recovered_captures=recovered,crown_meshes=len(crowns),static_wood_meshes=len(wood),native_loop_image_exact=True,images=images,limits=['Only this isolated derivative was imported; neighbor contacts/source mask ownership remain separate.','New inferred crown motion is unapproved.','Image view 0 reuses the asset own saved original-art camera.'])
     (args.output/'report.json').write_text(json.dumps(result,indent=2)+'\n')
 
 
