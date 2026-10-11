@@ -91,13 +91,30 @@ export function projectStairClearance(
       (first[0] * second[2] - first[2] * second[0]) / determinant,
     ];
     if (lines.some(([x, y, limit]) => x * point[0] + y * point[1] > limit + 1e-6)) return undefined;
-    result.push(preservePrecision ? point : [Math.round(point[0]), Math.round(point[1])]);
+    result.push(point);
   }
+  // Offset planes can form arbitrarily long miters at acute projected corners.
+  // Supported centers lie inside the projected floor, so their native boxes
+  // fit inside its bounds expanded by the footprint. Clip excess miters before
+  // quantization: they otherwise become distant walkable/clickable stair sectors.
+  const xs = projected.map(([x]) => x);
+  const ys = projected.map(([, y]) => y);
+  let bounded = result;
+  for (const limit of [
+    [1, 0, -Math.min(...xs) + half[0]],
+    [-1, 0, Math.max(...xs) + half[0]],
+    [0, 1, -Math.min(...ys) + half[1]],
+    [0, -1, Math.max(...ys) + half[1]],
+  ] satisfies HeightPlane[])
+    bounded = clipHeight(bounded, limit);
+  const output = preservePrecision
+    ? bounded
+    : bounded.map(([x, y]): Point => [Math.round(x), Math.round(y)]);
   if (
-    result.some((point) =>
+    output.some((point) =>
       point.some((value) => !Number.isFinite(value) || value < -32768 || value > 32767),
     )
   )
     throw new Error("Stair clearance projection exceeds the game coordinate range");
-  return result;
+  return output;
 }

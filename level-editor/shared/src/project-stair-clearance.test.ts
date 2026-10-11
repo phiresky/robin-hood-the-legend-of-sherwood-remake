@@ -68,6 +68,19 @@ test("subpixel clearance preserves usable centers on a nearly edge-on stair", ()
   const precise = projectStairClearance(boundary, plane, true);
   const rounded = projectStairClearance(boundary, plane);
   assert.ok(precise && rounded);
+  const projected = vertices.map(([x, y, z]): Point => [x, y - z]);
+  for (const compiled of [precise, rounded])
+    for (const [axis, padding] of [7, 4].entries()) {
+      const coordinates = projected.map((point) => point[axis]!);
+      assert.ok(
+        compiled.every(
+          (point) =>
+            point[axis]! >= Math.min(...coordinates) - padding &&
+            point[axis]! <= Math.max(...coordinates) + padding,
+        ),
+        "acute clearance corners must not create distant clickable stair sectors",
+      );
+    }
   const { area } = compilePhysicalStairArea({
     surfaces: [{ polygon: vertices, holes: [] }],
     doors: [],

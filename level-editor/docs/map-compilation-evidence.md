@@ -4,6 +4,45 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Bounded stair clearance restores nearby jump clicks (2026-10-11)
+
+The two 270-degree click failures below were caused by an acute offset corner in
+exported stair clearance. Its polygon reached from approximately X=174 to X=2816,
+despite the actual projected stair being near X=1422–1549. Native top-layer mouse
+selection consequently chose that stair over a nearby jump landing.
+
+`projectStairClearance` now clips offset corners to the projected floor's bounds
+expanded by the native actor footprint before integer quantization. Supported
+centers lie inside the projected floor; their footprint boxes fit within these
+bounds. Existing supported-center tests remain green, and an acute-corner
+regression now checks both precise and rounded output bounds. This is solely an
+export-time change, with no new engine code or runtime geometry work.
+
+Fresh joined/separated exports: `work/map-compile/hall-walkway-connection-cj9fdz`.
+The four joined rotations pass 160/160 native sprite-dispatch jumps and 160/160
+click-driven routes, with no skipped occlusion cases. Reports are in
+`work/map-compile/hall-walkway-bounded-jump-audit-20261011`.
+Fresh isolated hall ZIP round trips at 270 degrees, elevations 0/40 and two copies
+are in `work/map-compile/grounded-stair-placements-6YObR0`: all 32 stair routes
+pass in each of the five native modes, with zero forbidden routes. The ZIP's
+decoded descriptor is the native test input; its rasters are diagnostic blanks.
+All 235 focused compiler/export tests, app type checking and scoped lint/format
+checks pass. Remaining draft metadata and opposing jump-edge warnings are retained.
+
+The wider eight-angle, two-elevation, two-copy matrix is retained in
+`work/map-compile/grounded-stair-placements-rfYibE`. Prepared, sprite, discovered
+and hidden-selection modes each complete 254/256 routes; ordinary clicks complete
+250/256. Four ordinary-click failures at 217 degrees are covered targets requiring
+hidden selection. The other two failures, at 90 degrees/elevation 40 in the first
+copy, report disagreement between the actor's current and queried receiver IDs.
+This is a separate pre-existing placement issue: running the pre-fix clearance
+implementation at exactly the same placements produces byte-equivalent parsed
+descriptors and the same two sprite-route failures. That control export is
+`work/map-compile/grounded-stair-placements-75Tlff`. The earlier all-pass matrix
+used 500 units of padding, so it did not exercise this position. Do not treat this
+wider run as a complete parity pass or attribute the receiver failure to bounded
+clearance. No forbidden routes were skipped.
+
 ## Independent rendered reveal-state round trip (2026-10-11)
 
 The browser fixture now hashes every appearance state's color and depth before
