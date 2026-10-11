@@ -36,7 +36,7 @@ def image_bytes(doc, buffers, texture):
     return buffers[view.get('buffer', 0)][offset:offset + view['byteLength']]
 
 
-def main(key):
+def main(key, *, expected_objects=None, frame=None):
     out, source_dir = (BASE / p for p in CONFIG[key])
     proof = json.loads((out / 'export-report.json').read_text())
     source = source_dir / 'model.blend'
@@ -45,6 +45,8 @@ def main(key):
     glb = out / '3d-assets' / proof['asset_id'] / 'model.glb'
     assert sha(glb) == proof['model_sha256']
     bpy.ops.wm.open_mainfile(filepath=str(source))
+    if frame is not None:
+        bpy.context.scene.frame_set(frame)
     bpy.context.view_layer.update()
     objects = {o.name: o for o in bpy.context.scene.objects if o.type == 'MESH'}
     doc, buffers, _ = la.read_glb(glb)
@@ -55,6 +57,9 @@ def main(key):
     if key == 'gatehouse':
         assert set(objects) - {n['name'] for n in nodes} == {'scenery-york-castle-portcullis'}
         objects = {name: obj for name, obj in objects.items() if name in {n['name'] for n in nodes}}
+    if expected_objects is not None:
+        assert set(expected_objects) <= set(objects)
+        objects = {name: objects[name] for name in expected_objects}
     assert set(objects) == {n['name'] for n in nodes}
     pivot = Vector(proof['source_origin_scene'])
     rows = []
