@@ -2458,7 +2458,7 @@ test("ordinary local navigation regions join height planes without lift behavior
   assert.equal(compileAssetGameplay(document, assets, bounds).motion_data.layers.flat().length, 2);
 });
 
-test("a self-overlapping authored region retains geometry and an explicit export warning", () => {
+test("a rotated precise authored loop exports sectors and checked passages where floors overlap", () => {
   const { document, assets, hut } = assetCompilerFixture();
   const surface = (
     id: string,
@@ -2471,6 +2471,7 @@ test("a self-overlapping authored region retains geometry and an explicit export
     id,
     node: "building-999",
     navigationRegion: "loop",
+    preserveMovementPrecision: true,
     height: heights,
     polygon: [
       [x0, y0 + heights[0]],
@@ -2490,14 +2491,22 @@ test("a self-overlapping authored region retains geometry and an explicit export
     surface("overlap", 0, 0, 100, 300, [100, 100, 100, 100]),
   ];
   const original = structuredClone(hut.gameplay);
-  const compiled = compileAssetGameplay(document, assets, bounds);
-  assert.equal(compiled.motion_data.layers.flat().length, 1);
-  assert.ok(compiled.sight_obstacles.filter((obstacle) => obstacle.projection_area).length >= 3);
-  const warnings = (compiled.warnings ?? []).filter((w) =>
-    w.includes("receiving floors overlap at different heights"),
-  );
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0]!, /hut-a\/hut\/loop/);
+  document.objects = document.objects.filter((object) => object.group);
+  Object.assign(document.objects[0]!.transform, { dx: 0, dy: 0 });
+  for (const rotation of [0, 37, 90, 180]) {
+    document.groups[0]!.transform = { dx: 1100, dy: 900, dz: 40, rot_deg: rotation };
+    const compiled = compileAssetGameplay(document, assets, [0, 0, 3000, 2000]);
+    const split = rotation === 0 || rotation === 37;
+    assert.equal(compiled.motion_data.layers.flat().length, split ? 2 : 1);
+    assert.ok(compiled.sight_obstacles.filter((obstacle) => obstacle.projection_area).length >= 3);
+    assert.deepEqual(
+      (compiled.warnings ?? []).filter((w) =>
+        w.includes("receiving floors overlap at different heights"),
+      ),
+      [],
+    );
+    assert.equal(compiled.doors.length, split ? 1 : 0);
+  }
   assert.deepEqual(hut.gameplay, original);
 });
 

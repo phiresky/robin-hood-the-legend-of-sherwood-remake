@@ -2148,6 +2148,7 @@ impl EngineInner {
         resolve_hiking_waypoint_sector_identities(assets, &self.world.fast_grid.level.sectors);
         let level_plan = level_builder.preflight(self, assets, &loaded)?;
         self.build_mission_level_stages(assets, &loaded, &level_plan)?;
+        self.bind_compiled_passage_receivers(assets, &loaded)?;
         assets.navigation.passage_states = loaded
             .proto
             .buildings

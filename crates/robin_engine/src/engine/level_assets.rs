@@ -74,6 +74,10 @@ pub struct LevelNavigationAssets {
     /// Only constrained doors are stored; refreshed on obstacle-state changes.
     #[serde(default)]
     pub passage_states: Vec<(usize, Vec<crate::level_data::PassageStateRequirement>)>,
+    /// Receiving floors at compiled ordinary passage approaches, bound once at
+    /// load. Entries are indexed by door; each pair is [outside, inside].
+    #[serde(default)]
+    pub passage_receivers: Vec<Option<[Option<crate::sight_obstacle::SightObstacleIndex>; 2]>>,
     /// Static fast-find grid geometry built at level load. Runtime
     /// active/overlay bits live on `EngineInner::fast_grid`; snapshots
     /// reattach this Arc after decode.

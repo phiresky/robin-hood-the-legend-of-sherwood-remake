@@ -1,5 +1,23 @@
 # Runtime changes introduced or extended for map compilation
 
+**2026-10-11 — compiled ordinary passage receiver handoff:**
+rotated, partitioned outdoor floors expose a missing receiving-plane transfer
+when an ordinary door changes sectors at its rounded midpoint. Explicit compiled
+ordinary passages now bind both approach receivers at level load, using their
+existing endpoint metadata and exact sector identities. The immutable navigation
+assets store two receiver IDs per applicable door. On the door-crossing callback,
+runtime reads the cached destination ID and installs its plane/material. It does
+not search geometry or solve routes during movement. Doors without explicit
+compiled endpoints retain their existing behavior; missing elevated receivers
+produce a load error, while explicitly zero-height endpoints may bind implicit
+ground. Static elevation preparation clips conflicting ground-facing edges only
+along the explicit passage approach, preventing a second transfer to ground
+after the callback. All 64 directed native loop walks pass, together with 46
+door-pass tests, three receiver-binding tests and 90 level-data tests. This is
+targeted evidence; broad stock-mission and full-map validation remain separate.
+Additional entry nodes along long contours are prepared entirely at export time
+to satisfy the native source-search margin; runtime graph search is unchanged.
+
 **2026-10-11 — matched baseline comparison:** the optimized stock benchmark now
 has a same-machine comparison against `2b9dff95a`, the earlier revision after
 solver removal. Both binaries use byte-identical benchmark functions, Cargo

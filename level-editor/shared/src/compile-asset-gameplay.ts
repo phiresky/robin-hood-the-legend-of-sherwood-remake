@@ -27,6 +27,10 @@ import {
 import { allocateLightReceivingLayers } from "./allocate-light-receiving-layers.ts";
 import { compactNavigationLayers } from "./compact-navigation-layers.ts";
 import { orderNavigationLayers } from "./order-navigation-layers.ts";
+import {
+  partitionSelfOverlappingNavigation,
+  type PartitionPassage,
+} from "./partition-self-overlapping-navigation.ts";
 import { lightReceiverIntersection } from "./light-receiver-segment.ts";
 import { preserveMovementBoundary } from "./preserve-movement-boundary.ts";
 import { navigationPosturePassages } from "./navigation-posture-passages.ts";
@@ -1861,6 +1865,33 @@ function compileAssetGameplayAttempt(
       throw new UnavailableLiftPlacement(error.lift, error.message, false, segments);
     }
   }
+  const partitionPassages: PartitionPassage[] = [];
+  navigationRegions = navigationRegions.flatMap((region) => {
+    const planned = partitionSelfOverlappingNavigation(region, warnings);
+    if (planned.regions.length === 1) return planned.regions;
+    const usable = planned.passages.filter(
+      ({ from, to, connection }) =>
+        navigationPosturePassages(
+          connection,
+          { ...from, plane: from.pieces[0]!.plane },
+          { ...to, plane: to.pieces[0]!.plane },
+        ).length > 0,
+    );
+    const reached = new Set([planned.regions[0]!]);
+    for (let previous = -1; previous !== reached.size;) {
+      previous = reached.size;
+      for (const passage of usable)
+        if (reached.has(passage.from) || reached.has(passage.to)) {
+          reached.add(passage.from);
+          reached.add(passage.to);
+        }
+    }
+    // Preserve best-effort geometry when no actor-sized matching-height seams
+    // reconnect the split floors. Layer ordering reports the unresolved overlap.
+    if (reached.size !== planned.regions.length) return [region];
+    partitionPassages.push(...usable);
+    return planned.regions;
+  });
   for (const region of navigationRegions)
     if (region.pieces.every((p) => p.navigationRegion?.startsWith("wall-spline-"))) {
       const count = region.blockers.length;
@@ -1989,8 +2020,10 @@ function compileAssetGameplayAttempt(
   // Receiving planes can share a navigation region; their provisional layers are not runtime layers.
   layers.length = 0;
   while (layers.length <= liftLayer) layers.push([]);
+  const partitionSectors = new Map<(typeof navigationRegions)[number], number>();
   let receivingRegion = 0;
   for (const region of navigationRegions) {
+    partitionSectors.set(region, sector);
     receivingRegion += 1;
     options.onProgress?.(
       `Constructing receiving boundaries (${receivingRegion}/${navigationRegions.length})`,
@@ -2692,7 +2725,7 @@ function compileAssetGameplayAttempt(
       motionBySector.set(motionSector, area);
       motionSector += 1 + area.obstacles.length;
     }
-  for (const { connection, fromCrouched, toCrouched } of postureConnections) {
+  const passageJobs = postureConnections.map(({ connection, fromCrouched, toCrouched }) => {
     const root = assembledNavigation.identities.get(connection.from.region)!;
     const members = (crouched: boolean) =>
       areas.filter(
@@ -2703,6 +2736,23 @@ function compileAssetGameplayAttempt(
       );
     const fromAreas = members(fromCrouched),
       toAreas = members(toCrouched);
+    return {
+      connection,
+      fromAreas,
+      toAreas,
+      namePrefix: `navigation-posture/${connection.from.region}/${connection.to.region}`,
+      failure: `Navigation ${root}: matched posture boundary has no character-sized unobstructed passage.`,
+    };
+  });
+  for (const [index, { connection, from, to }] of partitionPassages.entries())
+    passageJobs.push({
+      connection,
+      fromAreas: areas.filter((area) => area.sector === partitionSectors.get(from)),
+      toAreas: areas.filter((area) => area.sector === partitionSectors.get(to)),
+      namePrefix: `navigation-partition/${connection.from.region}/${index}`,
+      failure: `Navigation ${connection.from.region}: split receiving floors have no character-sized unobstructed passage at a matching-height boundary.`,
+    });
+  for (const { connection, fromAreas, toAreas, namePrefix, failure } of passageJobs) {
     const representatives = (members: typeof areas) => [
       ...new Map(members.map((area) => [area.sector, area])).values(),
     ];
@@ -2775,7 +2825,7 @@ function compileAssetGameplayAttempt(
             if (!(error instanceof UnresolvedSurface)) throw error;
             continue;
           }
-          const name = `navigation-posture/${connection.from.region}/${connection.to.region}/${emitted++}`;
+          const name = `${namePrefix}/${emitted++}`;
           doors.push({
             name,
             allowChangingObstacleAnchors: true,
@@ -2800,10 +2850,7 @@ function compileAssetGameplayAttempt(
           });
         }
       }
-    if (!emitted)
-      warnings.push(
-        `Navigation ${root}: matched posture boundary has no character-sized unobstructed passage.`,
-      );
+    if (!emitted) warnings.push(failure);
   }
   const omittedDoors = new Set<string>();
   if (options.bestEffort || cropped) {

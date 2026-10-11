@@ -4,6 +4,71 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Partitioning joined floor loops (2026-10-11)
+
+The compiler now partitions conflicting receiving pieces within an ordinary joined
+region, reassembles each connected component, and proposes passages only on
+oppositely oriented shared edges whose endpoint heights match. Authored region
+identities remain available for receiver and asset bindings. Before accepting a
+partition, every resulting component must reconnect through character-sized clear
+crossings. Otherwise the original best-effort geometry and overlap warning remain.
+Accepted seams use the existing passage compiler, including obstacle-state checks;
+no production runtime solver or engine format change was introduced.
+
+Rotated partial seams require both contours to retain the same rounded endpoints.
+The planner inserts these vertices only within ordinary nearest-integer boundary
+displacement, and quantizes clipped receiving fragments before building graphs.
+Receiving geometry stays precise and source metadata is not mutated.
+
+`work/map-compile/overlapping-floor-routes-slDukx` contains eight editable loop ZIPs,
+with two placements each at four rotations and two elevations. Reopening and
+recompiling reproduces their descriptors exactly. The 0- and 37-degree assemblies
+have generated sector passages; the 90- and 180-degree projections do not require
+the same split. No geometry-specific warnings remain in this batch. The fixture
+explicitly enables `preserveMovementPrecision`; rounded-only asset surfaces can
+still lose matching-height seam evidence and remain unsupported with warnings.
+
+Native normal-click validation now passes all 64 directed walks in
+`work/map-compile/overlapping-floor-routes-Q3i0aT`, including per-tick receiving
+plane, height, sector, collision and passage checks. All eight ZIPs reopen and
+recompile identically. The initial movement assertion incorrectly
+required a passage-straddling footprint to remain wholly in one sector; the revised
+test checks support from both connected floors near the exported passage. With that
+correction, the 37-degree case reaches the generated passage but loses its receiving
+floor during the sector change: at projected `(937, 1200)`, layer 2, sector 2,
+the current receiver is absent while lookup finds receiver 4. The rounded door
+midpoint lies slightly past the exact plane seam; changing ordinary door sectors
+does not explicitly transfer the receiving plane. This needs a correct static-data
+handoff contract. Load-bound receiver
+IDs fix the callback itself, but the next reverse-movement step crossed an
+unchanged ground-facing elevation line and cleared the receiver again near
+`(937.759, 1197.7231)`. Boundary preparation now clips those ground-facing edges
+only along explicit ordinary passage approaches, as it already does for lift
+approaches. The static subpixel-seam regression passes and retains the edge away
+from the passage. Ninety level-data tests pass (eight require external fixtures).
+The combined change passes the native loop validation. The test permits
+subpixel receiver extrapolation only at the exact rounded door midpoint, including
+the moment before the sector callback, with a prepared receiver and matching height.
+Every other position retains normal receiver checks. Explicit
+zero-height approaches may use implicit ground; missing elevated receivers are
+rejected. Forty-six existing door-pass tests, three receiver-binding tests and the
+ordinary passage obstacle-state regression pass with the receiver binding
+implementation. Fresh loop artifact `work/map-compile/overlapping-floor-routes-fgOxzq`
+reopens and recompiles all eight ZIPs and exactly matches the preceding descriptors.
+An intermediate full native run advanced past the 0- and 37-degree passage cases but
+failed the reverse 90-degree walk: the actor remained at approximately
+`(996.807, 847.868)` instead of reaching `(1136.283, 985.226)`. This projection
+uses one sector and no generated passage. Exact endpoint routing isolated a graph
+entry failure: the nearest reachable detour corners lay outside the native
+400-unit source-search margin. Export now samples long contour edges at intervals
+no greater than 256 units, applying the existing footprint and obstacle-state
+checks to these ordinary graph nodes and their links. Runtime search is unchanged.
+The fresh Q3i0aT batch passes the full 64-walk audit; the preceding batch also
+passes the separate 32-walk partitioned-view audit. A small returning-corridor
+regression checks source-entry coverage in both directions. Saved Derby export
+`work/map-compile/saved-map-exports-XwDz7Y` exactly matches `saved-map-exports-5ROowT`,
+including the two small seam warnings. This does not establish full map parity.
+
 ## Self-overlapping navigation regions (2026-10-11)
 
 A connected loop with six receiving pieces returns above its starting floor.

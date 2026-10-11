@@ -183,14 +183,31 @@ export function compileNavigationGraph(layers: Layers): number[] {
           return sum + p[0] * q[1] - q[0] * p[1];
         }, 0);
         const sign = Math.sign(winding) * (ringIndex === 0 ? 1 : -1);
+        const candidates: { position: Point; from: Point; to: Point }[] = [];
         for (const [index, position] of ring.entries()) {
           const before = ring[(index + ring.length - 1) % ring.length]!;
           const after = ring[(index + 1) % ring.length]!;
-          // Routes bend around obstacle corners and inward floor corners.
-          // Outward floor corners and collinear vertices do not create detours.
-          if (cross(before, position, after) * sign >= 0) continue;
           const to: Point = [(position[0] - before[0]) * sign, (position[1] - before[1]) * sign];
           const from: Point = [(after[0] - position[0]) * sign, (after[1] - position[1]) * sign];
+          // Routes bend around obstacle corners and inward floor corners.
+          if (cross(before, position, after) * sign < 0) candidates.push({ position, from, to });
+          // Native source attachment searches within a 400-unit margin. A long
+          // straight corridor still needs nearby entry nodes when its detour
+          // corners lie outside that window. Prepare them here, using the same
+          // clearance and obstacle-state checks as corner nodes.
+          const spans = Math.ceil(Math.max(Math.abs(from[0]), Math.abs(from[1])) / 256);
+          for (let step = 1; step < spans; step++) {
+            candidates.push({
+              position: [
+                Math.round(position[0] + ((after[0] - position[0]) * step) / spans),
+                Math.round(position[1] + ((after[1] - position[1]) * step) / spans),
+              ],
+              from,
+              to: from,
+            });
+          }
+        }
+        for (const { position, from, to } of candidates) {
           for (const [place, offset] of offsets.entries()) {
             const docking: Point = [position[0] + offset[0], position[1] + offset[1]];
             for (const state of allowed(docking, docking)) {

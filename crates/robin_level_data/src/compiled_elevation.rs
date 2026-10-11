@@ -608,6 +608,26 @@ fn derive_with_spatial_index(
             .find(|index| *index != u16::MAX)
             .unwrap_or_else(|| receiver_at(topology, to))
     };
+    // Compiled ordinary passages install their load-bound plane when sector
+    // membership changes. Remove ground-facing edges only along the explicit
+    // approach, so a rounded midpoint cannot swap that plane back to ground.
+    for door in &geometry.doors {
+        if door.door_type != 0 || door.world_endpoints.is_none() {
+            continue;
+        }
+        for (sector, layer, point) in [
+            (door.sector_out, door.layer_out, door.point_out),
+            (door.sector_in, door.layer_in, door.point_in),
+        ] {
+            clip_passage_ground_edges(
+                &mut lines,
+                layer,
+                receiver_toward((sector, layer), door.point_mid, point),
+                [f64::from(door.point_mid.0), f64::from(door.point_mid.1)],
+                [f64::from(point.0), f64::from(point.1)],
+            )?;
+        }
+    }
     let mut passages = Vec::new();
     for lift in &geometry.lifts {
         if lift.physical_navigation.is_some() {
@@ -929,6 +949,42 @@ mod tests {
             BTreeSet::from([internal.left_obstacle_index, internal.right_obstacle_index]),
             BTreeSet::from([1, 2])
         );
+    }
+
+    #[test]
+    fn ordinary_passage_clips_only_its_ground_edges_at_a_subpixel_seam() {
+        let document: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../robin_engine/tests/fixtures/asset-joined-posture.level.json"
+        )))
+        .unwrap();
+        let mut geometry: CompiledAssetGeometry =
+            serde_json::from_value(document["asset_geometry"].clone()).unwrap();
+        let area = geometry.motion_data.layers[0].pop().unwrap();
+        geometry.motion_data.layers[1].push(area);
+        geometry.sight_obstacles[1].projection_area = Some((1, 1));
+        geometry.doors[0].layer_in = 1;
+        for obstacle in &mut geometry.sight_obstacles {
+            for point in &mut obstacle.points {
+                if point.x == 400. {
+                    point.x = 400.25;
+                }
+            }
+        }
+        let crosses = |line: &RawElevationLine, y: f32| {
+            let [a, b] = line.map_endpoints();
+            a[0] == 400.25
+                && b[0] == 400.25
+                && a[1].min(b[1]) <= y
+                && a[1].max(b[1]) >= y
+                && (line.left_obstacle_index == u16::MAX || line.right_obstacle_index == u16::MAX)
+        };
+        let lines = derive(&geometry).unwrap();
+        assert!(!lines.iter().any(|line| crosses(line, 310.)));
+        assert!(lines.iter().any(|line| crosses(line, 300.)));
+        geometry.doors.clear();
+        let unconnected = derive(&geometry).unwrap();
+        assert!(unconnected.iter().any(|line| crosses(line, 310.)));
     }
 
     #[test]

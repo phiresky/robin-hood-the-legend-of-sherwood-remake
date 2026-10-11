@@ -21,6 +21,8 @@ assert.ok(
 );
 const underDeck = process.argv.includes("--under-deck") || headroom !== undefined;
 const middleFloor = process.argv.includes("--middle-floor");
+const loopFloor = process.argv.includes("--loop");
+assert.ok(!loopFloor || (!middleFloor && !underDeck), "Loop audits use a separate assembly");
 assert.ok(!middleFloor || !underDeck, "Middle-floor and under-deck audits use separate assemblies");
 const output = await fs.mkdtemp(
   `work/map-compile/${underDeck ? "under-deck" : "overlapping-floor"}-routes-`,
@@ -36,6 +38,7 @@ const report = (complete) =>
       underDeck,
       headroom,
       middleFloor,
+      loopFloor,
       results,
     }),
   );
@@ -64,6 +67,29 @@ for (const rotation of [0, 37, 90, 180])
       surface("ramp", "upper", 200, 300, 60, 20),
       surface("deck", "upper", 100, 200, 60, 60),
     ];
+    if (loopFloor) {
+      const rectangle = (id, x0, y0, x1, y1, heights) => ({
+        id,
+        navigationRegion: "loop",
+        node: "building-999",
+        preserveMovementPrecision: true,
+        polygon: [
+          [x0, y0 + heights[0]],
+          [x1, y0 + heights[1]],
+          [x1, y1 + heights[2]],
+          [x0, y1 + heights[3]],
+        ],
+        height: heights,
+      });
+      hut.gameplay.surfaces = [
+        rectangle("base", 0, 0, 200, 100, [20, 20, 20, 20]),
+        rectangle("low-turn", 200, 0, 300, 100, [20, 20, 20, 20]),
+        rectangle("ramp", 200, 100, 300, 300, [20, 20, 100, 100]),
+        rectangle("high-turn", 200, 300, 300, 400, [100, 100, 100, 100]),
+        rectangle("return", 0, 300, 200, 400, [100, 100, 100, 100]),
+        rectangle("overlap", 0, 0, 100, 300, [100, 100, 100, 100]),
+      ];
+    }
     if (middleFloor) {
       hut.gameplay.surfaces[0] = surface("lower", "lower", 0, 80, 20, 20);
       hut.gameplay.surfaces.push(surface("middle", "middle", 0, 200, 40, 40));
@@ -97,7 +123,7 @@ for (const rotation of [0, 37, 90, 180])
         },
       ];
     document.objects = document.objects.filter((o) => o.group);
-    if (underDeck) Object.assign(document.objects[0].transform, { dx: 0, dy: 0 });
+    if (underDeck || loopFloor) Object.assign(document.objects[0].transform, { dx: 0, dy: 0 });
     document.groups[0].transform = { dx: 1100, dy: 900, dz: elevation, rot_deg: rotation };
     const group = structuredClone(document.groups[0]);
     group.id = "copy";
@@ -139,36 +165,46 @@ for (const rotation of [0, 37, 90, 180])
       const matrix = partMatrix(document.camera, document, object);
       const world = (p) =>
         sceneToGame(document.camera, applyAffineMatrix(matrix, gameToScene(document.camera, ...p)));
-      const lanes = underDeck
-        ? [130, 170].map((x) =>
+      const lanes = loopFloor
+        ? [30, 70].map((y) =>
             [
-              [x, 40, 20],
-              [x, 400, 20],
+              [150, y + 20, 20],
+              [50, y + 100, 100],
             ].map(world),
           )
-        : [130, 170].map((y) =>
-            [
-              [350, y + 20, 20],
-              [150, y + 60, 60],
-            ].map(world),
-          );
-      const goal = lanes[0][1];
-      const projected = [goal[0], goal[1] - goal[2]];
-      const layers = new Set(
-        descriptor.asset_geometry.sight_obstacles
-          .filter((o) => {
-            if (!o.projection_area) return false;
-            const points = o.points.map((p) => [p.x, p.y - p.z_top, p.z_top]);
-            return (
-              Math.abs(planeHeight(heightPlane(points), projected) - goal[2]) < 1e-4 &&
-              pointInGameplayPolygon(
-                projected,
-                points.map((p) => [p[0], p[1]]),
-              )
+        : underDeck
+          ? [130, 170].map((x) =>
+              [
+                [x, 40, 20],
+                [x, 400, 20],
+              ].map(world),
+            )
+          : [130, 170].map((y) =>
+              [
+                [350, y + 20, 20],
+                [150, y + 60, 60],
+              ].map(world),
             );
-          })
-          .map((o) => o.projection_area[1]),
-      );
+      const receivingLayers = (goal) => {
+        const projected = [goal[0], goal[1] - goal[2]];
+        return new Set(
+          descriptor.asset_geometry.sight_obstacles
+            .filter((o) => {
+              if (!o.projection_area) return false;
+              const points = o.points.map((p) => [p.x, p.y - p.z_top, p.z_top]);
+              return (
+                Math.abs(planeHeight(heightPlane(points), projected) - goal[2]) < 1e-4 &&
+                pointInGameplayPolygon(
+                  projected,
+                  points.map((p) => [p[0], p[1]]),
+                )
+              );
+            })
+            .map((o) => o.projection_area[1]),
+        );
+      };
+      const goal = lanes[0][1];
+      const layers = receivingLayers(goal);
       assert.equal(
         layers.size,
         1,
@@ -180,6 +216,18 @@ for (const rotation of [0, 37, 90, 180])
         elevation,
         copy: object.id,
         layer: [...layers][0],
+        ...(loopFloor
+          ? {
+              world_probes: lanes,
+              probe_layers: lanes.map((lane) =>
+                lane.map((point) => {
+                  const layers = receivingLayers(point);
+                  assert.equal(layers.size, 1);
+                  return [...layers][0];
+                }),
+              ),
+            }
+          : {}),
         blocked: headroom === 40,
         ...(headroom === 40
           ? {

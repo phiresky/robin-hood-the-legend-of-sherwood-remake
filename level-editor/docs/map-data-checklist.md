@@ -122,8 +122,15 @@ assemblies; Derby's real seam warnings remain unchanged. See
 Self-overlap inside one joined region now emits an explicit asset/region warning
 and projected location instead of silently treating both heights as one floor.
 Geometry is retained for best-effort export; holes are respected. Automatic
-partitioning and checked passage generation are still missing, so this case is
-not gameplay-ready without separately authored regions/connections. See
+partitioning and checked passage generation now handle precise matching-height
+seams in compiler/ZIP regressions. All eight editable loop ZIPs round-trip exactly
+and all 64 native walks pass, including rotated passage handoffs. Long contour
+edges receive additional static graph nodes so the native bounded source search
+can enter a route even when its detour corners are far away.
+Rounded-only seams that cannot be reconnected retain the warning; this category
+is not yet certified gameplay-ready. See
+[partitioning evidence](map-compilation-evidence.md#partitioning-joined-floor-loops-2026-10-11)
+and
 [self-overlap evidence](map-compilation-evidence.md#self-overlapping-navigation-regions-2026-10-11).
 
 **Authored occupancy triggers (2026-10-11):** eight new map exports place two

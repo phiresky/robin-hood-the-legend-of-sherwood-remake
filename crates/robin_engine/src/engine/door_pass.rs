@@ -956,6 +956,81 @@ impl EngineInner {
         }
     }
 
+    /// Bind receiving planes for compiled ordinary floor passages before simulation.
+    pub(super) fn bind_compiled_passage_receivers(
+        &self,
+        assets: &mut LevelAssets,
+        loaded: &crate::level_data::LoadedLevel,
+    ) -> Result<(), super::EngineError> {
+        let mut receivers = Vec::new();
+        for (index, raw) in loaded
+            .proto
+            .buildings
+            .iter()
+            .flat_map(|entry| match entry {
+                crate::level_data::RawBuildingEntry::Building { doors }
+                | crate::level_data::RawBuildingEntry::StandaloneDoors { doors } => doors,
+            })
+            .chain(loaded.proto.lifts.iter().flat_map(|lift| &lift.doors))
+            .enumerate()
+        {
+            let door = &self.script_domains.interactables.doors[index];
+            let endpoints = [
+                (
+                    door.sector_out,
+                    door.sector_out_index,
+                    door.layer_out,
+                    door.point_out,
+                ),
+                (
+                    door.sector_in,
+                    door.sector_in_index,
+                    door.layer_in,
+                    door.point_in,
+                ),
+            ];
+            if raw.door_type != 0
+                || raw.world_endpoints.is_none()
+                || endpoints.iter().any(|(_, sector, _, _)| {
+                    let sector = &self.world.fast_grid.level.sectors
+                        [usize::from(sector.expect("bound door sector"))];
+                    !sector.sector_type.is_motion()
+                        || sector.sector_type.is_lift()
+                        || sector.sector_type.is_building()
+                })
+            {
+                receivers.push(None);
+                continue;
+            }
+            let mut pair = Vec::with_capacity(2);
+            let world = raw
+                .world_endpoints
+                .as_ref()
+                .expect("compiled passage endpoints");
+            for ((number, arena, layer, point), world_point) in
+                endpoints.into_iter().zip([world.outside, world.inside])
+            {
+                let sector = crate::position_interface::SectorHandle::from_number(number)
+                    .with_arena_index(arena.expect("bound passage sector"));
+                let receiver = self.get_projection_area_index(assets, sector, layer, point);
+                // Explicit zero-height endpoints may use the map's implicit
+                // ground plane; elevated endpoints require a receiving surface.
+                if receiver.is_none() && world_point[2].abs() > 1e-4 {
+                    return Err(super::EngineError::MissionLevelStage {
+                        stage: "compiled passage receivers",
+                        reason: format!(
+                            "door {index} has no receiving floor at {point:?}, layer {layer}, sector {number}"
+                        ),
+                    });
+                }
+                pair.push(receiver);
+            }
+            receivers.push(Some([pair[0], pair[1]]));
+        }
+        assets.navigation.passage_receivers = receivers;
+        Ok(())
+    }
+
     /// Execute the PassDoor callback — change layer/sector and trigger
     /// building/lift callbacks.
     ///
@@ -1302,7 +1377,17 @@ impl EngineInner {
         // membership change. Close entrances can skip approach waypoints, and
         // climb animations teleport, so polygon crossings alone cannot ensure
         // this transfer for arbitrary placed geometry.
-        if (left_building && !direct) || compiled_climb_point.is_some() {
+        // Compiled ordinary floor passages can change layer after crossing the
+        // exact receiving edge. Apply their load-bound destination plane here;
+        // the rounded midpoint cannot reliably trigger that boundary again.
+        if let Some(Some(receivers)) = tcx
+            .assets
+            .navigation
+            .passage_receivers
+            .get(usize::from(door_index))
+        {
+            self.set_obstacle_and_material(tcx.assets, entity_id, receivers[usize::from(direct)]);
+        } else if (left_building && !direct) || compiled_climb_point.is_some() {
             let target_sector =
                 target_sector.expect("validated PassDoor target sector lost its public handle");
             let new_obstacle = self.find_projection_area_at(

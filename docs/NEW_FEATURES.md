@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Compiled floor passages.** Export partitions joined floors that overlap at
+  different heights and prepares ordinary passages at matching-height seams.
+  Explicit ordinary passages bind their receiving floors once at mission load;
+  crossing applies the cached floor identity without a runtime geometry solver.
+  See the map-data checklist for current validation limits.
+
 - **Historical startup difficulty recovery.** Fresh-mission parity replay can
   accept an independently evidenced construction difficulty separately from the
   recorded runtime difficulty, preserving existing recordings. The override is
