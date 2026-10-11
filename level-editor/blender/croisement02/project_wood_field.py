@@ -27,10 +27,10 @@ def protected_state(objects):
     return {o.name: _geometry(o, protect_appearance=True, appearance_cache=cache) for o in objects}
 
 
-def faces_hash(objects):
+def faces_hash(objects, *, local=False):
     faces = []
     for obj in objects:
-        points = [tuple(obj.matrix_world@v.co) for v in obj.data.vertices]
+        points = [tuple(v.co if local else obj.matrix_world@v.co) for v in obj.data.vertices]
         for face in obj.data.polygons:
             faces.append(tuple(sorted(points[i] for i in face.vertices)))
     return hashlib.sha256(repr(sorted(faces)).encode()).hexdigest()
@@ -75,7 +75,7 @@ def partition(primary, tree, properties):
     lookup = KDTree(len(points))
     for i,p in enumerate(points): lookup.insert(p,i)
     lookup.balance()
-    labels = [owner32(face.center) if tree == 32 else 94 for face in mesh.polygons]
+    labels = [owner32(primary.matrix_world @ face.center) if tree == 32 else 94 for face in mesh.polygons]
     results = []
     for owner in sorted(set(labels)):
         obj = primary.copy()
@@ -152,10 +152,12 @@ def main():
         protected_objects = [o for o in collection.all_objects if o.type == 'MESH' and o != primary]
         protected = protected_state(protected_objects)
         body_hash = faces_hash([primary])
+        body_local_hash = faces_hash([primary], local=True)
         # Partition the existing body first: no cap, overlap, vertex displacement,
         # or polygon shape change is introduced by the source-owner labels.
         parts = partition(primary, args.tree, properties)
         if faces_hash(parts) != body_hash: raise ValueError('Ownership partition changed world faces')
+        if faces_hash(parts, local=True) != body_local_hash: raise ValueError('Ownership partition changed local faces')
         bpy.data.objects.remove(primary, do_unlink=True)
         for obj in parts:
             owned = [f for f in fragments if owner32(np.mean(f,axis=0)) == int(obj['source_node'].split('-')[-1])]
@@ -170,23 +172,29 @@ def main():
             bm.to_mesh(obj.data); bm.free()
         local_origin = evidence.get('local_mesh_origin')
         if local_origin is not None:
-            if args.tree != 38: raise ValueError('Local wood rebase is only established for the whole Tree38 study')
+            if args.tree == 32 and (evidence.get('local_mesh_precision') != 'local-first-float32' or fragments): raise ValueError('Tree32 local precision requires its full reviewed source domain and no old fragments')
             before_rebase = faces_hash(parts)
             anchor = Vector(local_origin)
             for obj in parts:
-                world = [obj.matrix_world @ v.co for v in obj.data.vertices]
-                for vertex, point in zip(obj.data.vertices, world): vertex.co = point-anchor
+                if args.tree == 32:
+                    expected = Matrix.Translation(anchor)
+                    if any(abs(obj.matrix_world[i][j]-expected[i][j])>1e-7 for i in range(4) for j in range(4)): raise ValueError('Tree32 partition changed the checked local frame')
+                else:
+                    world = [obj.matrix_world @ v.co for v in obj.data.vertices]
+                    for vertex, point in zip(obj.data.vertices, world): vertex.co = point-anchor
                 obj.parent = None
                 obj.matrix_world = Matrix.Translation(anchor)
                 obj.data.update()
             bpy.context.view_layer.update()
             if faces_hash(parts) != before_rebase: raise ValueError('Local rebase changed world faces')
         before_projection = faces_hash(parts)
+        before_projection_local = faces_hash(parts, local=True)
         scoped = {o.name:[f.index for f in o.data.polygons if o.data.materials[f.material_index].name.startswith('Unprojected field wood')] for o in parts}
         if any(not faces for faces in scoped.values()): raise ValueError('Empty new-surface projection scope')
         cfg = json.loads((old.parent/'workspace.json').read_text())
         projection = bake(cfg['map_name'], cfg['source_path'], args.output/'projection.json', receiver_object_names=[o.name for o in parts], receiver_face_indices={name:set(faces) for name,faces in scoped.items()}, material_suffix='local-field-only', projection_label='exterior', elevation_deg=35., preserve_authored=False, source_mask_manifest=str(source_manifest))
         if faces_hash(parts) != before_projection: raise ValueError('Projection changed world faces')
+        if faces_hash(parts, local=True) != before_projection_local: raise ValueError('Projection changed local faces')
         if protected != protected_state(protected_objects): raise ValueError('Projection changed protected assets')
         support=[]
         for obj in parts:
@@ -202,9 +210,13 @@ def main():
         bpy.ops.wm.save_as_mainfile(filepath=str(args.output/'model.blend'), compress=args.compress)
         if sha(model) != evidence['model_sha256'] or sha(old) != record['input_model_sha256']: raise ValueError('Input mutation')
         report=dict(status='PRIVATE HOLD: projected prototype, no renders or approval', model_sha256=sha(args.output/'model.blend'), previous_prototype=str(args.prototype), previous_model_sha256=evidence['model_sha256'], packet_sha256=sha(args.packet), body_world_faces_sha256=body_hash, partition_preserves_world_faces=True, internal_caps_added=0, domain_review=str(args.domain_review) if args.domain_review else None, domain_review_sha256=sha(args.domain_review) if args.domain_review else None, disconnected_source_checks=pixel_checks, retained_source_fragments=len(fragments), source_scoped_projection=scoped, support=support, actual_ground_receiver=ground_evidence, protected=protected, pending=['Opaque source coverage and nine-pixel exact coverage','Actual terrain receiver footprint and38 terrain-occluded source coverage','Solid/actual independent visual review'])
+        report['body_local_faces_sha256'] = body_local_hash
+        report['partition_preserves_local_faces'] = True
+        report['projection_preserves_local_faces'] = True
         if local_origin is not None:
             report['local_mesh_origin'] = local_origin
             report['world_faces_unchanged_by_rebase'] = True
+            if args.tree == 32: report['local_mesh_precision'] = 'local-first-float32'
         (args.output/'evidence.json').write_text(json.dumps(report,indent=2)+'\n')
     except Exception as error:
         (args.output/'failure.json').write_text(json.dumps(dict(status='PRIVATE HOLD; failed before readiness',error=str(error)),indent=2)+'\n')

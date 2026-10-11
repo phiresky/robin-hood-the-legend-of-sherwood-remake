@@ -61,10 +61,11 @@ def main():
         protected=protected_state(others)
         # Keep map placement in the object transform. Blender's polygon-area
         # arithmetic loses small valid triangles when all coordinates include
-        # the large map offset; this exact float32 rebase changes no world point.
+        # the large map offset. Quantize in the local frame and bound that error.
         anchor=np.array([1090.,-1298.,0.],dtype=np.float32)
-        world=vertices.astype(np.float32);local=world-anchor
-        if not np.array_equal(local+anchor,world):raise ValueError('Local rebase changes world coordinates')
+        local=(vertices-anchor.astype(float)).astype(np.float32);world=local.astype(float)+anchor
+        quantization_error=float(np.max(np.linalg.norm(world-vertices,axis=1)))
+        if quantization_error>.0001:raise ValueError('Local coordinate quantization exceeds .0001 world units')
         bm=bmesh.new();points=[bm.verts.new(point)for point in local]
         for indices in faces:
             face=bm.faces.new([points[int(i)]for i in indices]);face.smooth=True
@@ -87,14 +88,14 @@ def main():
         for old_wood in wood:
             if old_wood!=primary:bpy.data.objects.remove(old_wood,do_unlink=True)
         bpy.context.view_layer.update()
-        if not np.array_equal(np.asarray([primary.matrix_world@v.co for v in data.vertices]),world):raise ValueError('Object placement changes CPU world coordinates')
+        if not np.array_equal(np.asarray([v.co for v in data.vertices]),local):raise ValueError('Saved local mesh differs from checked CPU coordinates')
         if protected!=protected_state(others):raise ValueError('Protected crown or another asset changed')
         args.output.mkdir(parents=True)
         packet={'status':'PRIVATE full visible wood construction; not approved','records':[{'tree':32,'input_model':str(MODEL),'input_model_sha256':MODEL_SHA,'source_node':'building-080','source_mask':str(source),'source_mask_sha256':sha(source),'source_box':report['source_box'],'unresolved_source_coordinates':domain_proposal['changed_pixels'],'construction_scope':'Replace complete private wood080–082; preserve source ownership, other assets and crown','cpu_mesh':str(args.mesh.resolve()),'cpu_mesh_sha256':mesh_sha,'cpu_report':str(report_path.resolve()),'cpu_report_sha256':sha(report_path)}]}
         packet_path=args.output/'recipe.json';packet_path.write_text(json.dumps(packet,indent=2)+'\n')
         destination=args.output/'model.blend';bpy.ops.wm.save_as_mainfile(filepath=str(destination),compress=True)
         if sha(MODEL)!=MODEL_SHA or sha(args.mesh)!=mesh_sha:raise ValueError('Input changed during integration')
-        evidence={'status':'PRIVATE HOLD: full wood hypothesis, source projection and context pending','model_sha256':sha(destination),'input_model':str(MODEL),'input_model_sha256':MODEL_SHA,'packet':str(packet_path.resolve()),'packet_sha256':sha(packet_path),'mesh':topology,'connected_components':components,'protected':protected,'source_mask_unchanged':True,'local_mesh_origin':anchor.tolist(),'world_float32_coordinates_unchanged_by_rebase':True,'retained_upper_geometry_changed':True,'inference':'Complete visible wood depth rebuilt; observed source pixels remain the constraint. No previous geometry approval is carried.','gallery_ready':False}
+        evidence={'status':'PRIVATE HOLD: full wood hypothesis, source projection and context pending','model_sha256':sha(destination),'input_model':str(MODEL),'input_model_sha256':MODEL_SHA,'packet':str(packet_path.resolve()),'packet_sha256':sha(packet_path),'mesh':topology,'connected_components':components,'protected':protected,'source_mask_unchanged':True,'local_mesh_origin':anchor.tolist(),'local_mesh_precision':'local-first-float32','maximum_local_quantization_error':quantization_error,'retained_upper_geometry_changed':True,'inference':'Complete visible wood depth rebuilt; observed source pixels remain the constraint. No previous geometry approval is carried.','gallery_ready':False}
         (args.output/'evidence.json').write_text(json.dumps(evidence,indent=2)+'\n')
         print(json.dumps({k:v for k,v in evidence.items()if k!='protected'},indent=2))
     finally:release()
