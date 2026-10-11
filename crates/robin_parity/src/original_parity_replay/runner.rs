@@ -533,6 +533,7 @@ pub(super) fn run_replay(
     let mut divergent_frames = 0_u64;
     let mut first_by_field = BTreeMap::<String, (u64, String)>::new();
     let mut gameplay_rng_index = prefix_end;
+    let mut pending_post_initialize = false;
     #[cfg(feature = "client")]
     let mut active_http_step = None;
     let debug_stage_timing = std::env::var_os("PARITY_DEBUG_STAGE_TIMING").is_some();
@@ -662,6 +663,13 @@ pub(super) fn run_replay(
             "RNG cursor already diverged before original frame {}",
             frame.frame_before
         );
+        // PostInitialize belongs to the interval after the preceding snapshot.
+        // Its RNG draws are recorded with this frame, so admit those draws
+        // before crossing the boundary. Crossing at the end of the previous
+        // iteration exhausts streaming RNG on fresh missions with random briefings.
+        if pending_post_initialize {
+            cross_post_initialize_frame(&mut engine, &assets)?;
+        }
         if scan_all
             && (frame.frame_before.is_multiple_of(10) || (150..=180).contains(&frame.frame_before))
         {
@@ -1372,7 +1380,7 @@ pub(super) fn run_replay(
                 // simulation tick, then runs one-shot post-initialization
                 // hook after refresh/sound. Apply that boundary only after
                 // comparing this frame, before advancing to the next one.
-                cross_post_initialize_frame(&mut engine, &assets)?;
+                pending_post_initialize = true;
                 continue;
             }
             let mut fields = BTreeMap::<&str, usize>::new();
@@ -1465,7 +1473,7 @@ pub(super) fn run_replay(
         // Original captures the frame above before its post-refresh
         // PostInitialize hook. The hook's effects belong to the starting
         // state of the next recorded frame, not the frame just compared.
-        cross_post_initialize_frame(&mut engine, &assets)?;
+        pending_post_initialize = true;
         #[cfg(feature = "client")]
         if let Some(step) = &mut active_http_step {
             step.remaining -= 1;
