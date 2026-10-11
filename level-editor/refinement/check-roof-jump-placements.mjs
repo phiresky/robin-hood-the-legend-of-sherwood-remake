@@ -1,7 +1,15 @@
 import fs from "node:fs/promises";
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { parseLevel3D, parseProjectionAssetDescriptor } from "../shared/src/validation.ts";
 import { roofJumpPlacement } from "../shared/test-fixtures/roof-jump-placements.ts";
-import { compileMap } from "../app/src/map-compile.ts";
+import { compileMap, packageCompiledMap } from "../app/src/map-compile.ts";
+import { parseStoredMap, serializeStoredMap } from "../shared/src/index.ts";
+
+const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", import.meta.url))(
+  "fflate",
+);
+const zipRoundtrip = process.argv.includes("--zip-roundtrip");
 
 const input = JSON.parse(
   await fs.readFile("shared/test-fixtures/complete-roof-jumps.json", "utf8"),
@@ -24,6 +32,7 @@ const report = (complete) =>
     JSON.stringify({
       scope: "prepared-roof-jump-placements-awaiting-native-traversal",
       crouched,
+      zip_roundtrip: zipRoundtrip,
       complete,
       results,
     }),
@@ -32,11 +41,38 @@ await report(false);
 for (const rotation of [0, 37, 90, 180]) {
   for (const height of [0, 40]) {
     const document = roofJumpPlacement(source, rotation, height);
-    const compiled = compileMap(document, [0, 0, 2000, 2000], new Map([[asset.id, asset]]), {
+    const assets = new Map([[asset.id, asset]]);
+    const bounds = [0, 0, 2000, 2000];
+    const compiled = compileMap(document, bounds, assets, {
       bestEffort: true,
     });
     const file = `roofs-${rotation}-${height}.level.json`;
-    await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
+    let descriptor = compiled.descriptor;
+    if (zipRoundtrip) {
+      const bytes = await packageCompiledMap(compiled, {
+        color: new Uint8Array(2000 * 2000 * 4),
+        depth: new Uint16Array(2000 * 2000),
+      });
+      const files = unzipSync(bytes);
+      const read = (path) => {
+        assert.ok(files[path]);
+        return JSON.parse(strFromU8(files[path]));
+      };
+      descriptor = read(`Data/Levels/${compiled.name}.level.json`);
+      assert.deepEqual(descriptor, JSON.parse(JSON.stringify(compiled.descriptor)));
+      const report = read("compile-report.json");
+      assert.deepEqual(report.warnings, compiled.warnings);
+      const reopened = parseStoredMap(read(report.editor_document), assets);
+      assert.deepEqual(serializeStoredMap(reopened, assets), serializeStoredMap(document, assets));
+      assert.deepEqual(
+        JSON.parse(
+          JSON.stringify(compileMap(reopened, bounds, assets, { bestEffort: true }).descriptor),
+        ),
+        descriptor,
+      );
+      await fs.writeFile(`${output}/${file}.zip`, bytes);
+    }
+    await fs.writeFile(`${output}/${file}`, JSON.stringify(descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
     results.push({
       file,

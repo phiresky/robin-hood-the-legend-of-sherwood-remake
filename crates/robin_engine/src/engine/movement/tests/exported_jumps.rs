@@ -1,5 +1,9 @@
 use super::*;
 
+mod exported_jump_groups {
+    include!("exported_jump_groups.rs");
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum JumpDispatch {
     Isolated,

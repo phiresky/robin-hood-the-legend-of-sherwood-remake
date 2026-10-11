@@ -4,6 +4,37 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Group clicks across exported roofs (2026-10-11)
+
+`refinement/check-roof-jump-placements.mjs --zip-roundtrip` now packages the
+compiled maps, extracts the native descriptors from the archives, and verifies
+editor reopening/recompilation, warning preservation and pinned scene equality.
+The standard batch is `work/map-compile/prepared-roof-placements-GbARm8`;
+adding `--crouched` produces
+`work/map-compile/prepared-crouched-roof-placements-cTVge0`. Each contains eight
+archives: two copied roof assemblies at four rotations and two elevations.
+Both 90-degree cases retain their expected omission of connections too narrow
+for the actor footprint. Diagnostic blank rasters do not verify appearance.
+
+The ignored native test `exported_roof_jumps_support_group_clicks` loads the
+ZIP-extracted descriptors and issues one normal group move for three PCs across
+every retained directed jump. Source positions use 5/50/95 percent of the usable
+span, with explicit non-overlap checks before launch and after arrival. Complete
+RobinTown animation data drives the walk/jump/landing sequences. Each PC must
+execute `JumpingLong`, finish its order queue, reach the destination sector and
+layer near the group goal, use the correct height/material receiver, and adopt
+the receiving floor's upright or crouched posture.
+
+Both batches pass: 24 group routes / 72 actor jumps each, 48 / 144 combined.
+Their `actor-jump-group-report.json` files retain each final placement. This
+verifies dispatch and separated endpoints, not collision between actors during
+flight, helper/carrier group choreography, combat or rendered traversal. No
+production engine changes were needed. The initial closer formation was replaced
+because its footprints overlapped before dispatch; those results are not counted.
+
+The two roof-export regressions, script lint/format checks, Rust formatting and
+game binary build also pass.
+
 ## Exported sight barriers and live guard detection (2026-10-11)
 
 `node refinement/check-automatic-triggers.mjs --sight-barriers` authors tall
