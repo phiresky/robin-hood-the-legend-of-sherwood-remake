@@ -2458,6 +2458,49 @@ test("ordinary local navigation regions join height planes without lift behavior
   assert.equal(compileAssetGameplay(document, assets, bounds).motion_data.layers.flat().length, 2);
 });
 
+test("a self-overlapping authored region retains geometry and an explicit export warning", () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  const surface = (
+    id: string,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    heights: [number, number, number, number],
+  ): AssetWalkableSurface => ({
+    id,
+    node: "building-999",
+    navigationRegion: "loop",
+    height: heights,
+    polygon: [
+      [x0, y0 + heights[0]],
+      [x1, y0 + heights[1]],
+      [x1, y1 + heights[2]],
+      [x0, y1 + heights[3]],
+    ],
+  });
+  hut.gameplay!.collision = "none";
+  hut.gameplay!.doors = [];
+  hut.gameplay!.surfaces = [
+    surface("base", 0, 0, 200, 100, [20, 20, 20, 20]),
+    surface("low-turn", 200, 0, 300, 100, [20, 20, 20, 20]),
+    surface("ramp", 200, 100, 300, 300, [20, 20, 100, 100]),
+    surface("high-turn", 200, 300, 300, 400, [100, 100, 100, 100]),
+    surface("return", 0, 300, 200, 400, [100, 100, 100, 100]),
+    surface("overlap", 0, 0, 100, 300, [100, 100, 100, 100]),
+  ];
+  const original = structuredClone(hut.gameplay);
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.equal(compiled.motion_data.layers.flat().length, 1);
+  assert.ok(compiled.sight_obstacles.filter((obstacle) => obstacle.projection_area).length >= 3);
+  const warnings = (compiled.warnings ?? []).filter((w) =>
+    w.includes("receiving floors overlap at different heights"),
+  );
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /hut-a\/hut\/loop/);
+  assert.deepEqual(hut.gameplay, original);
+});
+
 test("joined floors export distinct layers when a raised end overlaps a separate ground floor", () => {
   const { document, assets, hut } = assetCompilerFixture();
   document.groups[0]!.transform.dz = 40;

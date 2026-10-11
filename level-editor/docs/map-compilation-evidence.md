@@ -4,6 +4,37 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Self-overlapping navigation regions (2026-10-11)
+
+A connected loop with six receiving pieces returns above its starting floor.
+The compiler previously united it into one sector/layer without warning, despite
+two heights occupying the same projected area. Unlike overlap between separate
+regions, layer reordering alone cannot repair that representation.
+
+Export now reports the affected local navigation region and a projected overlap
+location while retaining its geometry for best-effort output. The check excludes
+blocked holes, so a lower receiver inside an upper floor's opening is not falsely
+reported as self-overlap. Coverage is cached while checking each region.
+
+An assembled-loop regression retains all six pieces and checks the warning;
+a complete asset compiler regression retains the emitted geometry, reports the
+placed asset/region identity and leaves source metadata unchanged. Existing
+non-overlapping and hole cases remain accepted. The saved Derby export
+`work/map-compile/saved-map-exports-5ROowT` preserves the preceding geometry,
+but adds warnings for the keep main hall's `walk-region-27` and the upper
+gatehouse's `walk-region-36`. Inspecting the captured receiving polygons finds
+overlap areas of 0.75 and approximately 0.9174 square projected units respectively.
+The hall's flat/ramp height difference ranges from -0.1391 to +0.8898; the
+gatehouse's two flat receivers differ by 1.03199. These are small seam discrepancies,
+not evidence of an 80-unit stacked loop like the regression. Their effect on native
+movement still needs checking; a warning alone does not establish an unwalkable
+location. This is detection of ambiguous receiving geometry, not a traversal fix.
+
+Automatic partitioning into non-overlapping native regions and collision-checked
+passage generation at their matching-height seams remain required. Authoring
+separate asset-local regions and passage connections is the available explicit
+representation. No production runtime changes were made.
+
 ## Shared layers around a middle floor (2026-10-11)
 
 A valid three-level assembly exposed a false ordering cycle: a lower floor and

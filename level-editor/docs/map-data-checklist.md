@@ -119,6 +119,13 @@ round trips and 64 native walks pass across copied/rotated/elevated three-level
 assemblies; Derby's real seam warnings remain unchanged. See
 [middle-floor evidence](map-compilation-evidence.md#shared-layers-around-a-middle-floor-2026-10-11).
 
+Self-overlap inside one joined region now emits an explicit asset/region warning
+and projected location instead of silently treating both heights as one floor.
+Geometry is retained for best-effort export; holes are respected. Automatic
+partitioning and checked passage generation are still missing, so this case is
+not gameplay-ready without separately authored regions/connections. See
+[self-overlap evidence](map-compilation-evidence.md#self-overlapping-navigation-regions-2026-10-11).
+
 **Authored occupancy triggers (2026-10-11):** eight new map exports place two
 independent reusable trigger assets at 0/37/90/180 degrees and elevations 0/40.
 All ZIP extraction/editor reopen/recompile checks pass. Normal native player

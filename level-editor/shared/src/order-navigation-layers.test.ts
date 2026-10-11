@@ -108,6 +108,72 @@ test("disjoint regions sharing a layer can lie on opposite sides of a middle flo
   }
 });
 
+test("a joined loop overlapping itself at different heights warns without dropping floors", () => {
+  const piece = (
+    layer: number,
+    plane: HeightPlane,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+  ): NavigationPiece => ({
+    navigationRegion: "loop",
+    layer,
+    plane,
+    blockers: [],
+    polygon: [
+      [x0, y0],
+      [x1, y0],
+      [x1, y1],
+      [x0, y1],
+    ],
+  });
+  const regions = assembleNavigationRegions(
+    [
+      piece(0, [0, 0, 0], 0, 0, 200, 100),
+      piece(0, [0, 0, 0], 200, 0, 300, 100),
+      piece(1, [0, 0.4, -40], 200, 100, 300, 300),
+      piece(2, [0, 0, 80], 200, 300, 300, 400),
+      piece(2, [0, 0, 80], 0, 300, 200, 400),
+      piece(2, [0, 0, 80], 0, 0, 100, 300),
+    ],
+    [],
+  );
+  const warnings: string[] = [];
+  orderNavigationLayers(regions, warnings);
+  assert.equal(regions.length, 1);
+  assert.equal(regions[0]!.pieces.length, 6);
+  assert.equal(warnings.length, 1);
+  assert.match(
+    warnings[0]!,
+    /Navigation region loop: receiving floors overlap at different heights/,
+  );
+  assert.match(warnings[0]!, /connect them with passages/);
+});
+
+test("a lower receiver inside a higher floor's hole is not a self-overlap", () => {
+  const upper = region(0, [0, 0, 80]);
+  upper.pieces[0]!.blockers = [
+    [
+      [120, 120],
+      [180, 120],
+      [180, 180],
+      [120, 180],
+    ],
+  ];
+  const lower = region(0, [0, 0, 0]).pieces[0]!;
+  lower.polygon = [
+    [125, 125],
+    [175, 125],
+    [175, 175],
+    [125, 175],
+  ];
+  upper.pieces.push(lower);
+  const warnings: string[] = [];
+  orderNavigationLayers([upper], warnings);
+  assert.deepEqual(warnings, []);
+});
+
 test("a crossing pair cannot put an unambiguous upper floor below it", () => {
   const upper = region(0, [0, 0, 200]);
   const ramp = region(1, [1, 0, -150]);

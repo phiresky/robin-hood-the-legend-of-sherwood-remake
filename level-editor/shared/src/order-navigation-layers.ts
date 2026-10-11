@@ -2,6 +2,7 @@ import type { NavigationRegion } from "./assemble-navigation-regions.ts";
 import { planeHeight } from "./gameplay-plane.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { separateOverlappingNavigationLayers } from "./separate-overlapping-navigation-layers.ts";
+import { warnSelfOverlappingNavigation } from "./warn-self-overlapping-navigation.ts";
 import {
   separateContradictoryLayerGroups,
   type NavigationLayerContact,
@@ -13,6 +14,7 @@ export function orderNavigationLayers(regions: NavigationRegion[], warnings: str
   while (!tryOrderNavigationLayers(regions, warnings)) {
     // Each retry splits a shared layer; individual navigation regions stay intact.
   }
+  warnSelfOverlappingNavigation(regions, warnings);
 }
 
 function tryOrderNavigationLayers(regions: NavigationRegion[], warnings: string[]): boolean {
