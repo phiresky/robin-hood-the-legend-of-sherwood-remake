@@ -77,7 +77,7 @@ export function assembleNavigationRegions(
       if (key.startsWith("lift:"))
         throw new Error(`Navigation ${key}: joined lift surfaces require one crouch setting`);
       warnings.push(
-        `Navigation ${key}: upright and forced-crouch areas remain separate; use authored passages to connect their posture boundary.`,
+        `Navigation ${key}: upright and forced-crouch areas remain separate; their posture boundary requires checked socket passages or authored passages.`,
       );
     }
   return [...groups.values()]

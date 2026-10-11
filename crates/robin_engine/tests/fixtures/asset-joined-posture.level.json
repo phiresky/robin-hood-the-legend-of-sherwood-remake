@@ -1,0 +1,410 @@
+{
+  "title": "Joined posture fixture",
+  "map_filename": "editor-joined-posture",
+  "spawn_points": [],
+  "walkable_polygon": [
+    [
+      0,
+      0
+    ],
+    [
+      1999,
+      0
+    ],
+    [
+      1999,
+      1999
+    ],
+    [
+      0,
+      1999
+    ]
+  ],
+  "volumes": [],
+  "asset_geometry": {
+    "warnings": [
+      "Navigation region:hut-a/hut/roof: upright and forced-crouch areas remain separate; their posture boundary requires checked socket passages or authored passages."
+    ],
+    "motion_data": {
+      "layers": [
+        [
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  300,
+                  260
+                ],
+                [
+                  400,
+                  260
+                ],
+                [
+                  400,
+                  360
+                ],
+                [
+                  300,
+                  360
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 0,
+            "obstacles": []
+          },
+          {
+            "is_lift": false,
+            "state_id": 0,
+            "polygon": {
+              "points": [
+                [
+                  400,
+                  260
+                ],
+                [
+                  500,
+                  260
+                ],
+                [
+                  500,
+                  360
+                ],
+                [
+                  400,
+                  360
+                ]
+              ]
+            },
+            "skeleton_segments": [],
+            "flags": 1,
+            "obstacles": []
+          }
+        ],
+        []
+      ],
+      "graph_bytes": [
+        1,
+        0,
+        0,
+        0,
+        192,
+        64,
+        0,
+        0,
+        64,
+        64,
+        2,
+        0,
+        2,
+        0,
+        1,
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        16,
+        0,
+        1,
+        1,
+        1,
+        0,
+        1,
+        1,
+        0,
+        1,
+        1,
+        2,
+        1,
+        0,
+        1,
+        1,
+        0,
+        2,
+        1,
+        4,
+        1,
+        0,
+        1,
+        1,
+        0,
+        4,
+        1,
+        8,
+        1,
+        0,
+        1,
+        1,
+        0,
+        8,
+        2,
+        1,
+        1,
+        0,
+        2,
+        1,
+        0,
+        1,
+        2,
+        2,
+        1,
+        0,
+        2,
+        1,
+        0,
+        2,
+        2,
+        4,
+        1,
+        0,
+        2,
+        1,
+        0,
+        4,
+        2,
+        8,
+        1,
+        0,
+        2,
+        1,
+        0,
+        8,
+        4,
+        1,
+        1,
+        0,
+        4,
+        1,
+        0,
+        1,
+        4,
+        2,
+        1,
+        0,
+        4,
+        1,
+        0,
+        2,
+        4,
+        4,
+        1,
+        0,
+        4,
+        1,
+        0,
+        4,
+        4,
+        8,
+        1,
+        0,
+        4,
+        1,
+        0,
+        8,
+        8,
+        1,
+        1,
+        0,
+        8,
+        1,
+        0,
+        1,
+        8,
+        2,
+        1,
+        0,
+        8,
+        1,
+        0,
+        2,
+        8,
+        4,
+        1,
+        0,
+        8,
+        1,
+        0,
+        4,
+        8,
+        8,
+        1,
+        0,
+        8,
+        1,
+        0,
+        8
+      ]
+    },
+    "sight_obstacles": [
+      {
+        "projection_plane": [
+          [
+            300,
+            300,
+            40
+          ],
+          [
+            400,
+            300,
+            40
+          ],
+          [
+            300,
+            400,
+            40
+          ]
+        ],
+        "points": [
+          {
+            "x": 300,
+            "y": 300,
+            "z_bottom": 40,
+            "z_top": 40
+          },
+          {
+            "x": 400,
+            "y": 300,
+            "z_bottom": 40,
+            "z_top": 40
+          },
+          {
+            "x": 400,
+            "y": 400,
+            "z_bottom": 40,
+            "z_top": 40
+          },
+          {
+            "x": 300,
+            "y": 400,
+            "z_bottom": 40,
+            "z_top": 40
+          }
+        ],
+        "projection_area": [
+          0,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      },
+      {
+        "projection_plane": [
+          [
+            400,
+            300,
+            40
+          ],
+          [
+            500,
+            300,
+            40
+          ],
+          [
+            400,
+            400,
+            40
+          ]
+        ],
+        "points": [
+          {
+            "x": 400,
+            "y": 300,
+            "z_bottom": 40,
+            "z_top": 40
+          },
+          {
+            "x": 500,
+            "y": 300,
+            "z_bottom": 40,
+            "z_top": 40
+          },
+          {
+            "x": 500,
+            "y": 400,
+            "z_bottom": 40,
+            "z_top": 40
+          },
+          {
+            "x": 400,
+            "y": 400,
+            "z_bottom": 40,
+            "z_top": 40
+          }
+        ],
+        "projection_area": [
+          1,
+          0
+        ],
+        "opaque": false,
+        "solid": false,
+        "mouse": true,
+        "show_shadow_polygon": false,
+        "default_material": 0,
+        "material_indices": []
+      }
+    ],
+    "doors": [
+      {
+        "world_endpoints": {
+          "inside": [
+            407,
+            350,
+            40
+          ],
+          "middle": [
+            400,
+            350,
+            40
+          ],
+          "outside": [
+            393,
+            350,
+            40
+          ]
+        },
+        "door_type": 0,
+        "active": true,
+        "locked_pc": false,
+        "unlockable": false,
+        "locked_npc_villain": false,
+        "locked_npc_civilian": false,
+        "locked_pc_after_patch": false,
+        "unlockable_after_patch": false,
+        "locked_npc_villain_after_patch": false,
+        "locked_npc_civilian_after_patch": false,
+        "door_sector": {
+          "points": []
+        },
+        "point_out": [
+          393,
+          310
+        ],
+        "sector_out": 0,
+        "layer_out": 0,
+        "point_mid": [
+          400,
+          310
+        ],
+        "point_in": [
+          407,
+          310
+        ],
+        "sector_in": 1,
+        "layer_in": 0
+      }
+    ]
+  }
+}

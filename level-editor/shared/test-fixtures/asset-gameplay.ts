@@ -1535,6 +1535,25 @@ export function joinedNavigationCompilerFixture() {
   return fixture;
 }
 
+export function joinedPostureCompilerFixture() {
+  const fixture = joinedNavigationCompilerFixture();
+  for (const [asset, x] of [
+    [fixture.hut, 0],
+    [fixture.upper, 100],
+  ] as const) {
+    const surface = asset.gameplay!.surfaces[0]!;
+    surface.polygon = [
+      [x, 0],
+      [x + 100, 0],
+      [x + 100, 100],
+      [x, 100],
+    ];
+    surface.height = 40;
+    surface.forceCrouched = asset === fixture.upper;
+  }
+  return fixture;
+}
+
 export function multiPlaneRegionCompilerFixture() {
   const fixture = compoundLiftCompilerFixture();
   const gameplay = fixture.hut.gameplay!;

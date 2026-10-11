@@ -66,6 +66,95 @@ fn exported_floor_flags_require_crouching_only_in_the_authored_room() {
     }
 }
 
+#[test]
+#[ignore = "requires ROBIN_CLIMB_RHS for complete character animations"]
+fn actors_cross_generated_posture_socket_passages() {
+    let sprite = exported_stairs::complete_climb_sprite();
+    for reverse in [false, true] {
+        let (mut engine, mut assets) = compiled_walkway(include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/asset-joined-posture.level.json"
+        )));
+        let door = engine.script_domains.interactables.doors[0].clone();
+        let (start, goal, source, destination, layer) = if reverse {
+            (
+                door.point_in,
+                door.point_out,
+                door.sector_in_index.unwrap(),
+                door.sector_out_index.unwrap(),
+                door.layer_in,
+            )
+        } else {
+            (
+                door.point_out,
+                door.point_in,
+                door.sector_out_index.unwrap(),
+                door.sector_in_index.unwrap(),
+                door.layer_out,
+            )
+        };
+        let handle = crate::position_interface::SectorHandle::from_number(
+            engine.world.fast_grid.level.sectors[usize::from(source)].sector_number,
+        )
+        .with_arena_index(source);
+        let owner = walking_pc(&mut engine, &mut assets, start, layer, handle);
+        let element = engine.ent_mut(owner).element_data_mut();
+        let position = element.sprite.position_iface.clone();
+        element.sprite = sprite.clone();
+        element.sprite.position_iface = position;
+        let receiver = engine.get_projection_area_index(&assets, handle, layer, start);
+        engine.set_obstacle_and_material(&assets, owner, receiver);
+        let sim = crate::sim_rng::test_context();
+        engine.perform_group_move(
+            crate::engine::TickCtx::new(&sim, &assets),
+            &[owner],
+            goal,
+            false,
+            false,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+        );
+        let expected =
+            if engine.world.fast_grid.level.sectors[usize::from(destination)].force_crouched {
+                Posture::Crouched
+            } else {
+                Posture::Upright
+            };
+        let mut arrived = false;
+        for _ in 0..600 {
+            engine.control.frame_counter += 1;
+            engine.t_hourglass_phase_sequences(&assets);
+            engine.hourglass_phase_paths(crate::engine::TickCtx::new(&sim, &assets));
+            engine.t_tick_actor_owner_envelopes(&assets);
+            let element = engine.ent(owner).element_data();
+            let settled = engine
+                .entities()
+                .current_element_for_actor(owner)
+                .and_then(|(id, index)| engine.seq().get_element(id, index))
+                .is_none_or(|selected| {
+                    selected.orders.is_empty() || selected.command == Command::Wait
+                });
+            if (element.position_map() - goal).length() < 0.1
+                && element.posture() == expected
+                && element.sector().and_then(|sector| sector.arena_index()) == Some(destination)
+                && settled
+            {
+                arrived = true;
+                break;
+            }
+        }
+        assert!(
+            arrived,
+            "generated posture passage failed in reverse={reverse}: {:?}",
+            engine.ent(owner).element_data().position_map()
+        );
+        assert!((engine.ent(owner).element_data().position().z - 40.).abs() < 0.001);
+    }
+}
+
 fn compiled_walkway(bytes: &[u8]) -> (EngineInner, LevelAssets) {
     compiled_walkway_with_dimensions(bytes, (2000., 2000.))
 }

@@ -9,6 +9,7 @@ import { IDENTITY_TRANSFORM } from "./level3d.ts";
 import {
   assetCompilerFixture,
   forcedCrouchCompilerFixture,
+  joinedPostureCompilerFixture,
   maskAssetCompilerFixture,
   anchoredReceiverCompilerFixture,
   slopedAssetCompilerFixture,
@@ -90,6 +91,100 @@ test("forced crouching remains local to authored floors with working passages", 
         hut,
       ),
     /forced-crouch/,
+  );
+});
+
+test("matching upright and crouched floor sockets emit an ordinary passage", () => {
+  const { document, assets } = joinedPostureCompilerFixture();
+  const compiled = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+  assert.equal(compiled.doors.length, 1);
+  const nativeFixture = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-joined-posture.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled, nativeFixture.asset_geometry);
+  assert.equal(compiled.doors[0]!.door_type, 0);
+  assert.deepEqual(compiled.doors[0]!.door_sector.points, []);
+  assert.notEqual(compiled.doors[0]!.sector_in, compiled.doors[0]!.sector_out);
+  assert.deepEqual(
+    compiled.motion_data.layers
+      .flat()
+      .map((a) => a.flags)
+      .sort((a, b) => a - b),
+    [0, 1],
+  );
+});
+
+test("generated posture passages follow rotated copies and detach when sockets move apart", () => {
+  for (const rotation of [0, 37, 90, 180]) {
+    const { document, assets } = joinedPostureCompilerFixture();
+    for (const group of document.groups)
+      group.transform = { dx: 500, dy: 600, dz: 20, rot_deg: rotation };
+    const groups = structuredClone(document.groups);
+    const objects = structuredClone(document.objects);
+    document.groups.push(
+      ...groups.map((group) => ({
+        ...group,
+        id: `copy/${group.id}`,
+        transform: { ...group.transform, dx: group.transform.dx + 700 },
+      })),
+    );
+    document.objects.push(
+      ...objects.map((object) => ({
+        ...object,
+        id: `copy/${object.id}`,
+        group: `copy/${object.group}`,
+      })),
+    );
+    const compiled = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+    assert.equal(compiled.doors.length, 2, `rotation ${rotation}`);
+    assert.equal(
+      new Set(compiled.doors.flatMap((door) => [door.sector_in, door.sector_out])).size,
+      4,
+    );
+    document.groups.find((group) => group.id === "upper")!.transform.dx += 20;
+    const detached = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+    assert.equal(detached.doors.length, 1);
+    assert.ok(detached.warnings!.some((warning) => warning.includes("no matching boundary")));
+  }
+});
+
+test("posture socket passages avoid blockers and warn when the whole seam is blocked", () => {
+  const { document, assets, hut, upper } = joinedPostureCompilerFixture();
+  for (const asset of [hut, upper])
+    asset.gameplay!.movementBlockers = [
+      {
+        id: "socket-wall",
+        node: "building-999",
+        height: 40,
+        polygon: [
+          [90, 40],
+          [110, 40],
+          [110, 60],
+          [90, 60],
+        ],
+      },
+    ];
+  const split = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+  assert.equal(split.doors.length, 2);
+  for (const asset of [hut, upper])
+    asset.gameplay!.movementBlockers![0]!.polygon = [
+      [90, 0],
+      [110, 0],
+      [110, 100],
+      [90, 100],
+    ];
+  const blocked = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+  assert.equal(blocked.doors.length, 0);
+  assert.ok(
+    blocked.warnings!.some((warning) =>
+      warning.includes("no character-sized unobstructed passage"),
+    ),
   );
 });
 

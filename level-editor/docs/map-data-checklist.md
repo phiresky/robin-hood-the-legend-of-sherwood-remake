@@ -374,7 +374,8 @@ not evidence that an omitted feature works.
 areas retain separate posture settings; uniformly crouched lift assemblies keep
 the flag. Conflicting lift segments fail strict compilation, or warn and omit
 the invalid lift in best-effort exports. Explicit navigation regions with mixed
-posture remain separate and warn that their boundary needs authored passages.
+posture remain separate; their boundary needs checked socket passages or
+authored passages.
 A compiler-generated two-room fixture passes a native waiting-transition test:
 the crouch room generates the crouching transition while its neighbour stays
 upright. Compiler tests also cover independently copied room passages at
@@ -408,12 +409,17 @@ passes all 48 crossings and remains upright when waiting under the same audit.
 The full rotated batch passes all 192 complete sprite crossings and crouched
 waiting transitions under the same collision, receiver, height and stationary
 posture checks (maximum travelled distance 39.990029 for a 40-unit target).
-Automatic connections across mixed-posture boundaries remain incomplete. The
-export-time passage candidate helper now checks integer-rounded approaches and
-crossings against joined floor contours and blockers; rotated, narrowed,
-disconnected and obstructed socket tests pass. It is not yet wired into native
-door emission or verified by native cross-boundary traversal. This is not full
-crouch-area parity.
+Explicitly matched sockets between uniformly upright and uniformly crouched
+asset regions now emit ordinary non-clickable passages. Compilation checks
+integer-rounded approaches and crossings against final floor contours and
+permanent blockers, retains one passage per separate clear opening, and warns
+when no usable opening remains. Compiler tests cover rotated copies, detached
+sockets, narrow openings and blocked/split seams. A compiler-generated raised
+two-floor fixture passes native player movement in both directions, retaining
+the expected sector, floor height and destination posture through completion.
+Native rotated/split-seam traversal, changing blockers, mixed-posture regions
+without explicit sockets, and editable ZIP round trips for these generated
+passages still need coverage. This is not full crouch-area parity.
 No runtime solver was added.
 
 Spline-wall trimming now preserves disconnected closed mask contours as separate

@@ -27,6 +27,7 @@ import { allocateLightReceivingLayers } from "./allocate-light-receiving-layers.
 import { compactNavigationLayers } from "./compact-navigation-layers.ts";
 import { lightReceiverIntersection } from "./light-receiver-segment.ts";
 import { preserveMovementBoundary } from "./preserve-movement-boundary.ts";
+import { navigationPosturePassages } from "./navigation-posture-passages.ts";
 import {
   assembleNavigationJoins,
   orientNavigationJoin,
@@ -1273,6 +1274,19 @@ function compileAssetGameplayAttempt(
     throw new UnavailableLiftPlacement(error.segments[0]!, error.message, false, error.segments);
   }
   const assembledNavigation = assembleNavigationJoins(navigationJoins);
+  const postureFlags = new Map<string, Set<boolean>>();
+  for (const surface of surfaces) {
+    if (!surface.navigationRegion || surface.lift) continue;
+    const flags = postureFlags.get(surface.navigationRegion) ?? new Set<boolean>();
+    flags.add(surface.forceCrouched === true);
+    postureFlags.set(surface.navigationRegion, flags);
+  }
+  const postureConnections = assembledNavigation.connections.flatMap((connection) => {
+    const from = postureFlags.get(connection.from.region),
+      to = postureFlags.get(connection.to.region);
+    if (from?.size !== 1 || to?.size !== 1 || [...from][0] === [...to][0]) return [];
+    return [{ connection, fromCrouched: [...from][0]!, toCrouched: [...to][0]! }];
+  });
   for (const surface of [...surfaces, ...projectionSupports])
     if (surface.navigationRegion)
       surface.navigationRegion =
@@ -1429,6 +1443,7 @@ function compileAssetGameplayAttempt(
     physical?: NavigationAnchorArea;
     lift?: string;
     navigationRegion?: string;
+    forceCrouched?: boolean;
     sector: number;
     layer: number;
   })[] = [];
@@ -2616,6 +2631,111 @@ function compileAssetGameplayAttempt(
     }
     return resolve(door.insideAnchor, label, lift, false, doorProjection(door, door.insideAnchor));
   };
+  const motionBySector = new Map<number, (typeof layers)[number][number]>();
+  let motionSector = 0;
+  for (const layer of layers)
+    for (const area of layer) {
+      motionBySector.set(motionSector, area);
+      motionSector += 1 + area.obstacles.length;
+    }
+  for (const { connection, fromCrouched, toCrouched } of postureConnections) {
+    const root = assembledNavigation.identities.get(connection.from.region)!;
+    const members = (crouched: boolean) =>
+      areas.filter(
+        (area) =>
+          !area.lift &&
+          area.navigationRegion === root &&
+          (area.forceCrouched === true) === crouched,
+      );
+    const fromAreas = members(fromCrouched),
+      toAreas = members(toCrouched);
+    const representatives = (members: typeof areas) => [
+      ...new Map(members.map((area) => [area.sector, area])).values(),
+    ];
+    let emitted = 0;
+    for (const from of representatives(fromAreas))
+      for (const to of representatives(toAreas)) {
+        const floor = (area: (typeof areas)[number]) => {
+          const motion = motionBySector.get(area.sector)!;
+          return {
+            plane: area.plane,
+            polygon: motion.polygon.points,
+            blockers: motion.obstacles.filter((o) => o.state_id === 0).map((o) => o.polygon.points),
+          };
+        };
+        const candidates = navigationPosturePassages(connection, floor(from), floor(to));
+        const [a, b] = connection.from.edge;
+        const dx = b[0] - a[0],
+          dy = b[1] - b[2] - (a[1] - a[2]);
+        candidates.sort(
+          (a, b) => (a.middle[0] - b.middle[0]) * dx + (a.middle[1] - b.middle[1]) * dy,
+        );
+        const runs: (typeof candidates)[] = [];
+        for (const candidate of candidates) {
+          const previous = runs.at(-1)?.at(-1);
+          if (
+            !previous ||
+            Math.max(
+              Math.abs(candidate.middle[0] - previous.middle[0]),
+              Math.abs(candidate.middle[1] - previous.middle[1]),
+            ) > 1
+          )
+            runs.push([]);
+          runs.at(-1)!.push(candidate);
+        }
+        for (const run of runs) {
+          const candidate = run[Math.floor(run.length / 2)]!;
+          const receiver = (members: typeof areas, sector: number, point: Point) =>
+            members.find((area) => area.sector === sector && inside(point, area.polygon, true));
+          const source = receiver(fromAreas, from.sector, candidate.outside);
+          const target = receiver(toAreas, to.sector, candidate.inside);
+          if (!source || !target) continue;
+          const world = (point: Point, area: (typeof areas)[number]): Vec3 => {
+            const height = planeHeight(area.plane, point);
+            return [point[0], point[1] + height, height];
+          };
+          const outside = world(candidate.outside, source),
+            insidePoint = world(candidate.inside, target);
+          const middle = world(candidate.middle, source);
+          try {
+            if (
+              resolve(outside, "Posture passage outside", null).sector !== source.sector ||
+              resolve(insidePoint, "Posture passage inside", null).sector !== target.sector
+            )
+              continue;
+          } catch (error) {
+            if (!(error instanceof UnresolvedSurface)) throw error;
+            continue;
+          }
+          const name = `navigation-posture/${connection.from.region}/${connection.to.region}/${emitted++}`;
+          doors.push({
+            name,
+            outside,
+            inside: insidePoint,
+            outsideAnchor: outside,
+            insideAnchor: insidePoint,
+            middle: candidate.middle,
+            worldMiddle: middle,
+            polygon: [],
+            definition: {
+              id: name,
+              node: "",
+              outside,
+              inside: insidePoint,
+              middle,
+              polygon: [],
+              type: 0,
+              locked: false,
+              unlockable: false,
+            },
+          });
+        }
+      }
+    if (!emitted)
+      warnings.push(
+        `Navigation ${root}: matched posture boundary has no character-sized unobstructed passage.`,
+      );
+  }
   const omittedDoors = new Set<string>();
   if (options.bestEffort || cropped) {
     for (const door of doors.filter((door) => door.lift)) {
