@@ -393,6 +393,18 @@ direction, before rounding margin. A ledge-generation regression checks this
 geometric rejection. Rotation can make a steep roof unusably narrow in the
 native projected navigation representation; this case must keep its warning,
 not export an unwalkable jump connection.
+The synthetic copied curved rising deck audit also accepts `--crouched` with
+`--deck`. With `--curved --deck --copied --crouched --rotated --zip-roundtrip`,
+all 16 diagnostic ZIPs reopen and recompile identically at 0/37/90/180 degrees
+and deck elevations 40/80. Native construction passes 384 collision probes and
+192 bounded routes, retaining independent deck sectors and upright ground.
+Evidence: `work/map-compile/spline-clearance-planes-B3ktkm`. These ZIPs use blank
+diagnostic rasters, so this does not certify rendered appearance. The first
+zero-rotation batch (`work/map-compile/spline-clearance-planes-FTFRiO`) passes
+48 complete sprite crossings and subsequent crouched waiting transitions,
+checking collision, receiving floor, height and no movement while crouching.
+The full rotated sprite crossing/waiting-posture audit is still pending; static
+route success does not prove that behavior.
 Automatic connections across mixed-posture boundaries and native spline crouch
 traversal remain incomplete or unverified. This is not full crouch-area parity.
 No runtime solver was added.

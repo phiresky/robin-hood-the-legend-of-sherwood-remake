@@ -14,12 +14,14 @@ const output = await fs.mkdtemp("work/map-compile/spline-clearance-planes-");
 const results = [];
 const curved = process.argv.includes("--curved");
 const deck = process.argv.includes("--deck");
+const crouched = process.argv.includes("--crouched");
 const copies = process.argv.includes("--copied") ? 2 : 1;
 const zipRoundtrip = process.argv.includes("--zip-roundtrip");
 const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", import.meta.url))(
   "fflate",
 );
 assert.ok(!deck || curved, "--deck requires --curved");
+assert.ok(!crouched || deck, "--crouched requires --deck");
 assert.ok(copies === 1 || deck, "--copied requires --deck");
 for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [0]) {
   const radians = (rotation * Math.PI) / 180;
@@ -76,6 +78,7 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
               node: "body",
               height: 0,
               navigationRegion: "deck",
+              ...(crouched ? { forceCrouched: true } : {}),
               polygon: [
                 [-50, -80],
                 [50, -80],
@@ -207,6 +210,7 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
           rotation,
           curved,
           deck,
+          crouched,
           copies,
           zip_roundtrip: zipRoundtrip,
           warnings: compiled.warnings,

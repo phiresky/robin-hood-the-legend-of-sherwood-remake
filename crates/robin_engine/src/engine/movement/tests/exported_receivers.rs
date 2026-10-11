@@ -145,7 +145,32 @@ fn exported_openings_support_complete_sprite_routes() {
                 "{file}: {source:?} -> {goal:?} travelled {distance}, exceeding {}",
                 probe["max_length"]
             );
-            results.push(serde_json::json!({"file":file,"start":probe["start"],"end":probe["end"],"distance":distance,"moving_ticks":moved_ticks}));
+            let expected_posture = if result["crouched"] == true {
+                Posture::Crouched
+            } else {
+                Posture::Upright
+            };
+            assert_eq!(
+                engine.world.fast_grid.level.sectors[index].force_crouched,
+                expected_posture == Posture::Crouched,
+            );
+            engine.launch_element(
+                TickCtx::new(&sim, &assets),
+                SequenceElement::new(1, Command::Wait, Some(owner)),
+            );
+            for _ in 0..100 {
+                engine.control.frame_counter += 1;
+                engine.t_hourglass_phase_sequences(&assets);
+                engine.t_tick_actor_owner_envelopes(&assets);
+                if engine.ent(owner).element_data().posture() == expected_posture {
+                    break;
+                }
+            }
+            assert_eq!(engine.ent(owner).element_data().posture(), expected_posture);
+            let waiting_position = engine.ent(owner).element_data().position_map();
+            assert!((waiting_position - previous).length() < 0.001);
+            assert_actor_receiver(&engine, &assets, owner, handle, layer, waiting_position);
+            results.push(serde_json::json!({"file":file,"start":probe["start"],"end":probe["end"],"distance":distance,"moving_ticks":moved_ticks,"waiting_posture":format!("{expected_posture:?}")}));
         }
     }
     assert!(!results.is_empty());
