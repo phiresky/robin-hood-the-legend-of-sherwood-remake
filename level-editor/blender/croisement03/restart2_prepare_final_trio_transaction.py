@@ -33,7 +33,7 @@ def main():
  RUNS.mkdir(exist_ok=True);out.mkdir()
  compiler_baseline=out/'same-compiler-baseline.json'
  require(not args.compiler_baseline or(args.compiler_sha256 and sha(args.compiler_baseline)==args.compiler_sha256),'Reuse baseline requires exact hash')
- frozen=read(args.compiler_baseline) if args.compiler_baseline else {}
+ frozen=read(args.compiler_baseline) if args.compiler_baseline else {};canonical_evidence=[];compiler_links={}
  if frozen.get('compilerScope')=='IMMUTABLE_SNAPSHOT_ASSET_ONLY':
   snapshot_pin=frozen['snapshot'];require(sha(snapshot_pin['path'])==snapshot_pin['sha256'],'Snapshot manifest changed');snapshot=read(snapshot_pin['path'])
   require(snapshot['status']=='FROZEN_COMPILER_COPY_VERIFIED' and frozen['compilerPins']==snapshot['compilerPins'],'Snapshot compiler binding changed')
@@ -45,6 +45,12 @@ def main():
    for name,value in frozen[side]['inputPins'].items():require(sha(name)==value,'Frozen input drift: '+name)
   require(frozen['prior']['geometry']==frozen['candidate']['geometry'] and frozen['prior']['scenerySources']==frozen['candidate']['scenerySources'],'Frozen full gameplay differs')
   require(str(stage_map) in frozen['candidate']['inputPins'],'Frozen candidate scope mismatch')
+  canonical=args.compiler_baseline.resolve().parent/'canonical.json';canonical_record=read(canonical)
+  require(canonical_record.get('compilerScope')=='IMMUTABLE_SNAPSHOT_ASSET_ONLY' and canonical_record['snapshot']==frozen['snapshot'],'Canonical comparison snapshot differs')
+  classifier=ROOT/'level-editor/blender/croisement03/restart2_classify_compiler_delta.py';delta=out/'canonical-delta.json'
+  subprocess.run([sys.executable,str(classifier),str(args.compiler_baseline.resolve()),str(delta),'--canonical',str(canonical)],cwd=ROOT,check=True)
+  require(read(delta)['status']=='PASS_FROZEN_COMPILER_AUTHORIZED_DELTA_ONLY','Exact canonical asset delta proof missing')
+  canonical_evidence=[pin(canonical),pin(delta),pin(classifier)];compiler_links={str(Path(snapshot['root'])/name):target for name,target in snapshot['links'].items()}
   shutil.copyfile(args.compiler_baseline,compiler_baseline)
  else:
   subprocess.run(['node',str(ROOT/'level-editor/blender/croisement03/restart2_prepare_trio_compiler_baseline.mjs'),str(compiler_baseline)]+([str(args.compiler_baseline.resolve())]if args.compiler_baseline else[]),cwd=ROOT,check=True)
@@ -109,8 +115,10 @@ def main():
  'compiler_source_pins':compiler_guard['compilerPins'],
  'compiler_scope':compiler_guard.get('compilerScope','CURRENT_SOURCE'),
  'compiler_snapshot':compiler_guard.get('snapshot'),
+ 'compiler_link_pins':compiler_links,
  'required_before_apply':['Root review of this exact plan and evidence','Fresh full-editor group/part selection, palette insertion and save/reload proof on exact staged map/models; current handoff does not cover these','Under shared publication lock rehash all old destinations, source/evidence/protected pins; require quiescent readers','Durable byte backups and journal for every existing target; record absent targets; refuse symlink parents; samefilesystem atomic replacements; rollback exact backups on failure','Install data before map/index; after commit rerun final strict validator and fresh canonical editor proof'],
  'remaining_interaction_scope':{'groups':['croisement03-tree-12','croisement03-tree-13','croisement03-tree-14','croisement03-native-arbre06'],'parts':'Select every child, including both static-native-samples and inferred-crown-context; gameplay-only wood IDs remain independently selectable.','palette':'Load exact-source previews and insert each of three trees plus native animation once at distinct poses. Confirm one native effect per animation placement; no frame0 proxies.','save_reload':'Save disposable inserted map, fresh-editor reload, preserve alloriginal placements/refs/resources and inserted poses, verify actual model/catalog/frame response hashes. Remove temporary instances only inside disposable fixture.','not_proven':'Automatic mission-driven source clock wiring remains outside this fixture-owned clock proof.'}}
+ plan['evidence'].extend(canonical_evidence)
  write(out/'plan.json',plan);write(out/'dry-run.json',{'status':'PASS_PREPARATION_ONLY','plan':pin(out/'plan.json'),'targets':len(records),'removals':sum(r['source']is None for r in records),'changed_assets':sorted(affected),'unrelated_index_rows':unchanged,'browser_clock_appearance_proven':True,'editor_interactions_proven':False})
  print(json.dumps(read(out/'dry-run.json')))
 if __name__=='__main__':main()

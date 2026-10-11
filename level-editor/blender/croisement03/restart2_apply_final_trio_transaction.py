@@ -39,6 +39,7 @@ def verify_evidence(plan):
  require(sha(Path(__file__))==EXECUTOR_SHA,'Executor changed during execution')
  for item in plan['protected']+plan['evidence']+[plan['browser']]:core.verify_pin(item)
  if plan.get('compiler_snapshot'):core.verify_pin(plan['compiler_snapshot'])
+ for name,target in plan.get('compiler_link_pins',{}).items():require(Path(name).is_symlink() and str(Path(name).readlink())==target,'Frozen compiler dependency link changed')
  for name,value in plan['compiler_source_pins'].items():core.verify_pin({'path':name,'sha256':value})
  handoff=read(Path(plan['browser']['path']))
  require(handoff['approved_models']==plan['approved_models']and handoff['stage_map_sha256']==plan['map_sha256'],'Combined proof scope differs')
@@ -99,7 +100,7 @@ def main():
     else:command=['node',str(VALIDATOR),str(LIB/'scenes/croisement03.rhlos-map.json'),str(LIB),str(folder/'installed-strict-validation.json'),str(folder/'same-compiler-baseline.json')]
     subprocess.run(command,cwd=ROOT,check=True)
    journal=protocol.commit(plan['records'],folder/'transaction',plan_hash,precommit,postcheck)
-   dump(folder/'result.json',{'status':'INSTALLED_LIVE_EDITOR_PROOF_PENDING','plan':authority['plan'],'journal':pin(folder/'transaction/journal.json'),'editor':proof,'canonical_map_sha256':sha(LIB/'scenes/croisement03.rhlos-map.json')})
+   dump(folder/'result.json',{'status':'INSTALLED_LIVE_EDITOR_PROOF_PENDING','plan':authority['plan'],'journal':pin(folder/'transaction/journal.json'),'editor':proof,'canonical_map_sha256':sha(LIB/'scenes/croisement03.rhlos-map.json'),'compiler_scope':plan['compiler_scope'],'latest_compiler_verified':plan['compiler_scope']!='IMMUTABLE_SNAPSHOT_ASSET_ONLY'})
   except BaseException:
    # The durable protocol restores any replacements, including deleted derivatives.
    # If failure preceded replacement, only these newly created empty directories exist.
