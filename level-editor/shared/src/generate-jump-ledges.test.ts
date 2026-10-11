@@ -112,6 +112,40 @@ test("a ledge without room for a character warns and omits the unusable connecti
   assert.match(generated.warnings[0]!, /no character-sized receiving span/);
 });
 
+test("a rotated roof with insufficient projected width cannot receive the native footprint", () => {
+  const roof: Point[] = [
+    [622.0098304073418, 618.4073022680268],
+    [667.4153997740315, 605.8654531169257],
+    [577.6742104808769, 646.1159485491778],
+    [531.7381493027198, 658.7799436611931],
+  ];
+  const plane: [number, number, number] = [
+    2.7005010041582427, 6.032710920487782, -5166.674004380235,
+  ];
+  // A level takeoff line is perpendicular to the height gradient. Projecting
+  // every vertex onto its normal bounds every possible landing in this roof.
+  const length = Math.hypot(plane[0], plane[1]);
+  const normal = [plane[0] / length, plane[1] / length];
+  const depths = roof.map(([x, y]) => x * normal[0]! + y * normal[1]!);
+  const available = Math.max(...depths) - Math.min(...depths);
+  const required = 2 * (6 * Math.abs(normal[0]!) + 3 * Math.abs(normal[1]!));
+  assert.ok(available < 7.21);
+  assert.ok(required > 10.37);
+  assert.ok(available < required);
+  const generated = generateJumpLedges("rotated-roof", roof, [], plane, {
+    maxGap: 100,
+    maxRise: 40,
+    maxDrop: 60,
+    minOverlap: 16,
+    inset: 4,
+    landingDepth: 4,
+    maxLevelAdjustment: 2,
+    edges: [3],
+  });
+  assert.equal(generated.segments.length, 0);
+  assert.match(generated.warnings.join("\n"), /no character-sized receiving span/);
+});
+
 test("holes cut receiving bands into independent usable spans", () => {
   const hole: Point[] = [
     [80, 40],

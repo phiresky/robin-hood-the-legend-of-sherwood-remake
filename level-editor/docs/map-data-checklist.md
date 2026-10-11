@@ -387,6 +387,12 @@ crouched posture. Evidence: `work/map-compile/prepared-crouched-roof-placements-
 upright control: `work/map-compile/prepared-roof-placements-ntgG7I`.
 Both variants omit the 90-degree jump pairs because no character-sized receiving
 span remains; those omitted connections are not covered by the passing audit.
+The narrow roof's projected width is at most 7.21 along the level ledge normal,
+while the native axis-aligned character footprint requires 10.38 in that
+direction, before rounding margin. A ledge-generation regression checks this
+geometric rejection. Rotation can make a steep roof unusably narrow in the
+native projected navigation representation; this case must keep its warning,
+not export an unwalkable jump connection.
 Automatic connections across mixed-posture boundaries and native spline crouch
 traversal remain incomplete or unverified. This is not full crouch-area parity.
 No runtime solver was added.
