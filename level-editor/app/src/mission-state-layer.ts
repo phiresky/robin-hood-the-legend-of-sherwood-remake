@@ -35,7 +35,8 @@ export async function resolveMissionStateTargets(
   )
     throw new Error("Mission state source or camera does not match pinned contract");
   const targets = source.data.targets;
-  if (!Array.isArray(targets)) throw new Error("Mission state source has no target array");
+  if (contract.targets.some((t) => t.source_kind !== "map-animation") && !Array.isArray(targets))
+    throw new Error("Mission state source has no target array");
   const finite = (v: unknown, label: string): number => {
     if (typeof v !== "number" || !Number.isFinite(v))
       throw new Error(`Mission state invalid ${label}`);
@@ -43,7 +44,10 @@ export async function resolveMissionStateTargets(
   };
   return Promise.all(
     contract.targets.map(async (binding) => {
-      const raw = targets[binding.target_index];
+      const mapAnimation = binding.source_kind === "map-animation";
+      const raw = mapAnimation
+        ? source.level.animations[binding.target_index]
+        : (targets as unknown[])[binding.target_index];
       if (
         !raw ||
         typeof raw !== "object" ||
@@ -51,13 +55,16 @@ export async function resolveMissionStateTargets(
         (await missionStateDataHash(raw)) !== binding.target_sha256
       )
         throw new Error(`Mission state target changed: ${binding.id}`);
-      const target = raw as Record<string, unknown>;
+      const original = raw as Record<string, unknown>;
+      const target = (mapAnimation ? original.sprite : original) as Record<string, unknown>;
+      if (!target || typeof target !== "object") throw new Error("Map animation sprite missing");
       const x = finite(target.position_x, "target x"),
         y = finite(target.position_y, "target y");
-      let z = finite(target.position_z, "target z");
-      const obstacleIndex = finite(target.obstacle_index, "target support");
+      let z = finite(mapAnimation ? target.elevation : target.position_z, "target z");
+      const obstacleIndex = mapAnimation ? 65535 : finite(target.obstacle_index, "target support");
       if (!Number.isInteger(obstacleIndex) || obstacleIndex < 0 || obstacleIndex > 65535)
         throw new Error("Mission state invalid support index");
+      if (mapAnimation && z < 0) throw new Error("Map animation elevation must be explicit");
       if (z < 0) {
         if (obstacleIndex === 65535) z = 0;
         else {
@@ -66,12 +73,12 @@ export async function resolveMissionStateTargets(
           z = placementHeight(x, y, obstacle);
         }
       }
-      const action = finite(target.action, "initial action");
+      const action = mapAnimation ? 0 : finite(target.action, "initial action");
       if (!binding.actions.some((a) => a.action === action))
         throw new Error(`Mission state unbound initial action: ${binding.id}`);
       const actionPosition = [
-        finite(target.action_position_x, "action x"),
-        finite(target.action_position_y, "action y"),
+        mapAnimation ? x : finite(target.action_position_x, "action x"),
+        mapAnimation ? y : finite(target.action_position_y, "action y"),
       ];
       const [sx, sy, sz] = gameToScene(source.camera, x, y + z, z);
       return {
@@ -211,7 +218,8 @@ export class MissionStateLayer {
             }
             this.players.set(row.binding.id, { player, binding: row.binding });
             this.root.add(player.object);
-            this.replaced.add(row.binding.target_index);
+            if (row.binding.source_kind !== "map-animation")
+              this.replaced.add(row.binding.target_index);
             this.changed(new Set(this.replaced));
           } catch (error) {
             player?.dispose();

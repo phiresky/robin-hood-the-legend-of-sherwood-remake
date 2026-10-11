@@ -22,6 +22,8 @@ import type { MissionStateContract } from "../../shared/src/mission-state.ts";
 import type { NativeStatePresentationContract } from "../../shared/src/native-state-presentation.ts";
 import {
   verifyStaticStateReplacements,
+  verifyStaticReplacementRows,
+  type StaticStateReplacement,
   validateNativePatchPreview,
   validateNativeLoopPreview,
   type NativeLoopPreviewContract,
@@ -308,7 +310,14 @@ export class EditorViewport {
       this.textureDisplay.apply(root, anisotropy);
       return;
     }
-    for (const sceneRoot of [this.sourceAsset, this.ground, this.objectsRoot, this.stateDelivery.physical, this.aperturePreview?.root])
+    for (const sceneRoot of [
+      this.sourceAsset,
+      this.ground,
+      this.objectsRoot,
+      this.stateDelivery.physical,
+      this.missionStates.root,
+      this.aperturePreview?.root,
+    ])
       if (sceneRoot) this.textureDisplay.apply(sceneRoot, anisotropy);
   }
   readonly listeners = new AbortController();
@@ -823,6 +832,19 @@ export class EditorViewport {
       for (const replacement of family?.static_replacements?.[this.deliveryEndpoint] ?? [])
         suppressed.add(replacement.object_id);
     }
+    if (this.loopStaticReplacements && this.loopClocks.ready) {
+      try {
+        verifyStaticReplacementRows(this.loopStaticReplacements, document);
+      } catch (error) {
+        this.loopStaticReplacements = undefined;
+        this.clearNativeArtPresentation();
+        this.bindings.onError?.(String(error));
+        return;
+      }
+      if (this.loopPhysicalVisible && this.missionStates.root.visible)
+        for (const replacement of this.loopStaticReplacements)
+          suppressed.add(replacement.object_id);
+    }
     for (const object of document.objects) {
       const view = this.partViews.get(object.id);
       if (view) view.wrapper.visible = !object.hidden && !suppressed.has(object.id);
@@ -1050,6 +1072,8 @@ export class EditorViewport {
   }
   private readonly loopClocks = new SourceContractClockBinding();
   private loopFocus: string | undefined;
+  private loopStaticReplacements: StaticStateReplacement[] | undefined;
+  private loopPhysicalVisible = true;
   private loopSequence = 0;
   private loopEpoch = 0;
   private sampleLoopClocks() {
@@ -1075,6 +1099,11 @@ export class EditorViewport {
     if (this.entities instanceof MissionEntities && this.entities.missionName !== source.name)
       throw new Error("Physical loop does not match the displayed mission");
     try {
+      if (frozen.static_replacements) {
+        const document = this.bindings.document();
+        if (!document) throw new Error("Physical loop has no displayed map");
+        verifyStaticReplacementRows(frozen.static_replacements, document);
+      }
       if (
         !(await this.loopClocks.set(frozen.native, frozen.physical!, resolvedSource)) ||
         !current()
@@ -1090,6 +1119,10 @@ export class EditorViewport {
       if (!current()) return false;
       if (!ready || this.missionStates.players.size !== frozen.physical!.targets.length)
         throw new Error("Physical loop resources did not all become ready");
+      this.loopStaticReplacements = frozen.static_replacements;
+      this.refreshTextureDisplay();
+      this.syncDeliveredStaticPlacements();
+      if (!this.loopClocks.ready) return false;
       this.sampleLoopClocks();
       return true;
     } catch (error) {
@@ -1145,6 +1178,7 @@ export class EditorViewport {
     this.nativeSurface?.update(this.nativePreviewPixels());
   }
   setStatePresentationMode(mode: "physical" | "native-art") {
+    this.loopPhysicalVisible = mode === "physical";
     if (mode === "physical") {
       if (this.loopClocks.ready) this.sampleLoopClocks();
       else if (!this.actorPreview) this.currentNativeArt.setPlaying(false);
@@ -1183,6 +1217,7 @@ export class EditorViewport {
   clearNativeArtPresentation() {
     this.clearNativeActorPreview();
     this.loopEpoch++;
+    this.loopStaticReplacements = undefined;
     this.setStatePresentationMode("physical");
     if (this.loopClocks.ready) this.missionStates.clear();
     this.loopClocks.clear();

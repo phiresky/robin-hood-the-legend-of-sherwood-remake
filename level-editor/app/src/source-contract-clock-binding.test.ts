@@ -242,3 +242,49 @@ test("inactive physical targets use a bound initial frame or remain hidden witho
     /Unbound inactive physical artwork/,
   );
 });
+
+test("physical map animation follows its own native clock without replacing mission targets", async () => {
+  const f = await fixture();
+  const binding = structuredClone(f.physical.targets[0]!);
+  binding.id = "physical-map14";
+  binding.source_kind = "map-animation";
+  binding.target_index = 14;
+  binding.target_sha256 = await missionStateDataHash(f.source.level.animations[14]);
+  binding.actions = [binding.actions[0]!];
+  f.physical.targets.push(binding);
+  const contract = {
+    version: 1,
+    scope: "controlled-native-loop-preview",
+    native: f.native,
+    focus_element_id: "animation14",
+    physical: f.physical,
+  };
+  validateNativeLoopPreview(contract);
+  const clocks = new SourceContractClockBinding();
+  await clocks.set(f.native, f.physical, f.source);
+  const samples: [number, boolean][] = [];
+  clocks.attachPhysical(
+    binding.id,
+    {
+      internallyPlaying: () => false,
+      sampleExternalTick: (tick, active) => samples.push([tick, active]),
+    },
+    clocks.physicalToken(binding.id),
+  );
+  clocks.seek("animation14", 70);
+  assert.deepEqual(samples.at(-1), [6, true]);
+  clocks.setActive("animation14", false);
+  assert.deepEqual(samples.at(-1), [6, false]);
+  clocks.setActive("animation14", true);
+  assert.deepEqual(samples.at(-1), [6, true]);
+  const wrong = structuredClone(contract);
+  wrong.physical.targets.at(-1)!.source_kind = "mission-target";
+  assert.throws(() => validateNativeLoopPreview(wrong), /identity/);
+  const mapOnly = structuredClone(contract);
+  mapOnly.physical.targets = [binding];
+  validateNativeLoopPreview(mapOnly);
+  await clocks.set(mapOnly.native, mapOnly.physical, f.source);
+  const invalidReplacement = { ...contract, static_replacements: [{ object_id: "x" }] };
+  assert.throws(() => validateNativeLoopPreview(invalidReplacement), /static replacement/);
+  clocks.dispose();
+});

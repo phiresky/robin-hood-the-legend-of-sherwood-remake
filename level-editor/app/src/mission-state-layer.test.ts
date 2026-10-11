@@ -192,3 +192,26 @@ test("mission switch invalidates in-flight loads and disposes their resources af
   layer.dispose();
   assert.equal(disposed, 1);
 });
+
+test("map animation binding uses exact source slot and does not alias a mission target", async () => {
+  const { source, contract } = await fixture();
+  const animation = { sprite: { position_x: 625, position_y: 693, elevation: 150 }, active: true };
+  source.level.animations = [animation] as unknown as ProtoLevel["animations"];
+  contract.level_data_sha256 = await missionStateDataHash(source.level);
+  const binding = structuredClone(contract.targets[0]!);
+  binding.id = "crown";
+  binding.source_kind = "map-animation";
+  binding.target_sha256 = await missionStateDataHash(animation);
+  binding.actions = [binding.actions[0]!];
+  contract.targets.push(binding);
+  const rows = await resolveMissionStateTargets(contract, source);
+  assert.deepEqual(rows[2]!.physicalPositionGame, [625, 843, 150]);
+  assert.deepEqual(rows[2]!.displayPosition, [625, 693]);
+  assert.equal(rows[2]!.action, 0);
+  const changed = structuredClone(source);
+  changed.level.animations[0]!.sprite.position_x++;
+  await assert.rejects(resolveMissionStateTargets(contract, changed), /source or camera/);
+  const wrong = structuredClone(contract);
+  wrong.targets[2]!.target_sha256 = contract.targets[0]!.target_sha256;
+  await assert.rejects(resolveMissionStateTargets(wrong, source), /target changed/);
+});

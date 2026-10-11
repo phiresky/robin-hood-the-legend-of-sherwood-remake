@@ -200,34 +200,13 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
       } else fail("unknown reviewed physical motion");
     }
     if (family.static_replacements !== undefined) {
-      const transform = (t: unknown): t is GameTransform => {
-        if (!t || typeof t !== "object") return false;
-        const value = t as GameTransform;
-        return [value.dx, value.dy, value.dz, value.rot_deg].every(Number.isFinite);
-      };
-      for (const state of ["initial", "applied"] as const) {
-        const rows = family.static_replacements[state];
-        if (!Array.isArray(rows)) fail("invalid static replacements");
-        const objects = new Set<string>();
-        for (const row of rows) {
-          if (
-            !row ||
-            ![row.object_id, row.node, row.asset_id].every(
-              (v) => typeof v === "string" && v.length > 0,
-            ) ||
-            objects.has(row.object_id) ||
-            !hash(row.model_sha256) ||
-            !transform(row.transform) ||
-            (row.group_id === undefined) !== (row.group_transform === undefined) ||
-            (row.group_id !== undefined &&
-              (typeof row.group_id !== "string" ||
-                !row.group_id ||
-                !transform(row.group_transform)))
-          )
-            fail("invalid static replacement");
-          objects.add(row.object_id);
-        }
-      }
+      for (const rows of Object.values(family.static_replacements))
+        validateStaticReplacementRows(rows);
+      if (
+        !Array.isArray(family.static_replacements.initial) ||
+        !Array.isArray(family.static_replacements.applied)
+      )
+        fail("invalid static replacements");
     }
     for (const endpoint of [family.physical.initial, family.physical.applied]) {
       if (
@@ -297,32 +276,69 @@ export function verifyStaticStateReplacements(
   document: Level3D,
 ): void {
   validateStateDelivery(contract);
+  verifyStaticReplacementRows(
+    contract.families.flatMap((f) => Object.values(f.static_replacements ?? {}).flat()),
+    document,
+  );
+}
+
+export function validateStaticReplacementRows(
+  rows: unknown,
+): asserts rows is StaticStateReplacement[] {
+  const fail = (reason: string): never => {
+    throw new Error(reason);
+  };
+  const hash = (v: unknown) => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
+  const transform = (t: unknown): t is GameTransform => {
+    if (!t || typeof t !== "object") return false;
+    const value = t as GameTransform;
+    return [value.dx, value.dy, value.dz, value.rot_deg].every(Number.isFinite);
+  };
+  if (!Array.isArray(rows)) throw new Error("invalid static replacements");
+  const objects = new Set<string>();
+  for (const row of rows) {
+    if (
+      !row ||
+      ![row.object_id, row.node, row.asset_id].every(
+        (v) => typeof v === "string" && v.length > 0,
+      ) ||
+      objects.has(row.object_id) ||
+      !hash(row.model_sha256) ||
+      !transform(row.transform) ||
+      (row.group_id === undefined) !== (row.group_transform === undefined) ||
+      (row.group_id !== undefined &&
+        (typeof row.group_id !== "string" || !row.group_id || !transform(row.group_transform)))
+    )
+      fail("invalid static replacement");
+    objects.add(row.object_id);
+  }
+}
+
+/** Verify exact static receiver identities shared by endpoint and loop previews. */
+export function verifyStaticReplacementRows(
+  rows: readonly StaticStateReplacement[],
+  document: Level3D,
+): void {
   const sameTransform = (a: GameTransform, b: GameTransform) =>
     a.dx === b.dx && a.dy === b.dy && a.dz === b.dz && a.rot_deg === b.rot_deg;
-  for (const family of contract.families)
-    for (const rows of Object.values(family.static_replacements ?? {}))
-      for (const row of rows) {
-        const object = document.objects.find((o) => o.id === row.object_id);
-        const asset = document.assetSources?.find((a) => a.id === row.asset_id);
-        const group =
-          row.group_id === undefined
-            ? undefined
-            : document.groups.find((g) => g.id === row.group_id);
-        if (
-          !object ||
-          object.node !== row.node ||
-          object.node.split(":")[1] !== row.asset_id ||
-          !asset ||
-          asset.model_sha256 !== row.model_sha256 ||
-          !sameTransform(object.transform, row.transform) ||
-          object.group !== row.group_id ||
-          (row.group_id !== undefined &&
-            (!group || !sameTransform(group.transform, row.group_transform!)))
-        )
-          throw new Error(
-            `State replacement differs from the displayed placement: ${row.object_id}`,
-          );
-      }
+  for (const row of rows) {
+    const object = document.objects.find((o) => o.id === row.object_id);
+    const asset = document.assetSources?.find((a) => a.id === row.asset_id);
+    const group =
+      row.group_id === undefined ? undefined : document.groups.find((g) => g.id === row.group_id);
+    if (
+      !object ||
+      object.node !== row.node ||
+      object.node.split(":")[1] !== row.asset_id ||
+      !asset ||
+      asset.model_sha256 !== row.model_sha256 ||
+      !sameTransform(object.transform, row.transform) ||
+      object.group !== row.group_id ||
+      (row.group_id !== undefined &&
+        (!group || !sameTransform(group.transform, row.group_transform!)))
+    )
+      throw new Error(`State replacement differs from the displayed placement: ${row.object_id}`);
+  }
 }
 
 /** Final patch animation keeps the existing native clock running after the transition. */
@@ -348,6 +364,8 @@ export interface NativeLoopPreviewContract {
   focus_element_id: string;
   /** Optional separately pinned animated model delivery; never an endpoint asset. */
   physical?: MissionStateContract;
+  /** Exact static parts suppressed only while the reviewed physical loop is shown. */
+  static_replacements?: StaticStateReplacement[];
 }
 export function validateNativeLoopPreview(
   value: unknown,
@@ -367,6 +385,10 @@ export function validateNativeLoopPreview(
     contract.native.elements.some((e) => e.frames.length && !e.loop)
   )
     throw new Error("Native loop preview requires a visible looping focus and independent loops");
+  if (contract.static_replacements !== undefined) {
+    if (!contract.physical) throw new Error("Static loop replacements require physical delivery");
+    validateStaticReplacementRows(contract.static_replacements);
+  }
   if (contract.physical) {
     const p = contract.physical,
       n = contract.native;
@@ -378,10 +400,12 @@ export function validateNativeLoopPreview(
       p.camera_elevation_deg !== n.camera_elevation_deg
     )
       throw new Error("Physical/native loop sources differ");
-    const bound = new Set<number>();
+    const bound = new Set<string>();
     for (const target of p.targets) {
       const e = n.elements.find(
-        (e) => e.source.kind === "mission-target" && e.source.index === target.target_index,
+        (e) =>
+          e.source.kind === (target.source_kind ?? "mission-target") &&
+          e.source.index === target.target_index,
       );
       if (
         !e ||
@@ -394,11 +418,15 @@ export function validateNativeLoopPreview(
       const cycle = e.frames.reduce((sum, f) => sum + f.delay + 1, 0);
       if (target.actions.some((a) => a.timing.mode !== "loop" || a.timing.cycleTicks !== cycle))
         throw new Error("Physical/native loop cycle differs");
-      bound.add(target.target_index);
+      bound.add(`${target.source_kind ?? "mission-target"}:${target.target_index}`);
     }
     if (
+      p.targets.some((t) => t.source_kind !== "map-animation") &&
       n.elements.some(
-        (e) => e.source.kind === "mission-target" && e.frames.length && !bound.has(e.source.index),
+        (e) =>
+          e.source.kind === "mission-target" &&
+          e.frames.length &&
+          !bound.has(`${e.source.kind}:${e.source.index}`),
       )
     )
       throw new Error("Missing physical loop target");

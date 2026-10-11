@@ -89,7 +89,9 @@ export class SourceContractClockBinding {
       const physicalIds = new Map<string, string>();
       for (const t of p.targets) {
         const e = n.elements.find(
-          (e) => e.source.kind === "mission-target" && e.source.index === t.target_index,
+          (e) =>
+            e.source.kind === (t.source_kind ?? "mission-target") &&
+            e.source.index === t.target_index,
         );
         if (
           !e ||
@@ -107,6 +109,7 @@ export class SourceContractClockBinding {
       }
       for (const e of n.elements)
         if (
+          p.targets.some((t) => t.source_kind !== "map-animation") &&
           e.source.kind === "mission-target" &&
           e.frames.length &&
           ![...physicalIds.values()].includes(e.id)

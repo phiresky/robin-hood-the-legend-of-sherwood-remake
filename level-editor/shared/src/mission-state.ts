@@ -16,8 +16,10 @@ export interface MissionStateContract {
   camera_elevation_deg: number;
   targets: {
     id: string;
+    /** Defaults to mission-target for existing contracts. */
+    source_kind?: "mission-target" | "map-animation";
     target_index: number;
-    /** Hash of JSON.stringify(the exact indexed source target). */
+    /** Hash of JSON.stringify(the exact indexed source record). */
     target_sha256: string;
     source: SceneAssetSource;
     /** glTF Y-up coordinate of the native physical anchor in the exported model. */
@@ -50,19 +52,20 @@ export function validateMissionStateContract(
   )
     fail("invalid source binding");
   const ids = new Set<string>(),
-    indices = new Set<number>();
+    indices = new Set<string>();
   for (const t of c.targets) {
     if (
       !t ||
       !text(t.id) ||
       ids.has(t.id) ||
+      !["mission-target", "map-animation"].includes(t.source_kind ?? "mission-target") ||
       !uint(t.target_index) ||
-      indices.has(t.target_index) ||
+      indices.has(`${t.source_kind ?? "mission-target"}:${t.target_index}`) ||
       !hash(t.target_sha256)
     )
       fail("invalid or duplicate target");
     ids.add(t.id);
-    indices.add(t.target_index);
+    indices.add(`${t.source_kind ?? "mission-target"}:${t.target_index}`);
     if (
       !Array.isArray(t.model_origin) ||
       t.model_origin.length !== 3 ||
@@ -86,7 +89,14 @@ export function validateMissionStateContract(
     if (!Array.isArray(t.actions) || !t.actions.length) fail("missing actions");
     const actions = new Set<number>();
     for (const a of t.actions) {
-      if (!a || !uint(a.action) || actions.has(a.action) || !text(a.clip) || !a.timing)
+      if (
+        !a ||
+        !uint(a.action) ||
+        (t.source_kind === "map-animation" && a.action !== 0) ||
+        actions.has(a.action) ||
+        !text(a.clip) ||
+        !a.timing
+      )
         fail("invalid action");
       actions.add(a.action);
       if (a.timing.mode === "loop") {
