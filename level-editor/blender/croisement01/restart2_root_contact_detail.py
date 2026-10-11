@@ -13,7 +13,7 @@ def main():
  p=argparse.ArgumentParser();p.add_argument('workspace',type=Path);p.add_argument('--hide-terrain',action='store_true');p.add_argument('--flat-terrain',action='store_true');p.add_argument('--all-neighbor-wood',action='store_true');p.add_argument('--all-views',action='store_true');p.add_argument('--overlay-worker',type=Path);p.add_argument('--overlay-asset');p.add_argument('--color-terrain-owner',action='store_true');p.add_argument('--context-node',action='append',default=[]);p.add_argument('--scale',type=float,default=160);p.add_argument('--wood-node',action='append',default=[]);p.add_argument('--output-name',default='root-contact-detail');a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);w=a.workspace.resolve();out=w/'inspection'/a.output_name
  if Path(a.output_name).name!=a.output_name or a.scale<=0:raise ValueError('Invalid detail output or scale')
  if out.exists():raise FileExistsError(out)
- acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'));cfg=json.loads((w/'workspace.json').read_text())
+ acquire(slots=2);bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'));cfg=json.loads((w/'workspace.json').read_text())
  review_objects=list(bpy.data.collections[cfg['collection_name']].all_objects);target_asset=cfg['asset_id'];camera_worker=w;overlay_proof=None
  if a.overlay_worker:
   if not a.overlay_asset:raise ValueError('Overlay requires exact asset ID')

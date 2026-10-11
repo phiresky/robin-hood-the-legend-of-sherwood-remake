@@ -8,7 +8,7 @@ from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 from review_evidence import sha
-p=argparse.ArgumentParser();p.add_argument('--tree',type=int,choices=[4,5],required=True);p.add_argument('--revision',type=int,required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);R=ROOT/'level-editor/work/croisement01-refinement/restart2';tree_id=a.tree;source_revision={4:6,5:7}[tree_id];source=R/f'tree{tree_id:02d}-v{source_revision}/assets/croisement01-tree-{tree_id:02d}';dest=R/f'tree{tree_id:02d}-regional-banks-v{a.revision}';worker=dest/f'assets/croisement01-tree-{tree_id:02d}';assert not dest.exists();acquire();bpy.ops.wm.open_mainfile(filepath=str(source/'model.blend'));bpy.context.preferences.filepaths.save_version=0;cfg=json.loads((source/'workspace.json').read_text());collection=bpy.data.collections[cfg['collection_name']];nodes=([f'building-{i:03d}' for i in range(2,6)] if tree_id==4 and a.revision>=4 else {4:['building-003','building-004'],5:['building-006','building-007']}[tree_id]);assert tree_id==5;nodes=['building-000','building-006','building-007'];banks=[o for o in collection.all_objects if o.type=='MESH' and o.get('source_node') in nodes];source_hash=sha(source/'model.blend')
+p=argparse.ArgumentParser();p.add_argument('--tree',type=int,choices=[4,5],required=True);p.add_argument('--revision',type=int,required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);R=ROOT/'level-editor/work/croisement01-refinement/restart2';tree_id=a.tree;source_revision={4:6,5:7}[tree_id];source=R/f'tree{tree_id:02d}-v{source_revision}/assets/croisement01-tree-{tree_id:02d}';dest=R/f'tree{tree_id:02d}-regional-banks-v{a.revision}';worker=dest/f'assets/croisement01-tree-{tree_id:02d}';assert not dest.exists();acquire(slots=2);bpy.ops.wm.open_mainfile(filepath=str(source/'model.blend'));bpy.context.preferences.filepaths.save_version=0;cfg=json.loads((source/'workspace.json').read_text());collection=bpy.data.collections[cfg['collection_name']];nodes=([f'building-{i:03d}' for i in range(2,6)] if tree_id==4 and a.revision>=4 else {4:['building-003','building-004'],5:['building-006','building-007']}[tree_id]);assert tree_id==5;nodes=['building-000','building-006','building-007'];banks=[o for o in collection.all_objects if o.type=='MESH' and o.get('source_node') in nodes];source_hash=sha(source/'model.blend')
 def geom(o):return hashlib.sha256(json.dumps([[list(v.co) for v in o.data.vertices],[list(f.vertices) for f in o.data.polygons]],separators=(',',':')).encode()).hexdigest()
 def make_bvh(objects):
  points=[];faces=[]
@@ -102,7 +102,7 @@ def constrain(objects,mask_id,mask_path,label):
    hit,_,_,_=bvh.ray_cast(Vector((x,y,-500)),Vector((0,0,1)),2000)
    if hit is not None and hit.z<low+45:
     root_samples.append((i,j,float(hit.z)));z[i,j]=hit.z+(8. if mask_id==6 and a.revision>=3 else -.5);fixed[i,j]=True;root_fixed+=1
- if (mask_id==6 and a.revision>=4) or (mask_id==4 and a.revision>=12):
+ if (mask_id==6 and a.revision>=4) or (mask_id==4 and a.revision==12):
   # Embed the hidden basal volume beneath one gentle slope. Do not trace
   # every underside vertex into the ground or reveal a closed root end cap.
   sy=np.asarray([ys[j] for i,j,h in root_samples]);front=np.quantile(sy,.1);back=np.quantile(sy,.75)
@@ -137,6 +137,28 @@ for n,path,mask in neighbors:
   assert max(abs(target.matrix_world[i][j]-expected[0]['matrix_world'][i][j]) for i in range(4) for j in range(4))<1e-5,'Neighbor evaluated transform mismatch'
  constrain(targets,n,R/mask,f'croisement01-tree-{n:02d}');root_constraints[-1]['model_sha256']=sha(path);root_constraints[-1]['model_path']=str(path);root_constraints[-1]['domain_path']=str(R/mask)
  for o in loaded:bpy.data.objects.remove(o,do_unlink=True)
+if a.revision>=13:
+ # Preserve the current approved neighboring wood in the source camera.
+ # Existing soil-hidden native samples do not constrain inferred terrain.
+ model=R/'approved-tree08-bark-fill-v3/croisement01-tree-08/baked-v8-connected-gaps/worker.blend'
+ assert sha(model)=='01dedc44df9d06962a76b6bbf6d4fc96715f219ee0af7eb782ba22677892767a'
+ with bpy.data.libraries.load(str(model),link=False) as (src,dst):dst.objects=list(src.objects)
+ loaded=[o for o in dst.objects if o is not None]
+ for obj in loaded:bpy.context.scene.collection.objects.link(obj)
+ bpy.context.view_layer.update()
+ targets=[o for o in loaded if o.type=='MESH' and o.get('asset_group')=='croisement01-tree-08'];assert len(targets)==1
+ current_tree,_=make_bvh(targets);old_soil,_=make_bvh(banks)
+ mask_path=R.parent/'baseline/masks/000008.png';mask=np.asarray(Image.open(mask_path))>0;count=0;old_hidden=0
+ for py,px in zip(*np.nonzero(mask)):
+  x=331+px+.5
+  if x<xs[0] or x>xs[-1]:continue
+  origin=Vector((x,-(11+py+.5)/sine,0))+ray*5000;hit,_,_,distance=current_tree.ray_cast(origin,-ray,10000)
+  if hit is None:continue
+  old_hit,_,_,old_distance=old_soil.ray_cast(origin,-ray,10000)
+  if old_hit is not None and old_distance<distance-.1:old_hidden+=1;continue
+  i=min(len(xs)-2,max(0,int(np.searchsorted(xs,x)-1)));limit=hit.z+(hit.y-ys)*sine/cosine-.5;limit=np.where(ys<=hit.y+step,limit,np.inf);caps[i]=np.minimum(caps[i],limit);caps[i+1]=np.minimum(caps[i+1],limit);count+=1
+ root_constraints.append(dict(asset='croisement01-tree-08',mask=8,domain_sha256=sha(mask_path),native_rays=count,original_soil_hidden_samples=old_hidden,root_grid_constraints=0,model_path=str(model),model_sha256=sha(model),domain_path=str(mask_path),scope='Native visibility only; no root-height constraints'))
+ for obj in loaded:bpy.data.objects.remove(obj,do_unlink=True)
 violations=int(np.count_nonzero(boundary&(caps<z0-.01)));z=np.minimum(z,caps);z[~domain]=0
 for it in range(4000):
  sums=np.zeros_like(z);count=np.zeros_like(z)
@@ -144,6 +166,7 @@ for it in range(4000):
   mask=np.roll(domain,(di,dj),(0,1));sums+=np.roll(z,(di,dj),(0,1))*mask;count+=mask
  proposed=np.where(count>0,(sums+.001*z0)/(np.maximum(count,1)+.001),z);proposed[fixed]=z[fixed];proposed=np.minimum(proposed,caps);proposed[~domain]=0;delta=float(np.max(np.abs(proposed-z)));z=proposed
  if delta<1e-5:break
+soil_bottom=min(-64.,float(z[domain].min())-64.) if a.revision>=14 else -1.
 mesh_reports=[]
 for label,bank in enumerate(banks):
  cells={(i,j) for i in range(len(xs)-1) for j in range(len(ys)-1) if domain[i:i+2,j:j+2].all() and collections.Counter(labels[i:i+2,j:j+2].ravel()).most_common(1)[0][0]==nodes.index(bank['source_node'])};verts=[];polys=[];components=0
@@ -160,7 +183,7 @@ for label,bank in enumerate(banks):
     if k not in mapping:mapping[k]=len(mapping)
     row.append(mapping[k])
    top.append(row)
-  ordered=sorted(mapping,key=mapping.get);n=len(ordered);verts.extend((float(xs[i]),float(ys[j]),float(z[i,j])) for i,j in ordered);verts.extend((float(xs[i]),float(ys[j]),-1.) for i,j in ordered);counts={}
+  ordered=sorted(mapping,key=mapping.get);n=len(ordered);verts.extend((float(xs[i]),float(ys[j]),float(z[i,j])) for i,j in ordered);verts.extend((float(xs[i]),float(ys[j]),soil_bottom) for i,j in ordered);counts={}
   for face in top:
    polys.append(tuple(offset+k for k in face));polys.append(tuple(offset+n+k for k in reversed(face)))
    for x,y in zip(face,face[1:]+face[:1]):key=tuple(sorted((x,y)));counts[key]=(counts.get(key,(0,None))[0]+1,(x,y))
@@ -188,7 +211,7 @@ for label,bank in enumerate(banks):
  # Closed underground side faces must not pull top shading toward vertical.
  normals=[None]*len(mesh.loops)
  for f in mesh.polygons:
-  top_face=all(verts[k][2]>-.999 for k in f.vertices) and all(abs((verts[k][0]-xs[0])/step-round((verts[k][0]-xs[0])/step))<1e-5 and abs((verts[k][1]-ys[0])/step-round((verts[k][1]-ys[0])/step))<1e-5 for k in f.vertices);f.use_smooth=top_face
+  top_face=all(abs(verts[k][2]-soil_bottom)>.001 for k in f.vertices) and all(abs((verts[k][0]-xs[0])/step-round((verts[k][0]-xs[0])/step))<1e-5 and abs((verts[k][1]-ys[0])/step-round((verts[k][1]-ys[0])/step))<1e-5 for k in f.vertices);f.use_smooth=top_face
   for loop_index in f.loop_indices:
    vertex_index=mesh.loops[loop_index].vertex_index
    if top_face:
@@ -222,4 +245,4 @@ for label,bank in enumerate(banks):
  bank.data=mesh;mesh_reports.append(dict(node=bank['source_node'],vertices=len(verts),faces=len(polys),components=components,nonmanifold_edges=bad,degenerate_faces=deg))
 assert all(geom(o)==protected[o.get('source_node')] for o in collection.all_objects if o.type=='MESH' and o not in banks)
 bpy.data.orphans_purge(do_recursive=True);(worker/'modified').mkdir(parents=True);(worker/'inspection').mkdir();shutil.copy2(source/'modified/views.json',worker/'modified/views.json');(worker/'workspace.json').write_text(json.dumps(cfg,indent=2)+'\n');bpy.ops.wm.save_as_mainfile(filepath=str(worker/'model.blend'));assert sha(source/'model.blend')==source_hash
-(dest/'construction.json').write_text(json.dumps(dict(status='Private complete-bank hypothesis; root and user approval pending',source_sha256=source_hash,model_sha256=sha(worker/'model.blend'),wood_and_unrelated_geometry_unchanged=True,changed_nodes=nodes,grid_step=step,inferred='Broad regional slope for banks006/007 plus bounded background000 splice. Exterior000 planar geometry retained by exact clipping. Tree06 lowered along native camera rays; original proxy heights are weak priors, not observations. Unknown soil appearance, seams and topology require review.',root_constraints=root_constraints,background_region=list(region),preserved_background_polygons=len(preserved_background),preserved_exterior_corner_schema=exterior_schema,preserved_background_surface_sha256=hashlib.sha256(json.dumps([[list(v) for v in poly] for poly in preserved_background],separators=(',',':')).encode()).hexdigest(),boundary_visibility_conflicts=violations,filled_gap_grid_samples=int(filled.sum()),rounded_root_shoulder_grid_samples=int(extension.sum()),iterations=it+1,convergence=delta,max_raise=float(np.max((z-z0)[domain])),max_lower=float(np.max((z0-z)[domain])),topology=mesh_reports),indent=2)+'\n');print(worker)
+(dest/'construction.json').write_text(json.dumps(dict(status='Private complete-bank hypothesis; root and user approval pending',source_sha256=source_hash,model_sha256=sha(worker/'model.blend'),wood_and_unrelated_geometry_unchanged=True,changed_nodes=nodes,grid_step=step,soil_bottom=soil_bottom,inferred='Broad regional slope for banks006/007 plus bounded background000 splice. Exterior000 planar geometry retained by exact clipping. Tree06 lowered along native camera rays; original proxy heights are weak priors, not observations. Unknown soil appearance, seams and topology require review.',root_constraints=root_constraints,background_region=list(region),preserved_background_polygons=len(preserved_background),preserved_exterior_corner_schema=exterior_schema,preserved_background_surface_sha256=hashlib.sha256(json.dumps([[list(v) for v in poly] for poly in preserved_background],separators=(',',':')).encode()).hexdigest(),boundary_visibility_conflicts=violations,filled_gap_grid_samples=int(filled.sum()),rounded_root_shoulder_grid_samples=int(extension.sum()),iterations=it+1,convergence=delta,max_raise=float(np.max((z-z0)[domain])),max_lower=float(np.max((z0-z)[domain])),topology=mesh_reports),indent=2)+'\n');print(worker)

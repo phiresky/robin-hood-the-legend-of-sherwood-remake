@@ -14,14 +14,15 @@ from review_evidence import sha
 p=argparse.ArgumentParser();p.add_argument('worker',type=Path)
 a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);w=a.worker.resolve()
 acquire(slots=2);bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'))
-nodes=set(json.loads((w.parents[1]/'construction.json').read_text())['changed_nodes'])
+construction=json.loads((w.parents[1]/'construction.json').read_text());nodes=set(construction['changed_nodes'])
 objects=[o for o in bpy.context.scene.objects if o.type=='MESH' and o.get('source_node') in nodes]
 assert len(objects)==len(nodes)
+soil_bottom=construction.get('soil_bottom',min((o.matrix_world@v.co).z for o in objects for v in o.data.vertices))
 points=[];faces=[];upward_audit=[]
 for o in objects:
     offset=len(points);points.extend(o.matrix_world@v.co for v in o.data.vertices)
     faces.extend(tuple(offset+i for i in f.vertices) for f in o.data.polygons)
-    upper=[f for f in o.data.polygons if all((o.matrix_world@o.data.vertices[k].co).z>-.999 for k in f.vertices)]
+    upper=[f for f in o.data.polygons if all((o.matrix_world@o.data.vertices[k].co).z>soil_bottom+.001 for k in f.vertices)]
     downward=[f.index for f in upper if (o.matrix_world.to_3x3().inverted().transposed()@f.normal).z<-.1]
     upward_audit.append(dict(node=o.get('source_node'),upper_faces=len(upper),downward_upper_faces=downward))
 mesh=bpy.data.meshes.new('Private spatial seam audit');mesh.from_pydata(points,[],faces);mesh.update()
