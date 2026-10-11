@@ -1,7 +1,6 @@
 """Reconcile current C1 resource closure without equating it with visual completion."""
 import hashlib
 import json
-from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
