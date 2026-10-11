@@ -21,9 +21,9 @@ def main():
    for ob,original,copy in changed:ob.data=original;bpy.data.meshes.remove(copy)
   culling.append(dict(frame=s.frame_current,removed_back_faces=removed))
  s.render.engine='CYCLES';s.cycles.samples=4;s.cycles.use_denoising=False;s.render.threads_mode='FIXED';s.render.threads=2;s.render.resolution_percentage=100;s.render.image_settings.file_format='PNG';s.render.image_settings.color_mode='RGBA';s.render.film_transparent=True;s.view_settings.view_transform='Standard';s.view_settings.look='None';s.world=bpy.data.worlds.new('Neutral');s.world.use_nodes=True;s.world.node_tree.nodes['Background'].inputs[0].default_value=(.3,.3,.3,1)
- camera=bpy.data.cameras.new('Original camera first');camera.type='ORTHO';camera.ortho_scale=24;cam=bpy.data.objects.new(camera.name,camera);s.collection.objects.link(cam);s.camera=cam;s.render.resolution_x=s.render.resolution_y=256;views=[];isolated=OUT/'isolated';isolated.mkdir();s.frame_set(0)
+ camera=bpy.data.cameras.new('Original camera first');camera.type='ORTHO';camera.ortho_scale=max(24,24*fit['fixed_uniform_scale']);cam=bpy.data.objects.new(camera.name,camera);s.collection.objects.link(cam);s.camera=cam;s.render.resolution_x=s.render.resolution_y=256;views=[];isolated=OUT/'isolated';isolated.mkdir();s.frame_set(0)
  for i in range(8):
-  angle=-math.pi/2+i*math.pi/4;direction=Vector((math.cos(angle)*C,math.sin(angle)*C,S));center=root.matrix_world.translation;cam.location=center+direction*100;cam.rotation_euler=(center-cam.location).to_track_quat('-Z','Y').to_euler();s.render.filepath=str(isolated/f'{i}.png');render_culled();views.append(dict(index=i,camera_matrix_world=[list(r) for r in cam.matrix_world],ortho_scale=24))
+  angle=-math.pi/2+i*math.pi/4;direction=Vector((math.cos(angle)*C,math.sin(angle)*C,S));center=root.matrix_world.translation;cam.location=center+direction*100;cam.rotation_euler=(center-cam.location).to_track_quat('-Z','Y').to_euler();s.render.filepath=str(isolated/f'{i}.png');render_culled();views.append(dict(index=i,camera_matrix_world=[list(r) for r in cam.matrix_world],ortho_scale=camera.ortho_scale))
  sheet=Image.new('RGB',(1024,512),'#252525')
  for i in range(8):im=Image.open(isolated/f'{i}.png').convert('RGBA');sheet.paste(im,(i%4*256,i//4*256),im)
  sheet.save(OUT/'isolated-eight.png');positions=[];pose_errors=[]
