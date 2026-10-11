@@ -144,10 +144,11 @@ routes: all three climb variants stop against projected boundaries at 5–8 and
 172–175 degrees. Export-time footprint compensation now passes all 2,160 routes
 with no permission skips (`climb-angle-routes-gAccNf`). This covers three variants
 at every integer rotation, elevated by 40 units. The eight repaired angles also
-pass 144 open/closed/reset checks. The full-circle barrier audit finds a
-pre-existing closed-state graph route at 283 degrees; unchanged baseline geometry
-fails the same check. Normal clicks, ZIP round trips and the synthetic sweep
-remain unverified or unresolved. See
+pass 144 open/closed/reset checks. The apparent barrier bypass at 283 degrees
+was caused by an undersized test grid; all 18 checks there pass with the exported
+dimensions. The corrected full-circle barrier audit passes all 6,480 directed
+initial/closed/reset checks across 1,080 fixtures. Normal clicks, ZIP round trips
+and the synthetic sweep remain unverified or unresolved. See
 [full-circle evidence](map-compilation-evidence.md#full-circle-editor-climb-audit-2026-10-12-incomplete).
 
 **Authored occupancy triggers (2026-10-11):** eight new map exports place two

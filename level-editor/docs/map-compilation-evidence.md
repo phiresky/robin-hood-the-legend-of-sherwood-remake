@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Stable cap vertices for clipped solids (2026-10-12)
+
+Fresh saved Croisement01 export `saved-map-exports-2Yh8ga` fails jump preparation
+on a small planar solid whose first two vertices differ by about 5e-9 units.
+The footprint has area, but its leading triple cannot define the native cap.
+Export now cyclically rotates such contours to a consecutive triple usable in
+both source precision and native binary32. All vertices, heights, winding and
+flags are retained. Existing valid leading triples remain unchanged, including
+solids with deliberately varying later heights. Recovery requires planar top and
+bottom caps; warped or fully degenerate solids still require asset repair.
+
+Two focused regressions pass. The compiler/packaging run passes 231 cases and
+finds one obsolete error-message expectation; the updated receiving-plane case
+passes separately and still rejects a cap that differs from its receiving floor.
+Typechecking, lint and formatting pass. Four exports of the actual small solid
+at 0/37/90/180 degrees pass native geometry construction in
+`sight-cap-exports-lIN7lZ`. Full Croisement01 export `saved-map-exports-AeJzeU`
+has passed the previous crash and remains in jump/door construction; these
+checks do not yet certify its complete export or rendering.
+
 ## Split York component bindings staged (2026-10-12)
 
 `refinement/stage-york-component-gameplay.mjs` stages asset-local bindings for
@@ -50,14 +70,18 @@ closed, then traverses again after reset. Closed cases verify collision and grap
 rejection plus either a disabled entrance or stalled actor. The existing changing
 climb actor-traversal/reset fixture also passes.
 
-The full-circle barrier audit remains failing: at 283 degrees, the ladder's
-closed state blocks the direct collision query but still admits a graph route.
-Baseline export `climb-angle-routes-i571vD` and changed export
-`climb-angle-routes-HogyvM` have identical descriptors for all three variants;
-the baseline fails the same native assertion. This is a pre-existing state/graph
-coverage gap, not a passing full-circle barrier result. The audit stops at its
-first failure, so later cases remain unverified. `--angle=283` reproduces the
-targeted export. Actual actor bypass at this angle has not yet been established.
+The initial full-circle barrier failure at 283 degrees was a harness error:
+it loaded a 3,000-square export into a 2,000-square grid, leaving part of the
+climb outside the grid. Baseline `climb-angle-routes-i571vD` and changed export
+`climb-angle-routes-HogyvM` have identical descriptors for all three variants.
+With the grid built from exported dimensions, the latter passes all 18 directed
+open/closed/reset checks. The earlier claim of a state/graph coverage gap is
+withdrawn. The corrected full-circle state audit now passes all 6,480 directed
+checks through initial, applied and reset states across 1,080 fixtures, recorded
+in `climb-angle-routes-gAccNf/climb-barrier-state-report.json`. This checks thin
+collision, graph availability and complete-sprite prepared traversal or entrance
+rejection. The existing changing-climb regression, game build and formatting pass.
+No production runtime code changed. `--angle=283` reproduces the targeted export.
 
 Saved-scene batch `saved-map-exports-OYnTc1` compiled Leicester, Lincoln and
 Nottingham but failed York validation: the west gatehouse retains a sight-order

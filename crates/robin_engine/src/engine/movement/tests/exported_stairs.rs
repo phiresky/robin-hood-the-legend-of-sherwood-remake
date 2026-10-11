@@ -2069,7 +2069,14 @@ fn exported_climb_angles_preserve_barriers_through_apply_reset() {
 fn audit_changing_climb_fixtures(fixtures: &[serde_json::Value], sprite: Option<&crate::sprite::Sprite>) {
     for (rotation, fixture) in fixtures.iter().enumerate() {
         let lift_type = &fixture["asset_geometry"]["lifts"][0]["lift_type"];
-        let (mut engine, assets) = compiled_walkway(&serde_json::to_vec(fixture).unwrap());
+        let bounds = &fixture["walkable_polygon"][2];
+        let (mut engine, assets) = compiled_walkway_with_dimensions(
+            &serde_json::to_vec(fixture).unwrap(),
+            (
+                bounds[0].as_f64().unwrap() as f32 + 1.,
+                bounds[1].as_f64().unwrap() as f32 + 1.,
+            ),
+        );
         let sim = crate::sim_rng::test_context();
         let patch = crate::patch::PatchIndex::new(0).unwrap();
         for (step, applied) in [false, true, false].into_iter().enumerate() {
@@ -2105,19 +2112,21 @@ fn audit_changing_climb_fixtures(fixtures: &[serde_json::Value], sprite: Option<
                     leave.point_in,
                     true,
                 );
+                let actor_result = sprite.map(|sprite| {
+                    walk_exported_lift(
+                        engine.clone(),
+                        assets.clone(),
+                        entrance,
+                        exit,
+                        Some(sprite),
+                    )
+                });
                 assert_eq!(
                     route.is_some(),
                     !applied,
-                    "climb planning type={lift_type}, rotation={rotation}, applied={applied}"
+                    "climb planning type={lift_type}, rotation={rotation}, applied={applied}, route={route:?}, actor={actor_result:?}"
                 );
-                let Some(sprite) = sprite else { continue };
-                let result = walk_exported_lift(
-                    engine.clone(),
-                    assets.clone(),
-                    entrance,
-                    exit,
-                    Some(sprite),
-                );
+                let Some(result) = actor_result else { continue };
                 if applied {
                     // A narrow climb may lose its authorized entrance when
                     // the barrier closes, rejecting movement before dispatch.
