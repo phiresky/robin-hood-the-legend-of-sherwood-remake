@@ -51,6 +51,36 @@ const edges: [JumpEdge, JumpEdge] = [
   { zone: "right", a: [60, 0, 0], b: [60, 100, 0] },
 ];
 
+test("vertical flights allow narrow forward gaps without a long-jump takeoff", () => {
+  for (const gap of [1, 10, 15]) {
+    const vertical: [JumpEdge, JumpEdge] = [
+      { zone: "lower", a: [0, 100, 0], b: [0, 0, 0] },
+      { zone: "upper", a: [gap, 120, 120], b: [gap, 220, 120] },
+    ];
+    assert.deepEqual(createJumpClearance([])(vertical, false), []);
+    const placed = segments().map((segment, index) => ({
+      ...segment,
+      long: false,
+      edge: vertical[index]!,
+      attachment: { maxGap: 30, maxRise: 150, maxDrop: 150, minOverlap: 20 },
+    }));
+    const assembled = assembleJumpSegments(placed, createJumpClearance([]));
+    assert.equal(assembled.pairs.length, 1);
+    assert.deepEqual(assembled.warnings, []);
+    assert.throws(() => createJumpClearance([])(vertical, true), /15-unit takeoff/);
+    const reversed = structuredClone(vertical);
+    reversed[1].a[0] = -gap;
+    reversed[1].b[0] = -gap;
+    assert.throws(() => createJumpClearance([])(reversed, false), /not forward/);
+  }
+  const projectedBehind: [JumpEdge, JumpEdge] = [
+    { zone: "lower", a: [-50, 0, 0], b: [50, 0, 0] },
+    { zone: "upper", a: [50, 10, 120], b: [-50, 10, 120] },
+  ];
+  assert.deepEqual(createJumpClearance([])(projectedBehind, false), []);
+  assert.throws(() => createJumpClearance([])(projectedBehind, true), /15-unit takeoff/);
+});
+
 test("long-jump landing binds the receiver at the destination midpoint across the whole span", () => {
   const receiver: SightObstacle = {
     ...wall(55, 140, 10, 20, 100, 100),

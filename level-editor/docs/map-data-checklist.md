@@ -27,6 +27,15 @@ routes do not certify clearance across every edge parameter. These warnings
 require further geometry review; no jump endpoints or runtime behavior changed.
 See the [jump-audit evidence](map-compilation-evidence.md#jump-vector-warnings-no-longer-hide-clearance-findings-2026-10-11).
 
+The subsequent clearance repair separates vertical flights from long-jump
+takeoff constraints. Clear 1/10/15-unit vertical gaps now assemble successfully;
+long jumps still require their projected walking takeoff. Vertical direction is
+checked in world XY because elevation can project a valid landing behind its
+source. Fresh hall/walkway exports now reach clearance checking at all four
+rotations. Their gameplay geometry is unchanged and passes 160 native direct
+vertical jumps plus 160 click-driven routes. Solid-intersection warnings remain
+unresolved, including supporting-wall contacts. No runtime changes were needed.
+
 **Rendered reveal round trip (2026-10-11):** two independent hall/walkway pairs
 at 37 degrees now pass a 5000×5000 browser export/reopen/rebake check. Both reveal
 regions change color and depth independently; all applied-state PNG pixels,

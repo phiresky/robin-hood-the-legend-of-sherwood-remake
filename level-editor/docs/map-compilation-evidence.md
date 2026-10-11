@@ -196,6 +196,38 @@ an unverified forward takeoff at 270 degrees. They remain unresolved and require
 contact-level diagnosis; previous sampled native traversal success does not
 prove that the whole flight ribbon is clear. No production runtime changes.
 
+## Vertical-flight takeoff constraints (2026-10-11)
+
+Contact tracing of the newly visible hall/walkway warnings exposed an overly
+strict clearance precondition: every flight required 15 units of projected
+forward space. Vertical ascent/descent does not use the long-jump walking
+takeoff. The compiler now applies that minimum only when a long-flight branch
+is possible. Vertical orientation uses world XY; a raised destination can project
+behind its source while its world-space flight still goes forward.
+
+Regression checks assemble clear vertical edges separated by 1/10/15 units,
+reject their long-jump equivalents, reject genuinely reversed vertical edges,
+and accept a raised landing whose projection is behind the source. The selected
+jump/assembly/compiler/export suites pass all 260 tests.
+
+Fresh exports are in `work/map-compile/hall-walkway-connection-7YWoTu`.
+All eight editor round trips complete; the previous 270-degree unverified
+takeoff warnings become solid-intersection findings. Every descriptor matches
+the preceding `hall-walkway-connection-21cxr8` export after removing warnings.
+Its four joined descriptors were audited in
+`work/map-compile/hall-walkway-narrow-jump-aw169zos`: both
+`exported_vertical_jumps_climb_with_help_and_descend_upright` and
+`exported_vertical_jumps_resolve_clicks_and_complete_the_route` pass, covering
+160 direct and 160 click-driven traversals. Reports are
+`actor-jump-vertical-report.json` and `actor-jump-vertical-click-report.json`.
+
+Initial contact traces are retained as `jump-contacts-<rotation>-<pair>.json`
+in `hall-walkway-connection-B6I5vj`. They include the source's supporting wall
+during the jump-down height adjustment and additional nearby volumes. These
+contacts still require review against the visual/body envelope; they were not
+silently exempted. Sampled arrival success does not certify a clear whole-span
+flight, and no asset or production runtime was changed.
+
 ## Authored occupancy-trigger round trips (2026-10-11)
 
 `node refinement/check-automatic-triggers.mjs` creates eight new editor maps

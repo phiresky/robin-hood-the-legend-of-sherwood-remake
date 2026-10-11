@@ -342,19 +342,27 @@ export function createJumpClearance(
         dy = source.b[1] - source.a[1];
       const length = Math.hypot(dx, dy);
       if (length < EPSILON) throw new Error("Jump edge collapses on the movement grid");
+      const rise = destination.b[2] - source.a[2];
+      const hasLongFlight = long || Math.abs(rise) < 100;
+      const minimumForward = hasLongFlight ? 15 : 0;
+      // Elevated landings can project behind the takeoff despite lying forward
+      // in world XY. Vertical orders use that world-space destination; only a
+      // long flight needs room beyond its projected 15-unit walking takeoff.
+      const forwardY = destination.b[1] - source.a[1] - (hasLongFlight ? rise : 0);
       if (
-        (-(destination.b[0] - source.a[0]) * dy +
-          (destination.b[1] - destination.b[2] - source.a[1] + source.a[2]) * dx) /
-          length <=
-        15 + EPSILON
+        (-(destination.b[0] - source.a[0]) * dy + forwardY * dx) / length <=
+        minimumForward + EPSILON
       )
-        throw new Error("Ledges leave no forward flight after the 15-unit takeoff");
+        throw new Error(
+          hasLongFlight
+            ? "Ledges leave no forward flight after the 15-unit takeoff"
+            : "Vertical jump destination is not forward of the source ledge",
+        );
       const start: Vec3 = [
         source.a[0] - (15 * dy) / length,
         source.a[1] + (15 * dx) / length,
         source.a[2],
       ];
-      const rise = destination.b[2] - source.a[2];
       const slopedRibbons =
         sloped && !long && Math.abs(rise) >= 60
           ? verticalFlightRibbons(
