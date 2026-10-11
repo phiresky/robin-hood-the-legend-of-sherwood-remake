@@ -15,7 +15,7 @@ def guard():
  assert shutil.disk_usage(R).free>=10*1024**3+cap
  assert next(int(s.split()[1]) for s in Path('/proc/meminfo').read_text().splitlines() if s.startswith('MemAvailable:'))>=6*1024**2
  assert sum(p.stat().st_size for p in out.rglob('*') if p.is_file())<=cap
-guard();acquire();out.mkdir();digest=sha(model);scene_path=lib/'scenes/croisement01.rhlos-map.json';manifest=json.loads(scene_path.read_text());source_hash=sha(scene_path);bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;wood=next(o for o in scene.objects if o.type=='MESH');wood.color=(.6,.35,.15,1);support=[];bindings=[];s,c=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-c,s));down=Vector((0,-s,-c));right=Vector((1,0,0))
+guard();acquire(slots=2);out.mkdir();digest=sha(model);scene_path=lib/'scenes/croisement01.rhlos-map.json';manifest=json.loads(scene_path.read_text());source_hash=sha(scene_path);bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;wood=next(o for o in scene.objects if o.type=='MESH');wood.color=(.6,.35,.15,1);support=[];bindings=[];s,c=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-c,s));down=Vector((0,-s,-c));right=Vector((1,0,0))
 selected=[manifest['sceneAssets'][0],next(v for v in manifest['assetSources'] if v['id']=='croisement01-terrace-000')]
 for asset in selected:
  path=lib/asset['model'];descriptor=lib/asset['descriptor'];assert sha(path)==asset['model_sha256'] and sha(descriptor)==asset['descriptor_sha256'];before=set(scene.objects);bpy.ops.import_scene.gltf(filepath=str(path));new=set(scene.objects)-before;placement=next((p for p in manifest['placements'] if p['assets']==[asset['id']]),None);translation=Vector((0,0,0))
