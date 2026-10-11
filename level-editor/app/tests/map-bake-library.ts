@@ -6,6 +6,7 @@ import { readPinnedAssetDescriptors } from "../src/projection-library.ts";
 import { serializeStoredMap } from "@rle/shared";
 import { unzipSync, strFromU8 } from "fflate";
 import { decode } from "fast-png";
+import type { BakedAppearanceRegion } from "../src/map-appearance.ts";
 
 async function imageHash(data: Uint8Array | Uint8ClampedArray | Uint16Array) {
   const bytes = new Uint8Array(data.byteLength);
@@ -15,6 +16,26 @@ async function imageHash(data: Uint8Array | Uint8ClampedArray | Uint16Array) {
 
 function check(condition: boolean, message: string) {
   if (!condition) throw new Error(message);
+}
+
+async function appearanceHashes(regions: readonly BakedAppearanceRegion[]) {
+  const result = [];
+  for (const region of regions) {
+    const states = [];
+    for (const pixels of region.states)
+      states.push({ color: await imageHash(pixels.color), depth: await imageHash(pixels.depth) });
+    result.push({ bounds: region.bounds, patches: region.patches, states });
+  }
+  return result;
+}
+
+interface StoredAppearanceManifest {
+  version: number;
+  regions: {
+    bounds: [number, number, number, number];
+    patches: number[];
+    states: ({ color: string; depth: string } | null)[];
+  }[];
 }
 
 const result = document.querySelector("#result")!;
@@ -74,6 +95,20 @@ try {
   const originalHashes = roundtrip
     ? await Promise.all([imageHash(pixels.color), imageHash(pixels.depth)])
     : undefined;
+  const originalAppearances = roundtrip ? await appearanceHashes(appearance) : [];
+  if (parameters.has("independent-appearances")) {
+    const expected = Number(parameters.get("independent-appearances"));
+    check(roundtrip && Number.isSafeInteger(expected) && expected > 0, "Invalid appearance check");
+    check(originalAppearances.length === expected, "Missing independent appearance regions");
+    for (const region of originalAppearances) {
+      check(
+        region.patches.length === 1 && region.states.length === 2,
+        "Copied controls share a region",
+      );
+      check(region.states[0]!.color !== region.states[1]!.color, "Reveal did not change color");
+      check(region.states[0]!.depth !== region.states[1]!.depth, "Reveal did not change depth");
+    }
+  }
   result.textContent = "RUNNING encoding images and packaging ZIP";
   const archive = await worker.package(compiled, pixels, appearance);
   (window as unknown as { __bakeZip: Uint8Array }).__bakeZip = archive;
@@ -114,6 +149,55 @@ try {
         (await imageHash(depth.data)) === originalHashes![1],
       "ZIP PNGs changed baked pixels",
     );
+    if (originalAppearances.length) {
+      const manifest: StoredAppearanceManifest = readJson(`${prefix}.appearance.json`);
+      check(manifest.version === 1, "Invalid appearance manifest version");
+      check(manifest.regions.length === originalAppearances.length, "ZIP lost appearance regions");
+      for (const [index, region] of manifest.regions.entries()) {
+        const original = originalAppearances[index]!;
+        check(
+          JSON.stringify(region.bounds) === JSON.stringify(original.bounds),
+          "ZIP changed appearance bounds",
+        );
+        check(
+          JSON.stringify(
+            region.patches.map(
+              (patch) => compiled.descriptor.asset_geometry?.movement_transitions?.[patch]?.id,
+            ),
+          ) === JSON.stringify(original.patches),
+          "ZIP appearance indices target the wrong controls",
+        );
+        check(
+          region.states.length === original.states.length && region.states[0] === null,
+          "ZIP lost appearance states",
+        );
+        for (let state = 1; state < region.states.length; state++) {
+          const filesForState = region.states[state];
+          if (!filesForState) throw new Error("Applied appearance has no images");
+          const stateColor = decode(files[filesForState.color]!);
+          const stateDepth = decode(files[filesForState.depth]!);
+          check(
+            stateColor.depth === 8 && stateColor.channels === 4,
+            "Invalid appearance color format",
+          );
+          check(
+            stateDepth.depth === 16 && stateDepth.channels === 1,
+            "Invalid appearance depth format",
+          );
+          check(
+            [stateColor, stateDepth].every(
+              (image) => image.width === region.bounds[2] && image.height === region.bounds[3],
+            ),
+            "ZIP changed appearance dimensions",
+          );
+          check(
+            (await imageHash(stateColor.data)) === original.states[state]!.color &&
+              (await imageHash(stateDepth.data)) === original.states[state]!.depth,
+            "ZIP changed applied appearance pixels",
+          );
+        }
+      }
+    }
     result.textContent = "RUNNING reopening ZIP editor document and pinned models";
     const stored = readJson(report.editor_document);
     const reopened = await prepareMapCandidate(
@@ -156,6 +240,11 @@ try {
     check(
       JSON.stringify(rebaked.compiled.warnings) === JSON.stringify(compiled.warnings),
       "Rebake changed warnings",
+    );
+    check(
+      JSON.stringify(await appearanceHashes(rebaked.appearance)) ===
+        JSON.stringify(originalAppearances),
+      "Reopened map changed appearance regions, bindings or pixels",
     );
   }
   const obstacles =

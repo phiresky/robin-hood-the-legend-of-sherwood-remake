@@ -4,6 +4,24 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Independent rendered reveal-state round trip (2026-10-11)
+
+The browser fixture now hashes every appearance state's color and depth before
+packaging, decodes every applied-state PNG from the ZIP, and checks its format,
+dimensions, pixels and patch-index binding. Reopening and rebaking must preserve
+all region bounds, control bindings and state pixels. The optional
+`independent-appearances=2` assertion requires two separate one-control regions,
+each with different initial/applied color and depth.
+
+The joined hall/walkway scene at 37 degrees passes with two independent copies
+on new editor terrain: 5000×5000 pixels, 141 sight obstacles and a 49,176,397-byte
+ZIP. The downloaded artifact is
+`work/map-compile/browser-hall-reveal-20261011/rendered-hall-reveal.zip`.
+This uses the browser viewport and export worker with a bounded library containing
+only the two pinned reusable assets. It verifies rendered export/reopen fidelity;
+it does not establish native renderer switching or actor interaction. Existing
+best-effort geometry warnings remain visible and unresolved.
+
 ## Separate walkway restores hall reveal binding (2026-10-11)
 
 The raised reveal waypoint lies on the separate east-bailey west-curtain's floor,

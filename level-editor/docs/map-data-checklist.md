@@ -11,6 +11,12 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**Rendered reveal round trip (2026-10-11):** two independent hall/walkway pairs
+at 37 degrees now pass a 5000×5000 browser export/reopen/rebake check. Both reveal
+regions change color and depth independently; all applied-state PNG pixels,
+region bounds and control-index bindings survive ZIP packaging and reopening.
+Native rendered switching and actor interaction remain unverified by this check.
+
 **Hall/walkway dependency (2026-10-11):** the hall's reveal waypoint belongs on
 the separate east-bailey west-curtain walkway. A flat-ground-only scene cannot
 bind it correctly. Joining those reusable assets restores the control without
