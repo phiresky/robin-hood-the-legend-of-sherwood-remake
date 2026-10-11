@@ -22,7 +22,7 @@ if a.revision>=8:
  nodes=['building-000',*[f'building-{i:03d}' for i in range(2,8)]]
  banks=[o for o in collection.all_objects if o.type=='MESH' and o.get('source_node') in nodes]
  assert len(banks)==len(nodes)
-region=(200.,752.,-1100.,-400.) if a.revision>=9 else ((200.,750.,-1100.,-400.) if a.revision>=8 else (300.,640.,-980.,-540.))
+region=(80.,800.,-1240.,-320.) if a.revision>=11 else (200.,752.,-1100.,-400.) if a.revision>=9 else ((200.,750.,-1100.,-400.) if a.revision>=8 else (300.,640.,-980.,-540.))
 def split_polygon(poly,axis,bound,keep_low):
  inside=[];outside=[]
  for current,following in zip(poly,poly[1:]+poly[:1]):
@@ -102,12 +102,12 @@ def constrain(objects,mask_id,mask_path,label):
    hit,_,_,_=bvh.ray_cast(Vector((x,y,-500)),Vector((0,0,1)),2000)
    if hit is not None and hit.z<low+45:
     root_samples.append((i,j,float(hit.z)));z[i,j]=hit.z+(8. if mask_id==6 and a.revision>=3 else -.5);fixed[i,j]=True;root_fixed+=1
- if mask_id==6 and a.revision>=4:
+ if (mask_id==6 and a.revision>=4) or (mask_id==4 and a.revision>=12):
   # Embed the hidden basal volume beneath one gentle slope. Do not trace
   # every underside vertex into the ground or reveal a closed root end cap.
   sy=np.asarray([ys[j] for i,j,h in root_samples]);front=np.quantile(sy,.1);back=np.quantile(sy,.75)
   front_rows=[(ys[j],h) for i,j,h in root_samples if ys[j]<=front];back_rows=[(ys[j],h) for i,j,h in root_samples if ys[j]>=back]
-  yf=float(np.mean([y for y,h in front_rows]));yb=float(np.mean([y for y,h in back_rows]));zf=float(np.median([h for y,h in front_rows]))+.5;zb=float(np.quantile([h for y,h in back_rows],.25))+8.;slope=(zb-zf)/(yb-yf)
+  yf=float(np.mean([y for y,h in front_rows]));yb=float(np.mean([y for y,h in back_rows]));zf=float(np.median([h for y,h in front_rows]))+.5;zb=float(np.quantile([h for y,h in back_rows],.25))+(8. if mask_id==6 else .5);slope=(zb-zf)/(yb-yf)
   for i,j,h in root_samples:z[i,j]=zf+(ys[j]-yf)*slope
   root_plane=dict(front=[yf,zf],back=[yb,zb],dz_dy=slope,status='Inferred ground slope anchored to front root and embedded rear base; native visibility caps remain authoritative')
  row=next(r for r in native['masks'] if r['index']==mask_id);left,top=row['box_top_left'];mask=np.asarray(Image.open(mask_path))>0;count=0
