@@ -17,7 +17,9 @@ from restart2_tree08_fork_kernel import poly
 from restart2_tree08_local_fork import audit
 R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
 support='--restore-source' in sys.argv
-O=R/('tree08-implicit-collar-v2-source' if support else 'tree08-implicit-collar-v1');assert not O.exists()
+smooth_transition='--smooth-transition' in sys.argv
+base=('tree08-implicit-collar-v10-smooth-source' if support else 'tree08-implicit-collar-v9-smooth') if smooth_transition else ('tree08-implicit-collar-v2-source' if support else 'tree08-implicit-collar-v1')
+O=R/base;assert not O.exists()
 assert shutil.disk_usage(R).free>=10*1024**3
 assert next(int(x.split()[1]) for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:'))>=6*1024**2
 source=R/'tree08-connected-tip-cleanup-v2/candidate.npz';a=np.load(source);v,f=a['vertices'],a['faces']
@@ -33,12 +35,12 @@ s,c=np.sin(np.radians(35)),np.cos(np.radians(35));z=np.arange(dims[2])+origin[2]
 native_y=-s*y[None,:]-c*z[:,None]
 def smooth(t):
  t=np.clip(t,0,1);return t*t*(3-2*t)
-weight=smooth((315-native_y)/35)[:,:,None]*smooth((x-460)/45)[None,None,:]*smooth((700-x)/45)[None,None,:]
+weight=smooth((345-native_y)/10 if smooth_transition else (315-native_y)/35)[:,:,None]*smooth((x-460)/45)[None,None,:]*smooth((700-x)/45)[None,None,:]
 field=(distance+(filtered-distance)*weight).astype(np.float32);del distance,filtered,weight;gc.collect()
 if support:
     from PIL import Image
     from restart2_tree08_junction_proof import native_depth
-    prior=np.load(R/'tree08-implicit-collar-v1/candidate.npz')
+    prior=np.load(R/('tree08-implicit-collar-v9-smooth' if smooth_transition else 'tree08-implicit-collar-v1')/'candidate.npz')
     depth=native_depth([(prior['vertices'],prior['faces'])]);valid=np.isfinite(depth)
     nearest=distance_transform_edt(~valid,return_distances=False,return_indices=True)
     core=np.asarray(Image.open(R/'tree08-semantic-source-v1/bark-core-proposal.png'))>0
@@ -64,5 +66,5 @@ volume=vtkImageData();volume.SetDimensions(*dims);volume.SetOrigin(*origin);volu
 contour=vtkFlyingEdges3D();contour.SetInputData(volume);contour.SetValue(0,0);contour.ComputeNormalsOff();contour.Update();mesh=contour.GetOutput()
 vertices=vtk_to_numpy(mesh.GetPoints().GetData()).astype(float);cells=vtk_to_numpy(mesh.GetPolys().GetData()).reshape(-1,4);assert (cells[:,0]==3).all();faces=cells[:,1:].copy()
 check=audit(vertices,faces);O.mkdir();np.savez_compressed(O/'candidate.npz',vertices=vertices,faces=faces)
-report=dict(status='PRIVATE_IMPLICIT_ANATOMY_TRIAL_NOT_CONTACT_OR_SOURCE_VALIDATED',source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),candidate_sha256=hashlib.sha256((O/'candidate.npz').read_bytes()).hexdigest(),spacing=1.,gaussian_sigma=3.,source_support_capsules=(len(lost) if support else 0),vertices=len(vertices),faces=len(faces),topology=check,limits='Voxelized lower surface is diagnostic only. A usable upper shape requires exact retained-root stitching, all source pixel coverage/RGBA, topology and strict intersections. No approval or synthesis.')
+report=dict(status='PRIVATE_IMPLICIT_ANATOMY_TRIAL_NOT_CONTACT_OR_SOURCE_VALIDATED',source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),candidate_sha256=hashlib.sha256((O/'candidate.npz').read_bytes()).hexdigest(),spacing=1.,gaussian_sigma=3.,smooth_lower_transition=smooth_transition,source_support_capsules=(len(lost) if support else 0),vertices=len(vertices),faces=len(faces),topology=check,limits='Voxelized lower surface is diagnostic only. A usable upper shape requires exact retained-root stitching, all source pixel coverage/RGBA, topology and strict intersections. No approval or synthesis.')
 (O/'report.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(report,indent=2),flush=True)
