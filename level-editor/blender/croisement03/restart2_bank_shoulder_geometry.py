@@ -38,9 +38,26 @@ def planarize(boundary,lines):
   result.append(points[-1]);rebuilt.append((name,result))
  return rebuilt[0][1][:-1],rebuilt[1:]
 
+def native_front_breaks(points,vertices,faces):
+ # Split at every projected old triangle edge, where the visible plane can change.
+ projected=np.array([[p[0],-p[1]*S-p[2]*C]for p in vertices]);edges={tuple(sorted((a,b)))for f in faces for a,b in zip(f,f[1:]+f[:1])};out=[]
+ cross=lambda a,b:a[0]*b[1]-a[1]*b[0]
+ for start,end in zip(points,points[1:]):
+  a=np.array(start,dtype=float);delta=np.array(end)-a;cuts=[0.,1.]
+  for i,j in edges:
+   c=projected[i];d=projected[j]-c;den=cross(delta,d)
+   if abs(den)<1e-10:continue
+   u=cross(c-a,d)/den;v=cross(c-a,delta)/den
+   if 1e-8<u<1-1e-8 and -1e-8<=v<=1+1e-8:cuts.append(float(u))
+  ordered=[]
+  for u in sorted(cuts):
+   if not ordered or u-ordered[-1]>1e-7:ordered.append(u)
+  out += [(a+delta*u).tolist()for u in ordered[:-1]]
+ return out+[list(points[-1])]
+
 def main():
  global O
- ap=argparse.ArgumentParser();ap.add_argument('--output',type=Path,default=O);ap.add_argument('--recess',type=float,default=-2.);args=ap.parse_args();O=args.output.resolve()
+ ap=argparse.ArgumentParser();ap.add_argument('--output',type=Path,default=O);ap.add_argument('--recess',type=float,default=-2.);ap.add_argument('--follow-existing-front',action='store_true');args=ap.parse_args();O=args.output.resolve()
  assert not O.exists();O.mkdir();old=json.loads((B/'bank-whole-geometry-plan-v4/geometry.json').read_text());source=json.loads((B/'bank-shoulder-source-v1/traces.json').read_text());result={};details=[]
  for owner in ('52','54'):
   m=old[owner];n=m['source_vertex_count'];verts=np.array(m['vertices']);top=[f for f in m['faces'] if all(i<n for i in f)];counts=Counter(tuple(sorted((a,b))) for f in top for a,b in zip(f,f[1:]+f[:1]));edges=[e for e,c in counts.items() if c==1];adj={}
@@ -62,10 +79,11 @@ def main():
   lines=[(t['id'],[authored(verts[i])for i in t['vertices']])for t in m['traces']]
   for t in source['traces']:
    if str(t['owner'])!=owner:continue
-   points=[]
-   for i,(x,sy) in enumerate(t['points']):
+   points=[];native_points=[list(p)for p in t['points']]
+   if t['id']=='south-upper-short-shoulder':native_points[4][0]-=.5
+   if args.follow_existing_front:native_points=native_front_breaks(native_points,verts,m['faces'])
+   for i,(x,sy) in enumerate(native_points):
     original_source=[x,sy]
-    if t['id']=='south-upper-short-shoulder' and i==4:x-=.5  # Within the traced shoulder's1–3pixel uncertainty, away from serialized right-wall edge.
     if t['id']=='east-upper-outer-shoulder' and i==0:
      points.append([604.,189.+height,height]);continue
     origin=np.array([x,-sy/S,0.])+ray*5000;hits=boundary_hits(origin,-ray,{owner:(verts,m['faces'])});assert hits,(t['id'],i,'no existing surface')
@@ -73,6 +91,6 @@ def main():
    lines.append((t['id'],points))
   boundary,lines=planarize(boundary,lines)
   candidate=mesh(boundary,lines);candidate['native_obstacle']=m['native_obstacle'];candidate['gameplay_metadata']=m['gameplay_metadata'];result[owner]=candidate
- result['guards']=old['guards'];result['shoulder_source_sha256']=hashlib.sha256((B/'bank-shoulder-source-v1/traces.json').read_bytes()).hexdigest();result['scope']='CPU trial; small recessed joints along traced shoulders. Saved source-firsthit and appearance guards required.'
+ result['guards']=old['guards'];result['shoulder_source_sha256']=hashlib.sha256((B/'bank-shoulder-source-v1/traces.json').read_bytes()).hexdigest();result['scope']='CPU front-plane subdivision study; not complete morphology. Saved source-firsthit and appearance guards required.' if args.follow_existing_front else 'CPU trial; small recessed joints along traced shoulders. Saved source-firsthit and appearance guards required.'
  (O/'geometry.json').write_text(json.dumps(result,indent=2)+'\n');(O/'shoulder-points.json').write_text(json.dumps(details,indent=2)+'\n');print({k:{x:result[k][x]for x in ('source_vertex_count','signed_volume','euler')}for k in ('52','54')})
 if __name__=='__main__':main()

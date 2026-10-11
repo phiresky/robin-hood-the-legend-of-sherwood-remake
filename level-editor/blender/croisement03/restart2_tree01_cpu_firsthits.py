@@ -1,17 +1,20 @@
 """Check proposed bark spines against private wood and retained bank triangles."""
-import json,math,hashlib
+import json,math,hashlib,argparse
 from pathlib import Path
 import numpy as np
 from PIL import Image
 from restart2_bank_boundary_ray import boundary_hits
 R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-cpu-wood-v1'
 def main():
+ global O
+ parser=argparse.ArgumentParser();parser.add_argument('--input',type=Path,default=O);O=parser.parse_args().input.resolve()
  geometry=O/'geometry.json';data=json.loads(geometry.read_text());bank=B/'bank-whole-geometry-plan-v4/geometry.json';banks=json.loads(bank.read_text());meshes={f'wood-{p["source_obstacle_context"]}':(p['vertices'],p['faces']) for p in data['parts']};meshes.update({f'bank-{k}':(banks[k]['vertices'],banks[k]['faces']) for k in ['52','54']});west=json.loads((B/'bank-continuous-strata-plan-v1/geometry.json').read_text());meshes['bank-53']=(west['vertices'],west['faces']);S=math.sin(math.radians(35));C=math.cos(math.radians(35));ray=np.array([0.,-C,S]);rows=[]
- for part in data['parts']:
-  node=part['source_obstacle_context'];mask=np.array(Image.open(B/f'tree01-bark-seed-proposal-v1/building-{node:03}-proposed-bark.png'))>0;fail=[];passed=0
+ ownership={node:p['source_obstacle_context'] for p in data['parts'] for node in p.get('source_contexts',[p['source_obstacle_context']])}
+ for node in sorted(ownership):
+  expected=ownership[node];mask=np.array(Image.open(B/f'tree01-bark-seed-proposal-v1/building-{node:03}-proposed-bark.png'))>0;fail=[];passed=0
   for y,x in np.argwhere(mask):
    origin=np.array([x,-y/S,0.])+ray*5000;hits=boundary_hits(origin,-ray,meshes);owner=hits[0]['owner'] if hits else None
-   if owner==f'wood-{node}':passed+=1
+   if owner==f'wood-{expected}':passed+=1
    else:fail.append({'source':[int(x),int(y)],'firsthit':owner})
   rows.append({'source_obstacle_context':node,'tested':int(mask.sum()),'passed':passed,'failures':fail})
  bank_changes=[];bank_meshes={k:v for k,v in meshes.items() if k.startswith('bank-')};seeds=np.array(Image.open(B/'bank-exposed-rock-proposal-v1/candidate-rock-seeds.png'))>0
