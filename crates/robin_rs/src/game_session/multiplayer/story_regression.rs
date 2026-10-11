@@ -869,14 +869,19 @@ fn stock_three_player_navigation_tick_cost() {
             None::<f64>
         }
     };
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    let root = std::env::var_os("ROBIN_BENCH_INSTALL_ROOT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .to_path_buf()
+        });
     let data = robin_test_support::original_data::data_directory("");
     let (base_campaign, profiles, context) =
-        crate::main_entry::rust_init_with_roots(Some(&data), Some(root)).unwrap();
+        crate::main_entry::rust_init_with_roots(Some(&data), Some(&root)).unwrap();
     let files = context.preparation_files().unwrap().clone();
     let mut bank_host = Host::scratch(640.0, 480.0);
     bank_host

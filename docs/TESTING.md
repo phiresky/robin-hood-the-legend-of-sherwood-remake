@@ -25,6 +25,15 @@ other threads; wall time includes scheduling delays. Completion checks for hangs
 but neither metric is an automatic certification of the desired tick budget.
 Record both distributions and the execution conditions when comparing runs.
 
+For revision comparisons, set `ROBIN_BENCH_INSTALL_ROOT` to a controlled install
+directory containing `assets/core-datadir` and an empty `mods` directory. Set
+`ROBINHOOD_MODS_DIR` to that empty directory too, and leave
+`ROBINHOOD_OVERLAY_DATA_DIRS` unset. This prevents checkout-local or configured
+mods from changing one revision's workload. Use identical core-overlay contents,
+game data, benchmark code, build profile and CPU affinity for both revisions;
+alternate their runs after builds finish. The install-root override affects only
+this opt-in benchmark, not game startup.
+
 `bash scripts/check-quality.sh format` runs `cargo fmt --all -- --check` over
 Cargo-discovered sources. Client modules are explicit declarations, so rustfmt
 traverses their real module tree; no file needs a separate direct pass.
