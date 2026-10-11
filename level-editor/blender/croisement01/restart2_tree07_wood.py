@@ -28,7 +28,7 @@ core=base/'tree07-source-partition-v2/conservative-bark-core.png';wood=Image.ope
 # Only the complete upper section constrains width; its isolated lower edge
 # samples establish color without narrowing the opposite hidden side.
 centers=[Vector(v) for v in [(458,-307,39),(458,-307,55),(458,-307,120),(456,-307,190),(456,-307,218),(458,-307,270),(452,-308,335),(451,-308,365)]]
-body=helpers.tube('Continuous partly observed stem',centers,[14,13,10,9,9,8,5,1]);body['defer_union']=True
+body=helpers.tube('Continuous partly observed stem',centers,[14,13,11,10.5,10.5,9,5,1]);body['defer_union']=True
 fit=np.asarray(wood)>0;fit[12:]=False
 before=[v.co.copy() for v in body.data.vertices]
 helpers.fit_short_root(body,fit,x0=441)
