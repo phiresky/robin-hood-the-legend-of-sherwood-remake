@@ -23,3 +23,10 @@ test('source drift is rejected before a production loader can run',async()=>{
  const original=globalThis.fetch;globalThis.fetch=async()=>new Response('{}');
  try{await assert.rejects(loadProductionGateInputs(request,p=>p),/HTTP source hash differs/);}finally{globalThis.fetch=original;}
 });
+test('absent initial endpoints expose no fabricated model paths',async()=>{
+ const {createHash}=await import('node:crypto');
+ const contract=JSON.parse(fs.readFileSync(request.contract.path));contract.families[0].physical.initial={kind:'absent'};
+ const bytes=Buffer.from(JSON.stringify(contract)),copy=structuredClone(request);copy.contract.sha256=createHash('sha256').update(bytes).digest('hex');
+ const original=globalThis.fetch;globalThis.fetch=async url=>new Response(url===copy.contract.path?bytes:fs.readFileSync(url));
+ try{const input=await loadProductionGateInputs(copy,p=>p);assert.deepEqual(input.contract.families[0].physical.initial,{kind:'absent'});}finally{globalThis.fetch=original;}
+});

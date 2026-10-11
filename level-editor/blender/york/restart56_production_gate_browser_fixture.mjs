@@ -18,7 +18,7 @@ export async function loadProductionGateInputs(request,resolveURL){
   const contract=await json(request.contract),mission=await json(request.source.mission),level=await json(request.source.level);
   const paths=new Map();
   for(const resource of request.resources)paths.set(resource.path,{path:request.library+'/'+resource.path,sha256:resource.sha256});
-  for(const family of contract.families)for(const endpoint of [family.physical.initial,family.physical.applied])for(const binding of endpoint){paths.set(binding.model,{path:request.library+'/'+binding.model,sha256:binding.model_sha256});for(const resource of binding.resources)paths.set(resource.path,{path:request.library+'/'+resource.path,sha256:resource.sha256});}
+  for(const family of contract.families)for(const endpoint of [family.physical.initial,family.physical.applied])for(const binding of (Array.isArray(endpoint)?endpoint:[])){paths.set(binding.model,{path:request.library+'/'+binding.model,sha256:binding.model_sha256});for(const resource of binding.resources)paths.set(resource.path,{path:request.library+'/'+resource.path,sha256:resource.sha256});}
   const missing=path=>new DOMException('Not in pinned gate library: '+path,'NotFoundError');
   function directory(prefix=''){
     return{kind:'directory',name:prefix.split('/').filter(Boolean).at(-1)??'gate',
