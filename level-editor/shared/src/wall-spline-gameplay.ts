@@ -780,6 +780,9 @@ export function wallSplineGameplay(
                     }
                   : {}),
                 preserveMovementPrecision: true,
+                ...(target === out.surfaces && surface.forceCrouched !== undefined
+                  ? { forceCrouched: surface.forceCrouched }
+                  : {}),
                 ...(target === out.surfaces && navigationRegion !== undefined
                   ? {
                       navigationRegion: `${surfaceSet}/${navigationRegion}`,

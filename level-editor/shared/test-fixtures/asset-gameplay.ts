@@ -10,6 +10,12 @@ import { gameToScene } from "../src/scene.ts";
 import { applyAffineMatrix, sceneToGame } from "../src/geometry.ts";
 import type { MaskTriangle } from "../src/compile-mask-geometry.ts";
 
+export function forcedCrouchCompilerFixture() {
+  const fixture = assetCompilerFixture();
+  fixture.hut.gameplay!.surfaces[1]!.forceCrouched = true;
+  return fixture;
+}
+
 export function rotatedSceneryCompilerFixture() {
   const fixture = assetCompilerFixture();
   fixture.hut.gameplay!.animations = [

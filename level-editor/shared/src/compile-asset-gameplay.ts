@@ -377,6 +377,7 @@ function compileAssetGameplayAttempt(
     worldHoles: Point[][];
     lift?: string;
     navigationRegion?: string;
+    forceCrouched?: boolean;
     acceptsNavigationJoins?: boolean;
     preserveMovementBoundary?: boolean;
     holeContours?: string[];
@@ -983,6 +984,7 @@ function compileAssetGameplayAttempt(
       const minimumArea = continuous ? 1e-8 : 0.5;
       const placed = {
         owner: placement.id,
+        forceCrouched: surface.forceCrouched === true,
         acceptsNavigationJoins:
           surface.acceptsNavigationJoins || placement.id === "authored-terrain",
         preserveMovementBoundary: surface.preserveMovementBoundary,
@@ -1282,6 +1284,22 @@ function compileAssetGameplayAttempt(
   lifts = assembledLifts.lifts;
   for (const surface of surfaces)
     if (surface.lift) surface.lift = assembledLifts.identities.get(surface.lift)!;
+  for (const lift of lifts) {
+    const postures = new Set(
+      surfaces.filter((s) => s.lift === lift.id).map((s) => s.forceCrouched),
+    );
+    if (postures.size > 1) {
+      const segments = [...assembledLifts.identities]
+        .filter(([, id]) => id === lift.id)
+        .map(([id]) => id);
+      throw new UnavailableLiftPlacement(
+        lift.id,
+        "joined lift surfaces require one crouch setting",
+        false,
+        segments,
+      );
+    }
+  }
   for (const support of projectionSupports)
     if (support.lift) support.lift = assembledLifts.identities.get(support.lift)!;
   for (const door of doors) if (door.lift) door.lift = assembledLifts.identities.get(door.lift)!;
@@ -1379,18 +1397,30 @@ function compileAssetGameplayAttempt(
   );
   const groups = planes.flatMap((plane, layer) => {
     const matching = planeSurfaces.get(plane)!;
-    return [...new Set(matching.map((s) => s.navigationRegion))].map((region) => ({
-      plane,
-      layer,
-      lift: undefined as string | undefined,
-      navigationRegion: region,
-      surfaces: matching.filter((s) => s.navigationRegion === region),
-    }));
+    return [...new Set(matching.map((s) => s.navigationRegion))].flatMap((region) =>
+      [
+        ...new Set(
+          matching
+            .filter((s) => s.navigationRegion === region)
+            .map((s) => s.forceCrouched === true),
+        ),
+      ].map((forceCrouched) => ({
+        plane,
+        layer,
+        forceCrouched,
+        lift: undefined as string | undefined,
+        navigationRegion: region,
+        surfaces: matching.filter(
+          (s) => s.navigationRegion === region && (s.forceCrouched === true) === forceCrouched,
+        ),
+      })),
+    );
   });
   for (const surface of surfaces.filter((s) => s.lift))
     groups.push({
       plane: surface.plane,
       layer: layers.length - 1,
+      forceCrouched: surface.forceCrouched === true,
       lift: surface.lift,
       navigationRegion: undefined,
       surfaces: [surface],
@@ -1446,7 +1476,7 @@ function compileAssetGameplayAttempt(
         group.navigationRegion,
         (navigationPlaneCounts.get(group.navigationRegion) ?? 0) + 1,
       );
-  for (const { layer, plane, lift, navigationRegion, surfaces: group } of groups) {
+  for (const { layer, plane, lift, navigationRegion, forceCrouched, surfaces: group } of groups) {
     const joinedWall =
       navigationRegion !== undefined &&
       (navigationPlaneCounts.get(navigationRegion) ?? 0) > 1 &&
@@ -1582,6 +1612,7 @@ function compileAssetGameplayAttempt(
         layer,
         plane,
         navigationRegion,
+        forceCrouched,
         preserveMovementBoundary: true,
         worldPlane,
         receivingPolygon: ring(group[0]!.polygon, "Preserved receiving boundary"),
@@ -1599,6 +1630,7 @@ function compileAssetGameplayAttempt(
           layer,
           plane,
           navigationRegion,
+          forceCrouched,
           closeDeformationSeams: true,
           worldPlane,
           polygon: ring(polygon[0]!, "Wall navigation piece", 1e-7),
@@ -1670,6 +1702,7 @@ function compileAssetGameplayAttempt(
         worldPlane,
         lift,
         navigationRegion,
+        forceCrouched,
         polygon: boundary,
         ...(receivingBoundary ? { receivingPolygon: receivingBoundary } : {}),
         preciseBlockers: blockers.flatMap((points) => {
@@ -1922,7 +1955,9 @@ function compileAssetGameplayAttempt(
     );
     const { layer, lift, polygon: boundary, blockers, pieces } = region;
     const plane = pieces[0]!.plane;
+    const forceCrouched = pieces[0]!.forceCrouched === true;
     const physical = lift ? physicalStairs.get(lift) : undefined;
+    if (physical) physical.area.flags = forceCrouched ? 1 : 0;
     const changing = physical
       ? {
           pairs: physical.pairs,
@@ -2012,7 +2047,7 @@ function compileAssetGameplayAttempt(
         polygon: { points: boundary },
         ...(preciseBoundary ? { precise_polygon: preciseBoundary } : {}),
         skeleton_segments: [],
-        flags: 0,
+        flags: forceCrouched ? 1 : 0,
         obstacles: [
           ...blockers.map((points) => {
             const candidates = (preciseBlockers.get(motionBoundsKey(points)) ?? []).filter(

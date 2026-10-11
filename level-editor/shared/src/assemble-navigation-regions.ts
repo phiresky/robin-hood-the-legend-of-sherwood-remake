@@ -11,6 +11,7 @@ export interface NavigationPiece {
   /** Plane fitted before projection/rounding, retained for physical collision slices. */
   worldPlane?: HeightPlane;
   layer: number;
+  forceCrouched?: boolean;
   lift?: string;
   navigationRegion?: string;
   preserveMovementBoundary?: boolean;
@@ -56,16 +57,29 @@ export function assembleNavigationRegions(
   warnings: string[],
 ): NavigationRegion[] {
   const groups = new Map<string, NavigationPiece[]>();
+  const postures = new Map<string, Set<boolean>>();
   for (const [i, piece] of pieces.entries()) {
     const key = piece.lift
       ? `lift:${piece.lift}`
       : piece.navigationRegion
         ? `region:${piece.navigationRegion}`
         : `piece:${i}`;
-    const group = groups.get(key) ?? [];
+    const flags = postures.get(key) ?? new Set<boolean>();
+    flags.add(piece.forceCrouched === true);
+    postures.set(key, flags);
+    const postureKey = `${key}/crouched:${piece.forceCrouched === true}`;
+    const group = groups.get(postureKey) ?? [];
     group.push(piece);
-    groups.set(key, group);
+    groups.set(postureKey, group);
   }
+  for (const [key, flags] of postures)
+    if (flags.size > 1) {
+      if (key.startsWith("lift:"))
+        throw new Error(`Navigation ${key}: joined lift surfaces require one crouch setting`);
+      warnings.push(
+        `Navigation ${key}: upright and forced-crouch areas remain separate; use authored passages to connect their posture boundary.`,
+      );
+    }
   return [...groups.values()]
     .flatMap((members): NavigationRegion[] => {
       const first = members[0]!;

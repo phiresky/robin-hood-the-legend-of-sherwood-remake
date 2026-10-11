@@ -1,4 +1,5 @@
 import test from "node:test";
+import { readFileSync } from "node:fs";
 
 import assert from "node:assert/strict";
 import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
@@ -7,6 +8,7 @@ import { createTerrainGrid } from "./authored-terrain.ts";
 import { IDENTITY_TRANSFORM } from "./level3d.ts";
 import {
   assetCompilerFixture,
+  forcedCrouchCompilerFixture,
   maskAssetCompilerFixture,
   anchoredReceiverCompilerFixture,
   slopedAssetCompilerFixture,
@@ -48,6 +50,68 @@ import { pointInGameplayPolygon } from "./navigation-anchor.ts";
 import { parseLevel3D, parseProjectionAssetDescriptor } from "./validation.ts";
 import nearEdgeOnStair from "../test-fixtures/near-edge-on-placed-stair.json" with { type: "json" };
 import rotatedTerrainBridge from "../test-fixtures/rotated-terrain-bridge-seam.json" with { type: "json" };
+
+test("forced crouching remains local to authored floors with working passages", () => {
+  const { document, hut, assets } = forcedCrouchCompilerFixture();
+  const gameplay = hut.gameplay!;
+  const compiled = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+  const nativeFixture = JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-forced-crouch.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled, nativeFixture.asset_geometry);
+  assert.deepEqual(
+    compiled.motion_data.layers.flat().map((a) => a.flags),
+    [0, 1],
+  );
+  assert.equal(compiled.doors.length, 1);
+  const original = structuredClone(gameplay);
+  for (const invalid of [1, "true", null])
+    assert.throws(
+      () =>
+        validateAssetGameplay(
+          {
+            ...original,
+            surfaces: original.surfaces.map((s) => ({ ...s, forceCrouched: invalid })),
+          },
+          hut,
+        ),
+      /forced-crouch/,
+    );
+  assert.throws(
+    () =>
+      validateAssetGameplay(
+        { ...original, movementClearances: [{ ...original.surfaces[1], id: "invalid-clearance" }] },
+        hut,
+      ),
+    /forced-crouch/,
+  );
+});
+
+test("assembled lifts retain uniform posture and warn when conflicting segments cannot join", () => {
+  const { document, hut, upper, assets } = compoundLiftCompilerFixture();
+  for (const asset of [hut, upper])
+    for (const lift of asset.gameplay!.lifts!)
+      asset.gameplay!.surfaces.find((s) => s.id === lift.surface)!.forceCrouched = true;
+  const compiled = compileAssetGameplay(document, assets, [0, 0, 1000, 1000]);
+  const liftAreas = compiled.motion_data.layers.flat().filter((a) => a.is_lift);
+  assert.equal(liftAreas.length, 1);
+  assert.equal(liftAreas[0]!.flags, 1);
+  upper.gameplay!.surfaces[0]!.forceCrouched = false;
+  assert.throws(
+    () => compileAssetGameplay(document, assets, [0, 0, 1000, 1000]),
+    /one crouch setting/,
+  );
+  const best = compileAssetGameplay(document, assets, [0, 0, 1000, 1000], { bestEffort: true });
+  assert.match(best.warnings!.join("\n"), /one crouch setting/);
+  assert.ok(best.motion_data.layers.flat().length > 0);
+  assert.ok(best.motion_data.layers.flat().every((a) => !a.is_lift));
+});
 
 test("a rail cut cannot disconnect a fractional terrain bank from its rotated bridge", () => {
   const document = parseLevel3D(rotatedTerrainBridge.document);

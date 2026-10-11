@@ -11,6 +11,8 @@ export interface AssetWalkableSurface {
   polygon: Point[];
   /** Constant height or one height per polygon vertex; the surface must be planar. */
   height: number | number[];
+  /** Require crouched waiting/landing posture in the compiled motion area. */
+  forceCrouched?: boolean;
   /** Static blockers and clearances: match collision on this local navigation plane while projecting the footprint at its physical height. */
   navigationHeight?: number | number[];
   /** Transition blockers may follow terrain within these finite vertical offsets from their plane. */
@@ -1140,6 +1142,11 @@ export function validateAssetGameplay(
   ]) {
     feature(surface);
     polygon(surface.polygon);
+    if (
+      surface.forceCrouched !== undefined &&
+      (typeof surface.forceCrouched !== "boolean" || !data.surfaces.includes(surface))
+    )
+      fail(`invalid forced-crouch setting on ${surface.id}`);
     const navigationHeight = surface.navigationHeight;
     const validNavigationHeight =
       typeof navigationHeight === "number"

@@ -20,6 +20,52 @@ mod exported_jumps {
     include!("exported_jumps.rs");
 }
 
+#[test]
+fn exported_floor_flags_require_crouching_only_in_the_authored_room() {
+    let bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-forced-crouch.level.json"
+    ));
+    for (sector_number, x, expected) in [(0, 320., Posture::Upright), (2, 450., Posture::Crouched)]
+    {
+        let (mut engine, mut assets) = compiled_walkway(bytes);
+        let sector = crate::position_interface::SectorHandle::new(sector_number)
+            .unwrap()
+            .with_arena_index(
+                crate::fast_find_grid::SectorIndex::new(u32::from(sector_number)).unwrap(),
+            );
+        let owner = walking_pc(&mut engine, &mut assets, MapPoint::new(x, 350.), 0, sector);
+        let mut element = SequenceElement::new(1, Command::Wait, Some(owner));
+        element.posture_after_transition = Posture::Upright;
+        element.action_state_after_transition = ActionState::Moving;
+        let sequence = engine.orders.sequence_manager.insert_element(element);
+        engine
+            .orders
+            .sequence_manager
+            .start_sequence_level(sequence);
+        let sim = crate::sim_rng::test_context();
+        assert!(engine.generate_transition(
+            crate::engine::TickCtx::new(&sim, &assets),
+            &mut Vec::new(),
+            owner,
+            crate::sequence::SequenceElementRef::new(sequence, 0),
+        ));
+        let element = engine
+            .orders
+            .sequence_manager
+            .get_element(sequence, 0)
+            .unwrap();
+        assert_eq!(element.posture_after_transition, expected);
+        assert_eq!(
+            element
+                .orders
+                .iter()
+                .any(|order| order.order_type == OrderType::TransitionCrouchingDown),
+            expected == Posture::Crouched,
+        );
+    }
+}
+
 fn compiled_walkway(bytes: &[u8]) -> (EngineInner, LevelAssets) {
     compiled_walkway_with_dimensions(bytes, (2000., 2000.))
 }

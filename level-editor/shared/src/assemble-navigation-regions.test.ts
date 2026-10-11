@@ -2,6 +2,32 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { assembleNavigationRegions, type NavigationPiece } from "./assemble-navigation-regions.ts";
 
+test("joined posture boundaries never spread forced crouching to upright floors", () => {
+  const pieces: NavigationPiece[] = [false, true].map((forceCrouched, i) => ({
+    navigationRegion: "shared",
+    forceCrouched,
+    plane: [0, 0, 0],
+    layer: 0,
+    blockers: [],
+    polygon: [
+      [i * 100, 0],
+      [(i + 1) * 100, 0],
+      [(i + 1) * 100, 100],
+      [i * 100, 100],
+    ],
+  }));
+  const warnings: string[] = [];
+  const regions = assembleNavigationRegions(pieces, warnings);
+  assert.equal(regions.length, 2);
+  assert.deepEqual(
+    regions.map((r) => r.pieces.map((p) => p.forceCrouched)),
+    [[false], [true]],
+  );
+  assert.match(warnings.join("\n"), /posture boundary/);
+  pieces[0]!.forceCrouched = true;
+  assert.equal(assembleNavigationRegions(pieces, []).length, 1);
+});
+
 test("preserved navigation joins close arithmetic cracks but retain separate islands", () => {
   for (const gap of [0.00001, 0.001, 10]) {
     const pieces: NavigationPiece[] = [0, 1].map((i) => ({
