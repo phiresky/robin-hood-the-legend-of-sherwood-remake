@@ -1,3 +1,8 @@
+import {
+  prepareStateAperture,
+  verifyStateApertureReceivers,
+  type StateApertureManifest,
+} from "./state-aperture-loader.ts";
 import { assetNodeKey } from "@rle/shared";
 import {
   currentReceiverMeshes,
@@ -854,7 +859,11 @@ export class EditorViewport {
       throw error;
     }
   }
+  private aperturePreparation = 0;
+  private apertureManifest: StateApertureManifest | undefined;
   clearStateAperturePreview() {
+    this.aperturePreparation++;
+    this.apertureManifest = undefined;
     this.aperturePreview?.dispose();
     this.aperturePreview = undefined;
     this.stateDelivery.physical.visible =
@@ -867,10 +876,14 @@ export class EditorViewport {
       enabled && !(this.deliveryFamily && this.aperturePreview?.handles(this.deliveryFamily));
     if (!this.aperturePreview) return;
     try {
+      if (enabled && this.apertureManifest) {
+        const document = this.bindings.document();
+        if (!document) throw new Error("Aperture map is unavailable");
+        verifyStateApertureReceivers(this.apertureManifest, document);
+      }
       this.aperturePreview.selectEnabled(enabled);
     } catch (error) {
-      this.clearStateAperturePreview();
-      this.stateDelivery.physical.visible = enabled;
+      this.clearStateDelivery();
       this.bindings.onError?.(String(error));
     }
   }
@@ -878,9 +891,11 @@ export class EditorViewport {
     contract: StateDeliveryContract,
     library: FileSystemDirectoryHandle,
     source: MissionStateSource,
+    aperture?: StateApertureManifest,
   ) {
     if (this.disposed) throw new Error("Disposed viewport");
     this.clearNativeArtPresentation();
+    let apertureAttempt = this.aperturePreparation;
     const frozen = structuredClone(contract);
     const hasReplacements = frozen.families.some(
       (f) =>
@@ -920,9 +935,49 @@ export class EditorViewport {
         ]),
       );
       this.deliveryFamily = frozen.families[0]!.id;
+      if (aperture) {
+        const document = this.bindings.document();
+        if (!document) throw new Error("Aperture preview requires a displayed map");
+        const attempt = ++this.aperturePreparation;
+        apertureAttempt = attempt;
+        const originals = new Map<string, THREE.Object3D>();
+        for (const receiver of aperture.receivers) {
+          const original = receiver.group
+            ? this.groupViews.get(receiver.group)?.wrapper
+            : this.ground;
+          if (!original) throw new Error("Missing displayed aperture receiver " + receiver.asset);
+          originals.set(receiver.asset, original);
+        }
+        const prepared = await prepareStateAperture(
+          aperture,
+          document,
+          library,
+          originals,
+          source.name,
+          this.deliveryFamily,
+        );
+        if (attempt !== this.aperturePreparation || this.deliveryStaticContract !== frozen) {
+          disposeObjectResources([prepared.root]);
+          return false;
+        }
+        try {
+          const current = this.bindings.document();
+          if (!current) throw new Error("Aperture map retired during loading");
+          verifyStateApertureReceivers(aperture, current);
+          this.setStateAperturePreview(prepared);
+          apertureAttempt = this.aperturePreparation;
+          this.apertureManifest = structuredClone(aperture);
+          this.refreshTextureDisplay();
+        } catch (error) {
+          if (!this.apertureResourceRoots.has(prepared.root))
+            disposeObjectResources([prepared.root]);
+          throw error;
+        }
+      }
       this.clippingBoundsDirty = true;
       return true;
     } catch (error) {
+      if (apertureAttempt !== this.aperturePreparation) return false;
       this.clearStateDelivery();
       this.bindings.onError?.(String(error));
       throw error;

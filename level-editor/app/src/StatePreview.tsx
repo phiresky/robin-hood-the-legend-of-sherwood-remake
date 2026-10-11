@@ -166,7 +166,12 @@ export default function StatePreview(props: {
           ? await props.viewport.setNativePatchPresentation(loaded.contract, root, loaded.source)
           : loaded.kind === "native-loop"
             ? await props.viewport.setNativeLoopPresentation(loaded.contract, root, loaded.source)
-            : await props.viewport.setStateDelivery(loaded.contract, root, loaded.source);
+            : await props.viewport.setStateDelivery(
+                loaded.contract,
+                root,
+                loaded.source,
+                loaded.aperture,
+              );
       if (!ready || context !== generation || attempt !== request) return;
       if (loaded.kind === "native-patch") {
         setPatchContract(loaded.contract);
