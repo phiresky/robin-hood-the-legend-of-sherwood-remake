@@ -259,6 +259,8 @@ fn exported_building_doors_support_player_clicks_after_reopening() {
     assert_eq!(entries.len(), 8);
     let sprite = complete_climb_sprite();
     let mut checks = 0;
+    let mut exit_checks = 0;
+    let mut blocked_exit_checks = 0;
     for entry in entries {
         let file = entry["file"].as_str().unwrap();
         let bytes = std::fs::read(directory.join(file)).unwrap();
@@ -378,11 +380,110 @@ fn exported_building_doors_support_player_clicks_after_reopening() {
                     &engine.seq(),
                     owner
                 ));
+                if state != 1 {
+                    let hit = engine
+                        .world
+                        .fast_grid
+                        .get_sector_screen(door.point_out, door.point_in);
+                    assert_eq!(
+                        hit.sector_idx, door.sector_out_index,
+                        "exit landing must be selectable: {file}"
+                    );
+                    for blocked in if state == 2 {
+                        vec![true, false]
+                    } else {
+                        vec![false]
+                    } {
+                        if blocked {
+                            engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                        } else if state == 2 {
+                            engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+                        }
+                        assert_eq!(
+                            engine.script_domains.interactables.doors[entrance].passage_blocked,
+                            blocked
+                        );
+                        if !blocked {
+                            assert!(
+                                engine
+                                    .authorize_group_move_destination(
+                                        owner,
+                                        door.point_out,
+                                        door.point_out,
+                                        door.layer_out,
+                                        false
+                                    )
+                                    .is_some(),
+                                "exit footprint rejected"
+                            );
+                        }
+                        engine.perform_group_move(
+                            TickCtx::new(&sim, &assets),
+                            &[owner],
+                            door.point_out,
+                            false,
+                            false,
+                            None,
+                            None,
+                            None,
+                            &[],
+                            &[],
+                        );
+                        for _ in 0..600 {
+                            engine.control.frame_counter += 1;
+                            engine.t_hourglass_phase_sequences(&assets);
+                            engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
+                            engine.t_tick_actor_owner_envelopes(&assets);
+                            if blocked {
+                                assert_eq!(
+                                    engine
+                                        .ent(owner)
+                                        .element_data()
+                                        .sector()
+                                        .and_then(|s| s.arena_index()),
+                                    door.sector_in_index,
+                                    "blocked exit left room: {file}"
+                                );
+                            }
+                        }
+                        if !blocked {
+                            let element = engine.ent(owner).element_data();
+                            assert_eq!(
+                                element.sector().and_then(|s| s.arena_index()),
+                                door.sector_out_index,
+                                "exit sector: {file}"
+                            );
+                            assert_eq!(element.layer(), door.layer_out);
+                            assert!(
+                                (element.position_map() - door.point_out).length() < 0.02,
+                                "exit position: {file}: {:?}",
+                                element.position_map()
+                            );
+                            actor_receiver_result(
+                                &engine,
+                                &assets,
+                                owner,
+                                source,
+                                door.layer_out,
+                                element.position_map(),
+                            )
+                            .unwrap();
+                            assert!(!crate::engine::ai::selected_actor_is_passing_door(
+                                &engine.entities(),
+                                &engine.seq(),
+                                owner
+                            ));
+                            exit_checks += 1;
+                        } else {
+                            blocked_exit_checks += 1;
+                        }
+                    }
+                }
                 checks += 1;
             }
         }
     }
-    std::fs::write(directory.join("actor-building-click-report.json"), serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"checks":checks,"scope":"native-door-screen-selection-and-player-entry"})).unwrap()).unwrap();
+    std::fs::write(directory.join("actor-building-click-report.json"), serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"checks":checks,"exit_checks":exit_checks,"blocked_exit_checks":blocked_exit_checks,"scope":"native-door-screen-selection-and-player-entry-exit"})).unwrap()).unwrap();
 }
 
 #[test]

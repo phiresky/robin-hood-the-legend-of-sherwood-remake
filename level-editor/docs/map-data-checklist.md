@@ -467,7 +467,13 @@ leave the actor outside, while 32 initially open or reopened clicks leave it
 settled in the correct virtual room and layer. No gate path or selected-sector
 override is supplied. Evidence:
 `work/map-compile/building-passages-5BWPJQ/actor-building-click-report.json`.
-Trap entrances, multiple actors, player-click exits and broader lock/permission
+The same audit now also passes 32 outdoor player-click exits, including 16 after
+reopening. Sixteen blocked-exit checks keep the actor in its virtual room for
+600 ticks; reopening then completes exit with the correct position, layer,
+sector and receiver. Screen hit-testing selects the outdoor landing without a
+goal override. The audit applies before resetting a patch and verifies its live
+passage state, since the reset operation exchanges the movement-state pair.
+Trap entrances, multiple actors and broader lock/permission
 interactions still need coverage. Changing mixed-posture passages
 and regions without explicit sockets still need broader coverage. This is not full crouch-area
 parity. No runtime solver was added.
