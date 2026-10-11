@@ -80,11 +80,68 @@ fn exported_ordinary_passage_states_follow_only_their_own_asset_patch() {
 #[test]
 #[ignore = "requires ROBIN_CLIMB_RHS"]
 fn exported_building_entrances_pause_and_resume_complete_actor_crossings() {
-    let sprite = complete_climb_sprite();
-    let (engine, assets) = compiled_walkway(include_bytes!(concat!(
+    audit_building_passages(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/tests/fixtures/asset-interior-passage-states.level.json"
     )));
+}
+
+#[test]
+fn appearing_exported_entrance_barrier_marks_overlapping_actor_unreachable() {
+    let (mut engine, mut assets) = compiled_walkway(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-interior-passage-states.level.json"
+    )));
+    let door = engine.script_domains.interactables.doors[0].clone();
+    let sector = crate::position_interface::SectorHandle::from_number(door.sector_out)
+        .with_arena_index(door.sector_out_index.unwrap());
+    let point = MapPoint::new(door.point_out.x, door.point_out.y + 4.);
+    let owner = walking_pc(&mut engine, &mut assets, point, door.layer_out, sector);
+    assert!(!engine.ent(owner).element_data().unreachable);
+    let sim = crate::sim_rng::test_context();
+    engine.apply_patch(
+        TickCtx::new(&sim, &assets),
+        crate::patch::PatchIndex::new(0).unwrap(),
+    );
+    assert!(engine.ent(owner).element_data().unreachable);
+    assert!(engine.script_domains.interactables.doors[0].passage_blocked);
+    assert!(!engine.script_domains.interactables.doors[2].passage_blocked);
+}
+
+#[test]
+#[ignore = "requires ROBIN_ASSET_MAP_DIAGNOSTICS and ROBIN_CLIMB_RHS"]
+fn exported_building_passage_zips_support_native_actor_crossings() {
+    let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["complete"], true);
+    assert_eq!(
+        manifest["scope"],
+        "editable-building-passage-zips-awaiting-native-traversal"
+    );
+    let entries = manifest["results"].as_array().unwrap();
+    assert_eq!(entries.len(), 8);
+    let mut results = vec![];
+    for entry in entries {
+        let file = entry["file"].as_str().unwrap();
+        audit_building_passages(&std::fs::read(directory.join(file)).unwrap());
+        eprintln!("{file}: two control round trips and twelve closure cases passed");
+        results.push(serde_json::json!({"file":file,"control_round_trips":2,"closure_cases":12,"reopened_round_trips":8}));
+    }
+    std::fs::write(directory.join("actor-building-report.json"), serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"scope":"prepared-native-building-crossings-from-editable-zips-not-rendering","results":results})).unwrap()).unwrap();
+}
+
+fn audit_building_passages(bytes: &[u8]) {
+    let sprite = complete_climb_sprite();
+    let descriptor: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+    let dimensions = (
+        descriptor["walkable_polygon"][2][0].as_f64().unwrap() as f32 + 1.,
+        descriptor["walkable_polygon"][2][1].as_f64().unwrap() as f32 + 1.,
+    );
+    let (engine, assets) = compiled_walkway_with_dimensions(bytes, dimensions);
+    assert_eq!(engine.script_domains.interactables.doors.len(), 4);
+    assert_eq!(assets.navigation.passage_states.len(), 2);
     for entrance in [0, 2] {
         assert_eq!(
             walk_exported_building_round_trip(engine.clone(), assets.clone(), entrance, &sprite),
@@ -149,6 +206,13 @@ fn exported_building_entrances_pause_and_resume_complete_actor_crossings() {
                         {
                             paused = Some(cursor);
                             engine.apply_patch(TickCtx::new(&sim, assets), patch);
+                            if direct {
+                                let entity = engine.ent(owner);
+                                assert!(engine.world.fast_grid.is_position_authorized(
+                                    entity.position_iface().get_move_box_map(),
+                                    entity.element_data().layer(),
+                                ), "closure must not crush the actor; start={start:?}, position={:?}", cursor.0);
+                            }
                             assert!(
                                 engine.script_domains.interactables.doors[entrance].passage_blocked
                             );

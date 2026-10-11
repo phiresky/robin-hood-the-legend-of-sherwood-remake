@@ -450,9 +450,20 @@ fixed, and the other copy remains available. The test uses the compiler-pinned
 `asset-interior-passage-states.level.json` fixture and runs explicitly with
 `ROBIN_CLIMB_RHS` as
 `exported_building_entrances_pause_and_resume_complete_actor_crossings`.
-Rotated/elevated native crossings, trap entrances and multiple actors still need
-coverage. Changing mixed-posture passages and regions without
-explicit sockets still need broader coverage. This is not full crouch-area
+The `check-building-passages.mjs` audit additionally passes eight editable ZIP
+round trips at 0/37/90/180 degrees and elevations 0/40, each containing two
+independent building copies. Native full-sprite prepared routes from the extracted
+descriptors pass 16 control round trips and 96 closure cases: 64 reopen and
+finish, while 32 remain blocked. Every closure during entry explicitly verifies
+that the actor's footprint remains authorized. An earlier closer barrier at
+180 degrees overlapped the actor after its first animation step; a separate
+native regression verifies the resulting unreachable flag. The safe-closure
+audit moves that barrier four asset-local units along the approach. Evidence:
+`work/map-compile/building-passages-5BWPJQ/actor-building-report.json`.
+Blank diagnostic rasters do not certify rendered appearance, and prepared gate
+routes do not certify player-click discovery. Trap entrances, multiple actors
+and broader player dispatch still need coverage. Changing mixed-posture passages
+and regions without explicit sockets still need broader coverage. This is not full crouch-area
 parity. No runtime solver was added.
 
 Spline-wall trimming now preserves disconnected closed mask contours as separate
