@@ -1,4 +1,5 @@
 """Smooth an unowned join at a world-space scale, independent of triangle density."""
+import shutil
 import hashlib,json
 from pathlib import Path
 import numpy as np
@@ -7,6 +8,8 @@ from PIL import Image
 from restart2_tree08_local_fork import audit
 R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
 source=R/'tree08-implicit-collar-v13-smooth-clean/candidate.npz';out=R/'tree08-implicit-collar-v16-surface-seam';assert not out.exists()
+assert shutil.disk_usage(R).free>=10*1024**3
+assert next(int(line.split()[1]) for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:'))>=6*1024**2
 a=np.load(source);v,f=a['vertices'],a['faces'];s,c=np.sin(np.radians(35)),np.cos(np.radians(35));native=-v[:,1]*s-v[:,2]*c
 core=np.asarray(Image.open(R/'tree08-semantic-source-v1/bark-core-proposal.png'))>0;y,x=np.where(core)
 assert not np.any((y+11>=290)&(y+11<=350)&(x+331>=520)&(x+331<=610))
