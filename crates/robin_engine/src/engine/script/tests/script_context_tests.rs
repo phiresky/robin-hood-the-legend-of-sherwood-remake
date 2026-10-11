@@ -1348,6 +1348,14 @@ fn actor_location_changes_preserve_material_and_display_reference_state() {
         if spawn_elevation_probe.is_some() {
             assert_eq!(entity.position_iface().get_position().z, 10.0);
             assert_eq!(entity.position_iface().map_position().y, 2000.0);
+            assert_eq!(
+                entity
+                    .position_iface()
+                    .v48_serialized_state()
+                    .computed_position
+                    .bits(),
+                7,
+            );
         }
     }
 }

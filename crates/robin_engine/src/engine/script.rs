@@ -4139,12 +4139,22 @@ impl EngineInner {
                             // a 2D point that's outside the map; this
                             // pass corrects both Z and map-Y from the
                             // destination's projection-area top plane.
-                            let pi = entity.position_iface_mut();
+                            let sprite = &mut entity.element_data_mut().sprite;
+                            let pi = &mut sprite.position_iface;
                             pi.set_position(crate::coordinates::WorldPoint3D {
                                 x,
                                 y: y + elev,
                                 z: elev,
                             });
+                            // EnterGame completes all position projections
+                            // after teleporting outside the map. Preserve this
+                            // boundary even before the actor's first movement.
+                            let map = pi.map_position();
+                            pi.set_cached_sprite_position(crate::coordinates::MapPoint::new(
+                                (map.x - sprite.center.x).floor(),
+                                (map.y - sprite.center.y).floor(),
+                            ));
+                            pi.restore_cached_position_all_computed(pi.get_position());
                             entity.element_data_mut().update_grid_cell();
                         }
                     }
