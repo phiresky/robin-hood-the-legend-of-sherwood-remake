@@ -105,8 +105,9 @@ def safe_surface(volume, axes, voxel, method='tetra'):
     raise ValueError('No numerically stable CPU isosurface: '+str(failures))
 
 def main():
- p=argparse.ArgumentParser();p.add_argument('--tree',type=int,choices=[32,38],default=32);p.add_argument('--voxel',type=float,default=1.5);p.add_argument('--output',type=Path,required=True);p.add_argument('--source-box',type=int,nargs=4,metavar=('LEFT','TOP','RIGHT','BOTTOM'));p.add_argument('--diagonal-connectivity',action='store_true');p.add_argument('--surface-method',choices=['tetra','marching-cubes'],default='tetra');p.add_argument('--construction-mask',type=Path);p.add_argument('--minimum-disc-radius',type=float,default=0.,help='Private inferred thin-twig radius floor in world units; source ownership stays unchanged');a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--tree',type=int,choices=[32,38],default=32);p.add_argument('--voxel',type=float,default=1.5);p.add_argument('--output',type=Path,required=True);p.add_argument('--source-box',type=int,nargs=4,metavar=('LEFT','TOP','RIGHT','BOTTOM'));p.add_argument('--diagonal-connectivity',action='store_true');p.add_argument('--surface-method',choices=['tetra','marching-cubes'],default='tetra');p.add_argument('--construction-mask',type=Path);p.add_argument('--stem-ray-depth-scale',type=float,default=1.,help='Inferred lower-stem depth along artwork rays; preserves projected disc outlines');p.add_argument('--minimum-disc-radius',type=float,default=0.,help='Private inferred thin-twig radius floor in world units; source ownership stays unchanged');a=p.parse_args()
  if a.output.exists():raise FileExistsError(a.output)
+ if not np.isfinite(a.stem_ray_depth_scale) or not 1<=a.stem_ray_depth_scale<=2:raise ValueError('Stem ray depth scale must be between one and two')
  if not np.isfinite(a.minimum_disc_radius) or not 0<=a.minimum_disc_radius<=.75:raise ValueError('Thin-twig radius floor must be between zero and .75 world units')
  box=tuple(a.source_box) if a.source_box else CONFIG[a.tree][2]
  if box[2]<=box[0] or box[3]<=box[1]:raise ValueError('Source box must have positive area')
@@ -123,10 +124,12 @@ def main():
  world=np.column_stack((centers[:,0],np.full(len(centers),-ground/SIN),(ground-centers[:,1])/COS))
  # Raise source silhouettes out of the floor along their own camera rays.
  lift=np.maximum(0,radii*COS+.25-world[:,2]);world+=lift[:,None]/SIN*RAY
- lower=np.min(world-radii[:,None],axis=0)-3*a.voxel;upper=np.max(world+radii[:,None],axis=0)+3*a.voxel;axes=[np.arange(lo,hi+a.voxel,a.voxel) for lo,hi in zip(lower,upper)]
+ depth_weight=np.clip((160-world[:,2])/80,0,1);depth_weight=depth_weight*depth_weight*(3-2*depth_weight);depth_scales=1+(a.stem_ray_depth_scale-1)*depth_weight
+ extent=radii[:,None]*np.sqrt(1+(depth_scales[:,None]**2-1)*RAY[None,:]**2)
+ lower=np.min(world-extent,axis=0)-3*a.voxel;upper=np.max(world+extent,axis=0)+3*a.voxel;axes=[np.arange(lo,hi+a.voxel,a.voxel) for lo,hi in zip(lower,upper)]
  volume=np.full(tuple(len(axis) for axis in axes[::-1]),4*a.voxel)
- for center,radius in zip(world,radii):
-  starts=[max(0,int(np.searchsorted(axis,c-radius-3*a.voxel))) for axis,c in zip(axes,center)];ends=[min(len(axis),int(np.searchsorted(axis,c+radius+3*a.voxel))+1) for axis,c in zip(axes,center)];local=[axis[i:j] for axis,i,j in zip(axes,starts,ends)];xx,yy,zz=np.meshgrid(*local,indexing='ij');distance=np.sqrt((xx-center[0])**2+(yy-center[1])**2+(zz-center[2])**2)-radius;region=tuple(slice(i,j) for i,j in zip(starts[::-1],ends[::-1]));volume[region]=np.minimum(volume[region],distance.transpose(2,1,0))
+ for center,radius,depth_scale,bounds in zip(world,radii,depth_scales,extent):
+  starts=[max(0,int(np.searchsorted(axis,c-radius-3*a.voxel))) for axis,c,radius in zip(axes,center,bounds)];ends=[min(len(axis),int(np.searchsorted(axis,c+radius+3*a.voxel))+1) for axis,c,radius in zip(axes,center,bounds)];local=[axis[i:j] for axis,i,j in zip(axes,starts,ends)];xx,yy,zz=np.meshgrid(*local,indexing='ij');ray_distance=(yy-center[1])*RAY[1]+(zz-center[2])*RAY[2];distance=np.sqrt(np.maximum(0,(xx-center[0])**2+(yy-center[1])**2+(zz-center[2])**2+(1/depth_scale**2-1)*ray_distance**2))-radius;region=tuple(slice(i,j) for i,j in zip(starts[::-1],ends[::-1]));volume[region]=np.minimum(volume[region],distance.transpose(2,1,0))
  print('Physical volume sampled:',volume.shape,flush=True)
  # A small preview-only grid relaxation suppresses subvoxel sphere seams.
  # It is NOT a saved native-coverage claim; final guards remain mandatory.
@@ -150,6 +153,7 @@ def main():
  theoretical=np.concatenate([np.max(radii[None,:]-np.linalg.norm(chunk[:,None,:]-centers[None,:,:],axis=2),axis=1) for chunk in np.array_split(native,max(1,int(np.ceil(len(native)/256))))])
  report=dict(status='CPU volume proposal only; no Blender model or canonical changes',tree=a.tree,source_box=list(box),construction_connectivity=8 if a.diagonal_connectivity else 4,source_mask=str(sourcepath),source_sha256=hashlib.sha256(sourcepath.read_bytes()).hexdigest(),coverage=coverage,medial_discs=len(radii),theoretical_body_centers_covered=int((theoretical>=-1e-6).sum()),body_centers=len(native),voxel=a.voxel,surface_method=a.surface_method,vertices=len(vertices),faces=len(faces),sections=sections,source_ground=projection_coverage(vertices,faces,body,box[:2]),precision=precision,permitted_references=['leicester-southeast-cottage-tree','leicester-moat-bank-tree'],limitations=['The preview mesh uses a small grid relaxation; theoretical disc coverage is not saved mesh source coverage.','Retained upper limbs are not attached in this preview.','Private inferred front depth changed; native rays and source ownership remain the eventual constraints.'])
  report['construction_mask']=construction_record
+ report['stem_ray_depth_scale']=dict(maximum=a.stem_ray_depth_scale,fully_applied_below_center_z=80,returns_to_round_at_center_z=160,scope='Private inferred lower-stem depth; disc outlines and source ownership unchanged')
  report['thin_twig_radius_floor']=dict(radius=a.minimum_disc_radius,affected_discs=inferred_radius_count,scope='Subpixel inferred twig volume only; no source pixels changed and no geometry approval implied')
  report['observed_source_ground']=projection_coverage(vertices,faces,observed,box[:2])
  report['permitted_reference_evidence']=reference_bindings()
