@@ -11,7 +11,7 @@ def image_bytes(path,d,b,im):
  if'uri'in im:return(path.parent/im['uri']).resolve().read_bytes()
  v=d['bufferViews'][im['bufferView']];return b[v.get('buffer',0)][v.get('byteOffset',0):v.get('byteOffset',0)+v['byteLength']]
 def main(n):
- assert shutil.disk_usage(R).free>=10*1024**3;base=B/f'tree-{n}-v1';folder=base/'delivery-v1';source=folder/'model.glb';proof=json.loads((base/'merge-proof.json').read_text());assert sha(source)==proof['model_sha256'];doc,buffers,_=la.read_glb(source);d=copy.deepcopy(doc);body=bytearray();views=[]
+ assert shutil.disk_usage(R).free>=10*1024**3;assert int(next(x.split()[1]for x in Path('/proc/meminfo').read_text().splitlines()if x.startswith('MemAvailable:')))*1024>=6*1024**3;base=B/f'tree-{n}-v1';folder=base/'delivery-v1';source=folder/'model.glb';proof=json.loads((base/'merge-proof.json').read_text());assert sha(source)==proof['model_sha256'];doc,buffers,_=la.read_glb(source);d=copy.deepcopy(doc);body=bytearray();views=[]
  for v in doc['bufferViews']:
   row=copy.deepcopy(v);data=buffers[v.get('buffer',0)][v.get('byteOffset',0):v.get('byteOffset',0)+v['byteLength']];body.extend(b'\0'*(-len(body)%4));row.update(buffer=0,byteOffset=len(body),byteLength=len(data));body.extend(data);views.append(row)
  d['bufferViews']=views;images=[]

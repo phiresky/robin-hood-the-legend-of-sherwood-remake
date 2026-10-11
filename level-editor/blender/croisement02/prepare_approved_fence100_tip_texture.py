@@ -13,7 +13,7 @@ def main():
  decision=next(r for r in json.loads(A.read_text())['decisions']if r['asset_id']==ASSET+'--rail-tip');model=Path(decision['model']);assert sha(model)==decision['model_sha256']
  acquire(slots=2)
  try:
-  assert shutil.disk_usage(R).free>=10*1024**3;D.mkdir(exist_ok=False)
+  assert shutil.disk_usage(R).free>=10*1024**3;assert int(next(x.split()[1]for x in Path('/proc/meminfo').read_text().splitlines()if x.startswith('MemAvailable:')))*1024>=6*1024**3;D.mkdir(exist_ok=False)
   im=Image.new('L',(1792,1152));points=json.loads((BASE/'candidate.json').read_text())['native_centers']
   for x,y in points:im.putpixel((x,y),255)
   im.save(D/'known-tip-six.png');inventory=dict(masks=[dict(index=10100,png='known-tip-six.png',box_top_left=[0,0],box_size=[1792,1152])]);(D/'mask-inventory.json').write_text(json.dumps(inventory,indent=2)+'\n');manifest=dict(version=1,mask_inventory=str(D/'mask-inventory.json'),projections={'exterior':{'source_sha256':sha(B/'source-states/covered.png'),'state':'Approved static elevated tip six native centers only','assignments':[dict(source_node='building-023',projection_component='source100-tip-candidate',mask_indices=[10100],reviewed=True)]}});(D/'source-masks.json').write_text(json.dumps(manifest,indent=2)+'\n')

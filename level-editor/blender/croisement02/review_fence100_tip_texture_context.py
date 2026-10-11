@@ -12,7 +12,7 @@ B=R/'level-editor/work/croisement02-refinement';D=B/'approved-fence100-tip-textu
 def main():
  acquire(slots=2)
  try:
-  assert shutil.disk_usage(R).free>=10*1024**3;bpy.ops.wm.open_mainfile(filepath=str(BASE/'model.blend'));geom={o.name:_geometry(o)for o in bpy.data.objects if o.type=='MESH'};outside={o.name:_geometry(o,protect_appearance=True)for o in bpy.data.objects if o.type=='MESH'and o.name!='Source100 elevated wicker tip'}
+  assert shutil.disk_usage(R).free>=10*1024**3;assert int(next(x.split()[1]for x in Path('/proc/meminfo').read_text().splitlines()if x.startswith('MemAvailable:')))*1024>=6*1024**3;bpy.ops.wm.open_mainfile(filepath=str(BASE/'model.blend'));geom={o.name:_geometry(o)for o in bpy.data.objects if o.type=='MESH'};outside={o.name:_geometry(o,protect_appearance=True)for o in bpy.data.objects if o.type=='MESH'and o.name!='Source100 elevated wicker tip'}
   bpy.ops.wm.open_mainfile(filepath=str(E/'bake-v1/worker.blend'));assert geom=={o.name:_geometry(o)for o in bpy.data.objects if o.type=='MESH'};assert outside=={o.name:_geometry(o,protect_appearance=True)for o in bpy.data.objects if o.type=='MESH'and o.name!='Source100 elevated wicker tip'}
   scene=bpy.context.scene;scene.render.engine='CYCLES';scene.cycles.samples=8;scene.render.threads_mode='FIXED';scene.render.threads=2
   render(BASE/'actual-frames.json',D/'context-actual-v1',width=384);buffers=[]
