@@ -477,10 +477,89 @@ test("motion rejects missing review bindings and invalid pose tables before load
   assert.throws(() => p.selectMode("physical-motion"), /no reviewed/);
   p.dispose();
   const m = await motionFixture();
-  m.contract.families[0]!.physical.motion!.translation_frames.pop();
+  const motion = m.contract.families[0]!.physical.motion!;
+  assert.equal(motion.kind, "native-patch-translation");
+  if (motion.kind !== "native-patch-translation") throw new Error("Fixture motion mismatch");
+  motion.translation_frames.pop();
   const invalid = new StateDelivery(() => {
     throw new Error("must not load");
   });
   await assert.rejects(invalid.set(m.contract, m.source, m.library, m.read), /invalid reviewed/);
   invalid.dispose();
+});
+
+test("appearing mechanism follows all45 native poses and restores baked nodes on reset and mode change", async () => {
+  const f = await motionFixture();
+  const family = f.contract.families[0]!;
+  family.physical.initial = { kind: "absent" };
+  const rotations = Array.from({ length: 45 }, (_, frame) =>
+    frame === 44 ? new THREE.Matrix4() : new THREE.Matrix4().makeRotationZ((44 - frame) / 10),
+  );
+  family.physical.motion = {
+    kind: "native-patch-node-poses",
+    patch_id: "gate",
+    source_motion_sha256: "c".repeat(64),
+    node_frames: rotations.map((matrix) => [{ node: "link", matrix: matrix.toArray() }]),
+  };
+  const original = f.template.children[0]!;
+  original.name = "link";
+  original.position.set(2, 3, 4);
+  original.updateMatrix();
+  const base = original.matrix.clone();
+  const p = new StateDelivery(() => ({ load: async () => f.template, dispose() {} }));
+  await p.set(f.contract, f.source, {} as FileSystemDirectoryHandle, f.read);
+  p.selectMode("physical-motion");
+  const [initial, applied] = p.physical.children;
+  const link = applied!.getObjectByName("link")!;
+  assert.equal(initial!.children.length, 0);
+  assert.equal(applied!.visible, false);
+  p.activate("trap");
+  p.setPlaying(true);
+  for (let tick = 0; tick < 92; tick++) {
+    if (tick) p.advance(1 / 25);
+    assert.equal(p.familyTick("trap"), tick);
+    const frame = Math.min(44, Math.floor(tick / 2));
+    assert.equal(applied!.visible, true);
+    assert.deepEqual(link.matrix.toArray(), rotations[frame]!.clone().multiply(base).toArray());
+    assert.deepEqual(original.matrix.toArray(), base.toArray());
+  }
+  p.seekFamily("trap", 6);
+  p.selectMode("physical-endpoint");
+  assert.deepEqual(link.matrix.toArray(), base.toArray());
+  p.selectMode("physical-motion");
+  assert.deepEqual(link.matrix.toArray(), rotations[3]!.clone().multiply(base).toArray());
+  p.reset("trap");
+  assert.equal(applied!.visible, false);
+  assert.deepEqual(link.matrix.toArray(), base.toArray());
+  assert.equal(link.matrixAutoUpdate, true);
+  p.dispose();
+  assert.equal(p.physical.children.length, 0);
+});
+
+test("appearing mechanisms reject an unbaked terminal pose before loading", async () => {
+  const f = await motionFixture();
+  const family = f.contract.families[0]!;
+  family.physical.initial = { kind: "absent" };
+  family.physical.motion = {
+    kind: "native-patch-node-poses",
+    patch_id: "gate",
+    source_motion_sha256: "c".repeat(64),
+    node_frames: Array.from({ length: 45 }, () => [
+      { node: "link", matrix: new THREE.Matrix4().makeTranslation(0, 1, 0).toArray() },
+    ]),
+  };
+  let loaded = false;
+  const p = new StateDelivery(() => ({
+    load: async () => {
+      loaded = true;
+      return f.template;
+    },
+    dispose() {},
+  }));
+  await assert.rejects(
+    p.set(f.contract, f.source, {} as FileSystemDirectoryHandle, f.read),
+    /terminal node pose/,
+  );
+  assert.equal(loaded, false);
+  p.dispose();
 });

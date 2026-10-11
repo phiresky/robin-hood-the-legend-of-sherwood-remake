@@ -1,3 +1,4 @@
+import { ReviewedNodePoses } from "./reviewed-node-poses.ts";
 import * as THREE from "three";
 import {
   validateStateDelivery,
@@ -19,6 +20,7 @@ export class StateDelivery {
   private contract: StateDeliveryContract | undefined;
   private roots = new Map<string, { initial: THREE.Group; applied: THREE.Group }>();
   private starts = new Map<string, number>();
+  private nodePoses = new Map<string, ReviewedNodePoses>();
   private selectedFamily: string | undefined;
   private epoch = 0;
   private disposed = false;
@@ -49,6 +51,8 @@ export class StateDelivery {
     this.native.clear();
     this.physical.clear();
     this.physical.visible = false;
+    for (const poses of this.nodePoses.values()) poses.reset();
+    this.nodePoses.clear();
     this.roots.clear();
     this.starts.clear();
     this.selectedFamily = undefined;
@@ -118,6 +122,11 @@ export class StateDelivery {
           }
           pair[state].visible = false;
         }
+        if (family.physical.motion?.kind === "native-patch-node-poses")
+          this.nodePoses.set(
+            family.id,
+            new ReviewedNodePoses(pair.applied, family.physical.motion.node_frames),
+          );
         roots.set(family.id, pair);
       }
       if (!current()) return false;
@@ -159,6 +168,7 @@ export class StateDelivery {
       throw new Error("Selected family has no reviewed physical motion");
     if (!["initial", "applied"].includes(endpoint)) throw new Error("Unknown physical endpoint");
     this.selectedFamily = id;
+    for (const poses of this.nodePoses.values()) poses.reset();
     for (const [key, pair] of this.roots) {
       pair.initial.position.set(0, 0, 0);
       pair.applied.position.set(0, 0, 0);
@@ -210,6 +220,12 @@ export class StateDelivery {
       this.familyTick(this.selectedFamily),
     );
     const pair = this.roots.get(this.selectedFamily)!;
+    const nodes = this.nodePoses.get(this.selectedFamily);
+    if (pose.node_frame === undefined) nodes?.reset();
+    else {
+      if (!nodes) throw new Error("Reviewed node pose binding missing");
+      nodes.apply(pose.node_frame);
+    }
     pair.initial.position.fromArray(pose.translation);
     pair.applied.position.set(0, 0, 0);
     pair.initial.visible = pose.endpoint === "initial";

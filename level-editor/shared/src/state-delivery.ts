@@ -1,3 +1,4 @@
+import { validateReviewedNodePoses, type ReviewedNodePose } from "./reviewed-node-poses.ts";
 import { validateMissionStateContract, type MissionStateContract } from "./mission-state.ts";
 import { safeLibraryPath } from "./projection-assets.ts";
 import type { SceneAssetSource, Level3D, GameTransform } from "./level3d.ts";
@@ -41,6 +42,14 @@ export interface PhysicalPatchTranslation {
   translation_frames: [number, number, number][];
 }
 
+/** A mechanism appears at activation and keeps its baked terminal pose after completion. */
+export interface PhysicalPatchNodePoses {
+  kind: "native-patch-node-poses";
+  patch_id: string;
+  source_motion_sha256: string;
+  node_frames: ReviewedNodePose[][];
+}
+
 /** Exact artwork transitions and independently reviewed physical endpoints. */
 export interface StateDeliveryContract {
   version: 1;
@@ -57,7 +66,7 @@ export interface StateDeliveryContract {
     physical: {
       initial: PhysicalEndpoint;
       applied: PhysicalEndpoint;
-      motion?: PhysicalPatchTranslation;
+      motion?: PhysicalPatchTranslation | PhysicalPatchNodePoses;
     };
     static_replacements?: { initial: StaticStateReplacement[]; applied: StaticStateReplacement[] };
   }[];
@@ -150,7 +159,6 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
       const patch = c.native.patch_states?.find((p) => p.id === motion?.patch_id);
       if (
         !motion ||
-        motion.kind !== "native-patch-translation" ||
         !hash(motion.source_motion_sha256) ||
         family.patch_ids?.length !== 1 ||
         family.patch_ids[0] !== motion.patch_id ||
@@ -158,18 +166,38 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
         family.hidden_initial_element_ids?.length ||
         !patch?.definitive ||
         !patch.transition.length ||
-        !Array.isArray(motion.translation_frames) ||
-        motion.translation_frames.length !== patch.transition.length ||
-        motion.translation_frames.some(
-          (v) => !Array.isArray(v) || v.length !== 3 || !v.every(Number.isFinite),
-        ) ||
-        motion.translation_frames[0]?.some((v) => v !== 0) ||
-        !Array.isArray(family.physical.initial) ||
-        family.physical.initial.length !== 1 ||
         !Array.isArray(family.physical.applied) ||
         family.physical.applied.length !== 1
       )
-        fail("invalid reviewed patch translation");
+        fail("invalid reviewed patch motion binding");
+      if (motion.kind === "native-patch-translation") {
+        if (
+          !Array.isArray(motion.translation_frames) ||
+          motion.translation_frames.length !== patch!.transition.length ||
+          motion.translation_frames.some(
+            (v) => !Array.isArray(v) || v.length !== 3 || !v.every(Number.isFinite),
+          ) ||
+          motion.translation_frames[0]?.some((v) => v !== 0) ||
+          !Array.isArray(family.physical.initial) ||
+          family.physical.initial.length !== 1
+        )
+          fail("invalid reviewed patch translation");
+      } else if (motion.kind === "native-patch-node-poses") {
+        if (
+          Array.isArray(family.physical.initial) ||
+          family.physical.initial?.kind !== "absent" ||
+          !Array.isArray(motion.node_frames) ||
+          motion.node_frames.length !== patch!.transition.length
+        )
+          fail("invalid reviewed appearing mechanism");
+        validateReviewedNodePoses(motion.node_frames);
+        if (
+          motion.node_frames
+            .at(-1)!
+            .some(({ matrix }) => matrix.some((v, i) => v !== (i % 5 === 0 ? 1 : 0)))
+        )
+          fail("terminal node pose differs from baked applied model");
+      } else fail("unknown reviewed physical motion");
     }
     if (family.static_replacements !== undefined) {
       const transform = (t: unknown): t is GameTransform => {
@@ -240,7 +268,11 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
 }
 
 /** Sample the native presentation timeline; callers own the clock and reset state. */
-export function physicalPatchPose(contract: StateDeliveryContract, id: string, tick?: number) {
+export function physicalPatchPose(
+  contract: StateDeliveryContract,
+  id: string,
+  tick?: number,
+): { endpoint: "initial" | "applied"; translation: [number, number, number]; node_frame?: number } {
   const family = contract.families.find((f) => f.id === id);
   const motion = family?.physical.motion;
   if (!family || !motion) throw new Error(`Missing physical motion: ${id}`);
@@ -252,6 +284,8 @@ export function physicalPatchPose(contract: StateDeliveryContract, id: string, t
     return { endpoint: "applied" as const, translation: [0, 0, 0] as [number, number, number] };
   const patch = contract.native.patch_states!.find((p) => p.id === motion.patch_id)!;
   const frame = nativePresentationFrame({ frames: patch.transition, loop: false }, tick);
+  if (motion.kind === "native-patch-node-poses")
+    return { endpoint: "applied", translation: [0, 0, 0], node_frame: frame };
   const translation = motion.translation_frames[frame];
   if (!translation) throw new Error("Missing reviewed physical pose");
   return { endpoint: "initial" as const, translation };
