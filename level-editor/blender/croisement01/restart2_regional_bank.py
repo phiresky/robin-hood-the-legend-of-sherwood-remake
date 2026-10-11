@@ -120,7 +120,7 @@ def constrain(objects,mask_id,mask_path,label):
  root_constraints.append(dict(asset=label,mask=mask_id,domain_sha256=sha(mask_path),native_rays=count,root_grid_constraints=root_fixed,inferred_root_embedding=(8. if mask_id==6 and a.revision>=3 else -.5),root_plane=root_plane))
 wood=[o for o in collection.all_objects if o.type=='MESH' and o.get('source_node')==f'scenery-tree{tree_id:02d}-wood'];constrain(wood,tree_id,source.parents[1]/'wood-domain.png',cfg['asset_id'])
 neighbors=[(0,'approved-tree00-wood-fill-v1/croisement01-tree-00/baked-v4-support/worker.blend','tree00-v4/wood-domain.png'),(1,'approved-tree01-isolated-wood-fill-v1/croisement01-tree-01/baked-v1-luminance/worker.blend','tree01-source-prep-v1/wood-domain-proposal.png'),(2,'tree02-v8/assets/croisement01-tree-02/model.blend','tree02-v8/wood-domain.png'),(3,'approved-tree03-fill-v1/croisement01-tree-03/baked-v1-luminance/worker.blend','tree03-v4/wood-domain.png')]
-root_revision=11 if a.revision>=5 else (9 if a.revision>=2 else 8)
+root_revision=13 if a.revision>=15 else 11 if a.revision>=5 else (9 if a.revision>=2 else 8)
 neighbors.extend([(4,'tree04-v6/assets/croisement01-tree-04/model.blend','tree04-v6/wood-domain.png'),(6,f'tree06-v{root_revision}/assets/croisement01-tree-06/model.blend',f'tree06-v{root_revision}/wood-domain.png')])
 for n,path,mask in neighbors:
  path=R/path
