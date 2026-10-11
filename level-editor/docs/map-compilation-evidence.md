@@ -6,6 +6,27 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Overlapping joined floors (2026-10-11)
 
+The dedicated export audit `node refinement/check-overlapping-floor-routes.mjs`
+now prepares two copies of an asset-local ramp/deck and separate lower floor at
+0/37/90/180 degrees and elevations 0/40. The ramp rises 40 units over a 100-unit
+span. `work/map-compile/overlapping-floor-routes-6QltBt` contains eight ZIPs with
+matching extracted descriptors, warnings, pinned scenes and reopened/recompiled
+results. It records 64 directed upper-floor walk probes across 16 placements.
+The first batch clipped a rotated placement at the export frame and is not counted;
+the successful batch keeps all tested placements inside the frame. Blank rasters
+do not establish appearance.
+The native audit `exported_overlapping_floors_keep_clicks_on_the_joined_upper_region`
+passes all 64 directed PC walks using complete RobinTown animation data and normal
+move commands. Every tick retains the upper region's sector and layer, has an
+authored receiving floor at the correct height, and crosses no collision. Every
+route reaches its target, settles its order queue and stays within twice the
+straight-line distance. The batch's `joined-floor-actor-report.json` records completion.
+This verifies upper-floor traversal in both directions, not actor navigation
+under the deck, self-overlapping regions, group avoidance or rendered appearance.
+The existing native collision-connected path sampler passes eight routes per
+export, 64 distinct routes across the eight files. The per-copy manifest repeats
+each file; those duplicate sampling passes are not counted as additional coverage.
+
 A newly authored assembly reproduces a silent layer collision: one floor stays
 level while another starts at the same height, ramps up and ends over the first.
 Joining each walkway previously assigned its minimum input layer to the entire
@@ -22,8 +43,8 @@ The assembly regression covers both region input orders. A complete asset
 compiler regression uses three joined surfaces above a separate lower floor,
 verifies their distinct ordered layers and preserves both sectors without adding
 a lift. Disabling only the new separation call makes that regression fail its
-upper-layer assertion; enabling it passes. This proves the compiler correction,
-not native traversal of every overlapping arrangement.
+upper-layer assertion; enabling it passes. The native placement batch above
+extends this to representative actor traversal, not every overlapping arrangement.
 
 Four fresh editable spline ZIP round trips in
 `work/map-compile/spline-mask-floor-routes-FYxqkS` pass, and the existing native

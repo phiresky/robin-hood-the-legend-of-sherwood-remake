@@ -3,6 +3,16 @@ use super::*;
 #[test]
 #[ignore = "requires authored spline floor probes and ROBIN_CLIMB_RHS"]
 fn exported_spline_floor_clicks_follow_receivers_through_repeats() {
+    check_exported_floor_clicks(16, (500., 500.), "spline-floor-actor-report.json");
+}
+
+#[test]
+#[ignore = "requires overlapping floor exports and ROBIN_CLIMB_RHS"]
+fn exported_overlapping_floors_keep_clicks_on_the_joined_upper_region() {
+    check_exported_floor_clicks(64, (3000., 2000.), "joined-floor-actor-report.json");
+}
+
+fn check_exported_floor_clicks(expected: usize, dimensions: (f32, f32), report: &str) {
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
@@ -22,8 +32,7 @@ fn exported_spline_floor_clicks_follow_receivers_through_repeats() {
                 )
             };
             for (start, goal) in [(point(0), point(1)), (point(1), point(0))] {
-                let (mut engine, mut assets) =
-                    compiled_walkway_with_dimensions(&bytes, (500., 500.));
+                let (mut engine, mut assets) = compiled_walkway_with_dimensions(&bytes, dimensions);
                 let crate::fast_find_grid::SectorHit::Found {
                     sector_idx,
                     sector_number,
@@ -113,9 +122,9 @@ fn exported_spline_floor_clicks_follow_receivers_through_repeats() {
             }
         }
     }
-    assert_eq!(walks, 16);
+    assert_eq!(walks, expected);
     std::fs::write(
-        directory.join("spline-floor-actor-report.json"),
+        directory.join(report),
         serde_json::to_vec(&serde_json::json!({"complete":true,"walks":walks})).unwrap(),
     )
     .unwrap();
