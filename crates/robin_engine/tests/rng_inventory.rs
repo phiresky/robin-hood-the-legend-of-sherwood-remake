@@ -46,6 +46,12 @@ const REVIEWED_AMBIENT_RNG_USES: &[(&str, usize)] = &[
         2,
     ),
     (
+        // Transport-only nonce keeps repeated lobby lease announcements from
+        // being suppressed by gossip deduplication; it is not simulation input.
+        "crates/robin_rs/src/multiplayer/matchmaking.rs|rand::random",
+        1,
+    ),
+    (
         "crates/robin_rs/src/native_game_identity.rs|rand::random",
         1,
     ),
