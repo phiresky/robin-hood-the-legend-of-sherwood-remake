@@ -16,7 +16,8 @@ from review_evidence import sha
 R = ROOT/'level-editor/work/croisement01-refinement/restart2'
 packet=R/sys.argv[sys.argv.index('--')+1]
 assert packet.resolve().parent==R.resolve()
-out=packet/'solid-review-v1'
+close='--close' in sys.argv
+out=packet/('solid-close-review-v1' if close else 'solid-review-v1')
 assert not out.exists()
 acquire(slots=2)
 try:
@@ -46,6 +47,8 @@ try:
     s,c=math.sin(math.radians(35)),math.cos(math.radians(35))
     directions=[Vector((c*math.sin(i*math.tau/8),-c*math.cos(i*math.tau/8),s)) for i in range(8)]
     camera_data.ortho_scale=float(np.linalg.norm(vertices.max(0)-vertices.min(0)))*1.06
+    if close:
+        center=np.array([560.,-650.,115.]);camera_data.ortho_scale=190.
     scene.render.engine='BLENDER_WORKBENCH'
     scene.display.shading.light='STUDIO';scene.display.shading.color_type='SINGLE'
     scene.display.shading.single_color=(.5,.5,.5)
