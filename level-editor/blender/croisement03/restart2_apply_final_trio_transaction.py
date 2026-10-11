@@ -38,6 +38,7 @@ def editor_proof(path,expected,plan):
 def verify_evidence(plan):
  require(sha(Path(__file__))==EXECUTOR_SHA,'Executor changed during execution')
  for item in plan['protected']+plan['evidence']+[plan['browser']]:core.verify_pin(item)
+ if plan.get('compiler_snapshot'):core.verify_pin(plan['compiler_snapshot'])
  for name,value in plan['compiler_source_pins'].items():core.verify_pin({'path':name,'sha256':value})
  handoff=read(Path(plan['browser']['path']))
  require(handoff['approved_models']==plan['approved_models']and handoff['stage_map_sha256']==plan['map_sha256'],'Combined proof scope differs')
@@ -92,7 +93,11 @@ def main():
     verify_records(plan['records'],'new_sha256')
     for item in plan['protected']:core.verify_pin(item)
     validate_asset_index(ASSETS,read(ASSETS/'index.json'))
-    subprocess.run(['node',str(VALIDATOR),str(LIB/'scenes/croisement03.rhlos-map.json'),str(LIB),str(folder/'installed-strict-validation.json'),str(folder/'same-compiler-baseline.json')],cwd=ROOT,check=True)
+    if plan.get('compiler_snapshot'):
+     snap=plan['compiler_snapshot'];core.verify_pin(snap);frozen=read(snap['path']);runner=Path(frozen['root'])/'level-editor/blender/croisement03/restart2_run_frozen_compiler.mjs'
+     command=['node',str(runner),snap['path'],str(folder/'installed-strict-validation.json'),'validate',str(LIB/'scenes/croisement03.rhlos-map.json'),str(LIB),str(folder/'same-compiler-baseline.json')]
+    else:command=['node',str(VALIDATOR),str(LIB/'scenes/croisement03.rhlos-map.json'),str(LIB),str(folder/'installed-strict-validation.json'),str(folder/'same-compiler-baseline.json')]
+    subprocess.run(command,cwd=ROOT,check=True)
    journal=protocol.commit(plan['records'],folder/'transaction',plan_hash,precommit,postcheck)
    dump(folder/'result.json',{'status':'INSTALLED_LIVE_EDITOR_PROOF_PENDING','plan':authority['plan'],'journal':pin(folder/'transaction/journal.json'),'editor':proof,'canonical_map_sha256':sha(LIB/'scenes/croisement03.rhlos-map.json')})
   except BaseException:

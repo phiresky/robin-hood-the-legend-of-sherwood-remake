@@ -1,5 +1,5 @@
 """Closed CPU trial retaining existing bank creases and adding observed shoulder edges."""
-import json,math,hashlib
+import json,math,hashlib,argparse
 from collections import Counter
 from pathlib import Path
 import numpy as np
@@ -39,6 +39,8 @@ def planarize(boundary,lines):
  return rebuilt[0][1][:-1],rebuilt[1:]
 
 def main():
+ global O
+ ap=argparse.ArgumentParser();ap.add_argument('--output',type=Path,default=O);ap.add_argument('--recess',type=float,default=-2.);args=ap.parse_args();O=args.output.resolve()
  assert not O.exists();O.mkdir();old=json.loads((B/'bank-whole-geometry-plan-v4/geometry.json').read_text());source=json.loads((B/'bank-shoulder-source-v1/traces.json').read_text());result={};details=[]
  for owner in ('52','54'):
   m=old[owner];n=m['source_vertex_count'];verts=np.array(m['vertices']);top=[f for f in m['faces'] if all(i<n for i in f)];counts=Counter(tuple(sorted((a,b))) for f in top for a,b in zip(f,f[1:]+f[:1]));edges=[e for e,c in counts.items() if c==1];adj={}
@@ -67,7 +69,7 @@ def main():
     if t['id']=='east-upper-outer-shoulder' and i==0:
      points.append([604.,189.+height,height]);continue
     origin=np.array([x,-sy/S,0.])+ray*5000;hits=boundary_hits(origin,-ray,{owner:(verts,m['faces'])});assert hits,(t['id'],i,'no existing surface')
-    surface=origin-ray*hits[0]['distance'];shift=-2. if i in (3,5) else 0.;point=surface+ray*shift;points.append(authored(point));details.append({'trace':t['id'],'sample':i,'source':[x,sy],'ray_shift_world':shift,'world':point.tolist()})
+    surface=origin-ray*hits[0]['distance'];shift=args.recess if i in (3,5) else 0.;point=surface+ray*shift;points.append(authored(point));details.append({'trace':t['id'],'sample':i,'source':[x,sy],'ray_shift_world':shift,'world':point.tolist()})
    lines.append((t['id'],points))
   boundary,lines=planarize(boundary,lines)
   candidate=mesh(boundary,lines);candidate['native_obstacle']=m['native_obstacle'];candidate['gameplay_metadata']=m['gameplay_metadata'];result[owner]=candidate
