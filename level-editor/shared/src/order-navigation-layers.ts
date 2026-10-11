@@ -57,16 +57,43 @@ export function orderNavigationLayers(regions: NavigationRegion[], warnings: str
   const ordered: number[] = [];
   while (pending.size) {
     const next = layers.find((layer) => pending.has(layer) && incoming.get(layer) === 0);
+    let group: number[];
     if (next === undefined) {
+      // Resolve only a source strongly connected component. Layers above a
+      // conflicting group must still follow it, even when their old IDs do not.
+      const reachable = new Map<number, Set<number>>();
+      for (const layer of pending) {
+        const seen = new Set<number>();
+        const queue = [layer];
+        while (queue.length) {
+          const current = queue.pop()!;
+          if (seen.has(current)) continue;
+          seen.add(current);
+          for (const above of edges.get(current)!) if (pending.has(above)) queue.push(above);
+        }
+        reachable.set(layer, seen);
+      }
+      group = [...pending]
+        .map((layer) =>
+          [...pending].filter(
+            (other) => reachable.get(layer)!.has(other) && reachable.get(other)!.has(layer),
+          ),
+        )
+        .find((component) =>
+          [...pending].every(
+            (other) =>
+              component.includes(other) ||
+              component.every((layer) => !edges.get(other)!.has(layer)),
+          ),
+        )!;
       warnings.push(
-        `Navigation layers ${[...pending].join(", ")}: crossing receiving heights prevent consistent click ordering; remaining layers retain their previous order.`,
+        `Navigation layers ${group.join(", ")}: crossing receiving heights prevent consistent click ordering; these layers retain their previous relative order.`,
       );
-      ordered.push(...pending);
-      break;
-    }
-    ordered.push(next);
-    pending.delete(next);
-    for (const above of edges.get(next)!) incoming.set(above, incoming.get(above)! - 1);
+    } else group = [next];
+    ordered.push(...group);
+    for (const layer of group) pending.delete(layer);
+    for (const layer of group)
+      for (const above of edges.get(layer)!) incoming.set(above, incoming.get(above)! - 1);
   }
   // Preserve the reserved empty ground layer when no ordinary region owns it.
   const offset = layers.includes(0) ? 0 : 1;

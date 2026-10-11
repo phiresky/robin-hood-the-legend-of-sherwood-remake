@@ -16,7 +16,7 @@ Export now orders ordinary navigation layers by receiving heights at their
 projected intersections, before compaction and runtime reference assignment.
 Joined pieces keep one layer, lifts retain their separate allocation, and an
 empty ground slot stays reserved. Conflicting height order emits a warning and
-retains the remaining layers in their previous order; it does not discard floors.
+retains each conflicting group's previous relative order; it does not discard floors.
 Ordering is prepared entirely at export time. No production Rust code changed.
 
 `node refinement/check-spline-floor-routes.mjs` exports straight/curved paths
@@ -46,6 +46,29 @@ height order among layers 5, 8, 24, 33 and 36, alongside other existing export
 warnings. That finding requires diagnosis; successful export is not proof of
 correct clicking throughout Derby. The broader map/roof/spline/region tests,
 Rust formatting check and game binary build pass.
+
+Follow-up diagnosis captures the compiler's pre-order receiving regions in
+`work/map-compile/layer-order-diagnosis-Fl303H`. The five reported layers form
+two independent conflicting groups, involving three ramp/landing overlaps with
+height differences below 0.35 units. One overlap is an almost collinear clipping
+sliver; the others retain small real projected overlaps. The compiler does not
+silently waive these as harmless based on their size.
+
+Conflict handling now preserves relative order only within a source strongly
+connected component and continues sorting the remaining constraints. Previously,
+one cycle stopped ordering all pending layers, potentially leaving a clearly
+higher floor below the conflicting group. Regression tests cover that higher
+floor and independent conflicting pairs. Resolving the authored seam overlaps
+themselves remains open.
+
+The follow-up Derby export `work/map-compile/saved-map-exports-qz6YDk` completes
+in about 8.4 seconds and reports groups 5/24/36 and 8/33 separately. Native static
+construction passes with 60 areas, 371 sight obstacles, 70 doors, two jump pairs,
+64,860 grid blocks and 283 elevation boundaries. This uses the existing native
+integration binary; no runtime code changed for conflict isolation. All 162
+targeted compiler/layer-order tests, TypeScript checking, lint and changed-file
+formatting pass, as does the game binary build. The workspace Rust formatting check reports unrelated concurrent
+archery, purse, projectile-test and replay-comparison edits.
 
 ## Point masks on rising spline floors (2026-10-11)
 

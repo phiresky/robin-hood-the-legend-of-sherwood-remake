@@ -87,6 +87,9 @@ Four editable ZIP round trips, 16 complete-sprite PC walks, 16 direct routes and
 Conflicting height order warns without dropping geometry. Same-layer overlaps,
 cyclic ordering and full rendered coverage remain open. No production runtime
 changes were needed; see [click-order evidence](map-compilation-evidence.md#click-ordering-on-raised-spline-floors-2026-10-11).
+Conflicts are isolated to their connected groups so that unrelated and clearly
+higher layers still receive the correct order. Derby's reported conflicts trace
+to three small ramp/landing overlaps; their geometry still needs resolution.
 
 **Authored occupancy triggers (2026-10-11):** eight new map exports place two
 independent reusable trigger assets at 0/37/90/180 degrees and elevations 0/40.

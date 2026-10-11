@@ -66,3 +66,32 @@ test("an empty ground slot and reserved lift layers remain available", () => {
   assert.equal(ordinary.layer, 1);
   assert.equal(lift.layer, 900);
 });
+
+test("a crossing pair cannot put an unambiguous upper floor below it", () => {
+  const upper = region(0, [0, 0, 200]);
+  const ramp = region(1, [1, 0, -150]);
+  const landing = region(2, [0, 0, 0]);
+  const warnings: string[] = [];
+  orderNavigationLayers([upper, ramp, landing], warnings);
+  assert.deepEqual([ramp.layer, landing.layer, upper.layer], [0, 1, 2]);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0]!, /^Navigation layers 1, 2:/);
+});
+
+test("independent crossing pairs report only their own conflicting layers", () => {
+  const items = [
+    region(0, [1, 0, -150]),
+    region(1, [0, 0, 0]),
+    region(2, [1, 0, -450], 400),
+    region(3, [0, 0, 0], 400),
+  ];
+  const warnings: string[] = [];
+  orderNavigationLayers(items, warnings);
+  assert.deepEqual(
+    items.map((item) => item.layer),
+    [0, 1, 2, 3],
+  );
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0]!, /^Navigation layers 0, 1:/);
+  assert.match(warnings[1]!, /^Navigation layers 2, 3:/);
+});
