@@ -1,16 +1,18 @@
 """Try bounded vertex identification after exact branch union; retain failures."""
 import hashlib
 import json
+import sys
 from pathlib import Path
 import numpy as np
 from scipy.spatial import cKDTree
 from restart2_tree08_local_fork import audit
 
 R = Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
-source = R/'tree08-implicit-collar-v4-connected/candidate.npz'
+smooth_transition='--smooth-transition' in sys.argv
+source = R/('tree08-implicit-collar-v12-smooth-connected' if smooth_transition else 'tree08-implicit-collar-v4-connected')/'candidate.npz'
 data = np.load(source)
 v, f = data['vertices'], data['faces']
-out = R/'tree08-implicit-collar-v5-clean'
+out = R/('tree08-implicit-collar-v13-smooth-clean' if smooth_transition else 'tree08-implicit-collar-v5-clean')
 out.mkdir(exist_ok=False)
 trials = []
 for tolerance in [1e-7, 1e-5, 2.5e-5, 5e-5, .0001]:

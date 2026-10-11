@@ -8,7 +8,8 @@ from mathutils import Matrix,Vector
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(Path(__file__).parent)]
 from render_slots import acquire,release
 from restart2_tree08_union import topology
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';packet=R/'tree08-implicit-collar-v3-stitched';out=R/'tree08-implicit-collar-v4-connected';assert not out.exists()
+R=ROOT/'level-editor/work/croisement01-refinement/restart2';smooth_transition='--smooth-transition' in sys.argv
+packet=R/('tree08-implicit-collar-v11-smooth-stitched' if smooth_transition else 'tree08-implicit-collar-v3-stitched');out=R/('tree08-implicit-collar-v12-smooth-connected' if smooth_transition else 'tree08-implicit-collar-v4-connected');assert not out.exists()
 a=np.load(packet/'candidate.npz');v,f=a['vertices'],a['faces'];labels=np.load(packet/'component-labels.npz');report=json.loads((packet/'components-source.json').read_text());assert [x['source_pixels'] for x in report['components']]==[6253,0,23]
 origin=np.array([552.,-672.,235.])
 def mesh_object(name,component):
