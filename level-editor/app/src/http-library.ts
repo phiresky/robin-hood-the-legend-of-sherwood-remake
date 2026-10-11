@@ -1,8 +1,8 @@
 import { publishedMapLabel } from "./map-label.ts";
-import { loadHttpAssetCatalog, loadHttpModelParts } from "./http-asset-catalog.ts";
+import { createHttpCatalogReader } from "./http-catalog-reader.ts";
 import { writeMapThumbnail, thumbnailExtensions } from "./map-thumbnail";
 import { validateNewMap } from "./new-map";
-import { isNotFound, listFiles, writeText } from "./fs.ts";
+import { isNotFound, listFiles, setJsonReader, writeText } from "./fs.ts";
 import { Temporal } from "temporal-polyfill";
 
 async function migrateBrowserMaps(maps: FileSystemDirectoryHandle) {
@@ -46,9 +46,9 @@ export async function openHttpLibrary(
   base = (import.meta.env?.BASE_URL ?? "/") + "library/",
   storage?: FileSystemDirectoryHandle,
 ) {
-  // Only chunk routing is needed between reads; retaining the full catalog here
-  // duplicates every embedded descriptor already owned by the asset browser.
-  let modelShards = (await loadHttpAssetCatalog(base)).model_shards;
+  const catalog = createHttpCatalogReader(base);
+  // Preserve startup validation; explicit index reads still fetch a fresh release.
+  await catalog.read();
   const browser = storage ?? (await navigator.storage.getDirectory());
   const workspace = await browser.getDirectoryHandle("sherwood-level-editor", { create: true });
   const maps = await workspace.getDirectoryHandle("maps", { create: true });
@@ -57,16 +57,12 @@ export async function openHttpLibrary(
     if (path === "3d-assets/index.json") {
       // Maps and their descriptor pins can change while this connection is open.
       // Refresh the manifest too, including the model chunks for the new release.
-      const catalog = await loadHttpAssetCatalog(base);
-      modelShards = catalog.model_shards;
-      return new File([JSON.stringify(catalog)], "index.json", { type: "application/json" });
+      return new File([JSON.stringify(await catalog.read())], "index.json", {
+        type: "application/json",
+      });
     }
-    if (modelShards?.[path])
-      return new File(
-        [await loadHttpModelParts(base, modelShards[path])],
-        path.split("/").at(-1)!,
-        { type: "model/gltf-binary" },
-      );
+    const model = await catalog.readModel(path);
+    if (model) return new File([model], path.split("/").at(-1)!, { type: "model/gltf-binary" });
     const result = await fetch(base + path.split("/").map(encodeURIComponent).join("/"), {
       cache: "no-cache",
     });
@@ -207,7 +203,7 @@ export async function openHttpLibrary(
   }
   function directory(prefix: string): FileSystemDirectoryHandle {
     const isMaps = prefix === "scenes/";
-    return {
+    const handle = {
       kind: "directory",
       name: prefix ? prefix.split("/").at(-2)! : "HTTP library",
       async getDirectoryHandle(name: string) {
@@ -269,6 +265,8 @@ export async function openHttpLibrary(
         await maps.removeEntry(storageName(name.slice(0, -suffix.length)) + suffix);
       },
     } as unknown as FileSystemDirectoryHandle;
+    if (prefix === "3d-assets/") setJsonReader(handle, "index.json", catalog.read);
+    return handle;
   }
   return {
     handle: directory(""),

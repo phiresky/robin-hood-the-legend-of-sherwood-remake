@@ -41,7 +41,22 @@ export function isNotFound(error: unknown): boolean {
   return error instanceof DOMException && error.name === "NotFoundError";
 }
 
+const jsonReaders = new WeakMap<FileSystemDirectoryHandle, Map<string, () => Promise<unknown>>>();
+
+/** Virtual files may already be parsed; avoid serializing them just to read them back. */
+export function setJsonReader(
+  directory: FileSystemDirectoryHandle,
+  name: string,
+  read: () => Promise<unknown>,
+) {
+  let readers = jsonReaders.get(directory);
+  if (!readers) jsonReaders.set(directory, (readers = new Map()));
+  readers.set(name, read);
+}
+
 export async function readJson<T>(dir: FileSystemDirectoryHandle, name: string): Promise<T> {
+  const reader = jsonReaders.get(dir)?.get(name);
+  if (reader) return (await reader()) as T;
   const fh = await dir.getFileHandle(name);
   const file = await fh.getFile();
   try {

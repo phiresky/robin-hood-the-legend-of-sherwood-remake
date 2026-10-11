@@ -20,3 +20,18 @@ test("malformed JSON carries filename instead of returning defaults", async () =
   } as unknown as FileSystemDirectoryHandle;
   await assert.rejects(readJson(dir, "map.rhlos-map.json"), /Invalid JSON in map.rhlos-map.json/);
 });
+
+test("virtual JSON reads return parsed values without making a file or retaining an old value", async () => {
+  const { setJsonReader } = await import("./fs.ts");
+  const directory = {
+    getFileHandle: async () => {
+      throw new Error("No file serialization expected");
+    },
+  } as unknown as FileSystemDirectoryHandle;
+  let value = { version: 1, assets: [{ id: "first" }] };
+  setJsonReader(directory, "index.json", async () => value);
+  assert.equal(await readJson(directory, "index.json"), value);
+  value = { version: 1, assets: [{ id: "second" }] };
+  assert.equal(await readJson(directory, "index.json"), value);
+  await assert.rejects(readJson(directory, "other.json"), /No file serialization expected/);
+});
