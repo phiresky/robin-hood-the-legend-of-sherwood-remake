@@ -6,6 +6,28 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Curved spline opening traversal (2026-10-11)
 
+**Rising deck follow-up remains failing.** Add `--deck` to the curved verifier
+to author a wide floor and wall in the same reusable spline asset. The floor
+rises thirty units, with starting heights 40/80; the terrain below remains flat.
+The fixture identifies the curved region from its sampled perimeter because
+sloped plane ordering can put it before or after the terrain. With openings
+disabled the wall may correctly split the floor into separate regions.
+
+In `work/map-compile/spline-clearance-planes-jxb9rm`, a wall without upright
+headroom leaves an approximately 0.049493-unit gap at the first crossing: the
+exported receiver height is 42.266609 and the wall bottom is 42.316103.
+Independent triangulation of the bent floor and wall makes their shared authored
+base heights differ after deformation. The fixture now explicitly authors
+20 units of wall movement headroom; the terrain is sufficiently far below it.
+
+The resulting `work/map-compile/spline-clearance-planes-JPlsaV` passes the first
+disabled-clearance export's collision probes, but fails the first enabled opening:
+the layer-0 crossing from `[129.236593,197.357052]` to
+`[117.299188,235.534248]` remains blocked. Clearance/floor plane matching across
+independently triangulated bent geometry needs further compiler work. The native
+audit exits 101; this is a retained regression reproduction, not passing coverage.
+No actor run or full rotation sweep is claimed for this failing batch.
+
 `node refinement/check-spline-clearance-planes.mjs --rotated --curved` now
 constructs an authored three-handle curved wall at 0/37/90/180 degrees and
 elevations 0/40, with clearances enabled and disabled. Its three sampled repeated

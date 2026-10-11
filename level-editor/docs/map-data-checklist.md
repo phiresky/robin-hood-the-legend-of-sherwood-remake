@@ -1815,7 +1815,12 @@ probes, 96 bounded graph routes and 96 complete sprite crossings preserve the
 openings and intervening pillars. Maximum travelled distance is 39.990033 units
 for a 40-unit crossing. Use `--rotated --curved` with the same verifier; see the
 [curved traversal evidence](map-compilation-evidence.md#curved-spline-opening-traversal-2026-10-11).
-Curved longitudinal slopes and rendered actor integration remain open.
+Curved longitudinal slopes and rendered actor integration remain open. The new
+`--curved --deck` audit reproduces a blocked opening on a rising curved floor:
+independently triangulated clearance and floor planes fail to match. Explicit
+upright headroom blocks the uncut wall correctly, but the enabled opening still
+fails. This is an active export regression, not a native traversal pass; details
+are in the curved traversal evidence above.
 Use the ignored native `exported_openings_support_complete_sprite_routes` test
 with `ROBIN_ASSET_MAP_DIAGNOSTICS` set to the generated directory and
 `ROBIN_CLIMB_RHS` set to a complete character sprite to reproduce the actor audit.

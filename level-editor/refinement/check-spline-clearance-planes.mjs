@@ -10,13 +10,15 @@ import { sceneToGame } from "../shared/src/geometry.ts";
 const output = await fs.mkdtemp("work/map-compile/spline-clearance-planes-");
 const results = [];
 const curved = process.argv.includes("--curved");
+const deck = process.argv.includes("--deck");
+assert.ok(!deck || curved, "--deck requires --curved");
 for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [0]) {
   const radians = (rotation * Math.PI) / 180;
   const direction = [Math.cos(radians), Math.sin(radians)];
   const start = [250 - 150 * direction[0], 250 - 150 * direction[1]];
-  for (const elevation of [0, 40]) {
-    // Flat receiving terrain isolates bending from longitudinal slope changes.
-    for (const rise of curved ? [0] : [0, 30]) {
+  for (const elevation of deck ? [40, 80] : [0, 40]) {
+    // Curved terrain cases use a flat floor; raised decks supply their own rising floor.
+    for (const rise of deck ? [30] : curved ? [0] : [0, 30]) {
       for (const enabled of [false, true]) {
         const { document, asset, assets, bounds } = wallSplineFixture();
         const sine = Math.sin((document.camera.elevation_deg * Math.PI) / 180);
@@ -31,15 +33,39 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
         ];
         if (curved) {
           path.curved = true;
-          path.points.splice(1, 0, [250 - 50 * direction[1], 250 + 50 * direction[0], elevation]);
+          path.points.splice(1, 0, [
+            250 - 50 * direction[1],
+            250 + 50 * direction[0],
+            elevation + rise / 2,
+          ]);
         }
         for (const vertex of document.terrain.vertices)
-          vertex.position[2] =
-            elevation +
-            (((vertex.position[0] - start[0]) * gradient[0] +
-              (vertex.position[1] - start[1]) * gradient[1]) *
-              rise) /
-              run;
+          vertex.position[2] = deck
+            ? 0
+            : elevation +
+              (((vertex.position[0] - start[0]) * gradient[0] +
+                (vertex.position[1] - start[1]) * gradient[1]) *
+                rise) /
+                run;
+        if (deck) {
+          // Upright actors must not fit beneath subpixel gaps between independently
+          // triangulated bent floor and wall faces. The ground remains well below.
+          asset.gameplay.volumes[0].movementHeadroom = 20;
+          asset.gameplay.surfaces = [
+            {
+              id: "deck",
+              node: "body",
+              height: 0,
+              navigationRegion: "deck",
+              polygon: [
+                [-50, -80],
+                [50, -80],
+                [50, 80],
+                [-50, 80],
+              ],
+            },
+          ];
+        }
         if (enabled)
           asset.gameplay.movementClearances = [
             {
@@ -64,6 +90,19 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
             },
           ];
         const compiled = compileMap(document, bounds, assets);
+        const layers = compiled.descriptor.asset_geometry.motion_data.layers;
+        if (deck && enabled)
+          assert.deepEqual(
+            layers.map((layer) => layer.length),
+            [1, 1, 0],
+            "Raised deck must compile into one connected region above the terrain",
+          );
+        // The flat terrain has four corners; the curved deck has a sampled perimeter.
+        // Plane ordering can place the sloped deck before or after the terrain.
+        const routeLayer = deck
+          ? layers.findIndex((layer) => layer[0]?.polygon.points.length > 4)
+          : 0;
+        assert.ok(routeLayer >= 0, "Compiled curved deck region must exist");
         const curve = splineCurve(path, document.camera);
         const probes = [];
         for (let repeat = 0; repeat < 3; repeat++) {
@@ -82,7 +121,7 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
             const normal = [(-dy / length) * 20, (dx / length) * 20];
             const [x, y, z] = sceneToGame(document.camera, centre.toArray());
             probes.push({
-              layer: 0,
+              layer: routeLayer,
               start: [x - normal[0], y - z - normal[1]],
               end: [x + normal[0], y - z + normal[1]],
               reachable: enabled && opening,
@@ -90,7 +129,7 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
           }
         }
         assert.equal(probes.length, 12);
-        const file = `clearance-${curved ? "curved-" : ""}${rotation}-${elevation}-${rise}-${enabled}.level.json`;
+        const file = `clearance-${deck ? "deck-" : ""}${curved ? "curved-" : ""}${rotation}-${elevation}-${rise}-${enabled}.level.json`;
         await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
         await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
         results.push({
@@ -98,14 +137,21 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
           map: file,
           rotation,
           curved,
+          deck,
           warnings: compiled.warnings,
           movement_probes: probes,
           route_probes: enabled
             ? probes
                 .filter((probe) => probe.reachable)
                 .flatMap((probe) => [
-                  { ...probe, sector: 0, max_length: 45 },
-                  { ...probe, start: probe.end, end: probe.start, sector: 0, max_length: 45 },
+                  { ...probe, sector: routeLayer, max_length: 45 },
+                  {
+                    ...probe,
+                    start: probe.end,
+                    end: probe.start,
+                    sector: routeLayer,
+                    max_length: 45,
+                  },
                 ])
             : [],
         });
