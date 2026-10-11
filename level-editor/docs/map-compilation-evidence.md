@@ -4,6 +4,38 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Separate walkway restores hall reveal binding (2026-10-11)
+
+The raised reveal waypoint lies on the separate east-bailey west-curtain's floor,
+outside the hall's own local surface definitions. The control's sector/layer
+also supplies its interaction destination. Reanchoring it to arbitrary ground
+would change that behavior. No asset or production runtime repair was made.
+
+`node refinement/check-hall-walkway-connection.mjs` constructs new terrain and
+two independent copies of the adjoining asset pair. Asset-local stored origins
+establish a representative relative layout; each pair is then translated and
+rotated together without merging its asset instances. The compiler reads only
+the saved/reopened editor scene and the two asset descriptors. It never reads a
+level-data file. Current output: `work/map-compile/hall-walkway-connection-zO4ANz`.
+
+All eight exports complete: joined/separated at 0/37/90/270 degrees. Each joined
+map has two reveal controls, with distinct waypoints and disjoint initial/applied
+sight references. Each separated map has zero reveal controls and two explicit
+unresolved-waypoint warnings. Joined warnings total 16–18; separated warnings
+total 108–110. This corrects the earlier assumption that the isolated hall's
+omission necessarily required a metadata repair. Remaining warnings include
+opposing jump-edge rounding and draft geometry; this is not full assembly parity.
+
+The opt-in engine test
+`exported_reveal_controls_keep_copied_sight_states_independent` passes against
+that directory via `ROBIN_ASSET_MAP_DIAGNOSTICS`. It checks all eight retained
+controls, verifies each apply changes exactly its own initial/applied sight set,
+and verifies reset restores the complete sight, grid and navigation state.
+Separated exports are loaded too and must contain their declared zero controls.
+The added engine code is test-only. Rendered appearance-state switching and
+actual actor interaction with those controls remain separate checks.
+Scoped lint/formatting, Cargo formatting and the game build pass.
+
 ## Browser-rendered ZIP and mission separation (2026-10-10)
 
 `app/tests/map-bake-library.html?map=<scene>&roundtrip=1` now checks worker
@@ -32,8 +64,8 @@ The viewport visibly renders both textured assets on grass; the first tower's
 top is clipped by the explicit export frame. This checks repeatability and data
 transport, not a visual comparison against stock gameplay. The preserved 150
 warnings include unresolved reveal controls and entrances plus appearance
-bindings retained in their initial state. These remain actual gameplay gaps,
-not successful round-trip coverage. Full editor button interaction, game-menu
+bindings retained in their initial state. Some require neighboring raised floors,
+as verified above; others still need diagnosis. Full editor button interaction, game-menu
 installation, actual mission actor spawning and in-game compositing remain open.
 Type checking, scoped lint/formatting, game build and Cargo formatting pass.
 

@@ -11,6 +11,18 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**Hall/walkway dependency (2026-10-11):** the hall's reveal waypoint belongs on
+the separate east-bailey west-curtain walkway. A flat-ground-only scene cannot
+bind it correctly. Joining those reusable assets restores the control without
+changing metadata; moving the walkway away removes it with explicit warnings.
+Two copies at 0/37/90/270 degrees retain independent appearance and sight-state
+references. Native apply/reset checks pass for all eight retained reveal controls,
+including whole-world sight-state isolation and grid/navigation restoration.
+Joined exports have 16–18 warnings versus 108–110 when separated.
+The isolated hall's missing reveal is therefore a missing neighboring surface,
+not proof of a bad asset-local anchor. Jump-edge quantization and other draft
+warnings remain unresolved.
+
 **Browser bake/reopen round trip (2026-10-10):** two independently placed
 east-hall assets on elevated editor terrain bake to a real 2000×2000 color/depth
 export. ZIP decoding and reopening/rebaking through the browser viewport preserve
@@ -21,7 +33,8 @@ passes **16/16 stair routes in all five native modes**.
 
 This is not full asset parity: the export reports **150 warnings**, including
 omitted `hall-reveal` controls, unbound entrances and appearances held in their
-initial state. Repairing those asset-local bindings remains necessary. The
+initial state. Some depend on neighboring surfaces, as verified above; the
+remaining omissions still need assembly-specific diagnosis. The
 explicit frame also clips the first tower's top. Browser component integration
 is covered here; full editor button flows, game-menu installation and in-game
 image/actor compositing are still open.

@@ -1016,6 +1016,79 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires hall/walkway exports via ROBIN_ASSET_MAP_DIAGNOSTICS"]
+    fn exported_reveal_controls_keep_copied_sight_states_independent() {
+        let directory =
+            std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest["complete"], true);
+        let mut checked = 0;
+        for result in manifest["results"].as_array().unwrap() {
+            let bytes = std::fs::read(directory.join(result["file"].as_str().unwrap())).unwrap();
+            let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            let geometry = &descriptor["asset_geometry"];
+            let transitions: Vec<crate::level_data::CompiledMovementTransition> =
+                serde_json::from_value(
+                    geometry
+                        .get("movement_transitions")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!([])),
+                )
+                .unwrap();
+            let dimensions = &descriptor["walkable_polygon"][2];
+            let (mut engine, assets) = load_compiled_transition(
+                &bytes,
+                (
+                    dimensions[0].as_f64().unwrap() as f32 + 1.,
+                    dimensions[1].as_f64().unwrap() as f32 + 1.,
+                ),
+            );
+            assert_eq!(
+                engine.script_domains.interactables.patches.len(),
+                transitions.len()
+            );
+            let controls = transitions
+                .iter()
+                .enumerate()
+                .filter(|(_, transition)| transition.id.ends_with("/hall-reveal"))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                controls.len() as u64,
+                result["expected_controls"].as_u64().unwrap()
+            );
+            let sight = engine.world.static_sight_obstacle_active.clone();
+            let grid = engine.world.fast_grid.sector_active.clone();
+            let navigation = engine.world.pathfinder.states.clone();
+            let sim = crate::sim_rng::test_context();
+            for (index, transition) in controls {
+                assert_eq!(transition.initial_sight.len(), 1);
+                assert_eq!(transition.applied_sight.len(), 8);
+                let mut expected = sight.clone();
+                for &obstacle in &transition.initial_sight {
+                    assert!(sight[obstacle as usize]);
+                    expected[obstacle as usize] = false;
+                }
+                for &obstacle in &transition.applied_sight {
+                    assert!(!sight[obstacle as usize]);
+                    expected[obstacle as usize] = true;
+                }
+                let patch = crate::patch::PatchIndex::new(u32::try_from(index).unwrap()).unwrap();
+                engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                assert_eq!(engine.world.static_sight_obstacle_active, expected);
+                engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+                assert_eq!(engine.world.static_sight_obstacle_active, sight);
+                assert_eq!(engine.world.fast_grid.sector_active, grid);
+                assert_eq!(engine.world.pathfinder.states, navigation);
+                checked += 1;
+            }
+        }
+        assert!(checked > 0);
+        assert_eq!(checked, manifest["expected_controls"].as_u64().unwrap());
+    }
+
+    #[test]
     fn editor_joined_asset_switch_updates_both_members_and_resets() {
         let bytes = include_bytes!("../../tests/fixtures/asset-joined-transition.level.json");
         let (mut engine, assets) = load_compiled_transition(bytes, (2000., 2000.));
