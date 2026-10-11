@@ -1,0 +1,5 @@
+/** Compile the restored canonical map under the exact source pins of the stage proof. */
+import fs from 'node:fs/promises';import path from 'node:path';import assert from 'node:assert/strict';
+import {compilerPins,verifyPins,compilePinned,hash} from './restart2_trio_compiler_guard.mjs';
+const [output,pinnedCompiler]=process.argv.slice(2);assert.ok(output&&pinnedCompiler);const expected=JSON.parse(await fs.readFile(pinnedCompiler));const code=await compilerPins();assert.deepEqual(code,expected.compilerPins,'Canonical and staged compiler sources differ');
+const lib=path.resolve('level-editor/library');const canonical=await compilePinned(lib+'/scenes/croisement03.rhlos-map.json',lib,{deduplicateApprovedDrafts:true});const record={...canonical,compilerPins:code,nodeVersion:process.version,status:'COMPILED_SOURCE_GUARD_PENDING'};await fs.writeFile(output,JSON.stringify(record));await verifyPins(code);await verifyPins(canonical.inputPins);record.status='PASS_PINNED_CANONICAL_COMPILE';await fs.writeFile(output,JSON.stringify(record));console.log(JSON.stringify({status:record.status,path:output,sha256:hash(await fs.readFile(output))}));
