@@ -3,7 +3,7 @@ import argparse,collections,gzip,hashlib,json
 from pathlib import Path
 R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2/compiler-rebase-diagnosis-v2'
 def main():
- ap=argparse.ArgumentParser();ap.add_argument('--candidate',type=Path,default=B/'candidate.json');args=ap.parse_args();a=json.loads((B/'canonical.json').read_text());b=json.loads(args.candidate.read_text());diff=[]
+ ap=argparse.ArgumentParser();ap.add_argument('--candidate',type=Path,default=B/'candidate.json');args=ap.parse_args();a=json.loads((B/'canonical.json').read_text());b=json.loads(args.candidate.read_text());b=b.get('candidate',b);b={key:b[key]for key in ('geometry','scenerySources')};diff=[]
  def compare(x,y,path=''):
   if isinstance(x,dict)and isinstance(y,dict):
    for k in sorted(x.keys()|y.keys()):
