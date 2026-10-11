@@ -130,7 +130,7 @@ def run():
  assert data['guards']['plan_sha256']==hashlib.sha256(P.read_bytes()).hexdigest()
  baseline=B/'restart2/bank-continuous-strata-v1/worker.blend'
  assert data['guards']['baseline53_sha256']==hashlib.sha256(baseline.read_bytes()).hexdigest()
- base.O=B/'restart2/bank-whole-prototype-v2';interface={'geometry_plan':str(O/'geometry.json'),'geometry_plan_sha256':hashlib.sha256((O/'geometry.json').read_bytes()).hexdigest()}
+ base.O=B/'restart2/bank-whole-prototype-v3';interface={'geometry_plan':str(O/'geometry.json'),'geometry_plan_sha256':hashlib.sha256((O/'geometry.json').read_bytes()).hexdigest()}
  def signature(obj):return ([list(v.co) for v in obj.data.vertices],sorted(tuple(sorted(f.vertices)) for f in obj.data.polygons))
  def build(name,points,scene):
   index=name.rsplit(' ',1)[1];d=data[index];mesh=bpy.data.meshes.new(name+' continuous surface');mesh.from_pydata(d['vertices'],[],d['faces']);mesh.update();obj=bpy.data.objects.new(name,mesh);scene.collection.objects.link(obj)
@@ -155,7 +155,11 @@ def run():
    ray=Vector((0,-C,S));trees={}
    for key in ('52','53','54'):
     m=bpy.data.objects['Candidate bank '+key].data;m.calc_loop_triangles();trees[key]=BVHTree.FromPolygons([v.co for v in m.vertices],[list(t.vertices) for t in m.loop_triangles],all_triangles=True)
-   failures=[];sample_count=0;max_surface_error=0.
+   from restart2_bank_boundary_ray import boundary_hits
+   triangle_meshes={}
+   for key in trees:
+    m=bpy.data.objects['Candidate bank '+key].data;triangle_meshes[key]=([tuple(v.co) for v in m.vertices],[list(t.vertices) for t in m.loop_triangles])
+   boundary_fallbacks=[];failures=[];sample_count=0;max_surface_error=0.
    for key in ('52','54'):
     for trace in data[key]['traces']:
      pts=[Vector(data[key]['vertices'][i]) for i in trace['vertices']]
@@ -167,8 +171,13 @@ def run():
         hit,normal,face,dist=tree.ray_cast(point+ray*5000,-ray)
         if hit is not None:hits.append((dist,other))
        nearest=min(hits) if hits else None
+       if nearest is None:
+        precise=boundary_hits([float(point[j])+float(ray[j])*5000 for j in range(3)],[-float(x) for x in ray],triangle_meshes)
+        if precise:
+         hit=precise[0];assert min(hit['barycentric'])<1e-6,'Unexpected interior BVH miss'
+         nearest=(hit['distance'],hit['owner']);boundary_fallbacks.append(dict(owner=key,trace=trace['id'],source=[point.x,-point.y*S-point.z*C],hit=hit))
        if surface_error>1e-4 or nearest is None or nearest[0]<4999.99:failures.append(dict(owner=key,trace=trace['id'],source=[point.x,-point.y*S-point.z*C],surface_error=surface_error,firsthit=nearest))
-   interface['full_crease_guard']=dict(samples=sample_count,failures=failures,max_surface_error=max_surface_error)
+   interface['full_crease_guard']=dict(samples=sample_count,failures=failures,max_surface_error=max_surface_error,boundary_fallbacks=boundary_fallbacks,precision='Float32 BVH with independently intersected double-precision inclusive triangle edges only on null rays; barycentric tolerance1e-7')
    (base.O/'construction-crease-guard.json').write_text(json.dumps(interface,indent=2)+'\n')
    assert not failures,'Post-Boolean full-crease guard failed; no saved model or render'
    interface.update(dict(retained53_exact=True,bank52_after_difference_vertices=len(owner.data.vertices),bank52_after_difference_faces=len(owner.data.polygons),fixed_crest_max_world_error=max(errors),status='PASS construction checks; saved native and oblique review pending'))
