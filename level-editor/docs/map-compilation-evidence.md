@@ -20,11 +20,19 @@ finds one obsolete error-message expectation; the updated receiving-plane case
 passes separately and still rejects a cap that differs from its receiving floor.
 Typechecking, lint and formatting pass. Four exports of the actual small solid
 at 0/37/90/180 degrees pass native geometry construction in
-`sight-cap-exports-lIN7lZ`. Full Croisement01 export `saved-map-exports-AeJzeU`
-has passed the previous crash and remains in jump/door construction; these
-checks do not yet certify its complete export or rendering.
+`sight-cap-exports-lIN7lZ`. Fresh Croisement01 export `saved-map-exports-EmXHFO`
+completes in about 304 seconds and passes native geometry construction. It retains
+250 warnings, including 45 non-draft findings such as collapsed movement holes,
+rounded jump-edge mismatches, flight contacts and unsupported sloped jump edges.
+This does not certify complete traversal or rendering. The earlier cap-repaired
+batch `saved-map-exports-AeJzeU` remains running on its older compiler snapshot.
 
-## Split York component bindings staged (2026-10-12)
+Jump-clearance checking now rejects spatially distant prisms before searching the
+flight's plane bounds. The same geometric checks remain in force; all 27 clearance
+and jump-assembly tests pass. The fresh scene above includes this change, but an
+exact before/after scene timing comparison is not yet complete.
+
+## Split York component bindings published (2026-10-12)
 
 `refinement/stage-york-component-gameplay.mjs` stages asset-local bindings for
 four assets whose visual parts were split into separately named components.
@@ -32,9 +40,33 @@ Sight ordering follows each collision-bearing component. Gatehouse movement
 clearances retain their geometry and bind to each replacement structural piece;
 storehouse rooms, doors and masks bind to their enclosing wall component.
 Descriptor hashes guard the reviewed inputs, and all four gameplay definitions
-validate. Stage `york-component-gameplay-VTkqw6` is not yet published or certified;
-saved-scene export `saved-map-exports-i9U8hr` has passed validation and is still
-constructing geometry.
+validate. Stage `york-component-gameplay-VTkqw6` is published, with rollback
+snapshots under its `publication` directory. York's descriptor pins and the
+library's embedded editor definitions are updated. The model pins refer to the
+split component models used by the reviewed definitions.
+
+`check-york-component-exports.mjs` exercises all four assets at 0/37/90/180 degrees,
+translated and raised 20 units. Separate authored terrain layouts supply either
+low ground for masks or the storehouse doorway height. All 32 exports pass native
+geometry construction (`york-component-exports-h4GrMZ` and
+`york-component-exports-PNZNsa`; the former's descriptors exactly match
+`york-component-exports-8fvTnf`). The two storehouses retain every authored door
+on the matching support and pass eight complete-character enter/exit round trips.
+Low-ground checks retain the stone storehouse mask at all four rotations.
+These are separate support layouts, not a combined multi-height scene or a
+rendered/ZIP check; the assets retain their draft warnings.
+
+Post-publication batches `york-component-exports-kvDOBj` and
+`york-component-exports-fvI5Ln` match all 32 staged descriptors and warning reports
+exactly. Reauthoring the four published definitions is idempotent. Saved-scene
+export `saved-map-exports-i9U8hr` has passed validation and remains in jump/door
+construction using its earlier compiler snapshot; full York parity is unverified.
+
+Completed Wychford and Croisement03 descriptors from older all-map batch
+`saved-map-exports-BCyaS7` pass native geometry construction as the explicitly
+historical subset `completed-saved-subset-z9fr6j8f`. They do not certify the current
+compiler or full-map gameplay. Wychford took about 3,882 seconds to compile,
+including a best-effort retry; export performance remains a material limitation.
 
 Fresh inventory `gameplay-coverage-Ppt9f2` finds 1,278 indexed assets, 21 missing
 definitions and zero missing definitions among placed assets. Nineteen unused

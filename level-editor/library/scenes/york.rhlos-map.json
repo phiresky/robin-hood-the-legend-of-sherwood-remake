@@ -176,9 +176,9 @@
     },
     {
       "model": "3d-assets/york/york-castle-west-gatehouse/model.glb",
-      "model_sha256": "5520034762a1cdd26e8ba1cc0f8731c58a756c2f1d389102128c15345995af02",
+      "model_sha256": "06340abfee4ea771ecf4b9ff942063338c77d139dbb0d8409912287d626b1b1d",
       "descriptor": "3d-assets/york/york-castle-west-gatehouse/asset.json",
-      "descriptor_sha256": "2d5cd1e6199fa226a4661e9a394a81090a275b571c10bddc36206c116a666146",
+      "descriptor_sha256": "48dd19b1adeeab78c5a3f626cd6f279d723495af399694e67ad2b4471bcd7e8c",
       "id": "york-castle-west-gatehouse"
     },
     {
@@ -540,9 +540,9 @@
     },
     {
       "model": "3d-assets/york/york-market-roofed-stone-well/model.glb",
-      "model_sha256": "69bdd1658e0b8789dba8a15971f249665be3f5f1df6414dcfe992d0e92c50707",
+      "model_sha256": "d2936cb8549b3b79ca223956959e1a0946d325382014e3a7c96429958061f15a",
       "descriptor": "3d-assets/york/york-market-roofed-stone-well/asset.json",
-      "descriptor_sha256": "42b37f5f056585c82b8ff5c4b2bf25c6e4ac1d1fbbf31707f0c4e4459f9e3216",
+      "descriptor_sha256": "d9e080601b34437071f7feb8f288efcf37a0d29fabebb0aae61a4d8c6cbd2b16",
       "id": "york-market-roofed-stone-well"
     },
     {
@@ -1072,16 +1072,16 @@
     },
     {
       "model": "3d-assets/york/york-riverside-stone-storehouse/model.glb",
-      "model_sha256": "24d0ae8611a482a94326a15c95b0131e76ff5cad4ba4ba56466bb675bfe0ac3c",
+      "model_sha256": "03b5c885126f01f70d8a0eb755773e7d6f0ed7575d212514e568292a1a16c261",
       "descriptor": "3d-assets/york/york-riverside-stone-storehouse/asset.json",
-      "descriptor_sha256": "6a3e96379df5a8fbb706f141c60cf4189c0ee42c991efe844f0ca8dde6227e74",
+      "descriptor_sha256": "195f427646763b91f3e7af1c45973a6fbf6c68fc6383eefa82a1a13241ac9336",
       "id": "york-riverside-stone-storehouse"
     },
     {
       "model": "3d-assets/york/york-riverside-storehouse-timber-shed/model.glb",
-      "model_sha256": "743ee1db59cfec95982b6a25f82cf4ed851343032eb44dc131d52e8769603346",
+      "model_sha256": "0d94055aee688f7e2dfb82c2ef36f9c0efe914eb7a5b0ffa198c669625403c66",
       "descriptor": "3d-assets/york/york-riverside-storehouse-timber-shed/asset.json",
-      "descriptor_sha256": "ce5e7cb54988a07b0e20bb69fed1278d2c4caf1429b694c92061ccf5662c27dc",
+      "descriptor_sha256": "9ba89c1827b871d5af2526984e3195471ccaebc82776b7351ac5e054ccb3afb1",
       "id": "york-riverside-storehouse-timber-shed"
     },
     {
