@@ -13,7 +13,13 @@ import { compileMap, packageCompiledMap } from "../app/src/map-compile.ts";
 const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", import.meta.url))(
   "fflate",
 );
-const underDeck = process.argv.includes("--under-deck");
+const ceilingArgument = process.argv.find((argument) => argument.startsWith("--ceiling-headroom="));
+const headroom = ceilingArgument ? Number(ceilingArgument.split("=")[1]) : undefined;
+assert.ok(
+  headroom === undefined || headroom === 20 || headroom === 40,
+  "Use headroom 20 (open) or 40 (blocked)",
+);
+const underDeck = process.argv.includes("--under-deck") || headroom !== undefined;
 const output = await fs.mkdtemp(
   `work/map-compile/${underDeck ? "under-deck" : "overlapping-floor"}-routes-`,
 );
@@ -22,7 +28,7 @@ const results = [];
 const report = (complete) =>
   fs.writeFile(
     `${output}/diagnostics.json`,
-    JSON.stringify({ complete, scope: "overlapping-joined-floors", underDeck, results }),
+    JSON.stringify({ complete, scope: "overlapping-joined-floors", underDeck, headroom, results }),
   );
 await report(false);
 for (const rotation of [0, 37, 90, 180])
@@ -55,6 +61,27 @@ for (const rotation of [0, 37, 90, 180])
         [200, 0],
         [200, 440],
         [100, 440],
+      ];
+    if (headroom !== undefined)
+      hut.gameplay.volumes = [
+        {
+          id: "ceiling",
+          node: "building-999",
+          movementHeadroom: headroom,
+          shape: {
+            points: [
+              [100, 160],
+              [200, 160],
+              [200, 260],
+              [100, 260],
+            ].map(([x, y]) => ({ x, y, z_bottom: 50, z_top: 60 })),
+            solid: true,
+            opaque: true,
+            mouse: true,
+            show_shadow_polygon: false,
+            default_material: 1,
+          },
+        },
       ];
     document.objects = document.objects.filter((o) => o.group);
     if (underDeck) Object.assign(document.objects[0].transform, { dx: 0, dy: 0 });
@@ -140,6 +167,15 @@ for (const rotation of [0, 37, 90, 180])
         elevation,
         copy: object.id,
         layer: [...layers][0],
+        blocked: headroom === 40,
+        ...(headroom === 40
+          ? {
+              barrier: (() => {
+                const p = world([150, 210, 20]);
+                return [p[0], p[1] - p[2]];
+              })(),
+            }
+          : {}),
         probes: lanes.map((lane) => lane.map((p) => [p[0], p[1] - p[2]])),
         warnings: compiled.warnings,
       });

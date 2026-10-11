@@ -105,8 +105,11 @@ assembly additionally passes eight editable ZIP round trips and 64 normal PC
 walks across two copies, four rotations and two elevations, checking layer, sector,
 height and collision on every tick. Eight additional under-deck ZIP round trips
 and 64 lower-floor walks pass with the same layer/sector/receiver checks.
-Solid-ceiling headroom, self-overlap within one region, group avoidance and
-rendered appearance remain open;
+An explicit solid ceiling adds sixteen ZIP round trips: 64 moves pass with
+sufficient authored headroom, and 64 low-clearance moves are rejected after at
+least 120 observed ticks. Physical ceiling geometry stays identical between the
+two policies. Automatic posture selection, self-overlap within one region,
+group avoidance and rendered appearance remain open;
 see [joined-floor evidence](map-compilation-evidence.md#overlapping-joined-floors-2026-10-11).
 
 **Authored occupancy triggers (2026-10-11):** eight new map exports place two

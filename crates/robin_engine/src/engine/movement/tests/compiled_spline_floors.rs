@@ -8,7 +8,7 @@ fn exported_spline_floor_clicks_follow_receivers_through_repeats() {
 
 #[test]
 #[ignore = "requires overlapping floor exports and ROBIN_CLIMB_RHS"]
-fn exported_overlapping_floors_keep_clicks_on_the_joined_upper_region() {
+fn exported_overlapping_floors_respect_prepared_layers_and_clearance() {
     check_exported_floor_clicks(64, (3000., 2000.), "joined-floor-actor-report.json");
 }
 
@@ -20,10 +20,12 @@ fn check_exported_floor_clicks(expected: usize, dimensions: (f32, f32), report: 
     assert_eq!(manifest["complete"], true);
     let sprite = exported_stairs::complete_climb_sprite();
     let mut walks = 0;
+    let mut blocked_moves = 0;
     for entry in manifest["results"].as_array().unwrap() {
         let file = entry["file"].as_str().unwrap();
         let bytes = std::fs::read(directory.join(file)).unwrap();
         let layer = entry["layer"].as_u64().unwrap() as u16;
+        let blocked = entry["blocked"].as_bool().unwrap_or(false);
         for probe in entry["probes"].as_array().unwrap() {
             let point = |i: usize| {
                 MapPoint::new(
@@ -33,6 +35,20 @@ fn check_exported_floor_clicks(expected: usize, dimensions: (f32, f32), report: 
             };
             for (start, goal) in [(point(0), point(1)), (point(1), point(0))] {
                 let (mut engine, mut assets) = compiled_walkway_with_dimensions(&bytes, dimensions);
+                if blocked {
+                    let point = &entry["barrier"];
+                    let barrier = MapPoint::new(
+                        point[0].as_f64().unwrap() as f32,
+                        point[1].as_f64().unwrap() as f32,
+                    );
+                    assert!(
+                        !matches!(
+                            engine.world.fast_grid.get_sector(barrier, barrier, layer),
+                            crate::fast_find_grid::SectorHit::Found { .. }
+                        ),
+                        "{file}: low ceiling has no prepared exclusion"
+                    );
+                }
                 let crate::fast_find_grid::SectorHit::Found {
                     sector_idx,
                     sector_number,
@@ -72,7 +88,8 @@ fn check_exported_floor_clicks(expected: usize, dimensions: (f32, f32), report: 
                 let mut previous = start;
                 let mut distance = 0.;
                 let mut arrived = false;
-                for _ in 0..2000 {
+                let mut settled_at_end = false;
+                for tick in 0..2000 {
                     engine.control.frame_counter += 1;
                     engine.t_hourglass_phase_sequences(&assets);
                     engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
@@ -105,27 +122,30 @@ fn check_exported_floor_clicks(expected: usize, dimensions: (f32, f32), report: 
                         .is_none_or(|selected| {
                             selected.orders.is_empty() || selected.command == Command::Wait
                         });
-                    if settled && (position - goal).length() < 0.1 {
-                        arrived = true;
+                    if settled && ((position - goal).length() < 0.1 || (blocked && tick >= 119)) {
+                        arrived = (position - goal).length() < 0.1;
+                        settled_at_end = true;
                         break;
                     }
                 }
-                assert!(
-                    arrived,
-                    "{file}: actor stopped at {previous:?}, expected {goal:?}"
+                assert!(settled_at_end, "{file}: move order did not settle");
+                assert_eq!(
+                    arrived, !blocked,
+                    "{file}: actor stopped at {previous:?}, goal {goal:?}, blocked {blocked}"
                 );
                 assert!(
                     distance < (goal - start).length() * 2.,
                     "{file}: unexpected detour"
                 );
                 walks += 1;
+                blocked_moves += usize::from(blocked);
             }
         }
     }
     assert_eq!(walks, expected);
     std::fs::write(
         directory.join(report),
-        serde_json::to_vec(&serde_json::json!({"complete":true,"walks":walks})).unwrap(),
+        serde_json::to_vec(&serde_json::json!({"complete":true,"moves":walks,"walks":walks-blocked_moves,"blocked":blocked_moves})).unwrap(),
     )
     .unwrap();
 }

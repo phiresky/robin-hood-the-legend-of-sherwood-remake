@@ -15,7 +15,7 @@ results. It records 64 directed upper-floor walk probes across 16 placements.
 The first batch clipped a rotated placement at the export frame and is not counted;
 the successful batch keeps all tested placements inside the frame. Blank rasters
 do not establish appearance.
-The native audit `exported_overlapping_floors_keep_clicks_on_the_joined_upper_region`
+The native audit `exported_overlapping_floors_respect_prepared_layers_and_clearance`
 passes all 64 directed PC walks using complete RobinTown animation data and normal
 move commands. Every tick retains the upper region's sector and layer, has an
 authored receiving floor at the correct height, and crosses no collision. Every
@@ -34,13 +34,32 @@ so every rotated floor fits the export frame. All eight ZIP round trips in
 `work/map-compile/under-deck-routes-Pb6QeB` pass. Reusing the compiled floor-click
 harness with those manifest-selected lower layers passes 64 directed actor walks:
 the character keeps the lower sector, receiver and height while crossing beneath
-the elevated surface. The existing test entry point retains its upper-region
-name, but its assertions use each manifest entry's requested layer; no assertion
-was disabled or relaxed. Its `joined-floor-actor-report.json` records all 64 walks.
+the elevated surface. Its assertions use each manifest entry's requested layer;
+no assertion was disabled or relaxed. The entry point was subsequently renamed
+to cover both regions and clearance policies. Its `joined-floor-actor-report.json`
+records all 64 walks.
 These fixtures contain receiving floors without solid ceilings or rendered
 rasters, so this does not certify headroom collision or visual occlusion.
 Script lint/format checks and the game binary build pass. The preceding native
 test build and full Rust formatting check also pass.
+
+The solid-ceiling follow-up adds an asset-local slab from height 50 to 60 above
+the lower floor at height 20. `--ceiling-headroom=20` prepares the open batch
+`work/map-compile/under-deck-routes-MSQTrK`; `--ceiling-headroom=40` prepares the
+blocked batch `work/map-compile/under-deck-routes-gP66VL`. All sixteen ZIP round
+trips pass. The physical slab is identical; only the authored movement-headroom
+requirement changes. The blocked batch retains explicit normalization/material
+triangulation warnings. The two copied physical ceiling volumes match between
+every paired export; only prepared movement clearance changes.
+
+Native checks pass 64 open-clearance walks and 64 blocked move attempts. Each
+blocked case verifies an actual navigation exclusion beneath the ceiling,
+observes at least 120 ticks, retains its initial sector/layer/receiver and settles
+without reaching the other side or crossing collision. The reports record
+64 walks / zero blocked moves for the open batch and zero walks / 64 blocked
+moves for the closed batch. These checks validate authored headroom policy;
+automatic posture selection, visual occlusion and arbitrary ceiling assemblies
+are not established by them. No production runtime changes were needed.
 
 A newly authored assembly reproduces a silent layer collision: one floor stays
 level while another starts at the same height, ramps up and ends over the first.
