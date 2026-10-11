@@ -17,7 +17,8 @@ R = ROOT/'level-editor/work/croisement01-refinement/restart2'
 packet=R/sys.argv[sys.argv.index('--')+1]
 assert packet.resolve().parent==R.resolve()
 close='--close' in sys.argv
-out=packet/('solid-close-review-v1' if close else 'solid-review-v1')
+normal_trial='--smooth-join-normals' in sys.argv
+out=packet/(('solid-close-review-v1' if close else 'solid-review-v1')+('-join-normals' if normal_trial else ''))
 assert not out.exists()
 acquire(slots=2)
 try:
@@ -35,6 +36,21 @@ try:
     obj=bpy.data.objects.new(mesh.name,mesh)
     scene.collection.objects.link(obj)
     obj.location=Vector(center)
+    if normal_trial:
+        from scipy.spatial import cKDTree
+        ns=np.array([p.normal[:] for p in mesh.vertices]);result=ns.copy()
+        sy,cy=math.sin(math.radians(35)),math.cos(math.radians(35));native=-vertices[:,1]*sy-vertices[:,2]*cy
+        def smooth(t):
+            t=np.clip(t,0,1);return t*t*(3-2*t)
+        weight=smooth((native-275)/20)*smooth((365-native)/20)*smooth((vertices[:,0]-510)/15)*smooth((630-vertices[:,0])/15)
+        tree=cKDTree(vertices)
+        for j in np.flatnonzero(weight):
+            ids=np.array(tree.query_ball_point(vertices[j],7.));delta=vertices[ids]-vertices[j]
+            w=np.exp(-np.sum(delta*delta,axis=1)/18)*(ns[ids]@ns[j]>.6)
+            mean=(ns[ids]*w[:,None]).sum(0);mean/=np.linalg.norm(mean)
+            result[j]=ns[j]*(1-weight[j])+mean*weight[j];result[j]/=np.linalg.norm(result[j])
+        mesh.normals_split_custom_set_from_vertices(result.tolist());mesh.update()
+
     scene.render.threads_mode='FIXED';scene.render.threads=2
     scene.render.resolution_x=scene.render.resolution_y=384
     scene.render.resolution_percentage=100
