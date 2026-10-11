@@ -27,7 +27,12 @@ including bounds preparation, with both published fence repairs and staged wood
 09/44 repairs. It passes native construction and six ordinary collision-connected
 route samples. It retains 2,079 warnings, including 1,729 non-draft warnings;
 loading and sparse route samples do not certify the whole map, rendering or ZIP
-round trips.
+round trips. The corrected click audit passes 35/40 jump attempts; five remain
+unresolved in `actor-jump-click-report.json`. Of the non-draft warnings, 1,705
+report collapsed integer-grid obstacle fragments and seven report collapsed
+holes. Shrub 77's missing mask remains a separate issue: its receiving probes
+sit outside the ground navigation boundary in this placement, although its
+projected canopy extends toward the playable area.
 
 ## Isolated stump click-route investigation (2026-10-12)
 

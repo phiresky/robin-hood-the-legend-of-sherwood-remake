@@ -25,7 +25,8 @@ Croisement02's collapsing caps are traced to mesh-derived wood assets. Published
 pass 20 moved/rotated native exports and 33,160 mesh-derived sight/projectile
 checks, with measured loss below 0.003% of footprint and 0.002% of volume.
 Supplemental wood 09/44 repairs are now published too. Croisement02 exports and
-passes native loading plus six ordinary route samples, but retains 1,729 non-draft
+passes native loading, six ordinary route samples and 35/40 jump-click attempts,
+but retains 1,729 non-draft
 warnings and existing mesh/collision mismatches. The click-route audit now checks
 authorized destinations rather than raw clicks. Isolated stump tests still report
 30 of 640 cases with launch or selection-identity problems. These results do not establish
