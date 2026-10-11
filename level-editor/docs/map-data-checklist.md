@@ -405,10 +405,15 @@ zero-rotation batch (`work/map-compile/spline-clearance-planes-FTFRiO`) passes
 checking collision, receiving floor, height and no movement while crouching.
 The corresponding upright control (`work/map-compile/spline-clearance-planes-vq1qHO`)
 passes all 48 crossings and remains upright when waiting under the same audit.
-The full rotated sprite crossing/waiting-posture audit is still pending; static
-route success does not prove that behavior.
-Automatic connections across mixed-posture boundaries and native spline crouch
-traversal remain incomplete or unverified. This is not full crouch-area parity.
+The full rotated batch passes all 192 complete sprite crossings and crouched
+waiting transitions under the same collision, receiver, height and stationary
+posture checks (maximum travelled distance 39.990029 for a 40-unit target).
+Automatic connections across mixed-posture boundaries remain incomplete. The
+export-time passage candidate helper now checks integer-rounded approaches and
+crossings against joined floor contours and blockers; rotated, narrowed,
+disconnected and obstructed socket tests pass. It is not yet wired into native
+door emission or verified by native cross-boundary traversal. This is not full
+crouch-area parity.
 No runtime solver was added.
 
 Spline-wall trimming now preserves disconnected closed mask contours as separate
