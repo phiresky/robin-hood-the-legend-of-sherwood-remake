@@ -34,9 +34,12 @@ All ZIP extraction/editor reopen/recompile checks pass. Normal native player
 movement passes 64 enter/leave walks: two PCs are tracked independently, the
 state stays applied until the last exit, and initial/applied sight obstacles
 switch without affecting the other copy. Positions retain their authored height.
-Trigger polygons come from asset metadata; test PCs exist only in the native
-harness. This does not add triggers to assets with empty polygons, invent mission
-scripts, or certify NPC/carried-actor behavior or rendered activation. See the
+Another 64 walks pass with one PC carrying a soldier: carrier/body membership
+enters and leaves together, carrying posture is preserved, and the remaining PC
+keeps the state applied. Trigger polygons come from asset metadata; actors exist
+only in the native harness. This does not add triggers to assets with empty
+polygons, invent mission scripts, or certify independently moving NPCs, pickup/drop
+inside the trigger, or rendered activation. See the
 [occupancy-trigger evidence](map-compilation-evidence.md#authored-occupancy-trigger-round-trips-2026-10-11).
 
 **Hall/walkway dependency (2026-10-11):** the hall's reveal waypoint belongs on

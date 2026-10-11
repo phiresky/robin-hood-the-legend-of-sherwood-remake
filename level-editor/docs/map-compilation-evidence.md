@@ -197,8 +197,19 @@ are harness inputs, not mission content inserted into the exported map.
 Set `ROBIN_ASSET_MAP_DIAGNOSTICS` to the absolute output directory and
 `ROBIN_CLIMB_RHS` to a complete character sprite, then run the named ignored
 `robin_engine` library test. The passing run took 0.10 seconds and wrote
-`actor-trigger-report.json`. Actor-triggered rendering, NPC exclusion, carried
-actors and occupied control deactivation remain separate coverage gaps.
+`actor-trigger-report.json`.
+
+`exported_asset_triggers_track_carried_characters_until_exit` adds another 64
+walks over the same placements, using a complete Little John carrier sprite and
+Soldier A carried sprite. Occupancy now follows 2/3/1/0: the carrier and carried
+body enter/leave together, while the second PC independently holds the state.
+Carrying posture, complete sight-state isolation and arrival height are checked
+after every walk. The body is initialized as carried; this does not test pickup
+or dropping inside the region. Set `ROBIN_CARRIER_RHS` to `LittleJohn.rhs` and
+`ROBIN_CARRIED_RHS` to `Soldier A01.rhs` in addition to the diagnostics directory.
+Both player/carrier audits pass together in 0.38 seconds; carrier evidence is
+`actor-carried-trigger-report.json`. Actor-triggered rendering, independently
+moving NPC exclusion and occupied control deactivation remain coverage gaps.
 
 ## Independent rendered reveal-state round trip (2026-10-11)
 

@@ -3,13 +3,36 @@ use super::*;
 #[test]
 #[ignore = "requires automatic trigger ZIP diagnostics and ROBIN_CLIMB_RHS"]
 fn exported_asset_triggers_track_players_until_last_exit() {
+    audit_trigger_occupancy(false);
+}
+
+#[test]
+#[ignore = "requires automatic trigger ZIP diagnostics, ROBIN_CARRIER_RHS and ROBIN_CARRIED_RHS"]
+fn exported_asset_triggers_track_carried_characters_until_exit() {
+    audit_trigger_occupancy(true);
+}
+
+fn audit_trigger_occupancy(with_carried: bool) {
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
             .unwrap();
     assert_eq!(manifest["complete"], true);
     assert_eq!(manifest["scope"], "editable-asset-occupancy-triggers");
-    let sprite = exported_stairs::complete_climb_sprite();
+    let sprite = if with_carried {
+        let path =
+            std::env::var("ROBIN_CARRIER_RHS").expect("complete corpse-carrying character sprite");
+        let sprite =
+            exported_stairs::complete_character_sprite(std::path::Path::new(&path), "Petit Jean");
+        assert!(sprite.has_animation(OrderType::WalkingWithCorpse));
+        sprite
+    } else {
+        exported_stairs::complete_climb_sprite()
+    };
+    let body_sprite = with_carried.then(|| {
+        let path = std::env::var("ROBIN_CARRIED_RHS").expect("complete carried soldier sprite");
+        exported_stairs::complete_character_sprite(std::path::Path::new(&path), "Soldat A")
+    });
     let mut walks = 0;
     for entry in manifest["results"].as_array().unwrap() {
         let file = entry["file"].as_str().unwrap();
@@ -53,6 +76,20 @@ fn exported_asset_triggers_track_players_until_last_exit() {
                 engine.set_obstacle_and_material(&assets, owner, receiver);
                 owners.push(owner);
             }
+            let carried = with_carried.then(|| {
+                let body = engine.add_test_entity(
+                    crate::engine::test_support::actors::TestActor::soldier(Posture::Carried)
+                        .build(),
+                );
+                engine.ent_mut(body).element_data_mut().active = false;
+                engine.ent_mut(body).element_data_mut().sprite =
+                    body_sprite.as_ref().unwrap().clone();
+                engine.ent_mut(body).human_data_mut().unwrap().carrier = Some(owners[0]);
+                engine.ent_mut(owners[0]).pc_data_mut().unwrap().carried = Some(body);
+                engine.set_entity_posture(owners[0], Posture::CarryingCorpse);
+                crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+                body
+            });
             let initial_sight = engine.world.static_sight_obstacle_active.clone();
             let sim = crate::sim_rng::test_context();
             for (actor, entering, expected_count) in
@@ -99,6 +136,18 @@ fn exported_asset_triggers_track_players_until_last_exit() {
                     "{file}: copy={copy} actor={actor} entering={entering} did not arrive"
                 );
                 let current = &engine.script_domains.interactables.patches[copy];
+                let carrier_inside = current.is_inside(crate::patch::OccupantId(owners[0].index()));
+                let expected_count = expected_count + usize::from(with_carried && carrier_inside);
+                if let Some(body) = carried {
+                    assert_eq!(
+                        current.is_inside(crate::patch::OccupantId(body.index())),
+                        carrier_inside
+                    );
+                    assert_eq!(
+                        engine.ent(owners[0]).element_data().posture(),
+                        Posture::CarryingCorpse
+                    );
+                }
                 assert_eq!(
                     current.occupants.len(),
                     expected_count,
@@ -134,5 +183,10 @@ fn exported_asset_triggers_track_players_until_last_exit() {
         }
     }
     assert_eq!(walks, 64);
-    std::fs::write(directory.join("actor-trigger-report.json"), serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"walks":walks,"scope":"native-player-trigger-occupancy-and-sight-states-from-editable-zips"})).unwrap()).unwrap();
+    let report = if with_carried {
+        "actor-carried-trigger-report.json"
+    } else {
+        "actor-trigger-report.json"
+    };
+    std::fs::write(directory.join(report), serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"walks":walks,"with_carried":with_carried,"scope":"native-player-trigger-occupancy-and-sight-states-from-editable-zips"})).unwrap()).unwrap();
 }
