@@ -1,0 +1,32 @@
+(async()=>{
+const v=window.reviewViewport,T=window.reviewThree,cfg=window.stateUiPacket,checks=[],evidence=window.stateUiEvidence={checks,captures:[],expectedErrors:[],suppressedGroups:[],scope:'Supplement to all62 successful controls; diagnostic bank visibility and receiver-edit retirement only.'};
+const check=(name,pass,detail)=>{checks.push({name,pass:!!pass,...(detail===undefined?{}:{detail})});if(!pass)throw Error(name+': '+JSON.stringify(detail))};
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const until=async(test,label)=>{for(let i=0;i<2400;i++){if(await test())return;const error=document.querySelector('#result')?.textContent;if(error?.startsWith('FAIL'))throw Error(error);await sleep(100)}throw Error('Timeout '+label)};
+const picker=label=>document.querySelector('select[aria-label="'+label+'"]');
+const offered=(label,value)=>{const input=picker(label);return !!input&&[...input.options].some(o=>o.value===value)};
+const select=(label,value)=>{check('Option '+label+' '+value,offered(label,value));const input=picker(label);input.value=value;input.dispatchEvent(new Event('change',{bubbles:true}))};
+const mode=async(value,row)=>{select('State preview view',value);await until(()=>value==='art'?v.stateDelivery.ready&&v.stateDelivery.mode==='native-art':v.stateDelivery.ready&&v.stateDelivery.mode==='physical-endpoint'&&v.deliveryEndpoint===value,row.id+' '+value)};
+const visible=node=>{for(let p=node;p;p=p.parent)if(!p.visible)return false;return true};
+const bank=cfg.rows.find(r=>r.capture==='hole-north-woodland-bank');check('Bank control configured',bank);
+const missionButton=[...document.querySelectorAll('.editor-modes button')].find(b=>b.textContent.trim()==='Mission');check('Mission mode available',missionButton);missionButton.click();await until(()=>offered('Mission',bank.mission),'mission picker');select('Mission',bank.mission);await until(()=>v.bindings.document()?.mission?.importedFrom===bank.mission&&offered('State preview asset',bank.id),'bank mission ready');select('State preview asset',bank.id);await until(()=>v.stateDelivery.ready&&v.deliveryFamily===bank.family&&!!v.aperturePreview&&offered('State preview view','initial'),'bank delivery ready');v.setTextureDisplay(true,true);await mode('initial',bank);
+const preview=v.aperturePreview,root=preview.root,site=root.getObjectByName(bank.site),receivers=preview.receivers.map((object,index)=>({object,visible:preview.originalVisibility[index]}));check('Bank site found',site);check('Bank originals replaced',receivers.every(r=>!r.object.visible));check('Duplicate endpoint suppressed',!v.stateDelivery.physical.visible);
+const hidden=[];
+for(const group of v.bindings.document().groups)if(/^croisement02-(?:tree|shrub)-\d+$/.test(group.id)||group.id==='croisement02-northwest-boundary-shrub-54'){const node=v.groupViews.get(group.id)?.wrapper;if(node){hidden.push({node,visible:node.visible});node.visible=false;evidence.suppressedGroups.push(group.id)}}
+check('Only vegetation groups suppressed',evidence.suppressedGroups.length>0&&!evidence.suppressedGroups.includes(cfg.bankGroup));
+const box=new T.Box3().setFromObject(site);check('Bank frame has geometry',!box.isEmpty());const target=box.getCenter(new T.Vector3()),size=box.getSize(new T.Vector3()),span=Math.max(110,size.x*1.7,size.z*1.7);v.setPerspective(0);v.applyState(v.lookState(target.clone().add(new T.Vector3(0,Math.sin(35*Math.PI/180)*1000,Math.cos(35*Math.PI/180)*1000)),target,span));
+const capture=async name=>{await sleep(200);window.scatterStage={name,time:Date.now()};await until(()=>window.scatterCaptures[name],'capture '+name);evidence.captures.push(name)};
+try{
+ check('Diagnostic initial endpoint',visible(site.children[0])&&!visible(site.children[1]));await capture('bank-diagnostic-initial-vegetation-suppressed');await mode('applied',bank);check('Diagnostic applied endpoint',!visible(site.children[0])&&visible(site.children[1]));let caps=0;root.traverse(o=>{if(o.userData.aperture_component===bank.site){caps++;check('Selected bank cap hidden',!visible(o))}});check('Selected bank caps exist',caps>0);await capture('bank-diagnostic-applied-vegetation-suppressed');
+}finally{for(const row of hidden)row.node.visible=row.visible}
+await mode('art',bank);check('Native restores exact receiver visibility',receivers.every(r=>r.object.visible===r.visible));check('Native disables aperture root',!root.visible);
+await mode('initial',bank);const group=v.bindings.document().groups.find(g=>g.id===cfg.bankGroup);check('Editable bank group found',group);const originalTransform=structuredClone(group.transform),oldError=v.bindings.onError;
+v.bindings.onError=message=>evidence.expectedErrors.push(message);
+try{
+ v.bindings.onSelection({kind:'group',id:cfg.bankGroup},false);v.bindings.commitTransform({...originalTransform,dx:originalTransform.dx+1});await until(()=>!v.stateDelivery.ready,'edited receiver rejects delivered state');check('Receiver rejection reported',evidence.expectedErrors.some(e=>/Aperture receiver (placement changed|moved)/.test(e)),evidence.expectedErrors);check('Rejected aperture retired',!v.aperturePreview&&root.parent===null);check('Rejected aperture restores original receivers',receivers.every(r=>r.object.visible===r.visible));
+}finally{v.bindings.commitTransform(originalTransform);await sleep(100);v.bindings.onError=oldError}
+check('Bank placement restored',JSON.stringify(v.bindings.document().groups.find(g=>g.id===cfg.bankGroup)?.transform)===JSON.stringify(originalTransform));
+let ordinary=0;v.objectsRoot.traverse(o=>{if(!o.isMesh)return;for(const m of Array.isArray(o.material)?o.material:[o.material])if(m.userData.export_complementary_binary_ownership&&m.userData.export_rgb_sampling!=='nearest-required'&&m.emissiveMap){ordinary++;check('Unmarked RGB remains smooth',m.emissiveMap.magFilter===T.LinearFilter)}});check('Unmarked RGB comparison exists',ordinary>0);
+select('Mission','');await until(()=>!v.bindings.document()?.mission?.importedFrom&&!v.stateDelivery.ready&&!v.aperturePreview,'map-only retirement');check('Map-only retired every delivered endpoint',v.stateDelivery.physical.children.length===0);check('Old aperture detached after mission retirement',root.parent===null);
+return{status:'SCATTER_EXECUTED_PENDING_VISUAL_REVIEW',checks,evidence,scope:'Supplemental actual editor bank receiver lifecycle and edit rejection, with two explicitly vegetation-suppressed original-camera diagnostic captures. No new isolated appearance or gameplay claim.'};
+})()
