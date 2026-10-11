@@ -1262,6 +1262,16 @@ impl EngineInner {
             return;
         }
 
+        self.refresh_sprites_for_presentation(sim);
+    }
+
+    /// A refresh can run synchronously inside a modal as well as between ticks.
+    /// Keep sound latches at that boundary too: a following script command can
+    /// replace the animation before the ordinary end-of-frame presentation.
+    pub(crate) fn refresh_sprites_for_presentation(
+        &mut self,
+        sim: &crate::sim_rng::SimulationContext,
+    ) {
         self.refresh_arrows_for_presentation(sim);
         {
             let _detail = entity_system_detail_guard(EntitySystemDetail::FrameSounds);

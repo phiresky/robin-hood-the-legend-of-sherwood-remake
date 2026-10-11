@@ -1361,6 +1361,37 @@ fn actor_location_changes_preserve_material_and_display_reference_state() {
 }
 
 #[test]
+fn popup_refresh_latches_sound_before_a_following_animation_reset() {
+    use crate::element::{ElementFx, Entity};
+
+    let sim = crate::sim_rng::test_context();
+    let assets = LevelAssets::default();
+    let mut engine = EngineInner::new();
+    let mut fx = ElementFx {
+        element: Default::default(),
+        fx: Default::default(),
+    };
+    fx.element.active = true;
+    fx.element.sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+        sound_ids: vec![423],
+        ..Default::default()
+    }]);
+    fx.element.sprite.frame_count = 0;
+    let id = engine.add_test_entity(Entity::Fx(fx));
+    engine.apply_host_commands(
+        TickCtx::new(&sim, &assets),
+        vec![crate::natives::EngineCommand::DisplayPopupText { text_id: 11 }],
+    );
+    let sprite = engine.get_entity_mut(id).unwrap().sprite_mut();
+    sprite.reset_sprite_frame(false);
+    assert_eq!(sprite.last_sound_id, 423);
+    assert!(matches!(
+        engine.feedback.pending_side_effects.sounds.as_slice(),
+        [crate::engine::SoundCommand::Fx { fx_id: 423, .. }]
+    ));
+}
+
+#[test]
 fn direct_popup_native_refreshes_a_new_arrow_before_returning() {
     use crate::coordinates::WorldPoint3D;
     use crate::element::{

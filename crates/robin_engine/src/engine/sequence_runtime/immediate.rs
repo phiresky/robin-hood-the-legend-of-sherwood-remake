@@ -300,10 +300,9 @@ impl EngineInner {
                     // inline; accepted popup scroll backgrounds take the same
                     // path. Their constructor calls
                     // game refresh before returning to the
-                    // sequence manager, hence before frame recording. Model only
-                    // the simulation-bearing arrow portion here; resolved PC
+                    // sequence manager, hence before frame recording. Apply the sprite refresh here; resolved PC
                     // orientation is an explicit replay command.
-                    self.refresh_arrows_for_presentation(tcx.sim);
+                    self.refresh_sprites_for_presentation(tcx.sim);
                 }
             }
             Some(Command::Freeze | Command::FreezeAll) => {

@@ -3745,7 +3745,7 @@ impl EngineInner {
                     // The original game's dialog start is synchronous and its menu-screen
                     // constructor re-enters the game refresh before returning
                     // to the script VM.
-                    self.refresh_arrows_for_presentation(tcx.sim);
+                    self.refresh_sprites_for_presentation(tcx.sim);
                     self.forward_message(
                         tcx,
                         Message::new(MessageType::Simple(SimpleMessage::ResetInput)),
@@ -3931,7 +3931,7 @@ impl EngineInner {
                     // native on the same suppression latch as a recorded
                     // DisplayPopupText sequence element.
                     if !self.control.fast_forward && self.control.begin_popup_scroll_display() {
-                        self.refresh_arrows_for_presentation(tcx.sim);
+                        self.refresh_sprites_for_presentation(tcx.sim);
                     }
                     self.forward_message(
                         tcx,

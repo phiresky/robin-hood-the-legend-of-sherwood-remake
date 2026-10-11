@@ -287,13 +287,7 @@ pub(crate) fn apply_bow_transition_state_side_effect(
         OrderType::TransitionEquipBow | OrderType::TransitionEquipBowAnonymous
             if motion == SpriteMotionState::Start =>
         {
-            if engine
-                .expect_entity(entity_id, "bow posture owner")
-                .posture()
-                != Posture::AnonymousArcher
-            {
-                engine.publish_entity_order_posture(entity_id, Posture::Upright);
-            }
+            // Equipping changes action state only and retains the posture.
             Some(ActionState::AimingWithBow)
         }
         OrderType::TransitionLoweringBow | OrderType::TransitionLoweringBowAnonymous
@@ -331,16 +325,9 @@ pub(crate) fn apply_bow_transition_state_side_effect(
             Some(ActionState::AimingWithBow)
         }
         OrderType::TransitionUnequipBow | OrderType::TransitionUnequipBowAnonymous
-            if matches!(
-                motion,
-                SpriteMotionState::Start | SpriteMotionState::Done | SpriteMotionState::Terminated
-            ) =>
+            if motion == SpriteMotionState::Start =>
         {
-            if engine
-                .expect_entity(entity_id, "bow posture owner")
-                .posture()
-                != Posture::AnonymousArcher
-            {
+            if order_type == OrderType::TransitionUnequipBow {
                 engine.publish_entity_order_posture(entity_id, Posture::Upright);
             }
             Some(ActionState::Waiting)
@@ -584,8 +571,6 @@ pub fn begin_bow_shot(
         ShootMode::Normal
     };
 
-    let order_id = crate::order::alloc_order_id(next_order_id);
-
     // Push aim-transition orders if needed.  Orders live on the owning
     // `SequenceElement.orders` — when the element is cancelled, its
     // orders go with it.
@@ -598,6 +583,9 @@ pub fn begin_bow_shot(
     }
 
     // Push the shoot animation order.
+    // Allocate in execution order: any aiming transitions precede the shot.
+    // The sprite retains these identities after their sequence completes.
+    let order_id = crate::order::alloc_order_id(next_order_id);
     let shoot_ot = shoot_order_type_for_mode(desired_mode, anonymous);
     let mut order = Order::new(shoot_ot, tx, ty, order_id);
     order.target_actor = Some(target_id.index());

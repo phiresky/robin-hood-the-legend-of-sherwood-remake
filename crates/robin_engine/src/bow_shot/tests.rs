@@ -1026,6 +1026,18 @@ fn begin_bow_shot_keeps_current_aim_state_until_transition_pulse() {
         .collect();
     assert_eq!(orders[0], OrderType::TransitionRaisingBow);
     assert_eq!(orders[1], OrderType::ShootingWithBowUp);
+    let ids: Vec<_> = sm
+        .get_element(seq_id, elem_idx)
+        .unwrap()
+        .orders
+        .iter()
+        .map(|order| order.order_id.get())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![1, 2, 3],
+        "aim, shoot, and reload allocate in that order"
+    );
 }
 
 #[test]
