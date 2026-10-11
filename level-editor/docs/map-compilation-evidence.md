@@ -54,6 +54,23 @@ The added engine code is test-only. Rendered appearance-state switching and
 actual actor interaction with those controls remain separate checks.
 Scoped lint/formatting, Cargo formatting and the game build pass.
 
+Follow-up native jump audit: the four joined exports were loaded unchanged from
+`work/map-compile/hall-walkway-jump-audit-20261011/`, with both placed copies and
+five positions along every directed jump edge. Real Robin and Little John sprite
+dispatch passes all 160 assisted-ascent/upright-descent cases. Click-driven
+walk/jump/walk passes 158/160. At 270 degrees, line 0 and its copied line 4 fail
+at fraction 0.05: the target selects sector 23/25 instead of the jump overlay.
+The 37-degree case passes all 40 direct and all 40 click-driven cases. No native
+renderer behavior is covered by these tests.
+
+The opposing-edge warning alone therefore does not prove a failed flight.
+The asset-local pairs already differ by one unit in their opposing vectors before
+placement; those differences are not solely introduced by rotation rounding.
+The two click-selection failures remain unresolved: overlapping receiving surfaces
+must be checked before attributing them to edge rounding or changing the asset.
+Reports retain every sampled result as `actor-jump-vertical-report.json` and
+`actor-jump-vertical-click-report.json`. No asset or runtime changes were made.
+
 ## Browser-rendered ZIP and mission separation (2026-10-10)
 
 `app/tests/map-bake-library.html?map=<scene>&roundtrip=1` now checks worker

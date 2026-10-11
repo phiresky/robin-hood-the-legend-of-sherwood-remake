@@ -29,6 +29,13 @@ The isolated hall's missing reveal is therefore a missing neighboring surface,
 not proof of a bad asset-local anchor. Jump-edge quantization and other draft
 warnings remain unresolved.
 
+Native jumps in those four joined scenes now pass 160/160 direct sprite-dispatch
+cases, including assisted climbs and upright descents. Click-driven traversal
+passes 158/160; two copied endpoint clicks at 270 degrees select a different
+sector instead of the jump overlay. These remain unresolved. The edge-vector
+warning does not itself establish failed traversal; the 37-degree scene passes
+all 40 direct and 40 click cases.
+
 **Browser bake/reopen round trip (2026-10-10):** two independently placed
 east-hall assets on elevated editor terrain bake to a real 2000×2000 color/depth
 export. ZIP decoding and reopening/rebaking through the browser viewport preserve
