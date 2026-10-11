@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Exported sight barriers and live guard detection (2026-10-11)
+
+`node refinement/check-automatic-triggers.mjs --sight-barriers` authors tall
+opaque, nonsolid barriers from reusable asset metadata. Two copies, four rotations
+(0/37/90/180 degrees) and elevations 0/40 produce eight archives in
+`work/map-compile/sight-barriers-iw4e81`. ZIP descriptor extraction, warning
+preservation, editor reopening and recompilation all match. Blank raster payloads
+make this a gameplay-data round trip, not a rendered appearance check.
+
+The ignored native test `exported_sight_barriers_change_live_guard_detection`
+loads those extracted descriptors through normal level construction. Standing
+guard/PC pairs straddle both the initial and alternate obstacle positions of
+each copy. With controls initially reset, then each independently applied and
+reset, both `npc_is_detecting_human` and `live_ai_detects_180` must report the
+expected visibility. Each probe sweeps all sixteen facing directions; an opaque
+barrier must block every direction, while a cleared position must admit at least
+one. Visibility capture also verifies that probes reach the obstacle query.
+
+All 320 visibility assertions pass; `guard-sight-report.json` records the count.
+No source-level geometry or mission actors are imported, and no production
+runtime code changes. The test supplies actors directly and operates controls
+through native apply/reset methods. It does not certify patrol acquisition,
+alarm propagation, nighttime lighting, actor-driven activation or rendering.
+The separate occupancy audit covers normal player-driven trigger entry/exit.
+
+Validation also passes all 155 asset-gameplay compiler tests, script lint and
+format checks, Rust formatting and the game binary build.
+
 ## Curved spline opening traversal (2026-10-11)
 
 **Independent copied paths:** `--curved --deck --copied --rotated --zip-roundtrip`

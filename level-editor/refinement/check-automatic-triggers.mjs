@@ -8,7 +8,10 @@ import { serializeStoredMap, parseStoredMap } from "../shared/src/index.ts";
 const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", import.meta.url))(
   "fflate",
 );
-const output = await fs.mkdtemp("work/map-compile/automatic-triggers-");
+const sightBarriers = process.argv.includes("--sight-barriers");
+const output = await fs.mkdtemp(
+  `work/map-compile/${sightBarriers ? "sight-barriers" : "automatic-triggers"}-`,
+);
 console.log(output);
 const results = [];
 const report = (complete) =>
@@ -16,14 +19,18 @@ const report = (complete) =>
     `${output}/diagnostics.json`,
     JSON.stringify({
       complete,
-      scope: "editable-asset-occupancy-triggers",
+      scope: sightBarriers ? "editable-asset-sight-barriers" : "editable-asset-occupancy-triggers",
       results,
     }),
   );
 await report(false);
 for (const rotation of [0, 37, 90, 180]) {
   for (const elevation of [0, 40]) {
-    const { document, assets } = automaticTriggerCompilerFixture();
+    const { document, assets, hut } = automaticTriggerCompilerFixture();
+    if (sightBarriers) {
+      for (const shape of [hut.parts[0].obstacle_local_game, hut.gameplay.volumes[0].shape])
+        for (const point of shape.points) point.z_top = 120;
+    }
     for (const group of document.groups)
       group.transform = { dx: 900, dy: 900, dz: elevation, rot_deg: rotation };
     const groups = structuredClone(document.groups);

@@ -66,6 +66,15 @@ polygons, invent mission scripts, or certify independently moving NPCs, pickup/d
 inside the trigger, or rendered activation. See the
 [occupancy-trigger evidence](map-compilation-evidence.md#authored-occupancy-trigger-round-trips-2026-10-11).
 
+**Exported guard visibility (2026-10-11):** eight editable ZIP round trips with
+two independent tall sight barriers pass 320 native visibility checks. Normal
+NPC visibility and 180-degree detection both follow initial/applied obstacle
+positions through separate apply/reset operations at 0/37/90/180 degrees and
+elevations 0/40. Actors are supplied by the test, not inserted into map exports.
+This verifies live perception queries; patrol acquisition, alarm propagation and
+rendered encounters remain separate checks. No production runtime changes were
+needed. See the [sight-barrier evidence](map-compilation-evidence.md#exported-sight-barriers-and-live-guard-detection-2026-10-11).
+
 **Hall/walkway dependency (2026-10-11):** the hall's reveal waypoint belongs on
 the separate east-bailey west-curtain walkway. A flat-ground-only scene cannot
 bind it correctly. Joining those reusable assets restores the control without

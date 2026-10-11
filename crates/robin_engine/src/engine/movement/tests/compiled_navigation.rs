@@ -28,6 +28,10 @@ mod compiled_trigger_occupancy {
     include!("compiled_trigger_occupancy.rs");
 }
 
+mod compiled_sight_barriers {
+    include!("compiled_sight_barriers.rs");
+}
+
 #[test]
 fn exported_floor_flags_require_crouching_only_in_the_authored_room() {
     let bytes = include_bytes!(concat!(
