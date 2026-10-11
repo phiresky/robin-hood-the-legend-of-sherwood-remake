@@ -14,9 +14,9 @@ from review_evidence import sha
 p=argparse.ArgumentParser();p.add_argument('worker',type=Path)
 a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);w=a.worker.resolve()
 acquire(slots=2);bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'))
-nodes={'building-000','building-006','building-007'}
+nodes=set(json.loads((w.parents[1]/'construction.json').read_text())['changed_nodes'])
 objects=[o for o in bpy.context.scene.objects if o.type=='MESH' and o.get('source_node') in nodes]
-assert len(objects)==3
+assert len(objects)==len(nodes)
 points=[];faces=[]
 for o in objects:
     offset=len(points);points.extend(o.matrix_world@v.co for v in o.data.vertices)

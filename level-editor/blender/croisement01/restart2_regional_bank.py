@@ -18,7 +18,11 @@ def make_bvh(objects):
 # The bounded background splice retains its original planar faces outside this
 # rectangle. New intersections lie on those original surfaces; no exterior
 # original vertex moves. Terrain inside is explicitly inferred.
-region=(300.,640.,-980.,-540.)
+if a.revision>=8:
+ nodes=['building-000',*[f'building-{i:03d}' for i in range(2,8)]]
+ banks=[o for o in collection.all_objects if o.type=='MESH' and o.get('source_node') in nodes]
+ assert len(banks)==len(nodes)
+region=(200.,752.,-1100.,-400.) if a.revision>=9 else ((200.,750.,-1100.,-400.) if a.revision>=8 else (300.,640.,-980.,-540.))
 def split_polygon(poly,axis,bound,keep_low):
  inside=[];outside=[]
  for current,following in zip(poly,poly[1:]+poly[:1]):
