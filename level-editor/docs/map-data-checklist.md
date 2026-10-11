@@ -460,9 +460,15 @@ that the actor's footprint remains authorized. An earlier closer barrier at
 native regression verifies the resulting unreachable flag. The safe-closure
 audit moves that barrier four asset-local units along the approach. Evidence:
 `work/map-compile/building-passages-5BWPJQ/actor-building-report.json`.
-Blank diagnostic rasters do not certify rendered appearance, and prepared gate
-routes do not certify player-click discovery. Trap entrances, multiple actors
-and broader player dispatch still need coverage. Changing mixed-posture passages
+Blank diagnostic rasters do not certify rendered appearance. A separate native
+player-click audit now passes 48 cases from the same eight ZIP descriptors:
+screen selection identifies the intended door in each copy; 16 blocked clicks
+leave the actor outside, while 32 initially open or reopened clicks leave it
+settled in the correct virtual room and layer. No gate path or selected-sector
+override is supplied. Evidence:
+`work/map-compile/building-passages-5BWPJQ/actor-building-click-report.json`.
+Trap entrances, multiple actors, player-click exits and broader lock/permission
+interactions still need coverage. Changing mixed-posture passages
 and regions without explicit sockets still need broader coverage. This is not full crouch-area
 parity. No runtime solver was added.
 

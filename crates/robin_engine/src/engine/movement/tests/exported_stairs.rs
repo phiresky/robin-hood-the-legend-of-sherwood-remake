@@ -248,6 +248,144 @@ fn audit_building_passages(bytes: &[u8]) {
 }
 
 #[test]
+#[ignore = "requires ROBIN_ASSET_MAP_DIAGNOSTICS and ROBIN_CLIMB_RHS"]
+fn exported_building_doors_support_player_clicks_after_reopening() {
+    let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["complete"], true);
+    let entries = manifest["results"].as_array().unwrap();
+    assert_eq!(entries.len(), 8);
+    let sprite = complete_climb_sprite();
+    let mut checks = 0;
+    for entry in entries {
+        let file = entry["file"].as_str().unwrap();
+        let bytes = std::fs::read(directory.join(file)).unwrap();
+        let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let dimensions = (
+            descriptor["walkable_polygon"][2][0].as_f64().unwrap() as f32 + 1.,
+            descriptor["walkable_polygon"][2][1].as_f64().unwrap() as f32 + 1.,
+        );
+        for entrance in [0, 2] {
+            for state in [0, 1, 2] {
+                let (mut engine, mut assets) = compiled_walkway_with_dimensions(&bytes, dimensions);
+                let sim = crate::sim_rng::test_context();
+                let patch = crate::patch::PatchIndex::new((entrance / 2) as u32).unwrap();
+                if state > 0 {
+                    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                }
+                if state == 2 {
+                    engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+                }
+                let door = engine.script_domains.interactables.doors[entrance].clone();
+                let source = crate::position_interface::SectorHandle::from_number(door.sector_out)
+                    .with_arena_index(door.sector_out_index.unwrap());
+                let owner = walking_pc(
+                    &mut engine,
+                    &mut assets,
+                    door.point_out,
+                    door.layer_out,
+                    source,
+                );
+                let element = engine.ent_mut(owner).element_data_mut();
+                let position = element.sprite.position_iface.clone();
+                element.sprite = sprite.clone();
+                element.sprite.position_iface = position;
+                let receiver = engine.get_projection_area_index(
+                    &assets,
+                    source,
+                    door.layer_out,
+                    door.point_out,
+                );
+                engine.set_obstacle_and_material(&assets, owner, receiver);
+                let polygon =
+                    descriptor["asset_geometry"]["buildings"][entrance / 2]["Building"]["doors"][0]
+                        ["door_sector"]["points"]
+                        .as_array()
+                        .unwrap();
+                let click = MapPoint::new(
+                    polygon
+                        .iter()
+                        .map(|p| p[0].as_f64().unwrap() as f32)
+                        .sum::<f32>()
+                        / polygon.len() as f32,
+                    polygon
+                        .iter()
+                        .map(|p| p[1].as_f64().unwrap() as f32)
+                        .sum::<f32>()
+                        / polygon.len() as f32,
+                );
+                let hit = engine
+                    .world
+                    .fast_grid
+                    .get_sector_screen(click, door.point_out);
+                let selected = hit.sector_idx.expect("exported door must be selectable");
+                assert_eq!(
+                    engine.world.fast_grid.level.sectors[usize::from(selected)].door_index,
+                    Some(entrance as u32),
+                    "{file}"
+                );
+                engine.perform_group_move(
+                    TickCtx::new(&sim, &assets),
+                    &[owner],
+                    click,
+                    false,
+                    false,
+                    None,
+                    None,
+                    None,
+                    &[],
+                    &[],
+                );
+                let mut entered = false;
+                for _ in 0..600 {
+                    engine.control.frame_counter += 1;
+                    engine.t_hourglass_phase_sequences(&assets);
+                    engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
+                    engine.t_tick_actor_owner_envelopes(&assets);
+                    entered |= engine
+                        .ent(owner)
+                        .element_data()
+                        .sector()
+                        .and_then(|s| s.arena_index())
+                        == door.sector_in_index;
+                }
+                assert_eq!(
+                    entered,
+                    state != 1,
+                    "{file}, entrance={entrance}, state={state}"
+                );
+                let final_element = engine.ent(owner).element_data();
+                assert_eq!(
+                    final_element.sector().and_then(|s| s.arena_index()),
+                    if state == 1 {
+                        door.sector_out_index
+                    } else {
+                        door.sector_in_index
+                    }
+                );
+                assert_eq!(
+                    final_element.layer(),
+                    if state == 1 {
+                        door.layer_out
+                    } else {
+                        door.layer_in
+                    }
+                );
+                assert!(!crate::engine::ai::selected_actor_is_passing_door(
+                    &engine.entities(),
+                    &engine.seq(),
+                    owner
+                ));
+                checks += 1;
+            }
+        }
+    }
+    std::fs::write(directory.join("actor-building-click-report.json"), serde_json::to_vec_pretty(&serde_json::json!({"complete":true,"checks":checks,"scope":"native-door-screen-selection-and-player-entry"})).unwrap()).unwrap();
+}
+
+#[test]
 fn prepared_passage_state_preserves_script_activation_and_validates_bindings() {
     let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
