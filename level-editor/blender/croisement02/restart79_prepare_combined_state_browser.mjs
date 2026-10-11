@@ -1,0 +1,42 @@
+/** Freeze current sources and actual installed canonical state resources; no overlays. */
+import {readFile,writeFile,mkdir,readdir,copyFile} from 'node:fs/promises';
+import {resolve,join,dirname} from 'node:path';
+import {createHash} from 'node:crypto';
+const root=resolve('.'),old='level-editor/work/croisement02-refinement/restart73-hole-mound-canonical-browser-v1',out='level-editor/work/croisement02-refinement/restart79-climbing-tree42-ui-browser-v1';
+const hash=bytes=>createHash('sha256').update(bytes).digest('hex');const read=async p=>JSON.parse(await readFile(p));const pin=async p=>({path:resolve(p),sha256:hash(await readFile(p))});const save=async(p,d)=>writeFile(p,JSON.stringify(d,null,2)+'\n',{flag:'wx'});
+await mkdir(out);
+for(const name of ['editor.tsx'])await copyFile(join(old,name),join(out,name));
+const queued=await read('level-editor/work/croisement02-refinement/restart72-climbing-tree42-ui-rebase-v1/browser-request.json');
+const currentPath='level-editor/library/mission-states/index.json',current=await read(currentPath);
+if(current.entries.length!==104)throw Error('Expected reviewed 104-entry baseline, inspect changes before rebasing');
+const oldCandidate=await read(queued.routes['mission-states/index.json'].path),ids=new Set(queued.steps.flatMap(s=>s.entry_ids));
+const additions=oldCandidate.entries.filter(e=>ids.has(e.id));
+if(additions.length!==3||current.entries.some(e=>ids.has(e.id)))throw Error('Unexpected existing candidates');
+const candidate=join(out,'index.json');await save(candidate,{...current,entries:[...current.entries,...additions]});
+queued.routes['mission-states/index.json']=await pin(candidate);queued.canonical_catalog=await pin(currentPath);queued.preserved_entries=104;queued.candidate_entries=107;
+for(const step of queued.steps){for(const field of ['check','config']){const original=step[field];if(hash(await readFile(original.path))!==original.sha256)throw Error('Step drift');const target=join(out,step.name+'-'+field+(field==='check'?'.js':'.json'));await copyFile(original.path,target);step[field]=await pin(target)}}
+await save(join(out,'combined-request.json'),queued);
+let run=await readFile(join(old,'run-v3.mjs'),'utf8');run=run.replaceAll(old,out);
+const start=run.indexOf(" await evaluate('window.stateUiPacket='");const finish=run.indexOf(' await Promise.all(modulePending);',start);
+if(start<0||finish<0)throw Error('Runner structure changed');
+let block=run.slice(start,finish).replace(' let result;',' let stepResult;').replaceAll('result=await evaluate','stepResult=await evaluate').replaceAll("if(result?.status", "if(stepResult?.status").replaceAll('JSON.stringify(result,null,2)','JSON.stringify(stepResult,null,2)');
+block=block.replace("await readFile('"+out+"/check-config.json','utf8')", "await readFile(step.config.path,'utf8')").replace("await readFile('"+out+"/check-v3.js','utf8')", "await readFile(step.check.path,'utf8')");
+block=block.replace('window.scatterDone=false','window.scatterDone=false;window.scatterError=null;window.scatterResult=null;window.scatterStage=null');
+block=block.replaceAll("join(out,'progress.json')","join(stepOut,'progress.json')").replaceAll("join(out,name+'.png')","join(stepOut,name+'.png')").replaceAll("join(out,'functional-checkpoint.json')","join(stepOut,'functional-checkpoint.json')");
+run=run.slice(0,start)+" const combined=JSON.parse(await readFile('"+out+"/combined-request.json'));const results=[];\n for(const step of combined.steps){const stepOut=join(out,step.name);await mkdir(stepOut);\n"+block+" results.push({name:step.name,plan:step.plan,entry_ids:step.entry_ids,...stepResult});\n }\n const result={status:'SCATTER_EXECUTED_PENDING_VISUAL_REVIEW',steps:results,checks:results.flatMap(r=>r.checks)};\n"+run.slice(finish);
+await writeFile(join(out,'run-v3.mjs'),run,{flag:'wx'});
+const authority=await read(join(old,'runtime-authority.json'));
+const sourceFiles=async dir=>{const rows=[];for(const e of await readdir(dir,{withFileTypes:true})){const p=join(dir,e.name);if(e.isDirectory())rows.push(...await sourceFiles(p));else if(e.isFile()&&!/[.]test[.](ts|mjs|js)$/.test(p))rows.push(p)}return rows.sort()};
+const snapshot={};for(const p of(await Promise.all(authority.sourceDirectories.map(sourceFiles))).flat().sort()){const bytes=await readFile(p);snapshot[p]=hash(bytes);if(/\.(?:tsx?|jsx?|mjs|cjs|css|json)$/.test(p)){const target=join(out,'snapshot',p);await mkdir(dirname(target),{recursive:true});await writeFile(target,bytes,{flag:'wx'})}}
+if(!snapshot['level-editor/shared/src/reviewed-node-poses.ts'])throw Error('Current node pose helper missing');
+await save(join(out,'source-snapshot.json'),snapshot);
+authority.membership=Object.keys(snapshot).sort();authority.status='PRIVATE_COMBINED_STATE_RUNTIME_FROZEN';authority.runtime_commit='1b8a66062';
+const indexBytes=await readFile(authority.index.path),index=JSON.parse(indexBytes);const stable=v=>Array.isArray(v)?v.map(stable):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,stable(v[k])])):v;const subset=index.assets.filter(a=>a.source_map?.toLowerCase()==='croisement02').sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);authority.index.initial_sha256=hash(indexBytes);authority.index.c02_sha256=hash(JSON.stringify(stable(subset)));authority.index.c02_count=subset.length;await save(join(out,'runtime-authority.json'),authority);
+const runtime={};for(const p of Object.keys(await read(join(old,'runtime-inputs.json'))))runtime[p]=snapshot[p]??hash(await readFile(p));Object.assign(runtime,snapshot);await save(join(out,'runtime-inputs.json'),runtime);
+const overlay={status:'PRIVATE_APPROVED_CLIMBING_TREE42_UI',overlay_routes:queued.routes,scope:'Three approved additions over exact 104 existing entries; no canonical writes.'};
+await save(join(out,'overlay-request.json'),overlay);
+const inputs={};for(const name of ['editor.tsx','combined-request.json','run-v3.mjs','runtime-authority.json','runtime-inputs.json','source-snapshot.json','overlay-request.json'])inputs[join(out,name)]=hash(await readFile(join(out,name)));
+for(const p of Object.values(queued.routes))inputs[p.path]=p.sha256;
+for(const step of queued.steps)for(const field of ['check','config','plan'])inputs[step[field].path]=step[field].sha256;
+inputs[currentPath]=hash(await readFile(currentPath));await save(join(out,'inputs-v3.json'),inputs);
+const result={status:'PREPARED_NOT_EXECUTED',runner:await pin(join(out,'run-v3.mjs')),source_snapshot:await pin(join(out,'source-snapshot.json')),inputs:await pin(join(out,'inputs-v3.json')),source_files:Object.keys(snapshot).length,overlay_routes:Object.keys(overlay.overlay_routes).length,current_catalog_entries_preserved:current.entries.length,browser_started:false,canonical_writes:false};await save(join(out,'preparation.json'),result);console.log(JSON.stringify(result));
