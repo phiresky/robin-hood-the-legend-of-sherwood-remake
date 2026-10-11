@@ -403,6 +403,8 @@ diagnostic rasters, so this does not certify rendered appearance. The first
 zero-rotation batch (`work/map-compile/spline-clearance-planes-FTFRiO`) passes
 48 complete sprite crossings and subsequent crouched waiting transitions,
 checking collision, receiving floor, height and no movement while crouching.
+The corresponding upright control (`work/map-compile/spline-clearance-planes-vq1qHO`)
+passes all 48 crossings and remains upright when waiting under the same audit.
 The full rotated sprite crossing/waiting-posture audit is still pending; static
 route success does not prove that behavior.
 Automatic connections across mixed-posture boundaries and native spline crouch
