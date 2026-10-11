@@ -4,7 +4,7 @@ import hashlib,json,shutil
 ROOT=Path(__file__).resolve().parents[3]
 BASE=ROOT/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1'
 STAGE=BASE/'publication/stage-v2'
-OUT=BASE/'editor-check-v1'
+OUT=BASE/'editor-check-v2'
 TEMPLATE=ROOT/'level-editor/work/croisement01-refinement/restart2/tree02-browser-private-v2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def dump(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
@@ -16,7 +16,16 @@ def main():
  run=run[:start]+''' const bytes=await readFile(authority.index.path),hash=createHash('sha256').update(bytes).digest('hex');
  if(hash!==authority.index.initial_sha256)throw Error('Frozen private catalog drift');
  return {sha256:hash,unrelated_index_change:false};'''+run[end:]
- run=run.replace('i<1200','i<3600')
+ run=run.replace('i<1200','i<3600').replace('},180000)', '},600000)').replace(')),180000)', ')),600000)')
+ run=run.replace("import {readFile,writeFile,", "import {readFile,writeFile,appendFile,")
+ old_listener="ws.addEventListener('message',e=>{const d=JSON.parse(e.data);if(d.method==='Network.responseReceived'&&d.params.response.status===200&&d.params.response.url.startsWith(origin+'/library/'))libraryUrls.add(d.params.response.url)});"
+ new_listener="""let observationWrites=Promise.resolve();
+ const persistObservation=(name,row)=>{observationWrites=observationWrites.then(()=>appendFile(join(out,name),JSON.stringify(row)+'\\n'));};
+ ws.addEventListener('message',e=>{const d=JSON.parse(e.data);if(d.method==='Network.responseReceived'&&d.params.response.url.startsWith(origin+'/library/')){persistObservation('http-observations.jsonl',{url:d.params.response.url,status:d.params.response.status,requestId:d.params.requestId,time:Date.now()});if(d.params.response.status===200)libraryUrls.add(d.params.response.url)}if(d.method==='Runtime.bindingCalled'&&d.params.name==='persistLibraryDigest')persistObservation('http-digests.jsonl',JSON.parse(d.params.payload));});
+ await command('Runtime.addBinding',{name:'persistLibraryDigest'});"""
+ assert old_listener in run
+ run=run.replace(old_listener,new_listener)
+ run=run.replace("const httpPins=[];", "await observationWrites;const httpPins=[];")
  (OUT/'run.mjs').write_text(run)
  (OUT/'editor.tsx').write_text((TEMPLATE/'editor.tsx').read_text().replace('croisement01','croisement02'))
  (OUT/'reload-check.js').write_text((TEMPLATE.parent/'tree02-browser-private-v1/reload-check.js').read_text())
@@ -24,6 +33,7 @@ def main():
  observer=(TEMPLATE/'observe-library.js').read_text().replace('croisement01','croisement02').replace('(tree-02|group-005)','(tree-32|tree-38)')
  start=observer.index('        if (index) {');end=observer.index('        window.observedPublicationResponses',start)
  observer=observer[:start]+observer[end:]
+ observer=observer.replace('window.observedPublicationResponses.push(row);', 'window.observedPublicationResponses.push(row);\n        window.persistLibraryDigest(JSON.stringify(row));')
  (OUT/'observe-library.js').write_text(observer)
  dirs=['level-editor/app/src','level-editor/app/tests','level-editor/shared/src','level-editor/shared/test-fixtures']
  snapshots={}
