@@ -6,7 +6,30 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Curved spline opening traversal (2026-10-11)
 
-**Rising deck follow-up remains failing.** Add `--deck` to the curved verifier
+**Rising deck correction:** clearance pieces now additionally follow the affine
+mapping of each overlapping floor triangle from the same asset repetition. Only
+matching authored source planes participate. The source clearance is clipped
+before mapping, retaining pillar holes and the receiving triangle's boundary;
+its separate physical/navigation height offset is preserved. This prepares the
+cutout at export without relaxing the compiler's plane tolerance or adding
+runtime work. Original clearance pieces remain available outside owned floors.
+
+The formerly failing zero-degree batch now passes native collision and graph
+checks at both starting heights, plus 24 complete sprite crossings
+(`work/map-compile/spline-clearance-planes-ytQfAf`). The four-rotation batch
+`work/map-compile/spline-clearance-planes-dCwISE` passes all 192 collision probes
+and 96 bounded graph routes across 16 exports. All 96 complete sprite crossings
+also pass with per-tick collision, receiver and height checks, including the stop
+animation and empty order queue. Maximum travelled distance is 39.990021 units
+for a 40-unit crossing (45-unit limit). This supersedes the failure below for
+these authored assemblies; arbitrary terrain conformance remains separate.
+The focused compiler regression also rejects a clearance moved to another source
+height and fails against the compiler from `dac445597`; this verifies the test
+detects the original blocked opening. All 180 focused compiler/export tests,
+app typechecking, scoped lint/formatting, Cargo formatting and the game build
+pass. Full visual integration remains open.
+
+**Historical failing reproduction:** add `--deck` to the curved verifier
 to author a wide floor and wall in the same reusable spline asset. The floor
 rises thirty units, with starting heights 40/80; the terrain below remains flat.
 The fixture identifies the curved region from its sampled perimeter because

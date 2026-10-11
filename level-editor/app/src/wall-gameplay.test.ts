@@ -21,10 +21,79 @@ import {
   prepareWallGameplayAssetsAsync,
 } from "./wall-gameplay-calibration.ts";
 import { parseStoredMap } from "@rle/shared";
+import { pointInGameplayPolygon } from "../../shared/src/navigation-anchor.ts";
 import {
   validateAssetGameplay,
   type GameplayAssetDescriptor,
+  type AssetWalkableSurface,
 } from "../../shared/src/asset-gameplay.ts";
+
+test("rising curved openings follow their floor without clearing another source height", () => {
+  const f = wallSplineFixture();
+  const path = f.document.splines![0]!;
+  path.curved = true;
+  path.points = [
+    [100, 250, 40],
+    [250, 300, 55],
+    [400, 250, 70],
+  ];
+  const gameplay = f.asset.gameplay!;
+  gameplay.volumes![0]!.movementHeadroom = 20;
+  gameplay.surfaces = [
+    {
+      id: "deck",
+      node: "body",
+      height: 0,
+      navigationRegion: "deck",
+      polygon: [
+        [-50, -80],
+        [50, -80],
+        [50, 80],
+        [-50, 80],
+      ],
+    },
+  ];
+  const clearance: AssetWalkableSurface = {
+    id: "opening",
+    node: "body",
+    height: 30,
+    navigationHeight: 0,
+    polygon: [
+      [-40, -80],
+      [40, -80],
+      [40, 80],
+      [-40, 80],
+    ],
+    holes: [
+      [
+        [-4, -60],
+        [4, -60],
+        [4, 60],
+        [-4, 60],
+      ],
+    ],
+  };
+  gameplay.movementClearances = [clearance];
+  const crossing: [number, number] = [123.26789052469853, 216.44564995390317];
+  const compile = () => compileMap(f.document, f.bounds, f.assets).descriptor.asset_geometry!;
+  const open = compile();
+  const areas = open.motion_data.layers[0]!;
+  assert.equal(areas.length, 1);
+  assert.ok(pointInGameplayPolygon(crossing, areas[0]!.polygon.points));
+  assert.ok(
+    !areas[0]!.obstacles.some((o) => pointInGameplayPolygon(crossing, o.polygon.points, true)),
+  );
+  clearance.navigationHeight = 5;
+  const closed = compile().motion_data.layers[0]!;
+  assert.ok(
+    !closed.some(
+      (a) =>
+        pointInGameplayPolygon(crossing, a.polygon.points) &&
+        !a.obstacles.some((o) => pointInGameplayPolygon(crossing, o.polygon.points, true)),
+    ),
+    "Moving the source clearance off the deck must retain the wall",
+  );
+});
 
 test("wall export matches the fixture exercised by native routing and sight", async () => {
   const f = wallSplineFixture();

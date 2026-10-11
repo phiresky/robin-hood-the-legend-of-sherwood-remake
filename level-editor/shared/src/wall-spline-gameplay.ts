@@ -20,6 +20,7 @@ import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 import { clipSplinePolyline } from "./clip-spline-polyline.ts";
 import { clipSplineBoundary } from "./clip-spline-boundary.ts";
 import { splineLightReceivers } from "./spline-light-receivers.ts";
+import { splineFloorClearance } from "./spline-floor-clearance.ts";
 import type { MaskTriangle } from "./compile-mask-geometry.ts";
 import type { MaskTriangleAlpha } from "./mask-alpha-sampler.ts";
 
@@ -708,6 +709,9 @@ export function wallSplineGameplay(
         }
       }
       const surfaceSet = `span-${out.surfaces.length}`;
+      // Independent triangulation after bending can give an opening a different
+      // slope from its floor. Retain the floor's mapping for matching source cuts.
+      const floorPieces: { source: Vec3[]; placed: Vec3[]; repeat: number }[] = [];
       const appendSurface = (surface: AssetWalkableSurface, target: AssetWalkableSurface[]) => {
         const local = surface.polygon.map(([x, y], i): Vec3 => [
           x,
@@ -794,6 +798,47 @@ export function wallSplineGameplay(
               });
               if (target === out.surfaces)
                 surfaceOrigins.set(target.at(-1)!.id, { source: surface.id, repeat });
+              if (target === out.surfaces)
+                floorPieces.push({
+                  source: vertices.map((v): Vec3 => [v[0]!, v[1]!, v[2]!]),
+                  placed: world,
+                  repeat,
+                });
+              if (target === out.movementClearances) {
+                const physicalPlane = heightPlane(vertices.map((v): Vec3 => [v[0]!, v[1]!, v[2]!]));
+                const walkingPlane = navigationPlane ?? physicalPlane;
+                const walking = vertices.map((v): Vec3 => [
+                  v[0]!,
+                  v[1]!,
+                  planeHeight(walkingPlane, [v[0]!, v[1]!]),
+                ]);
+                for (const floor of floorPieces) {
+                  if (floor.repeat !== repeat) continue;
+                  const mapped = splineFloorClearance(walking, floor.source, floor.placed);
+                  for (let j = 1; j + 1 < mapped.length; j++) {
+                    const triangle = [mapped[0]!, mapped[j]!, mapped[j + 1]!];
+                    if (
+                      Math.abs(
+                        area(triangle[0]!.placed, triangle[1]!.placed, triangle[2]!.placed),
+                      ) < 1e-5
+                    )
+                      continue;
+                    target.push({
+                      id: `clearance-${target.length}`,
+                      node: "$root",
+                      polygon: triangle.map(({ placed: p }) => [p[0], p[1]]),
+                      navigationHeight: triangle.map(({ placed: p }) => p[2]),
+                      height: triangle.map(
+                        ({ source: [x, y], placed: p }) =>
+                          p[2] +
+                          warp([x, y, planeHeight(physicalPlane, [x, y])], repeat)[2] -
+                          warp([x, y, planeHeight(walkingPlane, [x, y])], repeat)[2],
+                      ),
+                      preserveMovementPrecision: true,
+                    });
+                  }
+                }
+              }
             },
           );
       };
