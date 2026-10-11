@@ -48,7 +48,7 @@ export async function runProductionWinchBrowserFixture({request,resolveURL,views
   }
   check(seen.size===45,'Not all native poses exercised');
   delivery.reset('york-winch');verify(undefined);await save('reset-absent',undefined);
-  equal([...delivery.native.compose().data],[...control.compose().data],'Native reset differs from independent initial at same ambient time');
+  equal([...delivery.native.pixels().data],[...control.pixels().data],'Native reset differs from independent initial at same ambient time');
   delivery.selectMode('native-art');check(!delivery.physical.visible,'Native selection kept physical mechanism visible');
   delivery.dispose();check(!delivery.physical.children.length&&!delivery.ready,'Dispose retained physical state');
   return {status:'EXECUTED_ACTUAL_LOADER_MOTION_PENDING_VISUAL_REVIEW',checks,captures,poses:seen.size,updates:92,nodes:pieces.length,verified_resources:input.verifiedResources(),scope:'Isolated complete mechanism. Room patch005, gate patch000, normal editor catalog and gameplay engine integration remain separate.'};
