@@ -24,7 +24,21 @@ The broader packaging, terrain-path and spline suites pass 104 tests. Eleven
 native fixture files were regenerated: seven change only graph bytes; the ladder
 seam fixture also changes only its graph; the three climb collections additionally
 clean coordinate residue by at most 2.3e-13. Structural comparisons reject any
-other changes. Native validation of the refreshed embedded fixtures is pending.
+other changes. Native navigation checks pass 36 tests (48 external-data checks
+remain opt-in). The receiving-state cases pass, as do six complete-sprite changing
+climb tests and the copied-climb independence test. The game build and formatting
+check pass.
+
+A broader projected-geometry rotation sweep fails for wall type 3 / upper door
+type 6 at 158 degrees, entering from the low side. The actor stalls at projected
+`(896, 783)` after entering the lift, before reaching `(900, 854)`. That helper
+rotates an unchanged compiled fixture in screen space and removes its explicit
+placement metadata; it does not compile an editor asset. The failure remains
+unresolved and must not be counted as passing traversal coverage. A separate
+check using real editor exports at 157/158/159 degrees and elevations 0/40 passes
+all 36 directed complete-sprite routes across ladder and both wall variants.
+Artifacts are in `work/map-compile/climb-angle-routes-32twis`. These are initial
+prepared routes through 18 descriptors, not ZIP round trips or player-click checks.
 
 Saved Derby export `work/map-compile/saved-map-exports-90j2PF` succeeds. Compared
 with `saved-map-exports-XwDz7Y`, every geometry field except motion data and all

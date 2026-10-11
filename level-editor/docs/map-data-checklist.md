@@ -136,6 +136,10 @@ asset coverage remains unverified. See
 and
 [self-overlap evidence](map-compilation-evidence.md#self-overlapping-navigation-regions-2026-10-11).
 
+A separate projected-geometry climb sweep still fails at 158 degrees for one wall
+variant. Real editor exports at 157/158/159 degrees pass 36 prepared native routes;
+this narrows the failure but does not certify the synthetic sweep or all angles.
+
 **Authored occupancy triggers (2026-10-11):** eight new map exports place two
 independent reusable trigger assets at 0/37/90/180 degrees and elevations 0/40.
 All ZIP extraction/editor reopen/recompile checks pass. Normal native player
