@@ -239,8 +239,8 @@ def main():
         require(not args.apply or (args.root_reviewed and args.readers_quiescent and args.browser_proof),
                 'Root review, quiescent readers and browser proof required')
         plan = prepare(folder, args.browser_proof, args.browser_sha256)
-        if args.apply:
-            rows = plan['records']
+        rows = plan['records']
+        if args.editor_proof or args.apply:
             require(args.editor_proof and args.editor_sha256,
                     'Full map/group/part/palette/reload browser proof required before publication')
             editor_pin = browser_evidence(args.editor_proof, args.editor_sha256, rows)
@@ -254,7 +254,9 @@ def main():
             dump(folder / 'plan.json', plan)
             dry = json.loads((folder / 'dry-run.json').read_text())
             dry['plan'] = pin(folder / 'plan.json')
+            dry['editor_browser_verified'] = True
             dump(folder / 'dry-run.json', dry)
+        if args.apply:
             plan_hash = sha(folder / 'plan.json')
             reserve = sum((Path(r['source']).stat().st_size if r['source'] else 0) +
                           (Path(r['target']).stat().st_size if Path(r['target']).exists() else 0) for r in rows)
