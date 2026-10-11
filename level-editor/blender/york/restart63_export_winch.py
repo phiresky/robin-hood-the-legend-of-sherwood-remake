@@ -21,7 +21,7 @@ def main(args):
     from export_editor import export_asset_library
     from refinement_workspace import _geometry
     source, out = Path(args.model).resolve(), Path(args.output).resolve()
-    assert source.is_relative_to(BASE) and out.is_relative_to(BASE) and source.name == 'model.blend'
+    assert source.is_relative_to(BASE) and out.is_relative_to(BASE) and source.suffix == '.blend'
     assert not out.exists() and sha(source) == args.model_sha256
     poses_path = BASE / 'restart62-winch-rigid-poses-v2/poses.json'
     assert sha(poses_path) == 'c277b27992bebb1eb0f29455ea019af1b41efa905ae7b39a59c9bf83b694330c'
@@ -87,7 +87,12 @@ def main(args):
     (out / 'export-report.json').write_text(json.dumps(proof, indent=2) + '\n')
     sys.path.insert(0, str(Path(__file__).parent))
     import restart42_approved_export_surface_guard as guard
-    guard.CONFIG['winch'] = (str(out.relative_to(BASE)), str(source.parent.relative_to(BASE)))
+    guard_source = source.parent
+    if source.name != 'model.blend':
+        guard_source = out / 'frozen-source'
+        guard_source.mkdir()
+        (guard_source / 'model.blend').hardlink_to(source)
+    guard.CONFIG['winch'] = (str(out.relative_to(BASE)), str(guard_source.relative_to(BASE)))
     guard.main('winch', expected_objects=names, frame=88)
     print(json.dumps(proof), flush=True)
 
