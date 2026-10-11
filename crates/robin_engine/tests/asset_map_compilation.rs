@@ -218,6 +218,47 @@ fn spline_masks_repeat_coverage_boundaries_and_obstacle_altitudes_independently(
 }
 
 #[test]
+fn cropped_spline_point_masks_keep_their_floor_and_volume_ownership() {
+    use robin_engine::coordinates::WorldPoint3D;
+    let cases: Vec<serde_json::Value> =
+        serde_json::from_slice(include_bytes!("fixtures/asset-spline-point-masks.json")).unwrap();
+    for case in cases {
+        let mut assets = LevelAssets::new();
+        let engine = construct(&serde_json::to_vec(&case).unwrap(), &mut assets);
+        let grid = engine.fast_grid();
+        assert_eq!(grid.level.masks.len(), 3);
+        assert!(grid.level.layers[0].mask_indices.is_empty());
+        assert_eq!(grid.level.layers[1].mask_indices.len(), 3);
+        let obstacles = robin_engine::sight_obstacle::ObstacleList::from_slice_all_active(
+            &assets.environment.static_sight_obstacles,
+        );
+        for (index, mask) in grid.level.masks.iter().enumerate() {
+            assert!(mask.bitmap.iter().any(|&pixel| pixel != 0));
+            let obstacle =
+                &assets.environment.static_sight_obstacles[usize::from(mask.obstacle_indices[0])];
+            let points = &obstacle.obstacle_points;
+            let x = points.iter().map(|p| p.x).sum::<f32>() / points.len() as f32;
+            let y = points.iter().map(|p| p.y).sum::<f32>() / points.len() as f32;
+            for (other, candidate) in grid.level.masks.iter().enumerate() {
+                assert_eq!(
+                    candidate.is_applied_to_point_3d(
+                        WorldPoint3D::new(x, y, 50.),
+                        false,
+                        obstacles,
+                    ),
+                    other == index
+                );
+                assert!(!candidate.is_applied_to_point_3d(
+                    WorldPoint3D::new(x, y, 90.),
+                    false,
+                    obstacles,
+                ));
+            }
+        }
+    }
+}
+
+#[test]
 fn spline_mask_application_fragments_preserve_independent_ranges() {
     use robin_engine::coordinates::MapPoint;
     let mut descriptor: serde_json::Value =

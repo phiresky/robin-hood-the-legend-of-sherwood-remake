@@ -9,6 +9,7 @@ import {
   wallDisconnectedLightFixture,
   wallDisconnectedBoundaryFixture,
   wallClosedBoundaryFixture,
+  wallPointMaskFloorFixture,
 } from "../test-fixtures/wall-spline.ts";
 import { wallSplineGameplay } from "./wall-spline-gameplay.ts";
 import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
@@ -827,6 +828,47 @@ test("a surviving mask probe retains a cropped repeat when its point anchor is t
   const pointOnly = wallSplineGameplay(document, assets, true);
   assert.equal(pointOnly.descriptors[0]!.gameplay!.masks!.length, 2);
   assert.ok(pointOnly.warnings.some((warning) => warning.includes("cropped receiving anchor")));
+});
+
+test("cropped point masks retain their own floor without borrowing other surfaces", () => {
+  for (const curved of [false, true]) {
+    const { document, asset, assets, bounds } = wallPointMaskFloorFixture(curved);
+    const before = structuredClone(asset);
+    const generated = wallSplineGameplay(document, assets, false);
+    assert.deepEqual(generated.warnings, []);
+    const masks = generated.descriptors[0]!.gameplay!.masks!;
+    assert.equal(masks.length, 3);
+    assert.ok(masks[2]!.receiverPoints!.length > 0);
+    assert.ok(masks[2]!.receiverPoints!.every((p) => p[2] === 40));
+    assert.equal(compileAssetGameplay(document, assets, bounds).masks!.length, 3);
+    assert.deepEqual(asset, before);
+    asset.gameplay!.surfaces.push({
+      ...structuredClone(asset.gameplay!.surfaces[0]!),
+      id: "ambiguous",
+    });
+    const ambiguous = wallSplineGameplay(document, assets, false);
+    assert.equal(ambiguous.descriptors[0]!.gameplay!.masks!.length, 2);
+    assert.ok(
+      ambiguous.warnings.some((warning) => warning.includes("unambiguous asset-owned floor")),
+    );
+    asset.gameplay!.surfaces.pop();
+    asset.gameplay!.surfaces[0]!.holes = [
+      [
+        [45, -5],
+        [50, -5],
+        [50, 5],
+        [45, 5],
+      ],
+    ];
+    const hole = wallSplineGameplay(document, assets, false);
+    assert.equal(hole.descriptors[0]!.gameplay!.masks!.length, 2);
+    asset.gameplay!.surfaces[0]!.holes = [];
+    asset.gameplay!.surfaces[0]!.height = 10;
+    assert.equal(
+      wallSplineGameplay(document, assets, false).descriptors[0]!.gameplay!.masks!.length,
+      2,
+    );
+  }
 });
 
 test("spline masks retain only ground contact points inside each cropped repeat", () => {

@@ -9,13 +9,15 @@ import {
   wallClosedBoundaryFixture,
   wallDisconnectedLightFixture,
   wallAutomaticLightFixture,
+  wallPointMaskFloorFixture,
 } from "../../shared/test-fixtures/wall-spline.ts";
 import { wallSplineGameplay } from "../../shared/src/wall-spline-gameplay.ts";
 import { sceneToGame } from "../../shared/src/geometry.ts";
 import { heightPlane, planeHeight } from "../../shared/src/gameplay-plane.ts";
 import { wallMesh } from "./spline-geometry.ts";
 import { readFile } from "node:fs/promises";
-import { compileMap } from "./map-compile.ts";
+import { compileMap, packageCompiledMap } from "./map-compile.ts";
+import { unzipSync, strFromU8 } from "fflate";
 import {
   prepareWallGameplayAssets,
   prepareWallGameplayAssetsAsync,
@@ -116,6 +118,40 @@ test("wall export matches the fixture exercised by native routing and sight", as
   assert.ok(stages.includes("Connecting navigation regions"));
   assert.ok(stages.includes("Constructing masks"));
   assert.equal(stages.at(-1), "Finalizing sight and appearance bindings");
+});
+
+test("cropped point masks preserve owned floors through native fixtures and ZIP reopening", async () => {
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-spline-point-masks.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  for (const [index, curved] of [false, true].entries()) {
+    const f = wallPointMaskFloorFixture(curved);
+    const compiled = compileMap(f.document, f.bounds, f.assets);
+    assert.deepEqual(JSON.parse(JSON.stringify(compiled.descriptor)), expected[index]);
+    const files = unzipSync(
+      await packageCompiledMap(compiled, {
+        color: new Uint8Array(500 * 500 * 4),
+        depth: new Uint16Array(500 * 500),
+      }),
+    );
+    const report = JSON.parse(strFromU8(files["compile-report.json"]!));
+    assert.deepEqual(report.warnings, compiled.warnings);
+    assert.deepEqual(
+      JSON.parse(strFromU8(files[`Data/Levels/${compiled.name}.level.json`]!)),
+      expected[index],
+    );
+    const reopened = parseStoredMap(
+      JSON.parse(strFromU8(files[report.editor_document]!)),
+      f.assets,
+    );
+    assert.deepEqual(compileMap(reopened, f.bounds, f.assets).descriptor, compiled.descriptor);
+  }
 });
 
 test("wall materials match the fixture exercised by native material queries", async () => {

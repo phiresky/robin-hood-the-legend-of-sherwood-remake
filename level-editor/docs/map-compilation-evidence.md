@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Cropped point-mask receivers (2026-10-11)
+
+Previously, spline cropping always omitted a mask whose only receiving anchor
+fell outside the retained source span. Export now checks whether exactly one
+asset-owned floor contains that anchor at its authored height, excluding holes.
+If so, it triangulates that floor with holes, clips it through the same repetition
+bands as the floor export, and takes contact samples from the transformed triangle
+centers. Sampling after deformation keeps the points on the actual receiving
+planes. The prepared samples are cached per mask across repeats.
+
+No receiving layer is borrowed from nearby scene terrain. Missing/ambiguous
+owners or completely trimmed floors retain an explicit warning requesting
+asset-local receiver points or probes. Existing explicit receiver metadata takes
+precedence. No asset records or runtime formats are changed.
+
+`wallPointMaskFloorFixture` exercises a third cropped repetition at elevation 40
+on straight and curved paths. Both formerly omitted masks survive. Negative
+checks retain omission for overlapping source floors, a hole under the anchor,
+and a mismatched source height; source asset metadata remains unchanged.
+The app test compares both complete descriptors with
+`crates/robin_engine/tests/fixtures/asset-spline-point-masks.json`, then packages,
+extracts, reopens and recompiles each ZIP with matching descriptors and warnings.
+Raster payloads are blank and do not establish rendered appearance.
+
+The native test `cropped_spline_point_masks_keep_their_floor_and_volume_ownership`
+loads both descriptors, verifies all three masks belong to the raised layer,
+checks decoded bitmap coverage, and checks independent repeated-volume and
+altitude application. All 72 enabled asset-map integration tests pass (five
+external-data audits remain ignored), along with the selected compiler/spline
+and app tests, type checking, lint and the game binary build. Changed files pass formatting; the full
+Rust formatting check reports an unrelated concurrent edit in the projectile
+lifecycle tests.
+
 ## Group clicks across exported roofs (2026-10-11)
 
 `refinement/check-roof-jump-placements.mjs --zip-roundtrip` now packages the

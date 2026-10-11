@@ -131,6 +131,44 @@ export function wallSplineFixture() {
   };
 }
 
+export function wallPointMaskFloorFixture(curved = false) {
+  const fixture = wallMaterialFixture();
+  const { document, asset } = fixture;
+  const mask = asset.gameplay!.masks![0]!;
+  mask.anchor = sceneToGame(document.camera, [49, 0, 0]);
+  delete mask.receiverSegment;
+  asset.gameplay!.surfaces = [
+    {
+      id: "floor",
+      node: "body",
+      height: 0,
+      polygon: [
+        [-50, -20],
+        [50, -20],
+        [50, 20],
+        [-50, 20],
+      ],
+    },
+  ];
+  asset.gameplay!.lights = [];
+  asset.gameplay!.sounds = [];
+  asset.gameplay!.materials = [];
+  const path = document.splines![0]!;
+  path.curved = curved;
+  path.points = curved
+    ? [
+        [100, 200, 40],
+        [220, 260, 40],
+        [345, 200, 40],
+      ]
+    : [
+        [100, 200, 40],
+        [345, 200, 40],
+      ];
+  path.repeatLength = splineCurve(path, document.camera).getLength() / 2.45;
+  return fixture;
+}
+
 export function wallMaterialFixture() {
   const fixture = wallSplineFixture();
   const { asset, document } = fixture;

@@ -21,6 +21,7 @@ import { clipSplinePolyline } from "./clip-spline-polyline.ts";
 import { clipSplineBoundary } from "./clip-spline-boundary.ts";
 import { splineLightReceivers } from "./spline-light-receivers.ts";
 import { splineFloorClearance } from "./spline-floor-clearance.ts";
+import { splineMaskReceiver } from "./spline-mask-receiver.ts";
 import type { MaskTriangle } from "./compile-mask-geometry.ts";
 import type { MaskTriangleAlpha } from "./mask-alpha-sampler.ts";
 
@@ -369,12 +370,14 @@ export function wallSplineGameplay(
             true,
           );
         }
+        let inferredFloorReceivers: Map<number, Vec3[]> | undefined;
         for (const [repeat, triangles] of coverage) {
           const limit = run
             ? Math.min(end, start + (end - start) * (length / run.repeatLength - repeat))
             : end;
           const anchorSource = source(mask.node, mask.anchor);
           const anchorCropped = run && (anchorSource[axis] < start || anchorSource[axis] > limit);
+          let floorReceivers: Vec3[] | undefined;
           if (
             anchorCropped &&
             !mask.receiverSegment &&
@@ -382,10 +385,27 @@ export function wallSplineGameplay(
             !mask.receiverPoints &&
             !mask.receiverPolylines
           ) {
-            warnings.push(
-              `Wall spline ${path.id}, mask ${mask.id}, repeat ${repeat}: cropped receiving anchor; mask omitted.`,
-            );
-            continue;
+            if (!inferredFloorReceivers) {
+              inferredFloorReceivers = new Map();
+              const triangles = splineMaskReceiver(anchorSource, data.surfaces, source);
+              for (const triangle of triangles)
+                pieces(triangle, (vertices, floorRepeat) => {
+                  const world = vertices.map((v) => warp([v[0]!, v[1]!, v[2]!], floorRepeat));
+                  if (Math.abs(area(world[0]!, world[1]!, world[2]!)) < 1e-5) return;
+                  const average = (axis: number) =>
+                    world.reduce((sum, point) => sum + point[axis]!, 0) / 3;
+                  const points = inferredFloorReceivers!.get(floorRepeat) ?? [];
+                  points.push([average(0), average(1), average(2)]);
+                  inferredFloorReceivers!.set(floorRepeat, points);
+                });
+            }
+            floorReceivers = inferredFloorReceivers.get(repeat) ?? [];
+            if (!floorReceivers.length) {
+              warnings.push(
+                `Wall spline ${path.id}, mask ${mask.id}, repeat ${repeat}: cropped receiving anchor has no surviving unambiguous asset-owned floor; add receiver points or probes. Mask omitted.`,
+              );
+              continue;
+            }
           }
           const receiver = (
             mask.receiverPolylines ??
@@ -419,10 +439,12 @@ export function wallSplineGameplay(
           }
           // An explicit probe selects the layer. Keep its representative anchor
           // inside the surviving span so export-frame checks do not discard it.
-          const anchor = warp(
-            anchorCropped ? (receiverPoints?.[0] ?? receiverFragments[0]![0]!) : anchorSource,
-            repeat,
-          );
+          const anchor =
+            floorReceivers?.[0] ??
+            warp(
+              anchorCropped ? (receiverPoints?.[0] ?? receiverFragments[0]![0]!) : anchorSource,
+              repeat,
+            );
           let boundaryMissing = false;
           const boundary = (points: Vec3[] | undefined, closed = true): Vec3[][] => {
             if (!points) return [];
@@ -489,8 +511,9 @@ export function wallSplineGameplay(
                 triangles: alphaCoverage.get(repeat)!,
               },
               anchor,
-              receiverPoints: receiverPoints?.map((p) => warp(p, repeat)),
-              receiverSegment: receiver || receiverPoints ? undefined : receiverSegment,
+              receiverPoints: floorReceivers ?? receiverPoints?.map((p) => warp(p, repeat)),
+              receiverSegment:
+                receiver || receiverPoints || floorReceivers ? undefined : receiverSegment,
               receiverPolyline:
                 receiver && receiverFragments.length === 1
                   ? receiverFragments[0]!.map((p) => warp(p, repeat))
