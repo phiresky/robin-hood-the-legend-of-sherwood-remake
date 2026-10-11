@@ -1,6 +1,6 @@
 """Private preparation by default. Root-only apply uses the existing guarded publisher core."""
 from pathlib import Path
-import argparse, hashlib, importlib.util, json, shutil, subprocess, sys
+import argparse, hashlib, importlib.util, json, os, shutil, subprocess, sys
 R=Path(__file__).resolve().parents[5]; D=Path(__file__).resolve().parent; L=R/'level-editor/library'; A=L/'3d-assets'; S=D.parent/'tree02-integration-batch-v1'; B=D.parent/'tree02-browser-private-v1'
 sys.path.insert(0,str(R/'level-editor/refinement'))
 check_generator=R/'level-editor/refinement/asset_index.py'
@@ -13,6 +13,26 @@ IDS={'croisement01-tree-02','croisement01-group-005'}
 def pin(p): return {'path':str(p.relative_to(R)), 'sha256':core.sha(p),'bytes':p.stat().st_size}
 def check(ok,msg): core.require(ok,msg)
 def dump(p,data): core.durable_json(p,data)
+MAX_CATALOG_BYTES=480*1024**2
+
+def compact_catalog(path,data,max_bytes=MAX_CATALOG_BYTES):
+ # Keep the large global catalog below JavaScript string limits. Journals use dump().
+ written=0
+ with path.open('xb') as out:
+  for chunk in json.JSONEncoder(ensure_ascii=True,separators=(',',':')).iterencode(data):
+   raw=chunk.encode('ascii');written+=len(raw)
+   check(written+1<=max_bytes,'Compact catalog exceeds safe browser string size')
+   out.write(raw)
+  out.write(b'\n');out.flush();os.fsync(out.fileno())
+ check(path.stat().st_size<=max_bytes,'Catalog size guard failed')
+ return path.stat().st_size
+
+def merge_catalog(old,affected):
+ replacements={row['id']:row for row in affected['assets']}
+ original_ids={row['id'] for row in old['assets']}
+ return {**old,'assets':[replacements.get(row['id'],row) for row in old['assets']]+
+         [row for row in affected['assets'] if row['id'] not in original_ids]}
+
 def evidence(require_browser=False):
  proof=json.loads((S/'scene-splice-proof.json').read_text())
  check(core.sha(L/'scenes/croisement01.rhlos-map.json')==proof['live_scene_sha256'],'Affected live map changed; restage required')
@@ -64,9 +84,10 @@ def prepare(folder):
  oldrows={x['id']:x for x in old['assets']};newrows=dict(oldrows)
  for row in affected['assets']:newrows[row['id']]=row
  check({row['id'] for row in affected['assets']}==IDS,'Wrong scoped generation')
- new={**old,'assets':[newrows[k] for k in sorted(newrows)]}
+ new=merge_catalog(old,affected)
+ check([r['id'] for r in new['assets'] if r['id'] in oldrows]==[r['id'] for r in old['assets']],'Existing catalog entry order drift')
  validate_asset_index(A,new,files=files)
- dump(folder/'index.json',new)
+ compact_catalog(folder/'index.json',new)
  check({k:v for k,v in old.items() if k!='assets'}=={k:v for k,v in new.items() if k!='assets'},'Index top-level drift')
  check(set(newrows)-set(oldrows)=={'croisement01-tree-02'} and not set(oldrows)-set(newrows),'Index membership drift')
  for aid,row in oldrows.items():

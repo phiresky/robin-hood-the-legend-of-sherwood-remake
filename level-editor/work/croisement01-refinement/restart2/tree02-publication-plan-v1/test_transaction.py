@@ -28,4 +28,19 @@ class Recovery(unittest.TestCase):
    journal=m.core.commit(rows,d/'journal',lambda:None);a.write_text('external')
    with self.assertRaises(RuntimeError):m.core.restore(rows,d/'journal',journal)
    self.assertEqual(a.read_text(),'external')
+class CatalogEncoding(unittest.TestCase):
+ def test_compact_roundtrip_and_order(self):
+  old={'assets':[{'id':'z','large':[{'x':'a','y':2}]*30},{'id':'a','value':1}],'version':1}
+  changed={'assets':[{'id':'new','value':3},{'id':'a','value':2}]}
+  merged=m.merge_catalog(old,changed)
+  self.assertEqual([r['id'] for r in merged['assets']],['z','a','new'])
+  self.assertEqual(merged['assets'][0],old['assets'][0])
+  with tempfile.TemporaryDirectory(dir=m.D) as tmp:
+   p=Path(tmp)/'index.json';size=m.compact_catalog(p,merged)
+   self.assertEqual(json.loads(p.read_text()),merged)
+   self.assertEqual(p.read_bytes(),(json.dumps(merged,separators=(',',':'))+'\n').encode('ascii'))
+   self.assertLess(size,len(json.dumps(merged,indent=2)))
+ def test_browser_size_limit_rejects_before_publication(self):
+  with tempfile.TemporaryDirectory(dir=m.D) as tmp:
+   with self.assertRaises(RuntimeError):m.compact_catalog(Path(tmp)/'oversize.json',{'assets':['x'*80]},max_bytes=64)
 if __name__=='__main__':unittest.main()
