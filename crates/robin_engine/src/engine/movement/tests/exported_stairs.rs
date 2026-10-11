@@ -78,6 +78,112 @@ fn exported_ordinary_passage_states_follow_only_their_own_asset_patch() {
 }
 
 #[test]
+#[ignore = "requires ROBIN_CLIMB_RHS"]
+fn exported_building_entrances_pause_and_resume_complete_actor_crossings() {
+    let sprite = complete_climb_sprite();
+    let (engine, assets) = compiled_walkway(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-interior-passage-states.level.json"
+    )));
+    for entrance in [0, 2] {
+        assert_eq!(
+            walk_exported_building_round_trip(engine.clone(), assets.clone(), entrance, &sprite),
+            Ok(true)
+        );
+        for direct in [true, false] {
+            for reopen_after in [None, Some(20), Some(120)] {
+                let sim = crate::sim_rng::test_context();
+                let patch = crate::patch::PatchIndex::new((entrance / 2) as u32).unwrap();
+                let mut paused = None;
+                let mut held = 0;
+                let mut reopened = false;
+                let result = walk_exported_lift_with_tick(
+                    engine.clone(),
+                    assets.clone(),
+                    entrance,
+                    entrance,
+                    Some(&sprite),
+                    |engine, assets, owner| {
+                        if reopened {
+                            return;
+                        }
+                        let element = engine.ent(owner).element_data();
+                        let door = &engine.script_domains.interactables.doors[entrance];
+                        let start = if direct {
+                            door.point_out
+                        } else {
+                            door.point_in
+                        };
+                        let animation_started = element.sprite.frame_count != u16::MAX
+                            && (element.position_map() - start).length() > 0.01;
+                        let cursor = (
+                            element.position_map(),
+                            element.position(),
+                            element.layer(),
+                            element.sector(),
+                            element.sprite.position_iface.get_obstacle(),
+                            element.sprite.current_row,
+                            element.sprite.current_frame,
+                            element.sprite.frame_count,
+                        );
+                        if let Some(expected) = paused {
+                            assert_eq!(
+                                cursor, expected,
+                                "closed building entrance changed actor cursor"
+                            );
+                            held += 1;
+                            if reopen_after == Some(held) {
+                                engine.reset_patch(TickCtx::new(&sim, assets), patch);
+                                reopened = true;
+                            }
+                        } else if animation_started && engine
+                            .entities()
+                            .current_element_for_actor(owner)
+                            .and_then(|(id, index)| engine.seq().get_element(id, index))
+                            .is_some_and(|selected| {
+                                selected.command == Command::PassDoor
+                                    && matches!(&selected.data,
+                                        crate::sequence::SequenceElementData::Movement { direction, .. }
+                                        if *direction == i16::from(direct))
+                            })
+                        {
+                            paused = Some(cursor);
+                            engine.apply_patch(TickCtx::new(&sim, assets), patch);
+                            assert!(
+                                engine.script_domains.interactables.doors[entrance].passage_blocked
+                            );
+                            assert!(
+                                !engine.script_domains.interactables.doors[2 - entrance]
+                                    .passage_blocked
+                            );
+                        }
+                    },
+                );
+                assert!(
+                    paused.is_some(),
+                    "building entrance never started: {result:?}"
+                );
+                if reopen_after.is_some() {
+                    assert!(reopened);
+                    assert_eq!(
+                        result,
+                        Ok(true),
+                        "entrance {entrance}, direct {direct}, hold {reopen_after:?}"
+                    );
+                } else {
+                    assert!(
+                        result
+                            .as_ref()
+                            .is_err_and(|error| error.starts_with("lift route stalled")),
+                        "{result:?}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn prepared_passage_state_preserves_script_activation_and_validates_bindings() {
     let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),

@@ -441,8 +441,17 @@ state word. Compiler and ZIP checks cover permanent blocking and warning output,
 and native loading/apply/reset checks cover two copied buildings with two
 entrances each: blocking one entrance preserves the other entrance, the other
 copy, and authored locks. Compiler checks also preserve those independent
-requirements at 0/37/90/180 degrees and elevations 0/40. Complete actor crossings
-through changing virtual-room entrances remain unverified. Changing mixed-posture passages and regions without
+requirements at 0/37/90/180 degrees and elevations 0/40. Native full-sprite tests
+now pass two unobstructed building round trips and twelve mid-crossing closure
+cases across both copies and both traversal directions. Four cases remain
+blocked; eight reopen after 20/120 ticks and complete the round trip. While
+blocked, map/world position, layer, sector, receiver and animation cursor stay
+fixed, and the other copy remains available. The test uses the compiler-pinned
+`asset-interior-passage-states.level.json` fixture and runs explicitly with
+`ROBIN_CLIMB_RHS` as
+`exported_building_entrances_pause_and_resume_complete_actor_crossings`.
+Rotated/elevated native crossings, trap entrances and multiple actors still need
+coverage. Changing mixed-posture passages and regions without
 explicit sockets still need broader coverage. This is not full crouch-area
 parity. No runtime solver was added.
 
