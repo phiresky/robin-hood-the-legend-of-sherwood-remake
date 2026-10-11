@@ -60,6 +60,7 @@ test("navigation sockets reject ambiguous, overlapping and same-owner connection
   const result = assembleNavigationJoins([a, b]);
   assert.equal(result.identities.get(a.region), result.identities.get(b.region));
   assert.deepEqual(result.unmatched, []);
+  assert.deepEqual(result.connections, [{ from: a, to: b, overlap: [0, 1] }]);
   assert.equal(assembleNavigationJoins([a]).unmatched.length, 1);
   assert.throws(
     () => assembleNavigationJoins([a, b, { ...b, owner: "c", region: "c/roof" }]),
@@ -137,6 +138,15 @@ test("opted-in navigation edges connect differently sized neighbors along disjoi
   const result = assembleNavigationJoins([a, b, c]);
   assert.equal(new Set(result.identities.values()).size, 1);
   assert.deepEqual(result.unmatched, []);
+  assert.deepEqual(result.connections, [
+    { from: a, to: b, overlap: [0.1, 0.4] },
+    { from: a, to: c, overlap: [0.6, 0.95] },
+  ]);
+  const reversed = assembleNavigationJoins([c, b, a]);
+  assert.deepEqual(reversed.connections, [
+    { from: c, to: a, overlap: [0, 1] },
+    { from: b, to: a, overlap: [0, 1] },
+  ]);
   assert.equal(
     assembleNavigationJoins([a, { ...b, minimumOverlap: undefined }]).unmatched.length,
     2,

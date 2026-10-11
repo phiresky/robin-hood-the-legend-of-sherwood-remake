@@ -8,6 +8,12 @@ export interface PlacedNavigationJoin {
   heightTolerance?: number;
   minimumOverlap?: number;
 }
+export interface NavigationConnection {
+  from: PlacedNavigationJoin;
+  to: PlacedNavigationJoin;
+  /** Shared interval along from.edge, normalized from zero to one. */
+  overlap: [number, number];
+}
 const near = (a: Vec3, b: Vec3) => Math.hypot(...a.map((n, i) => n - b[i]!)) < 1e-4;
 const projectedNear = (a: Vec3, b: Vec3) =>
   Math.hypot(a[0] - b[0], a[1] - a[2] - (b[1] - b[2])) < 1e-4;
@@ -55,6 +61,8 @@ export function assembleNavigationJoins(joins: PlacedNavigationJoin[]) {
     return result;
   };
   const unmatched: PlacedNavigationJoin[] = [];
+  const connections: NavigationConnection[] = [];
+  const visited = new Set<PlacedNavigationJoin>();
   for (const join of joins) {
     const meets = (other: PlacedNavigationJoin, a: Vec3, b: Vec3) =>
       near(a, b) ||
@@ -103,12 +111,15 @@ export function assembleNavigationJoins(joins: PlacedNavigationJoin[]) {
       unmatched.push(join);
       continue;
     }
-    for (const { other } of matches) {
+    for (const { other, start, end } of matches) {
+      if (!visited.has(other))
+        connections.push({ from: join, to: other, overlap: [start / length, end / length] });
       const a = root(join.region),
         b = root(other.region);
       if (a !== b) identities.set(b, a);
     }
+    visited.add(join);
   }
   for (const id of identities.keys()) identities.set(id, root(id));
-  return { identities, unmatched };
+  return { identities, unmatched, connections };
 }
