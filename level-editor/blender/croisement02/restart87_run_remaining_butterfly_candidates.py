@@ -12,7 +12,7 @@ sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--indices',type=int,nargs='+',required=True);parser.add_argument('--output',type=Path,required=True)
+    parser=argparse.ArgumentParser();parser.add_argument('--indices',type=int,nargs='+',required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--defer-import',action='store_true')
     args=parser.parse_args();args.output.mkdir(exist_ok=False);results=[]
     def run(name,command):
         log=args.output/f'{name}.log'
@@ -35,6 +35,8 @@ def main():
         run(f'{number:02}-export',['python3',str(RECIPES/'restart84_export_own_butterfly.py'),'--fit',str(contact/'fit.json'),'--atlas',str(atlas),'--depth',str(contact/'inputs.json'),'--output',str(exported)])
         readback=BASE/f'restart85-butterfly{number:02}-readback-v1'
         run(f'{number:02}-readback',['python3',str(RECIPES/'restart85_verify_own_butterfly.py'),'--model',str(model),'--fit',str(contact/'fit.json'),'--atlas',str(atlas),'--depth',str(contact/'inputs.json'),'--output',str(readback)])
+        if args.defer_import:
+            row.update(status='PRIVATE_CORE_VERIFIED_IMPORT_AND_VISUAL_REVIEW_PENDING',model_sha256=sha(model),readback_sha256=sha(readback/'readback.json'));results.append(row);(args.output/'progress.json').write_text(json.dumps(results,indent=2)+'\n');continue
         imported=BASE/f'restart86-butterfly{number:02}-import-review-v1'
         run(f'{number:02}-import',['/usr/bin/blender','--background','--factory-startup','--threads','2','--python-exit-code','1','--python',str(RECIPES/'restart86_review_own_butterfly_import.py'),'--','--model',str(model),'--fit',str(contact/'fit.json'),'--output',str(imported)])
         row.update(status='PRIVATE_RENDERED_CANDIDATE_NEEDS_SELF_AND_USER_REVIEW',model_sha256=sha(model),import_report_sha256=sha(imported/'report.json'),readback_sha256=sha(readback/'readback.json'))
