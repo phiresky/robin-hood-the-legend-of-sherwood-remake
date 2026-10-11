@@ -24,13 +24,23 @@ at 0/37/90/180 degrees pass native geometry construction in
 completes in about 304 seconds and passes native geometry construction. It retains
 250 warnings, including 45 non-draft findings such as collapsed movement holes,
 rounded jump-edge mismatches, flight contacts and unsupported sloped jump edges.
-This does not certify complete traversal or rendering. The earlier cap-repaired
+Native ordinary-sector route sampling passes 16 collision-connected routes, and
+complete-character jump dispatch and landing passes all 130 sampled traversals
+(`route-sampling-report.json` and `actor-jump-landing-report.json` in that export).
+The jump check dispatches prepared jumps directly; it does not verify player-click
+approaches, rendering, or clearance between samples. The earlier cap-repaired
 batch `saved-map-exports-AeJzeU` remains running on its older compiler snapshot.
 
 Jump-clearance checking now rejects spatially distant prisms before searching the
 flight's plane bounds. The same geometric checks remain in force; all 27 clearance
 and jump-assembly tests pass. The fresh scene above includes this change, but an
 exact before/after scene timing comparison is not yet complete.
+
+Fresh Croisement02 still fails cap preparation: a triangular volume has two XY
+vertices that collapse together in native binary32. Cyclic rotation cannot repair
+this case. The compiler now identifies the owning placement and part/volume in
+this error; an asset or export-geometry repair remains necessary. No obstacle is
+silently omitted to pass this check.
 
 ## Split York component bindings published (2026-10-12)
 

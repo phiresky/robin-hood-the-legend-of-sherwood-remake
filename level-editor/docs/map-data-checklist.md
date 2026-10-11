@@ -16,8 +16,11 @@ gameplay bindings and updated saved-scene pins. Thirty-two moved/rotated exports
 load natively, and both storehouses pass eight complete-character enter/exit
 round trips. Separate support layouts test door-height terrain and low-ground
 masks; the combined scene and rendering remain unverified. Croisement01's
-degenerate cap-plane crash is fixed: its fresh export loads natively but retains
-45 non-draft warnings and takes about five minutes. These results do not establish
+degenerate cap-plane crash is fixed: its fresh export loads natively and passes
+16 sampled ordinary walking routes and 130 directly dispatched jump/landing
+traversals. It retains 45 non-draft warnings and takes about five minutes.
+Croisement02 still fails on a triangular cap that collapses at native float
+precision; rotating its vertices cannot repair it. These results do not establish
 full parity; see [the current evidence](map-compilation-evidence.md).
 
 **Matched runtime comparison (2026-10-11):** current code and the earlier

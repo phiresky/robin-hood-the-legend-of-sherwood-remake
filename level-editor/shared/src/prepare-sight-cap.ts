@@ -3,7 +3,10 @@ import { heightPlane } from "./gameplay-plane.ts";
 import type { Vec3 } from "./scene.ts";
 
 /** Keep the native first-three-vertex caps usable after placement and clipping. */
-export function prepareSightCap(points: SightObstacle["points"]): SightObstacle["points"] {
+export function prepareSightCap(
+  points: SightObstacle["points"],
+  label = "Sight obstacle",
+): SightObstacle["points"] {
   const usable = (offset: number) => {
     const [a, b, c] = [0, 1, 2].map((index) => points[(offset + index) % points.length]!);
     if (!a || !b || !c) return false;
@@ -25,5 +28,5 @@ export function prepareSightCap(points: SightObstacle["points"]): SightObstacle[
       heightPlane(rotated.map((point): Vec3 => [point.x, point.y, point[height]]));
     return rotated;
   }
-  throw new Error("Sight obstacle has no stable consecutive vertices for its cap planes");
+  throw new Error(`${label}: no stable consecutive vertices for sight obstacle cap planes`);
 }

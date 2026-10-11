@@ -679,6 +679,7 @@ function compileAssetGameplayAttempt(
           ...shape,
           points: prepareSightCap(
             shape.points.map((p) => ({ ...p, x: p.x - bounds[0], y: p.y - bounds[1] })),
+            `${placement.id}/${node}`,
           ),
           projection_area: null,
           material_indices: [],
@@ -717,7 +718,7 @@ function compileAssetGameplayAttempt(
           return { x: top[0], y: top[1], z_bottom: bottom[2], z_top: top[2] };
         }),
       };
-      shape.points = prepareSightCap(shape.points);
+      shape.points = prepareSightCap(shape.points, `${placement.id}/${volume.id}`);
       sight.push(shape);
       sightLabels.set(sight.length - 1, `${placement.id}/${volume.id}`);
       partSight.set(volume.id, shape);
