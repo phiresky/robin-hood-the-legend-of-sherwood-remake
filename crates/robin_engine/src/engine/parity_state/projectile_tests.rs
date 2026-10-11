@@ -157,6 +157,7 @@ fn projectile_subtypes_match_frozen_json_including_partial_runtime_metadata() {
                 },
             ];
             projectile.trajectory_runtime = vec![TrajectoryPointRuntime {
+                legacy_material_uninitialized: false,
                 bounce: true,
                 material: u32::MAX,
             }];

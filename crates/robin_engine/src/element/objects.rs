@@ -196,6 +196,11 @@ pub struct TrajectoryPoint {
 pub struct TrajectoryPointRuntime {
     pub bounce: bool,
     pub material: u32,
+    /// Generated free-flight arrow waypoints have no defined legacy material.
+    /// Keep this provenance separate from the deterministic runtime value;
+    /// recorded allocator residue must not become a gameplay requirement.
+    #[serde(default)]
+    pub legacy_material_uninitialized: bool,
 }
 
 /// Projectile-level data.
@@ -243,6 +248,11 @@ pub struct ProjectileData {
     /// generated trajectory until its collision metadata is materialized.
     #[serde(default)]
     pub trajectory_runtime: Vec<TrajectoryPointRuntime>,
+    /// Whether the most recently consumed waypoint had undefined material.
+    /// Restored save values remain authoritative until a generated waypoint
+    /// explicitly changes this provenance.
+    #[serde(default)]
+    pub legacy_material_uninitialized: bool,
     /// Constructor-only latch: generated trajectory runtime still needs its
     /// exact collision waypoint materialized before the first update.
     /// Cleared before publication by the purse/coin constructor boundary.

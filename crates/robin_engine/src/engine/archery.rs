@@ -3041,6 +3041,7 @@ mod tests {
         };
         purse.projectile.trajectory_runtime = vec![
             TrajectoryPointRuntime {
+                legacy_material_uninitialized: false,
                 bounce: false,
                 material: GameMaterial::Stone.as_u32(),
             };

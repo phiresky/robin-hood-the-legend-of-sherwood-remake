@@ -157,6 +157,7 @@ fn arrow_trajectory_runtime(
 ) -> Vec<crate::element::TrajectoryPointRuntime> {
     let mut trajectory_runtime = vec![
         crate::element::TrajectoryPointRuntime {
+            legacy_material_uninitialized: true,
             bounce: false,
             material: crate::element::GameMaterial::Ground.as_u32(),
         };
@@ -167,6 +168,7 @@ fn arrow_trajectory_runtime(
             .last_mut()
             .expect("solid arrow impact requires a trajectory endpoint");
         impact.bounce = true;
+        impact.legacy_material_uninitialized = false;
         impact.material = crate::element::GameMaterial::NumberOfMaterials.as_u32();
     }
     trajectory_runtime
@@ -746,6 +748,7 @@ pub fn spawn_purse(
 
     let trajectory_runtime = vec![
         crate::element::TrajectoryPointRuntime {
+            legacy_material_uninitialized: false,
             bounce: false,
             material: crate::element::GameMaterial::NumberOfMaterials.as_u32(),
         };
@@ -902,6 +905,7 @@ pub fn spawn_coin(
 
     let trajectory_runtime = vec![
         crate::element::TrajectoryPointRuntime {
+            legacy_material_uninitialized: false,
             bounce: false,
             material: crate::element::GameMaterial::NumberOfMaterials.as_u32(),
         };

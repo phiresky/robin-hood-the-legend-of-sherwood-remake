@@ -783,6 +783,7 @@ fn preflight_projectile(
         .trajectory
         .iter()
         .map(|saved| TrajectoryPointRuntime {
+            legacy_material_uninitialized: false,
             bounce: saved.bounce,
             material: saved.material,
         })
@@ -844,6 +845,7 @@ fn apply_projectile(runtime: &mut ProjectileData, saved: PlannedProjectile) {
     runtime.shooter = saved.shooter;
     runtime.trajectory = saved.trajectory;
     runtime.trajectory_runtime = saved.trajectory_runtime;
+    runtime.legacy_material_uninitialized = false;
     runtime.velocity_increment = saved.velocity_increment;
     runtime.arrow_bow_profile = saved.arrow_bow_profile;
     runtime.arrow_flat_shot = saved.arrow_flat_shot;

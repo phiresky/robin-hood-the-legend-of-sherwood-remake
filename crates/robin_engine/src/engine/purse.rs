@@ -1220,6 +1220,7 @@ mod tests {
                 ],
                 trajectory_runtime: vec![
                     TrajectoryPointRuntime {
+                        legacy_material_uninitialized: false,
                         bounce: false,
                         material: GameMaterial::NumberOfMaterials.as_u32(),
                     };

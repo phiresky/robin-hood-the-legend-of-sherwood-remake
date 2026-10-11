@@ -1,6 +1,36 @@
 use super::*;
 
 #[test]
+fn saved_trajectory_material_bits_survive_waypoint_advance() {
+    let mut element = ElementData::default();
+    let mut projectile = ProjectileData {
+        flying: true,
+        trajectory: vec![TrajectoryPoint {
+            position: crate::coordinates::WorldPoint3D::new(10.0, 20.0, 30.0),
+            time: 2,
+        }],
+        trajectory_runtime: vec![TrajectoryPointRuntime {
+            bounce: false,
+            material: 52_415_172,
+            legacy_material_uninitialized: false,
+        }],
+        ..ProjectileData::default()
+    };
+
+    assert!(!advance_trajectory_one_frame(&mut element, &mut projectile));
+    assert_eq!(
+        element
+            .sprite
+            .position_iface
+            .v48_serialized_state()
+            .material,
+        52_415_172
+    );
+    assert_eq!(projectile.trajectory_frame_count, 1);
+    assert!(!projectile.legacy_material_uninitialized);
+}
+
+#[test]
 fn entity_slots_fit_within_two_kibibytes() {
     assert!(std::mem::size_of::<Option<Entity>>() <= 2048);
 }

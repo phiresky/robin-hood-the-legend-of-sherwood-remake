@@ -1697,7 +1697,11 @@ pub fn advance_trajectory_one_frame(
                 "projectile trajectory/runtime arrays lost their serialized lockstep"
             );
             let runtime = projectile.trajectory_runtime.remove(0);
-            element.set_material(crate::element::GameMaterial::from_u32(runtime.material));
+            projectile.legacy_material_uninitialized = runtime.legacy_material_uninitialized;
+            element
+                .sprite
+                .position_iface
+                .copy_trajectory_material(runtime.material);
         }
         let point = projectile.trajectory.remove(0);
         let time = point.time;

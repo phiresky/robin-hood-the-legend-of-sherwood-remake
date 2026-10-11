@@ -1587,6 +1587,14 @@ impl PositionInterface {
         self.material = m.as_u32();
     }
 
+    /// Copy trajectory storage without interpreting it as a live material.
+    /// Saved free-flight waypoints can contain allocator residue; copying those
+    /// bits is intentional, just as it is during save restoration. Gameplay
+    /// material access still validates the value through `get_material`.
+    pub(crate) fn copy_trajectory_material(&mut self, material: u32) {
+        self.material = material;
+    }
+
     #[inline]
     pub fn get_plane(&self) -> Option<&PlaneZCoeffs> {
         self.plane.as_ref()

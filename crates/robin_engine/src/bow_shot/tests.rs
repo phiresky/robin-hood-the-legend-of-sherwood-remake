@@ -5020,7 +5020,12 @@ fn arrow_material_changes_when_the_solid_impact_segment_starts() {
             arrow.element.material(),
             crate::element::GameMaterial::Ground
         );
+        assert!(arrow.projectile.legacy_material_uninitialized);
         assert!(!arrow.advance_projectile_hourglass());
+        assert_eq!(
+            arrow.projectile.legacy_material_uninitialized,
+            !solid_impact
+        );
         assert_eq!(
             arrow.element.material(),
             if solid_impact {

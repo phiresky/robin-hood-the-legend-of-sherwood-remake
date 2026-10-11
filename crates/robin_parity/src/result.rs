@@ -140,7 +140,12 @@ impl TraceCapabilities {
         register(
             "runtime-projectile-constructor-storage",
             "project_runtime_projectile_constructor_storage applies only to runtime-created Projectile entities: removes position.door_direction/goal_world/radius and sprite.flight_countdown; removes behind_display_order_reference only when display_order_reference is null; removes integer material only outside 0..=10; normalizes a point move_box to null",
-            "Original initializes these constructor slots and records bounding-box validity; in-domain material and referenced display ordering must remain checked meanwhile",
+            "Capture initializes these constructor slots and records bounding-box validity; defined materials and referenced display ordering remain checked",
+        );
+        register(
+            "uninitialized-arrow-waypoint-material",
+            "Generated arrow free-flight waypoints do not initialize material storage. The engine tracks this provenance when consuming each waypoint; only position.material is excluded while that provenance remains set. Defined solid-impact materials and saved waypoint values remain checked, irrespective of numeric value",
+            "Captures initialize every trajectory material slot or explicitly record material validity; historical allocator residue remains intentionally unconstrained",
         );
         register(
             "blocked-box-validity-transitions",
