@@ -126,7 +126,7 @@ test("generated posture passages follow rotated copies and detach when sockets m
     for (const group of document.groups)
       group.transform = { dx: 500, dy: 600, dz: 20, rot_deg: rotation };
     const groups = structuredClone(document.groups);
-    const objects = structuredClone(document.objects);
+    const objects = structuredClone(document.objects.filter((object) => object.group));
     document.groups.push(
       ...groups.map((group) => ({
         ...group,

@@ -417,9 +417,19 @@ when no usable opening remains. Compiler tests cover rotated copies, detached
 sockets, narrow openings and blocked/split seams. A compiler-generated raised
 two-floor fixture passes native player movement in both directions, retaining
 the expected sector, floor height and destination posture through completion.
-Native rotated/split-seam traversal, changing blockers, mixed-posture regions
-without explicit sockets, and editable ZIP round trips for these generated
-passages still need coverage. This is not full crouch-area parity.
+The expanded `check-posture-passages.mjs` audit passes 24 editable ZIP round
+trips: two independent copies at 0/37/90/180 degrees, elevations 40/80 and clear,
+split or fully blocked seams. Native player routes from the extracted descriptors
+pass all 96 directed crossings, checking completion, corridor adherence, sector,
+height and destination posture; eight blocked cases retain zero doors. Evidence:
+`work/map-compile/posture-passages-DlAdIG/actor-posture-report.json`. Blank diagnostic
+rasters do not verify rendered appearance. A rotated opening clipped by an earlier
+test frame was correctly omitted; the final audit asserts that no case is clipped.
+Changing blockers and mixed-posture regions without explicit sockets still need
+coverage. Specifically, export currently prepares obstacle-state requirements only
+for lift doors, although native loading supports them for ordinary doors too;
+ordinary generated passages need this export data before changing-obstacle
+behavior can be certified. This is not full crouch-area parity.
 No runtime solver was added.
 
 Spline-wall trimming now preserves disconnected closed mask contours as separate

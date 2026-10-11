@@ -69,90 +69,166 @@ fn exported_floor_flags_require_crouching_only_in_the_authored_room() {
 #[test]
 #[ignore = "requires ROBIN_CLIMB_RHS for complete character animations"]
 fn actors_cross_generated_posture_socket_passages() {
-    let sprite = exported_stairs::complete_climb_sprite();
-    for reverse in [false, true] {
-        let (mut engine, mut assets) = compiled_walkway(include_bytes!(concat!(
+    audit_posture_passages(
+        include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/fixtures/asset-joined-posture.level.json"
-        )));
-        let door = engine.script_domains.interactables.doors[0].clone();
-        let (start, goal, source, destination, layer) = if reverse {
-            (
-                door.point_in,
-                door.point_out,
-                door.sector_in_index.unwrap(),
-                door.sector_out_index.unwrap(),
-                door.layer_in,
-            )
-        } else {
-            (
-                door.point_out,
-                door.point_in,
-                door.sector_out_index.unwrap(),
-                door.sector_in_index.unwrap(),
-                door.layer_out,
-            )
-        };
-        let handle = crate::position_interface::SectorHandle::from_number(
-            engine.world.fast_grid.level.sectors[usize::from(source)].sector_number,
-        )
-        .with_arena_index(source);
-        let owner = walking_pc(&mut engine, &mut assets, start, layer, handle);
-        let element = engine.ent_mut(owner).element_data_mut();
-        let position = element.sprite.position_iface.clone();
-        element.sprite = sprite.clone();
-        element.sprite.position_iface = position;
-        let receiver = engine.get_projection_area_index(&assets, handle, layer, start);
-        engine.set_obstacle_and_material(&assets, owner, receiver);
-        let sim = crate::sim_rng::test_context();
-        engine.perform_group_move(
-            crate::engine::TickCtx::new(&sim, &assets),
-            &[owner],
-            goal,
-            false,
-            false,
-            None,
-            None,
-            None,
-            &[],
-            &[],
+        )),
+        40.,
+        1,
+    );
+}
+
+#[test]
+#[ignore = "requires ROBIN_ASSET_MAP_DIAGNOSTICS and ROBIN_CLIMB_RHS"]
+fn exported_posture_passage_zips_support_native_player_routes() {
+    let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["complete"], true);
+    let mut results = vec![];
+    let mut crossings = 0;
+    for entry in manifest["results"].as_array().unwrap() {
+        let file = entry["file"].as_str().unwrap();
+        let count = entry["expected_doors"].as_u64().unwrap() as usize;
+        let height = entry["height"].as_f64().unwrap() as f32;
+        let passed =
+            audit_posture_passages(&std::fs::read(directory.join(file)).unwrap(), height, count);
+        crossings += passed;
+        eprintln!("{file}: {passed} complete posture crossings");
+        results.push(
+            serde_json::json!({"file":file, "crossings":passed, "doors":count, "height":height}),
         );
-        let expected =
-            if engine.world.fast_grid.level.sectors[usize::from(destination)].force_crouched {
-                Posture::Crouched
-            } else {
-                Posture::Upright
-            };
-        let mut arrived = false;
-        for _ in 0..600 {
-            engine.control.frame_counter += 1;
-            engine.t_hourglass_phase_sequences(&assets);
-            engine.hourglass_phase_paths(crate::engine::TickCtx::new(&sim, &assets));
-            engine.t_tick_actor_owner_envelopes(&assets);
-            let element = engine.ent(owner).element_data();
-            let settled = engine
-                .entities()
-                .current_element_for_actor(owner)
-                .and_then(|(id, index)| engine.seq().get_element(id, index))
-                .is_none_or(|selected| {
-                    selected.orders.is_empty() || selected.command == Command::Wait
-                });
-            if (element.position_map() - goal).length() < 0.1
-                && element.posture() == expected
-                && element.sector().and_then(|sector| sector.arena_index()) == Some(destination)
-                && settled
-            {
-                arrived = true;
-                break;
-            }
-        }
-        assert!(
-            arrived,
-            "generated posture passage failed in reverse={reverse}: {:?}",
-            engine.ent(owner).element_data().position_map()
-        );
-        assert!((engine.ent(owner).element_data().position().z - 40.).abs() < 0.001);
     }
+    assert!(crossings > 0);
+    std::fs::write(directory.join("actor-posture-report.json"), serde_json::to_vec_pretty(&serde_json::json!({
+        "complete":true, "crossings":crossings, "scope":"native-player-routes-from-editable-zips-not-rendering", "results":results,
+    })).unwrap()).unwrap();
+}
+
+fn audit_posture_passages(bytes: &[u8], height: f32, expected_doors: usize) -> usize {
+    let sprite = exported_stairs::complete_climb_sprite();
+    let descriptor: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+    let dimensions = (
+        descriptor["walkable_polygon"][2][0].as_f64().unwrap() as f32 + 1.,
+        descriptor["walkable_polygon"][2][1].as_f64().unwrap() as f32 + 1.,
+    );
+    assert_eq!(
+        compiled_walkway_with_dimensions(bytes, dimensions)
+            .0
+            .script_domains
+            .interactables
+            .doors
+            .len(),
+        expected_doors
+    );
+    for index in 0..expected_doors {
+        for reverse in [false, true] {
+            let (mut engine, mut assets) = compiled_walkway_with_dimensions(bytes, dimensions);
+            let door = engine.script_domains.interactables.doors[index].clone();
+            let (start, goal, source, destination, layer) = if reverse {
+                (
+                    door.point_in,
+                    door.point_out,
+                    door.sector_in_index.unwrap(),
+                    door.sector_out_index.unwrap(),
+                    door.layer_in,
+                )
+            } else {
+                (
+                    door.point_out,
+                    door.point_in,
+                    door.sector_out_index.unwrap(),
+                    door.sector_in_index.unwrap(),
+                    door.layer_out,
+                )
+            };
+            let handle = crate::position_interface::SectorHandle::from_number(
+                engine.world.fast_grid.level.sectors[usize::from(source)].sector_number,
+            )
+            .with_arena_index(source);
+            let owner = walking_pc(&mut engine, &mut assets, start, layer, handle);
+            let element = engine.ent_mut(owner).element_data_mut();
+            let position = element.sprite.position_iface.clone();
+            element.sprite = sprite.clone();
+            element.sprite.position_iface = position;
+            let receiver = engine.get_projection_area_index(&assets, handle, layer, start);
+            engine.set_obstacle_and_material(&assets, owner, receiver);
+            let sim = crate::sim_rng::test_context();
+            engine.perform_group_move(
+                crate::engine::TickCtx::new(&sim, &assets),
+                &[owner],
+                goal,
+                false,
+                false,
+                None,
+                None,
+                None,
+                &[],
+                &[],
+            );
+            let expected =
+                if engine.world.fast_grid.level.sectors[usize::from(destination)].force_crouched {
+                    Posture::Crouched
+                } else {
+                    Posture::Upright
+                };
+            let mut arrived = false;
+            for _ in 0..600 {
+                engine.control.frame_counter += 1;
+                engine.t_hourglass_phase_sequences(&assets);
+                engine.hourglass_phase_paths(crate::engine::TickCtx::new(&sim, &assets));
+                engine.t_tick_actor_owner_envelopes(&assets);
+                let element = engine.ent(owner).element_data();
+                // A passage permits the footprint to straddle two floor sectors.
+                // Check its prepared collision state and actual corridor, rather
+                // than applying a single-floor reachability test at the seam.
+                assert!(!engine.script_domains.interactables.doors[index].passage_blocked);
+                let distance = |a: MapPoint, b: MapPoint| {
+                    let p = element.position_map();
+                    let dx = b.x - a.x;
+                    let dy = b.y - a.y;
+                    let squared = dx * dx + dy * dy;
+                    let t = if squared > 0. {
+                        (((p.x - a.x) * dx + (p.y - a.y) * dy) / squared).clamp(0., 1.)
+                    } else {
+                        0.
+                    };
+                    (p.x - a.x - dx * t).hypot(p.y - a.y - dy * t)
+                };
+                assert!(
+                    distance(door.point_out, door.point_mid)
+                        .min(distance(door.point_mid, door.point_in))
+                        < 0.001,
+                    "actor left its prepared passage corridor: {:?}",
+                    element.position_map()
+                );
+                let settled = engine
+                    .entities()
+                    .current_element_for_actor(owner)
+                    .and_then(|(id, index)| engine.seq().get_element(id, index))
+                    .is_none_or(|selected| {
+                        selected.orders.is_empty() || selected.command == Command::Wait
+                    });
+                if (element.position_map() - goal).length() < 0.1
+                    && element.posture() == expected
+                    && element.sector().and_then(|sector| sector.arena_index()) == Some(destination)
+                    && settled
+                {
+                    arrived = true;
+                    break;
+                }
+            }
+            assert!(
+                arrived,
+                "generated posture passage failed in reverse={reverse}: {:?}",
+                engine.ent(owner).element_data().position_map()
+            );
+            assert!((engine.ent(owner).element_data().position().z - height).abs() < 0.001);
+        }
+    }
+    expected_doors * 2
 }
 
 fn compiled_walkway(bytes: &[u8]) -> (EngineInner, LevelAssets) {
