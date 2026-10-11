@@ -1841,3 +1841,22 @@ test("mission retirement restores aperture receivers and shared resources dispos
   f.viewport.dispose();
   assert.equal(disposed, 1);
 });
+
+test("delivered projected textures receive sampling policy on load and display changes", async () => {
+  const root = new THREE.Group();
+  const material = new THREE.MeshStandardMaterial({
+    map: new THREE.Texture(), emissiveMap: new THREE.Texture(), alphaTest: 0.5,
+  });
+  material.userData.export_complementary_binary_ownership = true;
+  material.userData.export_rgb_sampling = "nearest-required";
+  root.add(new THREE.Mesh(new THREE.PlaneGeometry(), material));
+  const f = await deliveredFixture(async () => root);
+  await f.viewport.setStateDelivery(f.contract, f.library, f.source);
+  assert.equal(material.map!.magFilter, THREE.NearestFilter);
+  assert.equal(material.emissiveMap!.magFilter, THREE.NearestFilter);
+  f.viewport.setTextureDisplay(false, true);
+  f.viewport.setTextureDisplay(true, true);
+  assert.equal(material.map!.generateMipmaps, false);
+  assert.equal(material.emissiveMap!.minFilter, THREE.NearestFilter);
+  f.viewport.dispose();
+});

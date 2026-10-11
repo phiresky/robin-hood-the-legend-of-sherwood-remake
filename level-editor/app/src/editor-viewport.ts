@@ -308,7 +308,7 @@ export class EditorViewport {
       this.textureDisplay.apply(root, anisotropy);
       return;
     }
-    for (const sceneRoot of [this.sourceAsset, this.ground, this.objectsRoot])
+    for (const sceneRoot of [this.sourceAsset, this.ground, this.objectsRoot, this.stateDelivery.physical, this.aperturePreview?.root])
       if (sceneRoot) this.textureDisplay.apply(sceneRoot, anisotropy);
   }
   readonly listeners = new AbortController();
@@ -967,13 +967,13 @@ export class EditorViewport {
           this.setStateAperturePreview(prepared);
           apertureAttempt = this.aperturePreparation;
           this.apertureManifest = structuredClone(aperture);
-          this.refreshTextureDisplay();
         } catch (error) {
           if (!this.apertureResourceRoots.has(prepared.root))
             disposeObjectResources([prepared.root]);
           throw error;
         }
       }
+      this.refreshTextureDisplay();
       this.clippingBoundsDirty = true;
       return true;
     } catch (error) {
