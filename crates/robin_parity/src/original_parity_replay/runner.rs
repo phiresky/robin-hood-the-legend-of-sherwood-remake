@@ -1053,14 +1053,9 @@ pub(super) fn run_replay(
             );
             std::panic::resume_unwind(payload);
         });
-        // Both modal hosts refresh the game while capturing their background.
-        // Popup captures retain this event directly; dialogue captures retain
-        // the completed manager command instead.
-        if has_dialogue_lifecycle || popup_nested_refresh {
-            engine
-                .parity_replay_setup()
-                .replay_modal_sprite_sound_refresh();
-        }
+        // Modal commands refresh synchronously inside the simulation. A second
+        // refresh here would erase sound latches when the next script command
+        // has already replaced the animation.
         let rust_rng_after_tick = engine
             .original_rng_replay_cursor()
             .expect("original RNG replay unexpectedly disabled after Rust frame");

@@ -130,8 +130,10 @@ pub(super) fn write_engine_dump_frame(
                 .find(|element| element.entity_id == *entity_id)
                 .ok_or_else(|| {
                     TraceRunError::Input(format!(
-                        "manual parity dump requested missing Original entity {entity_id:?} at frame {}",
-                        frame.frame_after
+                        "manual parity dump requested missing Original entity {entity_id:?} at frame {}; available entities of that kind: {:?}",
+                        frame.frame_after,
+                        frame.elements.iter().filter(|element| element.entity_id.kind == entity_id.kind)
+                            .map(|element| element.entity_id.index).collect::<Vec<_>>()
                     ))
                 })
         })

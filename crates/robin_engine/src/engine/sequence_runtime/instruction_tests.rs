@@ -7,6 +7,57 @@ use crate::sequence::{SequenceElement, SequencePriority, SequenceState};
 use crate::sprite::MotionState;
 
 #[test]
+fn popup_refresh_precedes_its_sibling_animation_reset() {
+    use crate::element::{ElementTarget, Entity};
+    use crate::sequence::{Field, FieldValue, Sequence};
+    let mut engine = EngineInner::new();
+    let assets = LevelAssets::new();
+    let sim = crate::sim_rng::test_context();
+    let mut target = ElementTarget {
+        element: Default::default(),
+        fx: Default::default(),
+        target: Default::default(),
+    };
+    target.element.active = true;
+    target.element.kind = crate::element::ElementKind::Target;
+    let sprite = &mut target.element.sprite;
+    sprite.scripts = std::sync::Arc::new(vec![crate::sprite_script::SpriteScript {
+        frame_ids: vec![0, 1],
+        delays: vec![0, 0],
+        sound_ids: vec![0, 423],
+        ..Default::default()
+    }]);
+    sprite.conversion = std::sync::Arc::new(vec![0; 284]);
+    sprite.current_frame = 1;
+    sprite.frame_count = 0;
+    let owner = engine.add_test_entity(Entity::Target(target));
+    let mut sequence = Sequence::new();
+    let mut popup = SequenceElement::new_generic(1, Command::DisplayPopupText, None);
+    popup.set_property(Field::PopupTextId, FieldValue::Integer(11));
+    sequence.append_element(popup);
+    let mut animation = SequenceElement::new_generic(1, Command::PlayAnimFreeze, Some(owner));
+    animation.set_property(
+        Field::AnimationId,
+        FieldValue::Animation(OrderType::WaitingUpright),
+    );
+    sequence.append_element(animation);
+    engine.launch_sequence(TickCtx::new(&sim, &assets), sequence);
+    engine.hourglass_phase_sequences(
+        TickCtx::new(&sim, &assets),
+        &mut crate::engine::HostDisplayState::default(),
+    );
+    let sprite = engine.get_entity(owner).unwrap().sprite();
+    assert_eq!(
+        sprite.current_frame, 0,
+        "the continuation reset its animation"
+    );
+    assert_eq!(
+        sprite.last_sound_id, 423,
+        "the popup refreshed before that reset"
+    );
+}
+
+#[test]
 fn same_building_seek_keeps_synchronously_launched_post_seek_selection() {
     let mut engine = EngineInner::new();
     let assets = LevelAssets::new();

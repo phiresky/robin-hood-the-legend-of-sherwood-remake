@@ -294,16 +294,13 @@ impl EngineInner {
                 let refreshes_during_popup = command == Command::DisplayPopupText
                     && !self.control.fast_forward
                     && self.control.begin_popup_scroll_display();
-                self.dispatch_presentation_command(tcx, &mut Vec::new(), command, elem_ref);
                 if refreshes_during_dialogue || refreshes_during_popup {
-                    // Dialogue display constructs a menu screen
-                    // inline; accepted popup scroll backgrounds take the same
-                    // path. Their constructor calls
-                    // game refresh before returning to the
-                    // sequence manager, hence before frame recording. Apply the sprite refresh here; resolved PC
-                    // orientation is an explicit replay command.
+                    // Refresh before dispatch terminates this element: its
+                    // synchronous continuation may immediately replace a
+                    // target animation, losing the current frame's sound cue.
                     self.refresh_sprites_for_presentation(tcx.sim);
                 }
+                self.dispatch_presentation_command(tcx, &mut Vec::new(), command, elem_ref);
             }
             Some(Command::Freeze | Command::FreezeAll) => {
                 self.dispatch_freeze_immediate(tcx, &mut Vec::new(), elem_ref);
