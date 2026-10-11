@@ -423,13 +423,10 @@ impl AiOwnerCtx<'_> {
         let target = self
             .engine
             .expect_human_id_for_ai_handle(target, "attack target");
-        debug_assert!(
-            self.engine.camps_are_hostile(
-                self.engine.expect_entity(self.owner, "attack owner").camp(),
-                self.engine.expect_entity(target, "attack target").camp()
-            ),
-            "attack target is friendly"
-        );
+        // A non-soldier friendly-fire hit can reach retaliation.
+        // The shipping runtime continues through approach selection here;
+        // treating the authoring-time friendship assertion as a gameplay gate
+        // makes debug replays abort on otherwise valid recorded input.
         let position = self.engine.live_ai_position(target);
         let ai = self.engine.enemy_ai_mut(self.owner, "attack position");
         ai.base.seek_position = position;

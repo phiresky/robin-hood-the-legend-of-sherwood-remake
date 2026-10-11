@@ -274,6 +274,25 @@ mod tests {
     use crate::order::OrderType;
 
     #[test]
+    fn friendly_fire_from_a_pc_reaches_the_retaliation_path() {
+        let (mut engine, assets, owner, target) =
+            super::super::battle_decision_observation_tests::fixture(false);
+        let Entity::Soldier(soldier) = engine.ent_mut(owner) else {
+            unreachable!()
+        };
+        soldier.soldier.cached_camp = Camp::Royalists;
+        let mut stimulus = Stimulus::new(StimulusType::EventGotHit);
+        stimulus.info = StimulusInfo::Human(crate::ai::AiEntityHandle::new(target.index()));
+        engine
+            .ai_ctx(&crate::sim_rng::test_context(), &assets, owner)
+            .execute_ai_combat_impact_event(&stimulus);
+        assert_eq!(
+            engine.enemy(owner).base.primary_target,
+            Some(crate::ai::AiEntityHandle::new(target.index()))
+        );
+    }
+
+    #[test]
     fn incoming_arrow_checks_installed_shield_order_instead_of_last_sprite() {
         for (installed, displayed, protects) in [
             (
