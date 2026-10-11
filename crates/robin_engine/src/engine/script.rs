@@ -2389,6 +2389,8 @@ impl EngineInner {
                 }
             }
         }
+        self.select_initial_mission_pc(tcx);
+
         // Engine initialization populates script-sector occupant lists before
         // IEngineScript::Initialize(0). Mission startup scripts query those
         // lists synchronously (for example H07's indoor NPC reveal), so the

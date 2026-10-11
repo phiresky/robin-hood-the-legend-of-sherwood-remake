@@ -698,8 +698,60 @@ impl EngineInner {
         }
     }
 
+    /// Select the initial hero before global startup scripts can clear or
+    /// replace the selection. Doing this after AI initialization overwrites
+    /// intentional startup decisions on fresh missions.
+    pub(crate) fn select_initial_mission_pc(&mut self, tcx: TickCtx<'_>) {
+        // Co-op level loading has already assigned one hero to each admitted
+        // seat. Preserve those selections; the generic single-player startup
+        // selection would otherwise replace seat 0 with the highest-priority
+        // (often duplicated) hero.
+        let initial_pc = if self.control.sim_config.coop.players > 1 {
+            self.hero_selection(crate::player_command::PlayerId::HOST)
+                .first()
+                .copied()
+        } else {
+            self.world
+                .pc_ids
+                .iter()
+                .copied()
+                .filter_map(|pc_id| {
+                    let Entity::Pc(pc) = self.world.entities.get(pc_id)? else {
+                        return None;
+                    };
+                    if !pc.pc.playable
+                        || pc.pc.command_interface
+                            != crate::human_control::CommandInterface::HeroActions
+                    {
+                        return None;
+                    }
+                    let priority = tcx
+                        .assets
+                        .profile_manager
+                        .get_character(pc.pc.profile_index)?
+                        .priority;
+                    Some((pc_id, priority))
+                })
+                .max_by_key(|&(_, priority)| priority)
+                .map(|(pc_id, _)| pc_id)
+        };
+        if let Some(pc_id) = initial_pc {
+            // A playable hero can still be tied, unconscious or inactive.
+            // Center on the chosen hero, then let normal selection admission
+            // reject that state without choosing a different hero.
+            let point = self
+                .get_entity(pc_id)
+                .expect("initial hero exists")
+                .element_data()
+                .position_map();
+            self.center_on_point(0, point);
+            if self.control.sim_config.coop.players <= 1 {
+                self.select_pc(tcx, 0, pc_id, false, false);
+            }
+        }
+    }
+
     /// Post-load initialization: scripts, AI, animation preloading.
-    ///
     /// Called from `Engine::new` after level loading is complete.
     pub(crate) fn initialize(&mut self, assets: &mut LevelAssets) {
         self.with_simulation_context(|engine, sim| engine.initialize_inner(assets, sim));
@@ -791,6 +843,7 @@ impl EngineInner {
             for id in pcs {
                 self.actor_wait(TickCtx::new(sim, assets), id.into());
             }
+            self.select_initial_mission_pc(TickCtx::new(sim, assets));
         }
 
         tracing::debug!(
@@ -816,55 +869,6 @@ impl EngineInner {
             elapsed_ms = startup_started.elapsed().as_secs_f64() * 1000.0,
             "engine init: AI"
         );
-
-        // Co-op level loading has already assigned one hero to each admitted
-        // seat. Preserve those selections; the generic single-player startup
-        // selection would otherwise replace seat 0 with the highest-priority
-        // (often duplicated) hero.
-        let initial_pc = if self.control.sim_config.coop.players > 1 {
-            self.hero_selection(crate::player_command::PlayerId::HOST)
-                .first()
-                .copied()
-        } else {
-            self.world
-                .pc_ids
-                .iter()
-                .copied()
-                .filter_map(|pc_id| {
-                    let Entity::Pc(pc) = self.world.entities.get(pc_id)? else {
-                        return None;
-                    };
-                    if !pc.pc.playable
-                        || pc.pc.command_interface
-                            != crate::human_control::CommandInterface::HeroActions
-                    {
-                        return None;
-                    }
-                    let priority = assets
-                        .profile_manager
-                        .get_character(pc.pc.profile_index)?
-                        .priority;
-                    Some((pc_id, priority))
-                })
-                .max_by_key(|&(_, priority)| priority)
-                .map(|(pc_id, _)| pc_id)
-        };
-        if let Some(pc_id) = initial_pc {
-            assert!(
-                self.is_pc_selectable(assets, pc_id),
-                "highest-priority playable PC {pc_id:?} is not selectable after mission initialization"
-            );
-            if self.control.sim_config.coop.players <= 1 {
-                self.select_pc(TickCtx::new(sim, assets), 0, pc_id, false, false);
-                assert_eq!(
-                    self.players.seats[0].selection.as_slice(),
-                    &[pc_id],
-                    "initial PC selection message did not select its target"
-                );
-            } else if let Some(Entity::Pc(pc)) = self.get_entity(pc_id) {
-                self.center_on_point(0, pc.element.position_map());
-            }
-        }
 
         // Establish frame-zero visibility after every entity, authored sight
         // obstacle, and player allegiance has been loaded.
