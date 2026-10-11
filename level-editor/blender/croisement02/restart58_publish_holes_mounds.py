@@ -16,8 +16,8 @@ io = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(io)
 sha, require, dump = io.sha, io.require, io.dump
 STAGE_SHA = '2d05f13370187c175dfa435065c2458f2b1d9199f08c9776864fee0cfae058b5'
-PROOF = BASE / 'restart57-hole-mound-fixed-ui-browser-v1/handoff.json'
-PROOF_SHA = 'e2ac0b678060e7ae4056f1d3c034bc29b03df902df97204c37dfe41c622ab5d4'
+PROOF = BASE / 'restart63-hole-mound-current-runtime-browser-v1/root-review-ready.json'
+PROOF_SHA = '842ef6eb62d5755a86992d591c31e1172a2380e41123cd9c35ec75a9cf5c7127'
 SELF_SHA = sha(Path(__file__))
 
 def read(path):
@@ -35,16 +35,17 @@ def guards():
     require(sha(STAGE/'transaction.json') == STAGE_SHA, 'Stage drift')
     require(sha(PROOF) == PROOF_SHA, 'Browser handoff drift')
     proof = read(PROOF)
-    require(proof['status'] == 'PASS_SCOPED_HOLE_MOUND_EDITOR_UI' and proof['full_controls'] == 62, 'Incomplete UI evidence')
-    require(proof['guardAfter']['ready'] is False and proof['guardAfter']['actual']['dx'] != proof['guardBefore']['actual']['dx'], 'Receiver rejection unproven')
-    require(sha(ROOT/'level-editor/app/src/editor-viewport.ts') == proof['final_viewport_sha256'], 'Proven viewport changed')
+    require(proof['status'] == 'PASS' and proof['transaction_sha256'] == STAGE_SHA, 'Wrong UI evidence transaction')
+    require(all(proof['checks'].get(k) is True for k in ('all_62_controls', 'receiver_move_rejected', 'receiver_restored', 'map_retirement', 'representative_controls')), 'Incomplete UI evidence')
+    require(proof['guard_after']['ready'] is False and proof['guard_after']['actual']['dx'] != proof['guard_before']['actual']['dx'], 'Receiver rejection unproven')
+    require(sha(ROOT/'level-editor/app/src/editor-viewport.ts') == proof['runtime']['level-editor/app/src/editor-viewport.ts'], 'Proven viewport changed')
     for path, digest in proof['evidence'].items():
         require(sha(ROOT/path) == digest, 'Browser evidence drift: '+path)
     snapshot = read(PROOF.parent/'source-snapshot.json')
-    excluded = {row['path'] for row in proof['source_postflight']['drift']}
+    require(snapshot == proof['runtime'], 'Browser runtime snapshot drift')
+    # A drift disclosure records limits; it does not authorize skipping a guard.
     for path, digest in snapshot.items():
-        if path not in excluded:
-            require(sha(ROOT/path) == digest, 'Proven runtime changed: '+path)
+        require(sha(ROOT/path) == digest, 'Proven runtime changed: '+path)
     stage = read(STAGE/'transaction.json')
     for pin in stage['approvals'] + stage['browser_proofs'] + [p for r in stage['receiver_source_guards'] for p in r.values()]:
         io.core.verify_pin(pin)
@@ -74,7 +75,7 @@ def prepare(folder):
     dump(folder/'index.json', merged)
     rows.append({'source': str(folder/'index.json'), 'target': str(LIB/'mission-states/index.json'), 'old_sha256': before_sha, 'new_sha256': sha(folder/'index.json')})
     require(sha(LIB/'mission-states/index.json') == before_sha, 'Catalog drift during rebase')
-    plan = {'status': 'PREPARED_NOT_APPLIED', 'records': rows, 'catalog_before': before, 'additions': stage['catalog_additions'], 'browser': io.pin(PROOF), 'stage': io.pin(STAGE/'transaction.json'), 'map_guard': io.pin(LIB/'scenes/croisement02.rhlos-map.json'), 'executor': io.pin(Path(__file__).resolve()), 'source_verifier': io.pin(Path(__file__).with_name('restart58_verify_current_receivers.mjs')), 'scope': '62 additive catalog entries; immutable reviewed resources; catalog switched last. Unrelated entries/order/metadata preserved.', 'limitations': read(PROOF)['visual_review']['limitations']}
+    plan = {'status': 'PREPARED_NOT_APPLIED', 'records': rows, 'catalog_before': before, 'additions': stage['catalog_additions'], 'browser': io.pin(PROOF), 'stage': io.pin(STAGE/'transaction.json'), 'map_guard': io.pin(LIB/'scenes/croisement02.rhlos-map.json'), 'executor': io.pin(Path(__file__).resolve()), 'source_verifier': io.pin(Path(__file__).with_name('restart58_verify_current_receivers.mjs')), 'scope': '62 additive catalog entries; immutable reviewed resources; catalog switched last. Unrelated entries/order/metadata preserved.', 'limitations': read(PROOF)['limitations']}
     dump(folder/'plan.json', plan)
     dump(folder/'dry-run.json', {'status': 'PASS_NOT_APPLIED', 'plan': io.pin(folder/'plan.json'), 'targets': len(rows), 'unrelated_entries_preserved': len(before['entries'])})
     return plan
