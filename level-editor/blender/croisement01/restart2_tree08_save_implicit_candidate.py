@@ -17,7 +17,7 @@ from render_slots import acquire,release
 from review_evidence import sha
 from restart2_tree08_union import topology
 R=ROOT/'level-editor/work/croisement01-refinement/restart2'
-packet=R/'tree08-implicit-collar-v6-seam-clean'
+packet=R/'tree08-implicit-collar-v7-seam-cluster'
 parent=R/'tree08-wood-prototype-v17-bank-bands/model.blend'
 out=R/'tree08-wood-prototype-v20-implicit'
 assert not out.exists()
