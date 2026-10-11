@@ -1,0 +1,869 @@
+--- a/level-editor/app/src/editor-viewport.test.ts
++++ b/level-editor/app/src/editor-viewport.test.ts
+@@ -1953,3 +1953,95 @@
+   delete (internals.loopClocks as { ready?: boolean }).ready;
+   f.viewport.dispose();
+ });
++
++test("source cover uses the existing placed roof control, with no second patch UI or clock", async () => {
++  const { readFile } = await import("node:fs/promises");
++  const { resolve } = await import("node:path");
++  const { missionStateDataHash } = await import("./mission-state-layer.ts");
++  const base = resolve(
++    "level-editor/work/york-refinement/restart2/restart69-hall-approved-delivery-v1",
++  );
++  const read = async (p: string) => JSON.parse(await readFile(p, "utf8"));
++  const privateStage = resolve(
++    "level-editor/work/york-refinement/restart2/restart70-hall-visibility-private-v1",
++  );
++  const c = await read(privateStage + "/contract.proposed.json"),
++    data = await read(base + "/library/mission-states/york/source/S05_Yrk_EC.rhm.json"),
++    level = await read(base + "/library/mission-states/york/source/york.rhp.json");
++  const stored = await read(resolve("level-editor/library/scenes/york.rhlos-map.json"));
++  const ref = stored.assetSources.find((a: any) => a.id === "york-castle-great-hall");
++  const placed = stored.placements.find((p: any) => p.id === ref.id);
++  const cover = {
++    native_element_id: "animation-000",
++    physical_target_id: "hall000-flames-reflections",
++    source: {
++      kind: "map-patch" as const,
++      index: 2,
++      sha256: await missionStateDataHash(level.patches[2]),
++    },
++    visible_when: "applied" as const,
++    placement: {
++      group_id: placed.id,
++      transform: placed.transform,
++      asset_id: ref.id,
++      appearance_id: "appearance-2",
++      patch_id: "patch-002",
++      model_sha256: ref.model_sha256,
++      descriptor_sha256: ref.descriptor_sha256,
++    },
++  };
++  const f = fixture(),
++    d = documentFixture();
++  d.groups = [placed];
++  d.assetSources = [ref];
++  d.objects[0]!.group = placed.id;
++  d.objects[0]!.node = "asset:" + ref.id + ":roof";
++  const roof = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
++  roof.name = "actual-controlled-roof";
++  roof.userData.reveal_hide_when_applied = ["appearance-2"];
++  f.viewport.replaceMap(new THREE.Group(), null, new Map([[d.objects[0]!.node, roof]]));
++  f.publish(d);
++  const internal = f.viewport as any;
++  const source = { name: c.native.mission, data, level, camera: d.camera };
++  await internal.loopClocks.set(c.native, c.physical, source, [cover]);
++  await internal.nativeArt.set(c.native, source, async (r: any) => {
++    try {
++      return new Uint8Array(await readFile(privateStage + "/library/" + r.path));
++    } catch {
++      return new Uint8Array(await readFile(base + "/library/" + r.path));
++    }
++  });
++  internal.loopFocus = "animation-000";
++  internal.loopCoverVisibility = [cover];
++  const samples: any[] = [];
++  internal.loopClocks.attachPhysical(
++    cover.physical_target_id,
++    {
++      internallyPlaying: () => false,
++      sampleExternalTick: (tick: number, visible: boolean) => samples.push({ tick, visible }),
++    },
++    internal.loopClocks.physicalToken(cover.physical_target_id),
++  );
++  internal.loopClocks.seekPhysical(cover.physical_target_id, 9);
++  const shown = internal.objectsRoot.getObjectByName("actual-controlled-roof");
++  assert.ok(shown);
++  assert.equal(shown.visible, true);
++  f.viewport.setPatchRevealed("patch-002", false);
++  const coveredPixels = internal.nativeArt.pixels().data.slice();
++  f.viewport.setPatchRevealed("patch-002", true);
++  assert.equal(shown.visible, false);
++  assert.notDeepEqual(internal.nativeArt.loopDrawSnapshot().background.data, coveredPixels);
++  assert.deepEqual(samples.at(-1), { tick: 9, visible: true });
++  assert.equal(internal.nativeArt.loopDrawSnapshot().draws.length, 1);
++  f.viewport.setPatchRevealed("patch-002", false);
++  assert.equal(shown.visible, true);
++  assert.deepEqual(samples.at(-1), { tick: 9, visible: false });
++  assert.equal(internal.nativeArt.loopDrawSnapshot().draws.length, 0);
++  assert.deepEqual(internal.nativeArt.pixels().data, coveredPixels);
++  f.viewport.setPatchRevealed("patch-001", true);
++  assert.notDeepEqual(internal.nativeArt.pixels().data, coveredPixels);
++  assert.equal(shown.visible, true);
++  f.viewport.clearMap();
++  assert.equal(internal.loopClocks.ready, false);
++  f.viewport.dispose();
++});
+--- a/level-editor/app/src/editor-viewport.ts
++++ b/level-editor/app/src/editor-viewport.ts
+@@ -1,3 +1,7 @@
++import {
++  verifySourceCoverPlacements,
++  type SourceCoverVisibility,
++} from "../../shared/src/source-cover-visibility.ts";
+ import {
+   prepareStateAperture,
+   verifyStateApertureReceivers,
+@@ -267,6 +271,10 @@
+   setPatchRevealed(patch: string, revealed: boolean) {
+     this.patchDisplay.set(patch, revealed);
+     this.patchDisplay.apply(this.objectsRoot);
++    if (this.loopClocks.ready) {
++      this.sampleLoopClocks();
++      this.nativeSurface?.update(this.nativePreviewPixels());
++    }
+   }
+   patchPreviews(selection?: Selection) {
+     const patches = new Set<string>();
+@@ -1071,6 +1079,7 @@
+     };
+   }
+   private readonly loopClocks = new SourceContractClockBinding();
++  private loopCoverVisibility: SourceCoverVisibility[] = [];
+   private loopFocus: string | undefined;
+   private loopStaticReplacements: StaticStateReplacement[] | undefined;
+   private loopPhysicalVisible = true;
+@@ -1078,9 +1087,39 @@
+   private loopEpoch = 0;
+   private sampleLoopClocks() {
+     if (!this.loopClocks.ready || !this.loopFocus || !this.nativeArt.ready) return false;
++    if (this.loopCoverVisibility.length) {
++      try {
++        const document = this.bindings.document();
++        if (!document) throw new Error("Source cover has no displayed map");
++        verifySourceCoverPlacements(this.loopCoverVisibility, document);
++        for (const id of this.loopClocks.coverPatchIds())
++          this.loopClocks.setCoverRevealed(id, this.patchDisplay.isRevealed(id));
++      } catch (error) {
++        this.clearNativeArtPresentation();
++        throw error;
++      }
++    }
++    let artworkChanged = false;
++    const artworkBindings = this.nativeArt.coverArtworkBindings();
++    if (artworkBindings.length) {
++      try {
++        const document = this.bindings.document();
++        if (!document) throw new Error("Native cover artwork has no displayed map");
++        verifySourceCoverPlacements(artworkBindings, document);
++        for (const b of artworkBindings)
++          artworkChanged =
++            this.nativeArt.setCoverArtworkState(
++              b.placement.patch_id,
++              this.patchDisplay.isRevealed(b.placement.patch_id),
++            ) || artworkChanged;
++      } catch (error) {
++        this.clearNativeArtPresentation();
++        throw error;
++      }
++    }
+     const rows = this.loopClocks.snapshot();
+     this.scenery.sourceClocks.sample(rows);
+-    return this.nativeArt.sampleExternalClocks(rows, this.loopFocus);
++    return this.nativeArt.sampleExternalClocks(rows, this.loopFocus) || artworkChanged;
+   }
+   /** Animated physical loops are separate from endpoint delivery and its clip rejection. */
+   async setNativeLoopPresentation(
+@@ -1105,10 +1144,23 @@
+         verifyStaticReplacementRows(frozen.static_replacements, document);
+       }
+       if (
+-        !(await this.loopClocks.set(frozen.native, frozen.physical!, resolvedSource)) ||
++        !(await this.loopClocks.set(
++          frozen.native,
++          frozen.physical!,
++          resolvedSource,
++          frozen.cover_visibility,
++        )) ||
+         !current()
+       )
+         return false;
++      this.loopCoverVisibility = structuredClone(frozen.cover_visibility ?? []);
++      if (this.loopCoverVisibility.length) {
++        const document = this.bindings.document();
++        if (!document) throw new Error("Source cover has no displayed map");
++        verifySourceCoverPlacements(this.loopCoverVisibility, document);
++        for (const id of this.loopClocks.coverPatchIds())
++          this.loopClocks.setCoverRevealed(id, this.patchDisplay.isRevealed(id));
++      }
+       this.loopFocus = frozen.focus_element_id;
+       this.loopSequence = 0;
+       this.stateMission = frozen.native.mission;
+@@ -1223,6 +1275,7 @@
+     this.loopClocks.clear();
+     this.scenery.sourceClocks.clear();
+     this.loopFocus = undefined;
++    this.loopCoverVisibility = [];
+     this.loopSequence = 0;
+     this.nativePatchFocus = undefined;
+     this.nativeArt.clear();
+--- a/level-editor/app/src/native-state-presentation.ts
++++ b/level-editor/app/src/native-state-presentation.ts
+@@ -137,6 +137,17 @@
+     (await missionStateDataHash(source.level)) !== contract.level_data_sha256
+   )
+     throw new Error("Native artwork preview source or camera changed");
++  for (const binding of contract.cover_artwork?.bindings ?? []) {
++    const patch = source.level.patches[binding.source.index];
++    if (
++      !patch ||
++      (await missionStateDataHash(patch)) !== binding.source.sha256 ||
++      !patch.start_animation_valid ||
++      patch.transition_animation_valid ||
++      patch.end_animation_valid
++    )
++      throw new Error("Native cover artwork source changed");
++  }
+   const targets = source.data.targets;
+   if (!Array.isArray(targets)) throw new Error("Native artwork preview has no mission targets");
+   const seenAnimations = new Set<number>();
+@@ -269,6 +280,8 @@
+   private images = new Map<string, NativePixels>();
+   private contract: NativeStatePresentationContract | undefined;
+   private offsets = new Map<string, number>();
++  private coverApplied = new Set<string>();
++  private visibleElements = new Map<string, boolean>();
+   private activeElements = new Map<string, boolean>();
+   private verifiedDisjointPair: [string, string] | undefined;
+   private patches = new Map<string, { phase: NativeBackgroundPhase; offset: number }>();
+@@ -298,6 +311,8 @@
+     this.contract = undefined;
+     this.offsets.clear();
+     this.activeElements.clear();
++    this.visibleElements.clear();
++    this.coverApplied.clear();
+     this.backgrounds.clear();
+     this.patches.clear();
+     this.verifiedDisjointPair = undefined;
+@@ -338,7 +353,11 @@
+         ...s.final,
+       ]),
+     ];
+-    for (const resource of [frozen.background, ...frames]) {
++    for (const resource of [
++      frozen.background,
++      ...(frozen.cover_artwork?.variants.map((v) => v.image) ?? []),
++      ...frames,
++    ]) {
+       const prior = resources.get(resource.path);
+       if (
+         prior &&
+@@ -427,6 +446,30 @@
+     this.revision++;
+     return true;
+   }
++  coverArtworkBindings() {
++    return this.contract?.cover_artwork?.bindings ?? [];
++  }
++  setCoverArtworkState(id: string, applied: boolean) {
++    if (!this.contract?.cover_artwork?.bindings.some((b) => b.placement.patch_id === id))
++      throw new Error("Unknown native cover artwork state");
++    if (this.coverApplied.has(id) === applied) return false;
++    if (applied) this.coverApplied.add(id);
++    else this.coverApplied.delete(id);
++    this.revision++;
++    return true;
++  }
++  private currentBackground() {
++    if (!this.contract) throw new Error("Native artwork preview is not loaded");
++    const art = this.contract.cover_artwork;
++    const resource = art
++      ? art.variants.find(
++          (v) =>
++            v.applied.length === this.coverApplied.size &&
++            v.applied.every((id) => this.coverApplied.has(id)),
++        )!.image
++      : this.contract.background;
++    return this.images.get(resource.path)!;
++  }
+   setPlaying(value: boolean) {
+     if (this.externalClock) throw new Error("External source clock owns playback");
+     this.playing = value;
+@@ -500,7 +543,9 @@
+     }
+     const selected = byId.get(focus);
+     if (!selected) throw new Error("Unknown loop clock focus");
+-    const signature = JSON.stringify(rows.map((r) => [r.id, r.tick, r.active, r.playing]));
++    const signature = JSON.stringify(
++      rows.map((r) => [r.id, r.tick, r.active, r.playing, r.visible]),
++    );
+     if (signature === this.externalSignature) return false;
+     this.externalClock = true;
+     this.externalSignature = signature;
+@@ -510,6 +555,7 @@
+     for (const r of rows) {
+       this.offsets.set(r.id, r.tick - this.currentTick);
+       this.activeElements.set(r.id, r.active);
++      this.visibleElements.set(r.id, r.visible !== false);
+     }
+     this.revision++;
+     return true;
+@@ -552,6 +598,7 @@
+     const draws: NativeLoopDrawSnapshot["draws"] = [];
+     const orderOnly: NativePresentationElement[] = [];
+     for (const original of contract.elements) {
++      if (this.visibleElements.get(original.id) === false) continue;
+       const active = this.activeElements.get(original.id) ?? original.active;
+       const element =
+         !active && original.initial_frame
+@@ -579,7 +626,7 @@
+       revision: this.revision,
+       mission: contract.mission,
+       origin: [...contract.origin],
+-      background: this.images.get(contract.background.path)!,
++      background: this.currentBackground(),
+       orderOnly,
+       draws,
+     };
+@@ -587,7 +634,7 @@
+   pixels(): NativePixels {
+     if (!this.contract) throw new Error("Native artwork preview is not loaded");
+     if (this.cached?.revision === this.revision) return this.cached.pixels;
+-    const background = this.images.get(this.contract.background.path)!;
++    const background = this.currentBackground();
+     const pixels = {
+       width: background.width,
+       height: background.height,
+@@ -624,14 +671,14 @@
+           stamp.shadow_key,
+         );
+     }
+-    const elements: Omit<NativePresentationElement, "source">[] = this.contract.elements.map(
+-      (e) => {
++    const elements: Omit<NativePresentationElement, "source">[] = this.contract.elements
++      .filter((e) => this.visibleElements.get(e.id) !== false)
++      .map((e) => {
+         const active = this.activeElements.get(e.id) ?? e.active;
+         return !active && e.initial_frame
+           ? { ...e, active: true, frames: [e.initial_frame], loop: false }
+           : { ...e, active };
+-      },
+-    );
++      });
+     for (const state of [...(this.contract.patch_states ?? [])].sort(
+       (a, b) => a.creation_order - b.creation_order,
+     )) {
+--- a/level-editor/app/src/scenery-source-clocks.ts
++++ b/level-editor/app/src/scenery-source-clocks.ts
+@@ -47,7 +47,7 @@
+     );
+     if (matches.length !== 1) throw new Error("Missing or ambiguous scenery source clock");
+     const row = matches[0]!;
+-    if (!row.active) return -1;
++    if (!row.active || row.visible === false) return -1;
+     if (!Number.isInteger(row.frame) || row.frame < 0 || row.frame >= count)
+       throw new Error("Scenery resource frames differ from bound source clock");
+     return row.frame;
+--- a/level-editor/app/src/source-contract-clock-binding.ts
++++ b/level-editor/app/src/source-contract-clock-binding.ts
+@@ -1,3 +1,8 @@
++import {
++  validateSourceCoverVisibility,
++  type SourceCoverVisibility,
++} from "../../shared/src/source-cover-visibility.ts";
++import { missionStateDataHash } from "./mission-state-layer.ts";
+ import { verifyNativePresentationSource } from "./native-state-presentation.ts";
+ import { resolveMissionStateTargets, type MissionStateSource } from "./mission-state-layer.ts";
+ import type { MissionStateContract } from "../../shared/src/mission-state.ts";
+@@ -30,6 +35,8 @@
+ 
+ /** Exact loop-contract linkage. Resource decoding begins only after set() publishes every identity. */
+ export class SourceContractClockBinding {
++  private covers: SourceCoverVisibility[] = [];
++  private coverStates = new Map<string, boolean>();
+   private readonly clocks = new SourceAnimationClocks();
+   private request = 0;
+   private disposed = false;
+@@ -48,11 +55,14 @@
+     this.handles.clear();
+     this.physicalIds.clear();
+     this.consumers.clear();
++    this.covers = [];
++    this.coverStates.clear();
+   }
+   async set(
+     native: NativeStatePresentationContract,
+     physical: MissionStateContract,
+     source: MissionStateSource,
++    coverVisibility: readonly SourceCoverVisibility[] = [],
+   ) {
+     this.clear();
+     const request = this.request,
+@@ -61,6 +71,26 @@
+       s = structuredClone(source);
+     const current = () => !this.disposed && request === this.request;
+     try {
++      const covers = structuredClone(coverVisibility);
++      validateSourceCoverVisibility(covers);
++      for (const cover of covers) {
++        const patch = s.level.patches?.[cover.source.index];
++        const target = p.targets.find((t) => t.id === cover.physical_target_id);
++        const element = n.elements.find((e) => e.id === cover.native_element_id);
++        if (
++          !patch ||
++          (await missionStateDataHash(patch)) !== cover.source.sha256 ||
++          !patch.start_animation_valid ||
++          patch.transition_animation_valid ||
++          patch.end_animation_valid ||
++          !target ||
++          !element ||
++          element.source.kind !== "map-animation" ||
++          target.source_kind !== "map-animation" ||
++          target.target_index !== element.source.index
++        )
++          throw new Error("Source cover patch or loop identity differs");
++      }
+       await verifyNativePresentationSource(n, s);
+       await resolveMissionStateTargets(p, s);
+       if (!current()) return false;
+@@ -126,6 +156,8 @@
+         this.handles.set(e.id, handle);
+         this.clocks.setState(handle, { active: e.active, playing: false });
+       }
++      this.covers = structuredClone(covers);
++      for (const c of covers) this.coverStates.set(c.placement.patch_id, false);
+       this.native = n;
+       this.physical = p;
+       this.physicalIds = physicalIds;
+@@ -185,6 +217,9 @@
+         id: e.id,
+         source: Object.freeze({ ...e.source }),
+         ...cursor,
++        ...(this.covers.some((c) => c.native_element_id === e.id)
++          ? { visible: this.coverVisible(e.id) }
++          : {}),
+         frame: e.frames.length ? nativePresentationFrame(e, cursor.tick) : -1,
+       });
+     });
+@@ -221,6 +256,25 @@
+       this.disposed = true;
+     }
+   }
++  coverPatchIds() {
++    return [...this.coverStates.keys()];
++  }
++  setCoverRevealed(patchId: string, revealed: boolean) {
++    if (
++      this.disposed ||
++      !this.ready ||
++      !this.coverStates.has(patchId) ||
++      typeof revealed !== "boolean"
++    )
++      throw new Error("Unknown or retired source cover");
++    if (this.coverStates.get(patchId) === revealed) return;
++    this.coverStates.set(patchId, revealed);
++    this.samplePhysical();
++  }
++  private coverVisible(nativeId: string) {
++    const cover = this.covers.find((c) => c.native_element_id === nativeId);
++    return !cover || this.coverStates.get(cover.placement.patch_id) === true;
++  }
+   private assertExternalConsumers() {
+     for (const consumer of this.consumers.values())
+       if (consumer.internallyPlaying())
+@@ -228,7 +282,10 @@
+   }
+   private physicalVisible(id: string) {
+     const e = this.native!.elements.find((e) => e.id === this.physicalIds.get(id))!;
+-    return this.clocks.read(this.physicalToken(id)).active || !!e.initial_frame;
++    return (
++      this.coverVisible(e.id) &&
++      (this.clocks.read(this.physicalToken(id)).active || !!e.initial_frame)
++    );
+   }
+   private physicalSampleTick(id: string) {
+     const timing = this.physical?.targets.find((t) => t.id === id)?.actions[0]?.timing;
+--- a/level-editor/shared/src/native-state-presentation.ts
++++ b/level-editor/shared/src/native-state-presentation.ts
+@@ -1,3 +1,7 @@
++import {
++  validateSourceCoverVisibility,
++  type SourceCoverVisibility,
++} from "./source-cover-visibility.ts";
+ import { safeLibraryPath } from "./projection-assets.ts";
+ 
+ export interface NativeImageResource {
+@@ -81,6 +85,11 @@
+   camera_elevation_deg: number;
+   scope: "map-art-and-listed-effects";
+   background: NativeImageResource;
++  /** Static cover artwork follows existing scenery appearance state, never animation time. */
++  cover_artwork?: {
++    bindings: Pick<SourceCoverVisibility, "source" | "placement">[];
++    variants: { applied: string[]; image: NativeImageResource }[];
++  };
+   origin: [number, number];
+   elements: NativePresentationElement[];
+   background_states?: NativeBackgroundState[];
+@@ -151,6 +160,40 @@
+     !Array.isArray(c.elements)
+   )
+     fail("invalid source binding");
++  if (c.cover_artwork) {
++    const { bindings, variants } = c.cover_artwork;
++    if (
++      !Array.isArray(bindings) ||
++      bindings.length < 1 ||
++      bindings.length > 4 ||
++      !Array.isArray(variants)
++    )
++      fail("invalid cover artwork");
++    for (const b of bindings)
++      validateSourceCoverVisibility([
++        { ...b, native_element_id: "art", physical_target_id: "art", visible_when: "applied" },
++      ]);
++    const ids = bindings.map((b) => b.placement.patch_id);
++    const seen = new Set<string>();
++    if (new Set(ids).size !== ids.length || variants.length !== 2 ** ids.length)
++      fail("incomplete cover artwork states");
++    for (const v of variants) {
++      if (
++        !Array.isArray(v.applied) ||
++        new Set(v.applied).size !== v.applied.length ||
++        v.applied.some((id) => !ids.includes(id)) ||
++        !resource(v.image) ||
++        v.image.width !== c.background.width ||
++        v.image.height !== c.background.height
++      )
++        fail("invalid cover artwork variant");
++      const key = [...v.applied].sort().join("|");
++      if (seen.has(key)) fail("duplicate cover artwork state");
++      seen.add(key);
++      if (!v.applied.length && v.image.sha256 !== c.background.sha256)
++        fail("initial cover artwork differs");
++    }
++  }
+   const ids = new Set<string>(),
+     sources = new Set<string>(),
+     orders = new Set<number>();
+--- a/level-editor/shared/src/state-delivery.ts
++++ b/level-editor/shared/src/state-delivery.ts
+@@ -1,3 +1,7 @@
++import {
++  validateSourceCoverVisibility,
++  type SourceCoverVisibility,
++} from "./source-cover-visibility.ts";
+ import { validateReviewedNodePoses, type ReviewedNodePose } from "./reviewed-node-poses.ts";
+ import { validateMissionStateContract, type MissionStateContract } from "./mission-state.ts";
+ import { safeLibraryPath } from "./projection-assets.ts";
+@@ -358,6 +362,7 @@
+ 
+ /** Source artwork loop preview; independent ambient elements retain their own clocks. */
+ export interface NativeLoopPreviewContract {
++  cover_visibility?: SourceCoverVisibility[];
+   version: 1;
+   scope: "controlled-native-loop-preview";
+   native: NativeStatePresentationContract;
+@@ -374,6 +379,10 @@
+   const contract = value as NativeLoopPreviewContract;
+   if (contract.version !== 1 || contract.scope !== "controlled-native-loop-preview")
+     throw new Error("Invalid native loop preview");
++  if (contract.cover_visibility !== undefined) {
++    validateSourceCoverVisibility(contract.cover_visibility);
++    if (!contract.physical) throw new Error("Cover visibility requires a physical loop");
++  }
+   validateNativeStatePresentation(contract.native);
+   const focus = contract.native.elements.find((e) => e.id === contract.focus_element_id);
+   if (
+--- /dev/null
++++ b/level-editor/shared/src/source-cover-visibility.ts
+@@ -0,0 +1,77 @@
++import type { Level3D, GameTransform } from "./level3d.ts";
++/** Appearance authority is the existing placed roof control, not another patch cursor. */
++export interface SourceCoverVisibility {
++  native_element_id: string;
++  physical_target_id: string;
++  source: { kind: "map-patch"; index: number; sha256: string };
++  visible_when: "applied";
++  placement: {
++    group_id: string;
++    transform: GameTransform;
++    asset_id: string;
++    appearance_id: string;
++    patch_id: string;
++    model_sha256: string;
++    descriptor_sha256: string;
++  };
++}
++export function validateSourceCoverVisibility(
++  rows: unknown,
++): asserts rows is SourceCoverVisibility[] {
++  if (!Array.isArray(rows)) throw new Error("Invalid source cover visibility list");
++  const ids = new Set<string>();
++  const hash = (v: unknown) => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
++  for (const r of rows) {
++    if (
++      !r ||
++      !r.source ||
++      r.source.kind !== "map-patch" ||
++      !Number.isSafeInteger(r.source.index) ||
++      r.source.index < 0 ||
++      !hash(r.source.sha256) ||
++      r.visible_when !== "applied" ||
++      !r.placement ||
++      ![
++        r.native_element_id,
++        r.physical_target_id,
++        r.placement.group_id,
++        r.placement.asset_id,
++        r.placement.appearance_id,
++        r.placement.patch_id,
++      ].every((v) => typeof v === "string" && v.length > 0) ||
++      !r.placement.transform ||
++      !["dx", "dy", "dz", "rot_deg"].every((k) => Number.isFinite(r.placement.transform[k])) ||
++      !hash(r.placement.model_sha256) ||
++      !hash(r.placement.descriptor_sha256) ||
++      r.placement.patch_id !== `patch-${String(r.source.index).padStart(3, "0")}` ||
++      ids.has(r.native_element_id) ||
++      ids.has("physical:" + r.physical_target_id)
++    )
++      throw new Error("Invalid or duplicate source cover visibility");
++    ids.add(r.native_element_id);
++    ids.add("physical:" + r.physical_target_id);
++  }
++}
++export function verifySourceCoverPlacements(
++  rows: readonly Pick<SourceCoverVisibility, "placement">[],
++  document: Level3D,
++) {
++  for (const r of rows) {
++    const group = document.groups.find((g) => g.id === r.placement.group_id);
++    const asset = document.assetSources?.find((a) => a.id === r.placement.asset_id);
++    if (
++      !group ||
++      ["dx", "dy", "dz", "rot_deg"].some(
++        (k) =>
++          group.transform[k as keyof GameTransform] !==
++          r.placement.transform[k as keyof GameTransform],
++      ) ||
++      group.patches?.[r.placement.asset_id]?.[r.placement.appearance_id] !== r.placement.patch_id ||
++      !asset ||
++      asset.model_sha256 !== r.placement.model_sha256 ||
++      asset.descriptor_sha256 !== r.placement.descriptor_sha256 ||
++      !document.objects.some((o) => o.group === group.id && o.node.split(":")[1] === asset.id)
++    )
++      throw new Error("Source cover placement differs from the displayed roof");
++  }
++}
+--- /dev/null
++++ b/level-editor/app/src/source-cover-visibility.test.ts
+@@ -0,0 +1,217 @@
++import test from "node:test";
++import assert from "node:assert/strict";
++import { readFile } from "node:fs/promises";
++import { resolve } from "node:path";
++import * as THREE from "three";
++import { SourceContractClockBinding } from "./source-contract-clock-binding.ts";
++import { NativeStatePresentation } from "./native-state-presentation.ts";
++import { PatchDisplay } from "./patch-display.ts";
++import {
++  validateSourceCoverVisibility,
++  verifySourceCoverPlacements,
++} from "../../shared/src/source-cover-visibility.ts";
++import { missionStateDataHash } from "./mission-state-layer.ts";
++const root = resolve(process.env.REVIEW_REPO_ROOT ?? process.cwd());
++const stage = resolve(
++  root,
++  "level-editor/work/york-refinement/restart2/restart69-hall-approved-delivery-v1",
++);
++const read = async (p: string) => JSON.parse(await readFile(p, "utf8"));
++async function fixture() {
++  const c = await read(stage + "/contract.json"),
++    data = await read(stage + "/library/mission-states/york/source/S05_Yrk_EC.rhm.json"),
++    level = await read(stage + "/library/mission-states/york/source/york.rhp.json");
++  const stored = await read(root + "/level-editor/library/scenes/york.rhlos-map.json"),
++    asset = stored.assetSources.find((a: any) => a.id === "york-castle-great-hall"),
++    group = stored.placements.find((p: any) => p.id === asset.id);
++  const cover = {
++    native_element_id: "animation-000",
++    physical_target_id: "hall000-flames-reflections",
++    source: {
++      kind: "map-patch" as const,
++      index: 2,
++      sha256: await missionStateDataHash(level.patches[2]),
++    },
++    visible_when: "applied" as const,
++    placement: {
++      group_id: group.id,
++      transform: group.transform,
++      asset_id: asset.id,
++      appearance_id: "appearance-2",
++      patch_id: group.patches[asset.id]["appearance-2"],
++      model_sha256: asset.model_sha256,
++      descriptor_sha256: asset.descriptor_sha256,
++    },
++  };
++  const document = {
++    groups: [group],
++    assetSources: [asset],
++    objects: [{ group: group.id, node: "asset:" + asset.id + ":building-793" }],
++  } as any;
++  const source = {
++    name: c.native.mission,
++    data,
++    level,
++    camera: { kind: "oblique-orthographic" as const, elevation_deg: 35 },
++  };
++  return { c, source, cover, document };
++}
++test("actual hall appearance binding controls effect and overlay without resetting source time", async () => {
++  const { c, source, cover, document } = await fixture();
++  verifySourceCoverPlacements([cover], document);
++  validateSourceCoverVisibility([cover]);
++  const clocks = new SourceContractClockBinding();
++  await clocks.set(c.native, c.physical, source, [cover]);
++  const samples: any[] = [];
++  clocks.attachPhysical(
++    cover.physical_target_id,
++    {
++      internallyPlaying: () => false,
++      sampleExternalTick: (tick, visible) => samples.push({ tick, visible }),
++    },
++    clocks.physicalToken(cover.physical_target_id),
++  );
++  const art = new NativeStatePresentation();
++  await art.set(
++    c.native,
++    source,
++    async (path) => new Uint8Array(await readFile(stage + "/library/" + path.path)),
++  );
++  const display = new PatchDisplay(),
++    roof = new THREE.Object3D();
++  roof.userData.reveal_hide_when_applied = ["patch-002"];
++  const root = new THREE.Group();
++  root.add(roof);
++  const sync = () => {
++    display.apply(root);
++    clocks.setCoverRevealed("patch-002", display.isRevealed("patch-002"));
++    art.sampleExternalClocks(clocks.snapshot(), "animation-000");
++  };
++  clocks.setPhysicalPlaying(cover.physical_target_id, true);
++  clocks.advance(1, 0.24);
++  sync();
++  assert.equal(roof.visible, true);
++  assert.deepEqual(samples.at(-1), { tick: 6, visible: false });
++  assert.equal(art.loopDrawSnapshot().draws.length, 0);
++  const hidden = art.pixels().data.slice();
++  display.set("patch-002", true);
++  sync();
++  assert.equal(roof.visible, false);
++  assert.deepEqual(samples.at(-1), { tick: 6, visible: true });
++  assert.equal(art.loopDrawSnapshot().draws.length, 1);
++  assert.notDeepEqual(art.pixels().data, hidden);
++  clocks.advance(2, 0.12);
++  display.set("patch-002", false);
++  sync();
++  assert.equal(roof.visible, true);
++  assert.deepEqual(samples.at(-1), { tick: 9, visible: false });
++  assert.equal(clocks.snapshot().find((r) => r.id === "animation-000")!.active, true);
++  assert.equal(clocks.snapshot().find((r) => r.id === "animation-000")!.playing, true);
++  assert.equal(art.loopDrawSnapshot().draws.length, 0);
++  display.set("patch-001", true);
++  sync();
++  assert.equal(samples.at(-1).visible, false);
++  clocks.advance(3, 0.12);
++  display.set("patch-002", true);
++  sync();
++  assert.deepEqual(samples.at(-1), { tick: 12, visible: true });
++  const token = clocks.physicalToken(cover.physical_target_id);
++  clocks.clear();
++  assert.equal(clocks.resourceIsCurrent(token), false);
++  assert.throws(() => clocks.setCoverRevealed("patch-002", true), /retired/);
++  assert.equal(clocks.coverPatchIds().length, 0);
++  art.clear();
++  clocks.dispose();
++  art.dispose();
++  assert.throws(() => clocks.setCoverRevealed("patch-002", true), /retired/);
++});
++test("source, appearance placement and lifetime reject mismatch rather than showing through a roof", async () => {
++  const { c, source, cover, document } = await fixture();
++  const clocks = new SourceContractClockBinding();
++  const wrong = structuredClone(cover);
++  wrong.source.sha256 = "0".repeat(64);
++  await assert.rejects(clocks.set(c.native, c.physical, source, [wrong]), /patch or loop/);
++  assert.equal(clocks.ready, false);
++  const absent = structuredClone(cover);
++  absent.source.index = 999;
++  absent.placement.patch_id = "patch-999";
++  await assert.rejects(clocks.set(c.native, c.physical, source, [absent]), /patch or loop/);
++  const remapped = structuredClone(document);
++  remapped.groups[0].patches[cover.placement.asset_id]["appearance-2"] = "patch-001";
++  assert.throws(() => verifySourceCoverPlacements([cover], remapped), /displayed roof/);
++  const replaced = structuredClone(document);
++  replaced.assetSources[0].model_sha256 = "0".repeat(64);
++  assert.throws(() => verifySourceCoverPlacements([cover], replaced), /displayed roof/);
++  await clocks.set(c.native, c.physical, source, [cover]);
++  clocks.setCoverRevealed("patch-002", true);
++  await clocks.set(c.native, c.physical, source, [cover]);
++  assert.equal(clocks.snapshot().find((r) => r.id === "animation-000")!.visible, false);
++  clocks.dispose();
++});
++
++test("four exact source cover backgrounds follow real appearance bits, reset without resetting loop", async () => {
++  const { source, document } = await fixture();
++  const privateStage = resolve(
++    root,
++    "level-editor/work/york-refinement/restart2/restart70-hall-visibility-private-v1",
++  );
++  const c = await read(privateStage + "/contract.proposed.json");
++  const reader = async (r: any) => {
++    try {
++      return new Uint8Array(await readFile(privateStage + "/library/" + r.path));
++    } catch {
++      return new Uint8Array(await readFile(stage + "/library/" + r.path));
++    }
++  };
++  const { decodeNativeResource, compositeNativePixels } =
++    await import("./native-state-presentation.ts");
++  const clocks = new SourceContractClockBinding(),
++    art = new NativeStatePresentation(),
++    display = new PatchDisplay();
++  await clocks.set(c.native, c.physical, source, c.cover_visibility);
++  await art.set(c.native, source, reader);
++  verifySourceCoverPlacements(art.coverArtworkBindings(), document);
++  clocks.setPhysicalPlaying("hall000-flames-reflections", true);
++  const backgrounds = [];
++  for (const [a, b] of [
++    [false, false],
++    [true, false],
++    [false, true],
++    [true, true],
++    [false, false],
++  ]) {
++    clocks.advance(backgrounds.length + 1, 0.12);
++    display.set("patch-001", a!);
++    display.set("patch-002", b!);
++    clocks.setCoverRevealed("patch-002", display.isRevealed("patch-002"));
++    for (const binding of art.coverArtworkBindings())
++      art.setCoverArtworkState(
++        binding.placement.patch_id,
++        display.isRevealed(binding.placement.patch_id),
++      );
++    art.sampleExternalClocks(clocks.snapshot(), "animation-000");
++    const snapshot = art.loopDrawSnapshot(),
++      variant = c.native.cover_artwork.variants.find(
++        (v: any) => v.applied.includes("patch-001") === a && v.applied.includes("patch-002") === b,
++      );
++    const expected = await decodeNativeResource(variant.image, reader);
++    assert.deepEqual(snapshot.background, expected);
++    backgrounds.push(expected.data.slice());
++    for (const draw of snapshot.draws)
++      compositeNativePixels(expected, draw.pixels, draw.x, draw.y, draw.shadow);
++    assert.deepEqual(art.pixels(), expected);
++    assert.equal(snapshot.draws.length, b ? 1 : 0);
++    assert.equal(art.tick, backgrounds.length * 3);
++    assert.equal(art.isPlaying, true);
++  }
++  assert.deepEqual(backgrounds[0], backgrounds[4]);
++  assert.notDeepEqual(backgrounds[0], backgrounds[1]);
++  assert.notDeepEqual(backgrounds[0], backgrounds[2]);
++  const bad = structuredClone(c.native);
++  bad.cover_artwork.bindings[0].source.sha256 = "0".repeat(64);
++  await assert.rejects(art.set(bad, source, reader), /cover artwork source changed/);
++  assert.equal(art.ready, false);
++  clocks.dispose();
++  art.dispose();
++  assert.throws(() => art.setCoverArtworkState("patch-002", true), /Unknown/);
++});
