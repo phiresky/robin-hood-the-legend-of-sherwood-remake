@@ -27,6 +27,7 @@ pub(super) enum LegacyBlockedBoxValidity {
 pub(super) struct LegacyStoppableMotionOrder {
     pub(super) id: u32,
     pub(super) stop_animation: u32,
+    pub(super) playing_source_animation: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -303,6 +304,7 @@ pub(super) fn original_stoppable_current_motion_order(
     Some(LegacyStoppableMotionOrder {
         id,
         stop_animation: stop_animation as u32,
+        playing_source_animation: actor.animation == action as u32,
     })
 }
 
@@ -339,7 +341,8 @@ pub(super) fn original_reset_blocked_box_this_frame(
     let hidden_stop_movement_rewrite = prior_stoppable_motion_order
         .zip(prior_last_processed_order_id)
         .is_some_and(|(stoppable_order, prior_last_processed_order_id)| {
-            stoppable_order.id == prior_last_processed_order_id
+            (stoppable_order.id == prior_last_processed_order_id
+                || (stoppable_order.playing_source_animation && sprite_frame_count == 0))
                 && actor.animation == stoppable_order.stop_animation
         })
         && sequence.movement.is_none()
@@ -350,6 +353,10 @@ pub(super) fn original_reset_blocked_box_this_frame(
     // transition installed by the replacement sequence. Its first action
     // update retains the 0xFFFF frame-count sentinel; motion initialization
     // advances it before returning. Only the latter resets collision history.
+    // A resumed movement can still expose an older pending order ID at the
+    // preceding snapshot. Its running animation followed by a new stop animation
+    // at counter zero proves the same motion initialization: an action-only
+    // animation change would leave the counter at 0xFFFF.
     if hidden_stop_movement_rewrite && sprite_frame_count != u16::MAX {
         return true;
     }

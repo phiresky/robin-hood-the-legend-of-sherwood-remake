@@ -595,6 +595,9 @@ fn synchronous_look_there_refreshes_only_at_the_receivers_creation_slot() {
             soldier.npc.life_points = 100;
             soldier.element.set_direction_instantly(4);
             soldier.npc.direction_old = 4;
+            // Exercise an established gaze; fresh actors have not initialized
+            // their direction vector until their first view refresh.
+            soldier.npc.view_direction = [1.0, 0.0];
         }
         {
             let receiver = engine.ai_ctrl_mut(receiver_id);

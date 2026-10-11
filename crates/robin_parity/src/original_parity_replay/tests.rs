@@ -487,6 +487,7 @@ fn legacy_blocked_box_reset_recognizes_hidden_stop_movement_rewrite() {
     );
     let prior_walking = LegacyStoppableMotionOrder {
         id: 20,
+        playing_source_animation: true,
         stop_animation: robin_engine::order::OrderType::TransitionWalkingUprightWaitingUpright
             as u32,
     };
@@ -494,7 +495,8 @@ fn legacy_blocked_box_reset_recognizes_hidden_stop_movement_rewrite() {
     for (last_processed, moved, prior_last_processed, frame_count, expected) in [
         (25, false, 20, 0, true),
         (25, false, 20, u16::MAX, false),
-        (25, false, 19, 0, false),
+        (25, false, 19, 0, true),
+        (25, false, 19, u16::MAX, false),
         (30, false, 20, 0, false),
         (25, true, 20, 0, false),
     ] {
@@ -538,6 +540,7 @@ fn legacy_blocked_box_reset_recognizes_hidden_stop_movement_rewrite() {
             Some(LegacyStoppableMotionOrder {
                 id: 20,
                 stop_animation: stop_animation as u32,
+                playing_source_animation: true,
             }),
         );
     }

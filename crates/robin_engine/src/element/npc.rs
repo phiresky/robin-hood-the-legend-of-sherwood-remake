@@ -390,7 +390,7 @@ impl Default for AiActorData {
             real_half_aperture: crate::ai_vision::NORMAL_HALF_APERTURE,
             view_angle: 0.0,
             view_angle_step: crate::ai_vision::NORMAL_ANGLE_STEP,
-            view_transition: false,
+            view_transition: true,
             view_half_angle_range: crate::ai_vision::NORMAL_HALF_ANGLE_RANGE,
             view_angle_iterator: 0.0,
             view_angle_iterator_step: crate::ai_vision::NORMAL_ANGLE_ITERATOR_STEP,
@@ -410,9 +410,12 @@ impl Default for AiActorData {
             view_crazy_angle_iterator_step: crate::parameters_ai::CRAZY_TREMBLE_ITERATOR_STEP,
             view_crazy_color_iterator: 0,
             view_crazy_half_angle_range: crate::parameters_ai::CRAZY_TREMBLE_RANGE,
-            view_direction: [1.0, 0.0],
-            view_left_side: [1.0, 0.0],
-            view_right_side: [1.0, 0.0],
+            // The first view refresh initializes these vectors. A noise can
+            // trigger Stare before that refresh, so even a unit-vector default
+            // changes the initial rotation and which enemies are detected.
+            view_direction: [0.0, 0.0],
+            view_left_side: [0.0, 0.0],
+            view_right_side: [0.0, 0.0],
             view_lean_out: false,
             drunken_cone_iterators: [0.0; 4],
             view_radius_reduction_permil: 1000,

@@ -3066,6 +3066,33 @@ mod tests {
     }
 
     #[test]
+    fn noise_before_first_view_refresh_uses_zeroed_direction() {
+        let mut entity = crate::engine::test_support::actors::make_test_ai_soldier(
+            crate::element::Camp::Lacklandists,
+        );
+        entity.element_data_mut().set_direction_instantly(9);
+        entity
+            .element_data_mut()
+            .set_position(crate::coordinates::WorldPoint3D::new(695.0, 2073.0, 0.0));
+        let npc = entity.ai_actor_data_mut().unwrap();
+        npc.direction_old = 9;
+        focus_point(npc, GroundPoint::new(1015.0, 2310.001));
+        refresh_view(
+            &mut entity,
+            None,
+            None,
+            &crate::player_profile::DifficultyLevel::Medium.rules(),
+            |_| false,
+        );
+        let npc = entity.ai_actor_data().unwrap();
+        assert_eq!(npc.view_angle, -NORMAL_ANGLE_STEP);
+        let (x, y) = sector_to_forward(9);
+        let (x, y) = rotate_unit(x, y, -NORMAL_ANGLE_STEP);
+        assert_eq!(npc.view_direction, [x, y]);
+        assert_eq!(npc.eye_status, EyeStatus::Stare);
+    }
+
+    #[test]
     fn focus_point_enters_stare_state() {
         // `focus_point` sets eye status to Stare and the view cone
         // rotates toward the stored stare point.
