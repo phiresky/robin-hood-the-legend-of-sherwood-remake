@@ -85,38 +85,65 @@ impl MaterialSector {
         })
     }
 
-    /// Closed polygon membership, including exact edges and vertices.
-    /// Sound-line crossings can end precisely on a sector boundary; that
-    /// endpoint still belongs to the material sector.
+    /// Material membership preserves the convex ray-test's early rejection.
+    /// In particular, its second crossing is rejected before testing whether
+    /// that edge contains the point. Reordering those checks changes footsteps
+    /// at authored waypoints exactly on a boundary.
     pub fn contains(&self, p: MapPoint) -> bool {
-        if self.points.len() < 3 {
-            return false;
-        }
-        if !self.bounding_box.contains_point(p) {
-            return false;
-        }
-        let mut inside = false;
         let n = self.points.len();
-        let mut j = n - 1;
+        if n < 3 || !self.bounding_box.contains_point(p) {
+            return false;
+        }
+        let mut left_bends = false;
+        let mut right_bends = false;
         for i in 0..n {
-            let vi = self.points[i];
-            let vj = self.points[j];
-            let left = (p.y - vj.y) * (vi.x - vj.x);
-            let right = (p.x - vj.x) * (vi.y - vj.y);
-            if left == right
-                && p.x >= vi.x.min(vj.x)
-                && p.x <= vi.x.max(vj.x)
-                && p.y >= vi.y.min(vj.y)
-                && p.y <= vi.y.max(vj.y)
-            {
+            let a = self.points[(i + n - 2) % n];
+            let b = self.points[(i + n - 1) % n];
+            let c = self.points[i];
+            let det = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+            left_bends |= det < 0.0;
+            right_bends |= det > 0.0;
+        }
+        let convex = !(left_bends && right_bends);
+        let mut inside = false;
+        let mut a = self.points[n - 1];
+        for &b in &self.points {
+            let left = (p.y - a.y) * (b.x - a.x);
+            let right = (p.x - a.x) * (b.y - a.y);
+            let a_right = a.x >= p.x;
+            let b_right = b.x >= p.x;
+            let crosses = (a.y > p.y) != (b.y > p.y)
+                && if b.y == p.y {
+                    b_right
+                } else if a.y == p.y {
+                    a_right
+                } else {
+                    (a_right && b_right)
+                        || ((a_right || b_right)
+                            && if b.y > a.y {
+                                left >= right
+                            } else {
+                                left <= right
+                            })
+                };
+            if crosses {
+                if convex && inside {
+                    return false;
+                }
+                inside = !inside;
+            }
+            if b.y == p.y && b.x == p.x {
                 return true;
             }
-            if (vi.y > p.y) != (vj.y > p.y) {
-                if (vi.y > vj.y && left > right) || (vi.y < vj.y && left < right) {
-                    inside = !inside;
+            if a.y == p.y && b.y == p.y && p.x >= a.x.min(b.x) && p.x <= a.x.max(b.x) {
+                return true;
+            }
+            if (a.y < p.y && b.y > p.y) || (a.y > p.y && b.y < p.y) {
+                if (a.x == p.x && b.x == p.x) || (a_right != b_right && left == right) {
+                    return true;
                 }
             }
-            j = i;
+            a = b;
         }
         inside
     }
@@ -378,26 +405,40 @@ mod tests {
     }
 
     #[test]
-    fn material_sector_includes_edges_and_vertices_in_both_windings() {
-        let mut sector = MaterialSector::from_raw(&square(3, 0, 10), GameMaterial::Ground).unwrap();
-        for _ in 0..2 {
-            for point in [
-                (0.0, 0.0),
-                (10.0, 10.0),
-                (5.0, 0.0),
-                (10.0, 5.0),
-                (0.0, 5.0),
-                (5.0, 10.0),
-                (5.0, 5.0),
-            ] {
-                assert!(
-                    sector.contains(MapPoint::new(point.0, point.1)),
-                    "{point:?}"
-                );
-            }
-            assert!(!sector.contains(MapPoint::new(10.001, 5.0)));
-            sector.points.reverse();
+    fn material_sector_keeps_boundary_checks_after_convex_early_exit() {
+        let sector = MaterialSector::from_raw(&square(3, 0, 10), GameMaterial::Ground).unwrap();
+        for point in [
+            (0.0, 0.0),
+            (10.0, 10.0),
+            (5.0, 0.0),
+            (10.0, 5.0),
+            (0.0, 5.0),
+            (5.0, 10.0),
+            (5.0, 5.0),
+        ] {
+            assert!(
+                sector.contains(MapPoint::new(point.0, point.1)),
+                "{point:?}"
+            );
         }
+        assert!(!sector.contains(MapPoint::new(10.001, 5.0)));
+        let raw = RawMaterialSector {
+            material: 1,
+            polygon: SectorPolygon {
+                points: vec![(1647, 1078), (1591, 1022), (1778, 975), (1826, 1014)],
+            },
+        };
+        let mut sector = MaterialSector::from_raw(&raw, GameMaterial::Ground).unwrap();
+        let edge = MapPoint::new(1620.0, 1051.0);
+        assert!(
+            !sector.contains(edge),
+            "second convex crossing precedes edge equality"
+        );
+        sector.points.rotate_left(1);
+        assert!(
+            sector.contains(edge),
+            "the same edge is admitted when visited first"
+        );
     }
 
     #[test]

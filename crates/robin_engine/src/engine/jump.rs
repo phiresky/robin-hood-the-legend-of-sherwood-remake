@@ -1183,9 +1183,12 @@ impl EngineInner {
             projection_point,
             "jump landing",
         );
-        self.expect_entity_mut(entity_id, "jump landing depth")
-            .sprite_mut()
-            .compute_display_depth();
+        let entity = self.expect_entity_mut(entity_id, "jump landing projections");
+        // Landing changes the receiving plane after the airborne step already
+        // calculated its projections. Publish the snapped landing projections
+        // again before the next order observes the position cache.
+        publish_jump_position_projections(entity);
+        entity.sprite_mut().compute_display_depth();
     }
 }
 
@@ -1396,7 +1399,7 @@ pub(crate) fn perform_jump_ground_motion(
         let mut lifted = pi.get_position();
         lifted.z += TELEPORT_JUMPING_UP;
         pi.set_position(lifted);
-        entity.element_data_mut().update_grid_cell();
+        publish_jump_position_projections(entity);
         entity.sprite_mut().compute_display_depth();
     }
 
@@ -1426,7 +1429,7 @@ pub(crate) fn apply_jump_down_takeoff_drop(
     let mut dropped = pi.get_position();
     dropped.z -= TELEPORT_JUMPING_DOWN;
     pi.set_position(dropped);
-    entity.element_data_mut().update_grid_cell();
+    publish_jump_position_projections(entity);
 }
 
 fn jump_step_turns(anim: OrderType) -> bool {
@@ -1539,6 +1542,14 @@ fn advance_airborne_flight(entity: &mut crate::element::Entity) {
         y: pos.y + increment.y,
         z: pos.z + increment.z,
     });
+    publish_jump_position_projections(entity);
+    entity
+        .actor_data_mut()
+        .expect("airborne order requires an actor")
+        .wait_time -= 1;
+}
+
+fn publish_jump_position_projections(entity: &mut crate::element::Entity) {
     let map = entity.element_data().position_map();
     let center = entity.element_data().sprite.center;
     entity
@@ -1548,10 +1559,6 @@ fn advance_airborne_flight(entity: &mut crate::element::Entity) {
             (map.y - center.y).floor(),
         ));
     entity.element_data_mut().update_grid_cell();
-    entity
-        .actor_data_mut()
-        .expect("airborne order requires an actor")
-        .wait_time -= 1;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1849,6 +1856,35 @@ mod tests {
             }
         }
         results
+    }
+
+    #[test]
+    fn landing_republishes_snapped_position_projections() {
+        use crate::engine::test_support::actors::TestActor;
+        let mut engine = EngineInner::new();
+        let (grid, _) = make_jumpable_fixture(false);
+        *engine.world.fast_grid_mut() = grid;
+        let owner = engine.add_test_entity(
+            TestActor::pc(Posture::Flying)
+                .map_position(MapPoint::new(32.25, 40.75))
+                .sector(10)
+                .build(),
+        );
+        engine.finalize_airborne_jump_landing(
+            &LevelAssets::new(),
+            owner,
+            0,
+            Some(11),
+            MapPoint::new(32.25, 40.75),
+        );
+        let entity = engine.get_entity(owner).unwrap();
+        let pi = entity.position_iface();
+        assert_eq!(pi.v48_serialized_state().computed_position.bits(), 7);
+        let center = entity.sprite().center;
+        assert_eq!(
+            pi.cached_sprite_position().unwrap(),
+            MapPoint::new((32.25 - center.x).floor(), (40.75 - center.y).floor()),
+        );
     }
 
     #[test]
