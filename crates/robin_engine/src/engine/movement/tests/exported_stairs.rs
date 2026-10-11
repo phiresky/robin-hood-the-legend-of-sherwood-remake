@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn exported_initially_closed_posture_connections_open_independently() {
+    let (mut engine, assets) = compiled_walkway(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-closed-posture.level.json"
+    )));
+    assert_eq!(engine.script_domains.interactables.doors.len(), 2);
+    assert_eq!(assets.navigation.passage_states.len(), 2);
+    assert!(
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .iter()
+            .all(|door| door.passage_blocked)
+    );
+    let sim = crate::sim_rng::test_context();
+    for changed in [0, 1] {
+        let patch = crate::patch::PatchIndex::new(changed).unwrap();
+        engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+        for (index, door) in engine.script_domains.interactables.doors.iter().enumerate() {
+            assert_eq!(door.passage_blocked, index != changed as usize);
+            assert!(door.active);
+        }
+        engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+        assert!(
+            engine
+                .script_domains
+                .interactables
+                .doors
+                .iter()
+                .all(|door| door.passage_blocked)
+        );
+    }
+}
+
+#[test]
 fn exported_interior_passage_states_preserve_other_entrances_and_copies() {
     let (mut engine, assets) = compiled_walkway(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),

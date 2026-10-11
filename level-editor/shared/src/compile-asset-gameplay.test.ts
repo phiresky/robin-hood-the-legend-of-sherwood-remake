@@ -10,6 +10,7 @@ import {
   assetCompilerFixture,
   forcedCrouchCompilerFixture,
   joinedPostureCompilerFixture,
+  closedPostureCompilerFixture,
   maskAssetCompilerFixture,
   anchoredReceiverCompilerFixture,
   slopedAssetCompilerFixture,
@@ -117,6 +118,35 @@ test("matching upright and crouched floor sockets emit an ordinary passage", () 
       .map((a) => a.flags)
       .sort((a, b) => a - b),
     [0, 1],
+  );
+});
+
+test("posture socket connections survive an initially closed asset barrier", () => {
+  for (const rotation of [0, 37, 90, 180]) {
+    const { document, assets } = closedPostureCompilerFixture();
+    document.groups.forEach((group) => {
+      group.transform = {
+        dx: group.id.startsWith("copy/") ? 1600 : 900,
+        dy: 900,
+        dz: 0,
+        rot_deg: rotation,
+      };
+    });
+    document.size = [3000, 2000];
+    const compiled = compileAssetGameplay(document, assets, [0, 0, 3000, 2000]);
+    assert.equal(compiled.doors.length, 2, `both closed seams must be retained at ${rotation}`);
+  }
+});
+
+test("an unavailable posture switch retains solid closure instead of opening its seam", () => {
+  const { document, assets, hut } = closedPostureCompilerFixture();
+  hut.gameplay!.movementTransitions![0]!.waypoint = [2000, 2000, 40];
+  const compiled = compileAssetGameplay(document, assets, [0, 0, 2000, 2000], { bestEffort: true });
+  assert.equal(compiled.doors.length, 0);
+  assert.ok(
+    compiled.warnings!.some((warning) =>
+      warning.includes("retained its initial movement barriers"),
+    ),
   );
 });
 

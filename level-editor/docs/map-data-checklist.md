@@ -434,7 +434,19 @@ script activation or lock settings. Compiler/export tests pin editable ZIP
 descriptors to native fixtures. Native loading and authorization tests verify
 permanent blocking, independent copied patch controls, reopening, and preservation
 of explicit deactivation. These checks do not yet certify interruption/resumption
-of ordinary animated crossings or initially closed generated socket placement.
+of ordinary animated crossings.
+Initially closed generated posture sockets now retain their connections:
+permanent collision is checked before binding, while temporary obstacle coverage
+is represented by exported passage-state requirements. Previously, binding
+against the initial obstacle state discarded a connection needed after opening.
+Compiler checks cover independent copies at four rotations, and the ZIP
+descriptor matches `asset-closed-posture.level.json`. Native checks verify both
+connections start blocked, opening/resetting one control affects only its copy,
+and all four directed full-character player routes complete after opening with
+the correct posture, height and sector. If the control is unavailable,
+best-effort compilation retains its initial solid barrier and omits the passage.
+Rotated native traversal and closure during these posture-changing crossings
+remain open.
 Virtual-room entrances now prepare their outdoor leg against the outdoor area's
 state word and retained permanent cuts; the virtual interior has no motion-area
 state word. Compiler and ZIP checks cover permanent blocking and warning output,

@@ -1564,6 +1564,47 @@ export function joinedNavigationCompilerFixture() {
   return fixture;
 }
 
+export function closedPostureCompilerFixture() {
+  const fixture = joinedPostureCompilerFixture();
+  const transition = structuredClone(
+    movementTransitionCompilerFixture().hut.gameplay!.movementTransitions![0]!,
+  );
+  transition.waypoint = [20, 20, 40];
+  transition.initial = [
+    {
+      id: "closed-seam",
+      node: "building-999",
+      height: 40,
+      polygon: [
+        [90, 0],
+        [110, 0],
+        [110, 100],
+        [90, 100],
+      ],
+    },
+  ];
+  transition.applied = [];
+  fixture.hut.gameplay!.movementTransitions = [transition];
+  const groups = structuredClone(fixture.document.groups);
+  const objects = structuredClone(fixture.document.objects.filter((object) => object.group));
+  fixture.document.groups.push(
+    ...groups.map((group) => ({
+      ...group,
+      id: `copy/${group.id}`,
+      transform: { ...group.transform, dx: group.transform.dx + 700 },
+    })),
+  );
+  fixture.document.objects.push(
+    ...objects.map((object) => ({
+      ...object,
+      id: `copy/${object.id}`,
+      group: `copy/${object.group}`,
+    })),
+  );
+  fixture.document.map = "Initially closed posture connections";
+  return fixture;
+}
+
 export function joinedPostureCompilerFixture() {
   const fixture = joinedNavigationCompilerFixture();
   for (const [asset, x] of [

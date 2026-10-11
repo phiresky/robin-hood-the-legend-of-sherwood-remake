@@ -14,6 +14,7 @@ import {
 } from "./map-bake-render.ts";
 import {
   assetCompilerFixture,
+  closedPostureCompilerFixture,
   ordinaryPassageBarrierCompilerFixture,
   interiorPassageBarrierCompilerFixture,
   rotatedSceneryCompilerFixture,
@@ -70,6 +71,36 @@ import {
   doorAnchorCompilerFixture,
 } from "../../shared/test-fixtures/asset-gameplay.ts";
 import { readFile } from "node:fs/promises";
+
+test("initially closed posture connections export independent opening conditions", async () => {
+  const { document, assets } = closedPostureCompilerFixture();
+  const compiled = compileMap(document, [0, 0, 2000, 2000], assets);
+  assert.equal(compiled.descriptor.asset_geometry!.doors.length, 2);
+  for (const door of compiled.descriptor.asset_geometry!.doors) {
+    assert.ok(door.passage_states!.length > 0);
+    assert.ok(door.passage_states!.every((requirement) => requirement.allowed_states.includes(2)));
+  }
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-closed-posture.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled.descriptor, expected);
+  const files = unzipSync(
+    await packageCompiledMap(compiled, {
+      color: new Uint8Array(2000 * 2000 * 4),
+      depth: new Uint16Array(2000 * 2000),
+    }),
+  );
+  assert.deepEqual(
+    JSON.parse(strFromU8(files[`Data/Levels/${compiled.name}.level.json`]!)),
+    expected,
+  );
+});
 
 test("interior passage states affect only their own outdoor entrance", async () => {
   const { document, assets, hut } = interiorPassageBarrierCompilerFixture();

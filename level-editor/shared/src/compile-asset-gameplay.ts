@@ -455,6 +455,8 @@ function compileAssetGameplayAttempt(
   let lifts: PlacedLiftSegment[] = [];
   const placedInteriors: PlacedInterior[] = [];
   const doors: {
+    /** Generated approaches already checked against permanent collision. */
+    allowChangingObstacleAnchors?: true;
     name: string;
     lift?: string;
     interior?: string;
@@ -2639,7 +2641,7 @@ function compileAssetGameplayAttempt(
       door.outsideAnchor,
       label,
       lift,
-      false,
+      door.allowChangingObstacleAnchors === true,
       doorProjection(door, door.outsideAnchor),
     );
   };
@@ -2649,7 +2651,13 @@ function compileAssetGameplayAttempt(
       door.inside = resolveReceivingSegment(door.insideReceiverSegment, door.inside, label);
       door.insideAnchor = door.inside;
     }
-    return resolve(door.insideAnchor, label, lift, false, doorProjection(door, door.insideAnchor));
+    return resolve(
+      door.insideAnchor,
+      label,
+      lift,
+      door.allowChangingObstacleAnchors === true,
+      doorProjection(door, door.insideAnchor),
+    );
   };
   const motionBySector = new Map<number, (typeof layers)[number][number]>();
   let motionSector = 0;
@@ -2719,8 +2727,8 @@ function compileAssetGameplayAttempt(
           const middle = world(candidate.middle, source);
           try {
             if (
-              resolve(outside, "Posture passage outside", null).sector !== source.sector ||
-              resolve(insidePoint, "Posture passage inside", null).sector !== target.sector
+              resolve(outside, "Posture passage outside", null, true).sector !== source.sector ||
+              resolve(insidePoint, "Posture passage inside", null, true).sector !== target.sector
             )
               continue;
           } catch (error) {
@@ -2730,6 +2738,7 @@ function compileAssetGameplayAttempt(
           const name = `navigation-posture/${connection.from.region}/${connection.to.region}/${emitted++}`;
           doors.push({
             name,
+            allowChangingObstacleAnchors: true,
             outside,
             inside: insidePoint,
             outsideAnchor: outside,
@@ -2869,7 +2878,10 @@ function compileAssetGameplayAttempt(
       for (const [area, endpoint, anchor] of door.interior ? legs.slice(0, 1) : legs) {
         const receiving = areas.find(
           (candidate) =>
-            candidate.sector === area.sector && containsNavigationAnchor(candidate, anchor),
+            candidate.sector === area.sector &&
+            containsNavigationAnchor(candidate, anchor, {
+              allowBlocked: door.allowChangingObstacleAnchors === true,
+            }),
         );
         if (receiving && !passageCheck(receiving.plane)(door.middle, project(endpoint)).length) {
           const entry = motionBySector.get(area.sector)!;

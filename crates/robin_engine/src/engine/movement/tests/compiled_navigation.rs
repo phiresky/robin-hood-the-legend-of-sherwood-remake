@@ -108,6 +108,32 @@ fn exported_posture_passage_zips_support_native_player_routes() {
 }
 
 fn audit_posture_passages(bytes: &[u8], height: f32, expected_doors: usize) -> usize {
+    audit_posture_passages_with_controls(bytes, height, expected_doors, false)
+}
+
+#[test]
+#[ignore = "requires ROBIN_CLIMB_RHS"]
+fn initially_closed_posture_connections_support_player_routes_after_opening() {
+    assert_eq!(
+        audit_posture_passages_with_controls(
+            include_bytes!(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/fixtures/asset-closed-posture.level.json"
+            )),
+            40.,
+            2,
+            true
+        ),
+        4
+    );
+}
+
+fn audit_posture_passages_with_controls(
+    bytes: &[u8],
+    height: f32,
+    expected_doors: usize,
+    open_controls: bool,
+) -> usize {
     let sprite = exported_stairs::complete_climb_sprite();
     let descriptor: serde_json::Value = serde_json::from_slice(bytes).unwrap();
     let dimensions = (
@@ -126,6 +152,13 @@ fn audit_posture_passages(bytes: &[u8], height: f32, expected_doors: usize) -> u
     for index in 0..expected_doors {
         for reverse in [false, true] {
             let (mut engine, mut assets) = compiled_walkway_with_dimensions(bytes, dimensions);
+            if open_controls {
+                let sim = crate::sim_rng::test_context();
+                engine.apply_patch(
+                    TickCtx::new(&sim, &assets),
+                    crate::patch::PatchIndex::new(index as u32).unwrap(),
+                );
+            }
             let door = engine.script_domains.interactables.doors[index].clone();
             let (start, goal, source, destination, layer) = if reverse {
                 (
