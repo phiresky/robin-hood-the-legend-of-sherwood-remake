@@ -81,7 +81,13 @@ for _ in range(max(len(xs),len(ys))):
   near=[(labels[ii,jj],z0[ii,jj]) for ii,jj in [(i-1,j),(i+1,j),(i,j-1),(i,j+1)] if 0<=ii<len(xs) and 0<=jj<len(ys) and labels[ii,jj]>=0]
   if near:labels[i,j]=collections.Counter(x[0] for x in near).most_common(1)[0][0];z0[i,j]=sum(x[1] for x in near)/len(near)
 assert not np.any(closed&(labels<0));domain=closed;boundary=domain&~erode(domain)
-z=z0.copy();fixed=boundary.copy();caps=np.full_like(z,np.inf);root_constraints=[];native=json.loads((R.parent/'baseline/masks/manifest.json').read_text());sine,cosine=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-cosine,sine))
+z=z0.copy();fixed=boundary.copy()
+if a.revision>=6:
+ # The preserved background begins at the rectangle, not the full grid edge.
+ # Pin its splice rim before solving the interior slope.
+ rim=regional&((np.abs(xs[:,None]-region[0])<.01)|(np.abs(xs[:,None]-region[1])<.01)|(np.abs(ys[None,:]-region[2])<.01)|(np.abs(ys[None,:]-region[3])<.01))
+ fixed|=rim&(labels==nodes.index('building-000'))
+caps=np.full_like(z,np.inf);root_constraints=[];native=json.loads((R.parent/'baseline/masks/manifest.json').read_text());sine,cosine=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-cosine,sine))
 def constrain(objects,mask_id,mask_path,label):
  global caps,z,fixed
  bvh,verts=make_bvh(objects);low=min(p.z for p in verts);root_fixed=0;root_samples=[];root_plane=None
