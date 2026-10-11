@@ -248,7 +248,9 @@ impl TraceSimConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode)]
+#[derive(
+    Clone, Copy, Debug, Deserialize, Serialize, bitcode::Encode, bitcode::Decode, clap::ValueEnum,
+)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TraceDifficulty {
     Easy,

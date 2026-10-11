@@ -645,6 +645,12 @@ impl EngineInner {
                         crate::element::ElementData::from_initial_posture(initial_posture);
                     initial_element.kind = crate::element::ElementKind::ActorPc;
                     initial_element.sprite = sprite;
+                    // Rescue PCs initialize the sprite posture as well as the
+                    // gameplay posture, just like freshly spawned party PCs.
+                    initial_element
+                        .sprite
+                        .position_iface
+                        .set_posture(initial_posture);
                     initial_element
                 },
                 actor: crate::element::ActorData {
@@ -784,7 +790,7 @@ impl EngineInner {
                     reason: e.to_string(),
                 })?;
 
-            let mut cached_max_lp = soldier_profile.life_point as i16;
+            let cached_max_lp = soldier_profile.life_point as i16;
             let cached_camp = raw
                 .allegiance
                 .map(crate::element::Camp::from_allegiance_id)
@@ -812,15 +818,8 @@ impl EngineInner {
                 (raw.command_interface, raw.mission_role)
             };
 
-            // Modify life points for Lacklandist (enemy) soldiers based
-            // on difficulty level.  VIPs are excluded from the modifier.
-            // We scale cached_max_lp itself so both cached_max_life_points
-            // and initial life_points start at the difficulty-adjusted
-            // value.
-            if self.is_hostile_to_player_camp(cached_camp) && !soldier_profile.vip {
-                let diff = config.difficulty;
-                cached_max_lp = diff.rules().enemy_life_points(cached_max_lp as u16, 10000) as i16;
-            }
+            // Store unscaled profile health during loading. AI initialization
+            // applies difficulty after startup scripts (including invulnerability).
 
             // drunk_level must fit in u8.
             assert!(
@@ -915,7 +914,7 @@ impl EngineInner {
                     ..Default::default()
                 },
                 npc: crate::element::NpcData {
-                    // cached_max_lp was already difficulty-scaled above.
+                    // Difficulty scaling runs later, during AI initialization.
                     life_points: cached_max_lp,
                     ai: crate::element::AiActorData {
                         register_number: npc_register_number,
@@ -1070,7 +1069,10 @@ impl EngineInner {
             // baseline rather than the pre-placement zero.
             let current_position = sprite.position_iface.get_position();
             sprite.position_iface.set_old_position(current_position);
-            let visual_map = current_position.to_map();
+            // Compute the visual cache from the authored map coordinates before
+            // projecting to 3D. A 3D round trip can round just below an integer
+            // and floor to the wrong pixel on sloped projection areas.
+            let visual_map = MapPoint::new(raw.position_x as f32, raw.position_y as f32);
             sprite
                 .position_iface
                 .set_cached_sprite_position(MapPoint::new(
@@ -1088,6 +1090,12 @@ impl EngineInner {
                 .position_iface
                 .set_map_position_preserving_3d(action_point);
             sprite.position_iface.set_old_map_position(action_point);
+            // Mission targets retain distinct visual and interaction points,
+            // then declare all three cached projections valid. In particular,
+            // an explicit height must not leave only the 3D cache bit set.
+            sprite
+                .position_iface
+                .restore_cached_position_all_computed(current_position);
             let entity = Entity::Target(crate::element::ElementTarget {
                 element: {
                     let mut initial_element = crate::element::ElementData::default();

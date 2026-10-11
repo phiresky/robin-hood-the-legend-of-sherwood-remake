@@ -1050,6 +1050,7 @@ pub(super) fn initialize_headless_engine(
     header: &TraceHeader,
     rng_prefix: Vec<u32>,
     timing: &robin_engine::audio_durations::AudioDurations,
+    initial_difficulty: Option<super::trace_model::TraceDifficulty>,
 ) -> TraceRunResult<(Engine, LevelAssets, robin_engine::scb::ScbFile)> {
     // Game-data failures below keep their former `expect` text, including the
     // error's Debug rendering.
@@ -1134,23 +1135,27 @@ pub(super) fn initialize_headless_engine(
     )
     .map_err(|error| TraceRunError::Input(format!("read background dimensions: {error:?}")))?;
 
-    let engine = Engine::new(robin_engine::engine::EngineArgs {
-        campaign,
-        level: robin_engine::engine::LevelLoadArgs {
-            assets: &mut assets,
-            level_directory: "Data/Levels",
-            progress: &mut |_| {},
-            loaded,
-            bg_pixel_dims,
+    let sim_config = header
+        .sim_config
+        .to_sim_config(header.synchronous_pathfinding);
+    let engine = Engine::new_with_parity_construction_difficulty(
+        robin_engine::engine::EngineArgs {
+            campaign,
+            level: robin_engine::engine::LevelLoadArgs {
+                assets: &mut assets,
+                level_directory: "Data/Levels",
+                progress: &mut |_| {},
+                loaded,
+                bg_pixel_dims,
+            },
+            ground_mark_sprite: None,
+            titbit_row_frame_counts: Vec::new(),
+            rng_seed: header.rng_seed,
+            original_rng_replay: Some(rng_prefix),
+            sim_config,
         },
-        ground_mark_sprite: None,
-        titbit_row_frame_counts: Vec::new(),
-        rng_seed: header.rng_seed,
-        original_rng_replay: Some(rng_prefix),
-        sim_config: header
-            .sim_config
-            .to_sim_config(header.synchronous_pathfinding),
-    })
+        initial_difficulty.map(Into::into),
+    )
     .map_err(|error| TraceRunError::Input(format!("initialize engine: {error:?}")))?;
     crate::populate_sound_duration_tables(&mut assets, &profiles, timing).map_err(|error| {
         TraceRunError::Input(format!(
@@ -1165,6 +1170,7 @@ pub(super) fn initialize_headless_engine(
 pub(super) fn initialize_engine(
     header: &TraceHeader,
     rng_prefix: Vec<u32>,
+    initial_difficulty: Option<super::trace_model::TraceDifficulty>,
 ) -> TraceRunResult<(
     Engine,
     LevelAssets,
@@ -1283,23 +1289,27 @@ pub(super) fn initialize_engine(
     .ok_or_else(|| TraceRunError::Input("mission has no background map".to_owned()))?;
     let bg_pixel_dims = (background.width as f32, background.height as f32);
 
-    let engine = Engine::new(robin_engine::engine::EngineArgs {
-        campaign,
-        level: robin_engine::engine::LevelLoadArgs {
-            assets: &mut assets,
-            level_directory: "Data/Levels",
-            progress: &mut |_| {},
-            loaded,
-            bg_pixel_dims,
+    let sim_config = header
+        .sim_config
+        .to_sim_config(header.synchronous_pathfinding);
+    let engine = Engine::new_with_parity_construction_difficulty(
+        robin_engine::engine::EngineArgs {
+            campaign,
+            level: robin_engine::engine::LevelLoadArgs {
+                assets: &mut assets,
+                level_directory: "Data/Levels",
+                progress: &mut |_| {},
+                loaded,
+                bg_pixel_dims,
+            },
+            ground_mark_sprite: None,
+            titbit_row_frame_counts: Vec::new(),
+            rng_seed: header.rng_seed,
+            original_rng_replay: Some(rng_prefix),
+            sim_config,
         },
-        ground_mark_sprite: None,
-        titbit_row_frame_counts: Vec::new(),
-        rng_seed: header.rng_seed,
-        original_rng_replay: Some(rng_prefix),
-        sim_config: header
-            .sim_config
-            .to_sim_config(header.synchronous_pathfinding),
-    })
+        initial_difficulty.map(Into::into),
+    )
     .map_err(|error| TraceRunError::Input(format!("initialize engine: {error:?}")))?;
     robin_rs::game_session::setup_mission_audio_for_tool(
         &mut host,

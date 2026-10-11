@@ -358,12 +358,35 @@ pub(super) fn run_replay(
     );
     let rewind_loaded_save_rng =
         header.start_state == TraceStartState::LoadedSave && prefix_end == 0;
+    if let Some(difficulty) = options.initial_difficulty {
+        if header.start_state != TraceStartState::MissionStart {
+            return Err(TraceRunError::Input(
+                "--initial-difficulty requires a fresh mission trace".into(),
+            ));
+        }
+        eprintln!(
+            "recovered construction difficulty: {difficulty:?}; recorded runtime difficulty: {:?}",
+            header.sim_config.difficulty
+        );
+        result.capabilities.exceptions.push(crate::result::ProjectionException {
+            id: "explicit-historical-construction-difficulty".into(),
+            scope: format!("Caller supplies independently recovered construction difficulty {difficulty:?}; recorded runtime difficulty {:?} applies after construction. No expected frame values are restored.", header.sim_config.difficulty),
+            removal_condition: "The trace records its pre-construction difficulty separately from its runtime difficulty".into(),
+        });
+    }
     #[cfg(feature = "client")]
-    let (mut engine, assets, mut host, background, mission_scb, _menu_text) =
-        initialize_engine(&header, initial_rng_draws.clone())?;
+    let (mut engine, assets, mut host, background, mission_scb, _menu_text) = initialize_engine(
+        &header,
+        initial_rng_draws.clone(),
+        options.initial_difficulty,
+    )?;
     #[cfg(not(feature = "client"))]
-    let (mut engine, assets, mission_scb) =
-        initialize_headless_engine(&header, initial_rng_draws.clone(), &timing)?;
+    let (mut engine, assets, mission_scb) = initialize_headless_engine(
+        &header,
+        initial_rng_draws.clone(),
+        &timing,
+        options.initial_difficulty,
+    )?;
     let mut loaded_save_host = None;
     let mut legacy_blocked_box_shadows = BTreeMap::new();
     let mut constructor_storage =

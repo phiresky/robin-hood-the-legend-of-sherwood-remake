@@ -888,3 +888,21 @@ campaign snapshot. Run `python3 scripts/test_capture_fresh_mission_replays.py`
 for inventory/admission regressions. Register completed captures with
 `replay_state_db.py register-corpus`; capture completion alone is not evidence
 of a successful differential replay.
+
+Historical fresh-start captures can construct actors using the persisted player
+profile difficulty, then switch to the requested runtime difficulty. Schema 16
+records only the latter. When retained profile/capture evidence independently
+establishes the construction difficulty, pass `--initial-difficulty hard`
+(or `easy`/`medium`) to `original_parity_replay` or `parity_sweep.py run`.
+The runner uses that value during construction and applies the recorded runtime
+difficulty before startup scripts and AI initialization. It reports this recovery in its capabilities;
+the sweep records it in `launch.json` and requires the same value on resume.
+Never select this value by trying difficulties until a trace passes. Preserve
+the supporting evidence alongside the verification results. The option rejects
+saved-world traces and does not change retained trace bytes or expected frames.
+
+Fresh-start script lookup intentionally exposes only the already loaded target
+registry during each target's `Initialize`, even though allocation is batched.
+Targets also retain separate visual and action positions with valid cached
+projections. Saved-world replays bypass these construction steps and therefore
+cannot establish their correctness; retain fresh-start regression coverage.

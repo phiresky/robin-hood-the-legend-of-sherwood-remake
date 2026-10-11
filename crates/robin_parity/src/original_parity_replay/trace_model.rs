@@ -25,7 +25,7 @@ pub(super) use events::{
 pub(super) use frame::{TraceFrame, TraceRecordMarker};
 pub(super) use header::{
     LAST_TRACE_SCHEMA_WITHOUT_DRAW_VIEW, OLDEST_SUPPORTED_TRACE_SCHEMA, TRACE_SCHEMA_VERSION,
-    TraceHeader, TraceInitialNpcTransient, TraceStartState,
+    TraceDifficulty, TraceHeader, TraceInitialNpcTransient, TraceStartState,
 };
 pub(super) use json::{TraceJsonTree, TraceJsonValue};
 pub(super) use motion::{TraceMotionGrid, TraceMotionLine, TraceMotionLineChange};
@@ -40,9 +40,7 @@ pub(super) use events::{
     TraceAlertEligibility, TraceRouteGate, TraceTargetLifecycleEvent, TraceTargetLifecyclePayload,
 };
 #[cfg(test)]
-pub(super) use header::{
-    TraceDifficulty, TraceInitialSave, TraceSaveSourceProfile, TraceSimConfig,
-};
+pub(super) use header::{TraceInitialSave, TraceSaveSourceProfile, TraceSimConfig};
 #[cfg(test)]
 pub(super) use json::missing_legacy_trace_json_value;
 #[cfg(test)]

@@ -5,6 +5,7 @@ use super::{
 };
 
 pub(super) struct Options {
+    pub(super) initial_difficulty: Option<super::trace_model::TraceDifficulty>,
     #[cfg(not(feature = "client"))]
     pub(super) core_datadir: PathBuf,
     pub(super) inspect_capabilities: bool,
@@ -27,6 +28,11 @@ pub(super) struct Options {
 #[derive(clap::Parser, Serialize, Deserialize)]
 #[command(about = "Replay or inspect an Original parity trace")]
 pub(super) struct CliOptions {
+    /// Historical fresh captures may apply their recorded difficulty only after
+    /// construction. Supply the independently recovered profile difficulty used
+    /// during construction; never infer this value from expected frame results.
+    #[arg(long, value_enum, conflicts_with_all = ["mode", "frame_zero_screenshot_dir"])]
+    pub(super) initial_difficulty: Option<super::trace_model::TraceDifficulty>,
     /// CPU replay core data root (default: invocation-relative assets/core-datadir).
     /// Not supported by the client-feature runner, which uses client asset startup.
     #[arg(long, conflicts_with = "mode")]
@@ -72,6 +78,7 @@ pub(super) struct CliOptions {
 
 pub(super) fn parse_options() -> Options {
     let CliOptions {
+        initial_difficulty,
         core_datadir,
         inspect_capabilities,
         scan_all,
@@ -139,6 +146,7 @@ pub(super) fn parse_options() -> Options {
     );
     let reblock_policy = NativeStoragePolicy::new(reblock_records, reblock_window_log);
     Options {
+        initial_difficulty,
         #[cfg(not(feature = "client"))]
         core_datadir,
         inspect_capabilities,

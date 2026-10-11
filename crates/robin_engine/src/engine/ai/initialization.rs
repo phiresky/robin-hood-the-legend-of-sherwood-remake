@@ -91,6 +91,35 @@ mod tests {
     }
 
     #[test]
+    fn ai_startup_scales_script_modified_health_and_honors_trainer_invulnerability() {
+        for invulnerable in [false, true] {
+            let (mut engine, assets, owner) = fixture(OrderType::WaitingUpright, false);
+            engine.control.sim_config.difficulty = crate::player_profile::DifficultyLevel::Hard;
+            let Entity::Soldier(soldier) = engine.entities_mut().get_mut(owner).unwrap() else {
+                panic!("soldier fixture");
+            };
+            soldier.npc.life_points = 80;
+            soldier.soldier.cached_max_life_points = 120;
+            soldier.human.invulnerable = invulnerable;
+            engine.init_one_ai(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                owner,
+                &Default::default(),
+                0,
+                &[owner],
+                &[],
+            );
+            let soldier = engine.entities().get(owner).unwrap();
+            assert_eq!(
+                soldier.human_life_points(),
+                if invulnerable { 100 } else { 120 }
+            );
+            assert_eq!(soldier.soldier_data().unwrap().cached_max_life_points, 180);
+            assert_eq!(soldier.enemy_ai().unwrap().initial_life_points, 80);
+        }
+    }
+
+    #[test]
     fn authored_waiting_enters_post_and_clears_previous_pose_preferences() {
         for action in [
             OrderType::WaitingUpright,
@@ -349,10 +378,7 @@ impl EngineInner {
     ///    its segments against the fast-find grid; clear the
     ///    patrol if any segment intersects an obstacle.
     /// 8. Seed `old_life_points` / `initial_life_points` on enemy AIs
-    ///    for the "still has his initial HP" check.  Difficulty-based
-    ///    life-point scaling is already applied at entity-spawn time
-    ///    in `engine::level_loading::spawn_soldier`, so we just
-    ///    snapshot the current value here.
+    ///    before applying difficulty scaling through the human life-point setter.
     /// 9. Fill this enemy's `ambush_point_status` vector with
     ///    `Far` × `ambush_points_count` so ambush-point updates
     ///    has a slot per global ambush point.
@@ -509,6 +535,35 @@ impl EngineInner {
         if is_enemy && self_camp != Camp::Error {
             self.ai.global.soldier_camps.insert(self_camp);
         }
+        // Scale current health only after startup scripts have run. They may
+        // change health or mark a combat trainer invulnerable; scaling in the
+        // level loader loses both effects and uses the wrong difficulty for
+        // historical launches that switch difficulty after entity construction.
+        let difficulty = self.control.sim_config.difficulty;
+        if is_enemy && self_camp == Camp::Lacklandists {
+            let entity = self
+                .entities_mut()
+                .expect_entity_mut(npc_id, format_args!("AI initialization health owner"));
+            let vip = entity.enemy_ai().expect("enemy AI owner").is_vip;
+            if !vip && let Entity::Soldier(soldier) = entity {
+                let maximum = difficulty
+                    .rules()
+                    .enemy_life_points(soldier.soldier.cached_max_life_points as u16, 10000)
+                    as i16;
+                soldier.soldier.cached_max_life_points = maximum;
+                let life = difficulty
+                    .rules()
+                    .enemy_life_points(soldier.npc.life_points.max(0) as u16, 10000)
+                    as i16;
+                crate::combat::set_life_points(
+                    &mut soldier.npc.life_points,
+                    life,
+                    soldier.human.invulnerable,
+                    maximum,
+                    false,
+                );
+            }
+        }
         let state_allows_duty = self.initialize_ai_state(tcx, npc_id);
         let go_to_duty = {
             let ai = self.ai(npc_id, "AI initialization duty gate");
@@ -525,20 +580,32 @@ impl EngineInner {
             let pos_map = entity.element_data().position_map();
             let layer = entity.element_data().layer();
             let mut abs_box = move_box.translated(pos_map);
-            if !self.world.fast_grid.is_position_authorized(&abs_box, layer)
-                && self
-                    .world
-                    .fast_grid
-                    .find_authorized_position(&mut abs_box, layer)
+            // Initial placement uses the authored point as the fixed reference
+            // for every correction iteration, including boxes crossing map edges.
+            if self
+                .world
+                .fast_grid
+                .level
+                .map_bbox
+                .intersects_bbox(&abs_box)
+                && self.world.fast_grid.find_authorized_position_toward(
+                    &mut abs_box,
+                    pos_map,
+                    layer,
+                )
             {
                 let new_center = abs_box.center();
                 if let Some(entity) = self.entities_mut().get_mut(npc_id)
                     && entity.actor_data().is_some()
                 {
-                    let new_center_map = new_center;
-                    let pi = entity.position_iface_mut();
-                    pi.set_map_position(new_center_map);
-                    entity.element_data_mut().set_position_map(new_center_map);
+                    let sprite = &mut entity.element_data_mut().sprite;
+                    let pi = &mut sprite.position_iface;
+                    pi.set_map_position(new_center);
+                    pi.set_cached_sprite_position(MapPoint::new(
+                        (new_center.x - sprite.center.x).floor(),
+                        (new_center.y - sprite.center.y).floor(),
+                    ));
+                    pi.restore_cached_position_all_computed(pi.get_position());
                 }
             }
         }

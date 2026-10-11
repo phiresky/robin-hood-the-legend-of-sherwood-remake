@@ -176,6 +176,8 @@ impl<'a> NativeSessionCapabilities<'a> {
 pub struct ScriptCallFrame {
     script_this: i32,
     current_scroll: i32,
+    #[serde(default)]
+    initializing_actor_script_count: Option<usize>,
 }
 
 impl ScriptCallFrame {
@@ -183,6 +185,7 @@ impl ScriptCallFrame {
         Self {
             script_this,
             current_scroll: 0,
+            initializing_actor_script_count: None,
         }
     }
 
@@ -190,6 +193,7 @@ impl ScriptCallFrame {
         Self {
             script_this: 0,
             current_scroll,
+            initializing_actor_script_count: None,
         }
     }
 
@@ -209,6 +213,17 @@ impl ScriptCallFrame {
 
     pub fn current_scroll(self) -> i32 {
         self.current_scroll
+    }
+
+    /// During streamed entity initialization, indexed script lookup sees only
+    /// previously loaded elements. ThisActor still refers to the new element.
+    pub fn during_entity_initialization(mut self, count: usize) -> Self {
+        self.initializing_actor_script_count = Some(count);
+        self
+    }
+
+    pub fn initializing_actor_script_count(self) -> Option<usize> {
+        self.initializing_actor_script_count
     }
 }
 

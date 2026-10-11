@@ -1,5 +1,10 @@
 # Post-port Features
 
+- **Historical startup difficulty recovery.** Fresh-mission parity replay can
+  accept an independently evidenced construction difficulty separately from the
+  recorded runtime difficulty, preserving existing recordings. The override is
+  explicit in verification results and sweep resume metadata; see `docs/TESTING.md`.
+
 - **Static subpixel stair clearance.** Map export preserves precise clearance
   contours for stairs whose projection loses walking space on the integer grid.
   Mission startup uses these contours for existing collision lines, sector bounds

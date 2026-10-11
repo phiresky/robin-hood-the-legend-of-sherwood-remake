@@ -16,7 +16,26 @@ fn cli_checks_modes_values_and_repeated_entity_filters() {
     .unwrap();
     assert_eq!(args.dump_from, 3);
     assert_eq!(args.dump_entities.len(), 2);
+    let historical = super::CliOptions::try_parse_from([
+        "parity",
+        "--initial-difficulty",
+        "hard",
+        "trace.jsonl",
+    ])
+    .unwrap();
+    assert!(matches!(
+        historical.initial_difficulty,
+        Some(TraceDifficulty::Hard)
+    ));
     for arguments in [
+        vec!["parity", "--initial-difficulty", "unknown", "trace.jsonl"],
+        vec![
+            "parity",
+            "--initial-difficulty",
+            "hard",
+            "--convert",
+            "trace.jsonl",
+        ],
         vec![
             "parity",
             "--core-datadir",

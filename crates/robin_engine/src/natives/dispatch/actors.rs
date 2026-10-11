@@ -14,7 +14,7 @@ impl NativeContext<'_, '_> {
             // Original-game behavior:
             // Scripted actor-count lookup returns
             // the script-element collection's size.
-            GetNumberOfActorsInEngine => self.entities.len() as i32,
+            GetNumberOfActorsInEngine => self.standard_actor_script_count() as i32,
             IsActorAnimation => {
                 let handle = stack.pop_i32();
                 if handle == 0 {

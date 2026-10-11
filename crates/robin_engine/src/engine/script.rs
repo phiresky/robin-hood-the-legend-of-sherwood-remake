@@ -2339,12 +2339,20 @@ impl EngineInner {
             }
         }
         for (handle, _) in &per_target_scripts {
+            // Target Initialize runs before that target is appended to the
+            // script-element registry. Forward references must fail even though
+            // the Rust loader has already allocated the later targets. Keeping
+            // them visible changes trap activation on fresh mission starts;
+            // saved-world replays bypass this initialization boundary.
+            let loaded_count = crate::natives::ScriptHandleCodec::actor_handle_index(*handle)
+                .expect("target initialization requires an actor handle");
             if let Err(error) = self.call_script_vm(
                 tcx,
                 ScriptVmKey::Target(*handle),
                 "Initialize",
                 &[],
-                crate::natives::ScriptCallFrame::actor(*handle),
+                crate::natives::ScriptCallFrame::actor(*handle)
+                    .during_entity_initialization(loaded_count),
             ) {
                 tracing::warn!("Target Initialize (handle {handle}): {error}");
             }

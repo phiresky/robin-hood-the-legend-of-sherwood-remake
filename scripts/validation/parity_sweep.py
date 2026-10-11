@@ -178,7 +178,8 @@ def check_result_identity(result, trace, entry, runner_sha):
         raise ValueError("structured result identity mismatch")
 
 
-def run_case(entry, index, output, runner, runner_sha, datadir, timeout, core_datadir=None):
+def run_case(entry, index, output, runner, runner_sha, datadir, timeout, core_datadir=None,
+             initial_difficulty=None):
     core_datadir = (core_datadir or Path(__file__).resolve().parents[2] / "assets/core-datadir").resolve()
     started = time.monotonic()
     trace = output / "traces" / entry["path"]
@@ -193,7 +194,10 @@ def run_case(entry, index, output, runner, runner_sha, datadir, timeout, core_da
                 raise ValueError("copied trace identity changed")
             with log_path.open("wb") as log:
                 try:
-                    status = subprocess.run([str(runner), "--no-auto-dump", "--core-datadir", str(core_datadir), str(trace)],
+                    command = [str(runner), "--no-auto-dump", "--core-datadir", str(core_datadir)]
+                    if initial_difficulty is not None:
+                        command += ["--initial-difficulty", initial_difficulty]
+                    status = subprocess.run(command + [str(trace)],
                         env=dict(os.environ, ROBINHOOD_DATA_DIR=str(datadir)),
                         stdout=log, stderr=subprocess.STDOUT, timeout=timeout, check=False).returncode
                 except subprocess.TimeoutExpired:
@@ -244,6 +248,7 @@ def recover(output, manifest, args):
             or manifest["source_commit"] != launch["source_commit"]
             or str(args.datadir.resolve(strict=True)) != launch["datadir"]
             or core_identity(args) != launch.get("core_input")
+            or getattr(args, "initial_difficulty", None) != launch.get("initial_difficulty")
             or (args.workers, args.timeout, args.hours) !=
                (launch["workers"], launch["timeout_seconds"], launch["hours"])):
         raise ValueError("resume provenance/configuration mismatch")
@@ -345,6 +350,7 @@ def run(args):
             runner_sha256=runner_sha, manifest_sha256=digest(manifest_path),
             script_sha256=digest(__file__), validator_sha256=digest(Path(__file__).resolve().parents[1]/"parity_result.py"),
             workers=args.workers, timeout_seconds=args.timeout, hours=args.hours,
+            initial_difficulty=getattr(args, "initial_difficulty", None),
             datadir=str(args.datadir.resolve(strict=True)), core_input=core_identity(args), started_unix=time.time()))
         for entry in entries:
             relative = Path(entry["path"])
@@ -390,7 +396,8 @@ def dispatch(args, output, manifest, db, records, queue, launch):
                 timeout = min(args.timeout, max(0.01, deadline-time.monotonic()))
                 future = pool.submit(run_case, entries[index], index, output, runner,
                                      runner_sha, args.datadir.resolve(strict=True), timeout,
-                                     Path(launch["core_input"]["path"]))
+                                     Path(launch["core_input"]["path"]),
+                                     launch.get("initial_difficulty"))
                 pending[future] = index
                 print(f"START {index:04d} {entries[index]['path']}", flush=True)
             if not pending:
@@ -442,6 +449,8 @@ def main():
     p.add_argument("--runner", type=Path, required=True)
     p.add_argument("--datadir", type=Path, required=True)
     p.add_argument("--core-datadir", type=Path, default=Path(__file__).resolve().parents[2] / "assets/core-datadir")
+    p.add_argument("--initial-difficulty", choices=("easy", "medium", "hard"),
+                   help="explicit independently recovered construction difficulty for historical fresh captures")
     p.add_argument("--workers", type=int, choices=(1,2), default=2)
     p.add_argument("--timeout", type=int, default=1800)
     p.add_argument("--hours", type=float, default=8)

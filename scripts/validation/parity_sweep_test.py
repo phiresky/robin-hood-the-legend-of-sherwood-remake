@@ -31,7 +31,7 @@ class SweepTests(unittest.TestCase):
         self.assertEqual({e["campaign"] for e in chosen[:3]}, {"a", "b", "interactive"})
         self.assertEqual(sum(e["campaign"] == "interactive" for e in chosen), 10)
 
-    def case(self, changes=None, status=0, timeout=False):
+    def case(self, changes=None, status=0, timeout=False, initial_difficulty=None):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
             for name in ("traces", "locks", "logs", "results"):
@@ -50,12 +50,20 @@ class SweepTests(unittest.TestCase):
             def execute(*args, **kwargs):
                 self.assertIn("--core-datadir", args[0])
                 self.assertTrue(Path(args[0][args[0].index("--core-datadir") + 1]).is_absolute())
+                if initial_difficulty is not None:
+                    self.assertEqual(args[0][args[0].index("--initial-difficulty") + 1], initial_difficulty)
+                else:
+                    self.assertNotIn("--initial-difficulty", args[0])
                 if timeout:
                     raise subprocess.TimeoutExpired("fixture", 1)
                 kwargs["stdout"].write(("ROBIN_PARITY_RESULT "+json.dumps(result)+"\n").encode())
                 return types.SimpleNamespace(returncode=status)
             with patch.object(sweep.subprocess, "run", execute):
-                return sweep.run_case(entry, 0, output, runner, sweep.digest(runner), output, 1)
+                return sweep.run_case(entry, 0, output, runner, sweep.digest(runner), output, 1,
+                                      initial_difficulty=initial_difficulty)
+
+    def test_explicit_construction_difficulty_is_passed_to_runner(self):
+        self.assertEqual(self.case(initial_difficulty="hard")["classification"], "exact_eof")
 
     def test_exact_eof_requires_identity_and_full_extent(self):
         self.assertEqual(self.case()["classification"], "exact_eof")
@@ -102,7 +110,7 @@ class SweepTests(unittest.TestCase):
             runner.write_bytes(b"runner fixture")
             counts = dict(active=0, peak=0)
             lock = threading.Lock()
-            def worker(entry, index, output, runner, runner_sha, datadir, timeout, core_datadir):
+            def worker(entry, index, output, runner, runner_sha, datadir, timeout, core_datadir, initial_difficulty):
                 with lock:
                     counts["active"] += 1
                     counts["peak"] = max(counts["peak"], counts["active"])

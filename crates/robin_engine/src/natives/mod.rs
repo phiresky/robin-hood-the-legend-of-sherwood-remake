@@ -733,6 +733,9 @@ impl NativeContext<'_, '_> {
     /// as the Rust sequence owner. The original owner is the non-rendered
     /// mobile-element master; dispatch maps this child back to that master.
     fn mobile_owner_id(&self, mobile_index: i32) -> Option<EntityId> {
+        if self.call_frame.initializing_actor_script_count().is_some() {
+            return None;
+        }
         let mobile_index = u16::try_from(mobile_index).ok()?;
         self.occupied_entities().find_map(|(id, entity)| {
             entity
@@ -747,6 +750,9 @@ impl NativeContext<'_, '_> {
     /// same boundary. Return that boundary so script indices remain those of
     /// the original arrays rather than leaking the child entity slot layout.
     fn standard_actor_script_count(&self) -> usize {
+        if let Some(count) = self.call_frame.initializing_actor_script_count() {
+            return count;
+        }
         self.entities
             .occupied()
             .find_map(|(id, entity)| {

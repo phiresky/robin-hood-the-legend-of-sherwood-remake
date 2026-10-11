@@ -360,6 +360,7 @@ impl HostFunctions for CampaignNativeHost {
 }
 
 struct NativeTestHost {
+    call_frame: ScriptCallFrame,
     simulation: crate::sim_rng::SimulationContext,
 
     entities: crate::entities::Entities,
@@ -385,6 +386,7 @@ struct NativeTestHost {
 impl NativeTestHost {
     fn new() -> Self {
         Self {
+            call_frame: ScriptCallFrame::default(),
             simulation: crate::sim_rng::test_context(),
 
             entities: crate::entities::Entities::new(),
@@ -470,14 +472,58 @@ impl HostFunctions for NativeTestHost {
         .with_short_briefings(&mut self.short_briefings)
         .with_standard_view_radius(&mut self.standard_view_radius)
         .with_campaign(&mut self.campaign, &mut self.mission_stat);
-        NativeContext::with_bindings(
+        NativeContext::with_call_frame(
             &mut self.state,
             &mut self.script_domains,
             &self.bindings,
             &mut capabilities,
+            self.call_frame,
         )
         .call(index, stack)
     }
+}
+
+#[test]
+fn streamed_initialization_hides_forward_references_but_preserves_this_actor() {
+    let mut host = NativeTestHost::new();
+    for _ in 0..3 {
+        host.entities.push(Some(native_test_soldier()));
+    }
+    host.entities.push(Some(mobile_fx(0)));
+    let current = ScriptHandleCodec::actor_handle_from_index(1);
+    host.call_frame = ScriptCallFrame::actor(current).during_entity_initialization(1);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::ThisActor, &mut NativeStack::default()),
+        current
+    );
+    assert_eq!(
+        call_host_native(
+            &mut host,
+            NativeFn::GetNumberOfActorsInEngine,
+            &mut NativeStack::default()
+        ),
+        1
+    );
+    for (index, expected) in [
+        (0, ScriptHandleCodec::actor_handle_from_index(0)),
+        (1, 0),
+        (2, 0),
+        (3, 0),
+    ] {
+        let mut stack = NativeStack::default();
+        stack.push_i32(index);
+        assert_eq!(
+            call_host_native(&mut host, NativeFn::GetActorScript, &mut stack),
+            expected
+        );
+    }
+    host.call_frame = ScriptCallFrame::default();
+    let mut stack = NativeStack::default();
+    stack.push_i32(2);
+    assert_eq!(
+        call_host_native(&mut host, NativeFn::GetActorScript, &mut stack),
+        ScriptHandleCodec::actor_handle_from_index(2)
+    );
 }
 
 #[test]

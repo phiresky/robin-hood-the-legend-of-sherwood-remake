@@ -924,6 +924,17 @@ impl Engine {
         snapshot
     }
 
+    /// Reconstruct an independently evidenced historical difficulty switch:
+    /// entity construction uses the profile difficulty, while startup scripts
+    /// and AI initialization use the recorded runtime configuration.
+    pub fn new_with_parity_construction_difficulty(
+        args: EngineArgs,
+        difficulty: Option<crate::player_profile::DifficultyLevel>,
+    ) -> Result<Self, EngineError> {
+        assert!(args.original_rng_replay.is_some());
+        Self::construct_preserving_campaign(args, difficulty).map_err(|(error, _)| error)
+    }
+
     /// Create a fully-initialised engine while preserving ownership of the
     /// supplied campaign if mission ingestion fails.
     ///
@@ -935,11 +946,12 @@ impl Engine {
     pub fn new_preserving_campaign(
         args: EngineArgs,
     ) -> Result<Self, (EngineError, crate::campaign::Campaign)> {
-        Self::construct_preserving_campaign(args)
+        Self::construct_preserving_campaign(args, None)
     }
 
     fn construct_preserving_campaign(
         args: EngineArgs,
+        construction_difficulty: Option<crate::player_profile::DifficultyLevel>,
     ) -> Result<Self, (EngineError, crate::campaign::Campaign)> {
         let original_parity = args.original_rng_replay.is_some();
         let mut sim_config = if original_parity {
@@ -955,6 +967,9 @@ impl Engine {
         inner.control.sim_config = sim_config;
         inner.control.mission_start_rng_seed = args.rng_seed;
         inner.control.mission_start_sim_config = sim_config;
+        if let Some(difficulty) = construction_difficulty {
+            inner.control.sim_config.difficulty = difficulty;
+        }
         // Seed the PRNG and apply engine-global cheat flags FIRST,
         // before any setup that might draw from the RNG or branch on
         // the cheat flag.  See `EngineArgs::rng_seed` /
@@ -1047,6 +1062,9 @@ impl Engine {
         if let Err(error) = inner.validate_mission_script_classes(assets) {
             return Err((error, inner.into_campaign()));
         }
+        // Historical forced difficulty takes effect after level ingestion,
+        // before startup scripts and AI apply their difficulty-dependent work.
+        inner.control.sim_config.difficulty = sim_config.difficulty;
         let initialize_started = web_time::Instant::now();
         inner.initialize(assets);
         tracing::debug!(

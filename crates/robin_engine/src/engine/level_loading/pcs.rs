@@ -1212,7 +1212,12 @@ impl EngineInner {
                     crate::element::ElementData::from_initial_posture(initial_posture);
                 initial_element.kind = crate::element::ElementKind::ActorPc;
                 initial_element.sprite = sprite;
-                // Initial posture from action initialization.
+                // Initial action changes both gameplay and serialized posture.
+                // Saved-world restoration skips this constructor transition.
+                initial_element
+                    .sprite
+                    .position_iface
+                    .set_posture(initial_posture);
                 initial_element
             },
             actor: crate::element::ActorData {
