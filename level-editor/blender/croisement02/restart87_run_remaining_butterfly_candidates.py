@@ -36,7 +36,7 @@ def main():
         readback=BASE/f'restart85-butterfly{number:02}-readback-v1'
         run(f'{number:02}-readback',['python3',str(RECIPES/'restart85_verify_own_butterfly.py'),'--model',str(model),'--fit',str(contact/'fit.json'),'--atlas',str(atlas),'--depth',str(contact/'inputs.json'),'--output',str(readback)])
         imported=BASE/f'restart86-butterfly{number:02}-import-review-v1'
-        run(f'{number:02}-import',['/usr/bin/blender','--background','--factory-startup','--threads','2','--python',str(RECIPES/'restart86_review_own_butterfly_import.py'),'--','--model',str(model),'--fit',str(contact/'fit.json'),'--output',str(imported)])
+        run(f'{number:02}-import',['/usr/bin/blender','--background','--factory-startup','--threads','2','--python-exit-code','1','--python',str(RECIPES/'restart86_review_own_butterfly_import.py'),'--','--model',str(model),'--fit',str(contact/'fit.json'),'--output',str(imported)])
         row.update(status='PRIVATE_RENDERED_CANDIDATE_NEEDS_SELF_AND_USER_REVIEW',model_sha256=sha(model),import_report_sha256=sha(imported/'report.json'),readback_sha256=sha(readback/'readback.json'))
         results.append(row);(args.output/'progress.json').write_text(json.dumps(results,indent=2)+'\n')
     (args.output/'report.json').write_text(json.dumps(dict(status='PRIVATE_CANDIDATE_BATCH_COMPLETE_NOT_APPROVAL',results=results,limits=['Do not equate contact pass or rendered output with visual acceptance.','Static receiver tests exclude moving states and gameplay composition.','All geometry, depth and appearance proposals remain unapproved.']),indent=2)+'\n')
