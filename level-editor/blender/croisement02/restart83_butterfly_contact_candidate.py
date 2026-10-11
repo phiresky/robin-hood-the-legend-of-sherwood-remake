@@ -11,10 +11,14 @@ from restart21_butterfly07_geometry_v2 import fixed_geometry
 
 
 def main():
-    parser=argparse.ArgumentParser();parser.add_argument('--fit',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--run',action='store_true')
+    parser=argparse.ArgumentParser();parser.add_argument('--fit',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--run',action='store_true');parser.add_argument('--depth-bump',nargs=3,type=float,metavar=('CENTER','WIDTH','DELTA'))
     args=parser.parse_args();args.output.mkdir(exist_ok=False);fit=json.loads(args.fit.read_text());scale=fit['fixed_uniform_scale']
     proposal=audit.B/'footprint-path-proposal-v2/proposal.json';route=next(r for r in json.loads(proposal.read_text())['rows'] if r['sequence']==fit['animation_index'])
-    heights=np.asarray(route['world_zup_knots'])[:,2];assert len(heights)==99
+    heights=np.asarray(route['world_zup_knots'])[:,2].copy();assert len(heights)==99
+    if args.depth_bump:
+        center,width,delta=args.depth_bump;assert 0<=center<99 and width>0
+        distance=(np.arange(99)-center+49.5)%99-49.5
+        heights+=delta*np.exp(-.5*(distance/width)**2)
     geometry=fixed_geometry()
     for name in ('wing_outline','body_radii','wing_hinge_offsets'):geometry[name]=(np.asarray(geometry[name])*scale).tolist()
     geometry['inferred']='Own-source pose candidate with one scaled rest anatomy. Depth is an inherited initial footprint hypothesis, not observed altitude or approval.'
@@ -29,7 +33,7 @@ def main():
         x,y=row['source']['alpha_centroid_display'];row['fixed_path_anchor_zup']=[x,-(y+audit.reader.COS*z)/audit.reader.SIN,float(z)]
     joined=args.output/'fit.json';joined.write_text(json.dumps(fit,indent=2)+'\n')
     curve=dict(times=list(range(100)),heights=[*heights.tolist(),float(heights[0])])
-    input_report=dict(status='PRIVATE_INITIAL_PHYSICAL_PATH_NOT_APPROVED',source_fit_sha256=audit.reader.sha(args.fit),old_depth_proposal_sha256=audit.reader.sha(proposal),joined_fit_sha256=audit.reader.sha(joined),geometry_helper_sha256=audit.reader.sha(helper),continuous_height_curve=curve,limits=['Depth inherited as a private candidate only; earlier sampled footprint evidence is not a current contact result.','Own current source centroid and registration are preserved; display elevation is never treated as physical altitude.','Physical cubic depth and SLERP rotations are inferred between native held frames.','Current static receivers will be checked; moving mission states and visibility remain separate.'])
+    input_report=dict(status='PRIVATE_INITIAL_PHYSICAL_PATH_NOT_APPROVED',source_fit_sha256=audit.reader.sha(args.fit),old_depth_proposal_sha256=audit.reader.sha(proposal),joined_fit_sha256=audit.reader.sha(joined),geometry_helper_sha256=audit.reader.sha(helper),continuous_height_curve=curve,inferred_periodic_depth_bump=args.depth_bump,limits=['Depth inherited as a private candidate only; earlier sampled footprint evidence is not a current contact result.','Own current source centroid and registration are preserved; display elevation is never treated as physical altitude.','Physical cubic depth and SLERP rotations are inferred between native held frames.','Current static receivers will be checked; moving mission states and visibility remain separate.'])
     (args.output/'inputs.json').write_text(json.dumps(input_report,indent=2)+'\n')
     if args.run:
         audit.OUT=args.output/'contacts'
