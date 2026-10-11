@@ -42,6 +42,12 @@ test("integer jump audit checks fractional solids in world coordinates", () => {
     material_indices: [],
   };
   assert.match(auditCompiledJump(pair(), createJumpClearance([obstacle]))[0]!, /intersects/);
+  const unequal = pair();
+  unequal.line2.point_a[1]++;
+  const issues = auditCompiledJump(unequal, createJumpClearance([obstacle]));
+  assert.equal(issues.length, 2);
+  assert.match(issues[0]!, /landings can miss/);
+  assert.match(issues[1]!, /intersects/);
   obstacle.points.forEach((point) => {
     point.z_top = 11;
   });
@@ -66,4 +72,9 @@ test("unsupported flight geometry is reported without rejecting best-effort expo
   const input = pair();
   input.line1.point_b[2] = 13;
   assert.match(auditCompiledJump(input, createJumpClearance([]))[0]!, /unverified/);
+  input.line2.point_a[1]++;
+  const issues = auditCompiledJump(input, createJumpClearance([]));
+  assert.equal(issues.length, 2);
+  assert.match(issues[0]!, /landings can miss/);
+  assert.match(issues[1]!, /unverified/);
 });

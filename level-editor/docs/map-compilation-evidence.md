@@ -176,6 +176,26 @@ used 500 units of padding, so it did not exercise this position. Do not treat th
 wider run as a complete parity pass or attribute the receiver failure to bounded
 clearance. No forbidden routes were skipped.
 
+## Jump-vector warnings no longer hide clearance findings (2026-10-11)
+
+`auditCompiledJump` previously returned immediately when opposing integer edge
+vectors differed, skipping flight-clearance checking entirely. It now retains
+the mismatch warning and also reports blocked or unverified flight geometry.
+The clearance sweep uses each source vector from the opposite endpoint, matching
+the landing translation even when the authored destination span differs. The
+exported pair remains unchanged; this repairs diagnostics rather than claiming
+to fix the underlying geometry. Regression cases cover simultaneous mismatch
+and solid intersection, and simultaneous mismatch and unsupported flight shape.
+
+All 254 selected jump-clearance/compiler/export tests pass. Fresh
+`check-hall-walkway-connection.mjs` output is
+`work/map-compile/hall-walkway-connection-B6I5vj`; all eight editor
+save/reopen/compile cases complete. Joined exports have 18–20 geometry warnings.
+The newly visible findings include solid intersections at 0/37/90 degrees and
+an unverified forward takeoff at 270 degrees. They remain unresolved and require
+contact-level diagnosis; previous sampled native traversal success does not
+prove that the whole flight ribbon is clear. No production runtime changes.
+
 ## Authored occupancy-trigger round trips (2026-10-11)
 
 `node refinement/check-automatic-triggers.mjs` creates eight new editor maps

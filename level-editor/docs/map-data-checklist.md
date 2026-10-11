@@ -18,6 +18,15 @@ timing variation; these runs do not isolate a consistent current-code regression
 The frame-5 freeze does not recur. A universal 1 ms budget and full rendering
 costs remain unverified; detailed measurements are in the runtime inventory.
 
+**Jump audit completeness (2026-10-11):** mismatched opposing edge vectors no
+longer suppress the independent flight-clearance audit. Best-effort exports
+retain authored connections and report both findings. Fresh hall/walkway exports
+now reveal possible flight/takeoff intersections at 0/37/90 degrees and unverified
+forward-takeoff geometry at 270 degrees. The earlier successful sampled native
+routes do not certify clearance across every edge parameter. These warnings
+require further geometry review; no jump endpoints or runtime behavior changed.
+See the [jump-audit evidence](map-compilation-evidence.md#jump-vector-warnings-no-longer-hide-clearance-findings-2026-10-11).
+
 **Rendered reveal round trip (2026-10-11):** two independent hall/walkway pairs
 at 37 degrees now pass a 5000×5000 browser export/reopen/rebake check. Both reveal
 regions change color and depth independently; all applied-state PNG pixels,
