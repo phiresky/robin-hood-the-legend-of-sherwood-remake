@@ -1821,6 +1821,10 @@ source clearances through the receiving triangles. All 192 collision probes and
 96 bounded graph routes pass across four rotations/two heights. All 96 complete
 sprite crossings also pass with per-tick collision, receiver and height checks;
 maximum travelled distance is 39.990021 units for a 40-unit crossing.
+All 16 exports also pass editable ZIP round-tripping with `--zip-roundtrip`:
+geometry, warnings, scene and pins survive reopening/recompilation, and the
+ZIP-extracted descriptors pass the native collision and graph-route checks.
+Diagnostic blank rasters do not establish rendered appearance.
 Explicit upright headroom retains the uncut wall and authored pillar holes.
 Curved terrain conformance and rendered actor integration remain open; see the
 curved traversal evidence above.

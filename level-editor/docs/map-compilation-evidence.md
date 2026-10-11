@@ -14,6 +14,16 @@ its separate physical/navigation height offset is preserved. This prepares the
 cutout at export without relaxing the compiler's plane tolerance or adding
 runtime work. Original clearance pieces remain available outside owned floors.
 
+**Editable ZIP round trip:** `--curved --deck --rotated --zip-roundtrip` produces
+16 mod archives in `work/map-compile/spline-clearance-planes-KU1EkO`. Each archive
+preserves the compiled descriptor, warning list, editable scene and asset pins;
+reopening and recompiling yields the same descriptor and warnings. The verifier
+writes the native-test input from the ZIP entry. All 192 collision probes and
+96 bounded graph routes pass on those extracted inputs, which also compare equal
+to the complete-actor-tested `spline-clearance-planes-dCwISE` batch. Blank
+diagnostic rasters exercise packaging only; this adds no rendered appearance
+or native archive-mounting claim.
+
 The formerly failing zero-degree batch now passes native collision and graph
 checks at both starting heights, plus 24 complete sprite crossings
 (`work/map-compile/spline-clearance-planes-ytQfAf`). The four-rotation batch

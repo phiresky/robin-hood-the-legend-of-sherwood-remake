@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { wallSplineFixture } from "../shared/test-fixtures/wall-spline.ts";
-import { compileMap } from "../app/src/map-compile.ts";
+import { compileMap, packageCompiledMap } from "../app/src/map-compile.ts";
+import { serializeStoredMap, parseStoredMap } from "../shared/src/index.ts";
 import { splineCurve } from "../shared/src/spline-sampling.ts";
 import { sceneToGame } from "../shared/src/geometry.ts";
 
@@ -11,6 +13,10 @@ const output = await fs.mkdtemp("work/map-compile/spline-clearance-planes-");
 const results = [];
 const curved = process.argv.includes("--curved");
 const deck = process.argv.includes("--deck");
+const zipRoundtrip = process.argv.includes("--zip-roundtrip");
+const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", import.meta.url))(
+  "fflate",
+);
 assert.ok(!deck || curved, "--deck requires --curved");
 for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [0]) {
   const radians = (rotation * Math.PI) / 180;
@@ -130,14 +136,39 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
         }
         assert.equal(probes.length, 12);
         const file = `clearance-${deck ? "deck-" : ""}${curved ? "curved-" : ""}${rotation}-${elevation}-${rise}-${enabled}.level.json`;
-        await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
-        await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
+        const stored = serializeStoredMap(document, assets);
+        let runtimeDescriptor = compiled.descriptor;
+        if (zipRoundtrip) {
+          // Blank diagnostic rasters test packaging, not rendered appearance.
+          const bytes = await packageCompiledMap(compiled, {
+            color: new Uint8Array(bounds[2] * bounds[3] * 4),
+            depth: new Uint16Array(bounds[2] * bounds[3]),
+          });
+          const files = unzipSync(bytes);
+          const readJson = (name) => {
+            assert.ok(files[name], `Missing ZIP entry: ${name}`);
+            return JSON.parse(strFromU8(files[name]));
+          };
+          runtimeDescriptor = readJson(`Data/Levels/${compiled.name}.level.json`);
+          assert.deepEqual(runtimeDescriptor, JSON.parse(JSON.stringify(compiled.descriptor)));
+          const report = readJson("compile-report.json");
+          assert.deepEqual(report.warnings, compiled.warnings);
+          const reopened = parseStoredMap(readJson(report.editor_document), assets);
+          assert.deepEqual(serializeStoredMap(reopened, assets), stored);
+          const recompiled = compileMap(reopened, bounds, assets);
+          assert.deepEqual(JSON.parse(JSON.stringify(recompiled.descriptor)), runtimeDescriptor);
+          assert.deepEqual(recompiled.warnings, compiled.warnings);
+          await fs.writeFile(`${output}/${file}.zip`, bytes);
+        }
+        await fs.writeFile(`${output}/${file}`, JSON.stringify(runtimeDescriptor));
+        await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(stored));
         results.push({
           file,
           map: file,
           rotation,
           curved,
           deck,
+          zip_roundtrip: zipRoundtrip,
           warnings: compiled.warnings,
           movement_probes: probes,
           route_probes: enabled
