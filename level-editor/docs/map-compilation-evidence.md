@@ -4,6 +4,49 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Click ordering on raised spline floors (2026-10-11)
+
+Full actor movement exposed a defect that the receiver-only checks below did not
+cover: the curved, rising floor had layer 0 beneath terrain layer 1. Mouse picking
+checks ordinary layers from highest to lowest, so a normal move selected terrain
+even though direct pathfinding on the raised floor succeeded. Sorting initial
+planes by their intercept does not establish height order at placed overlaps.
+
+Export now orders ordinary navigation layers by receiving heights at their
+projected intersections, before compaction and runtime reference assignment.
+Joined pieces keep one layer, lifts retain their separate allocation, and an
+empty ground slot stays reserved. Conflicting height order emits a warning and
+retains the remaining layers in their previous order; it does not discard floors.
+Ordering is prepared entirely at export time. No production Rust code changed.
+
+`node refinement/check-spline-floor-routes.mjs` exports straight/curved paths
+with rises 0/30, each containing three repeated receiving floors and masks.
+`work/map-compile/spline-mask-floor-routes-UJXjKf` contains four editable ZIPs;
+descriptor, warning and pinned editor-document extraction/recompilation all pass.
+Raster payloads are blank, so this does not verify appearance.
+
+The ZIP-extracted descriptors pass 16 directed pathfinder routes and 88 sampled
+collision-connected routes. The native actor audit
+`exported_spline_floor_clicks_follow_receivers_through_repeats` also passes all
+16 normal PC clicks using complete RobinTown animation data, including the
+previously failing curved rising case. Every tick checks layer, sector, receiving
+floor, height and collision clearance; each route reaches its goal with a settled
+order queue and bounded travel distance. The automatic-light fixture was rebuilt
+from the compiler to follow the corrected layer references; all 72 enabled
+asset-map integration tests pass (seven external-data audits are ignored).
+
+These probes cover two lanes in both directions per assembly, not every point
+on the floors. Collapsed movement-fragment warnings remain. Same-layer overlaps
+and cyclic receiving-height arrangements require further authoring/export work;
+this correction does not establish complete navigation parity.
+
+The saved Derby scene also compiles successfully in about nine seconds
+(`work/map-compile/saved-map-exports-8Weoud`). It reports conflicting receiving
+height order among layers 5, 8, 24, 33 and 36, alongside other existing export
+warnings. That finding requires diagnosis; successful export is not proof of
+correct clicking throughout Derby. The broader map/roof/spline/region tests,
+Rust formatting check and game binary build pass.
+
 ## Point masks on rising spline floors (2026-10-11)
 
 The floor-owned receiver repair also exposed a failure outside cropped repeats:
@@ -27,8 +70,9 @@ With `ROBIN_SPLINE_MASK_CASES` pointing to that file, the ignored native test
 `exported_spline_point_masks_follow_rising_floors` passes all four constructions,
 bitmap checks, volume-isolation and altitude queries. The regular two-case test
 also passes. Layer registration is checked against the native projection
-receivers' raised heights, not a fixed layer number: the curved rising floor is
-assigned layer 0. Some movement-grid rounding/collapsed-fragment warnings remain;
+receivers' raised heights, not a fixed layer number. This earlier export assigned
+the curved rising floor layer 0; the click-order repair above supersedes that
+assignment. Some movement-grid rounding/collapsed-fragment warnings remain;
 these visibility checks do not certify that floor's complete navigation or
 rendered appearance.
 

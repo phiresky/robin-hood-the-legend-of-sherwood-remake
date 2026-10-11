@@ -78,15 +78,24 @@ test("rising curved openings follow their floor without clearing another source 
   gameplay.movementClearances = [clearance];
   const crossing: [number, number] = [123.26789052469853, 216.44564995390317];
   const compile = () => compileMap(f.document, f.bounds, f.assets).descriptor.asset_geometry!;
+  const deckLayer = (compiled: ReturnType<typeof compile>) => {
+    const receiver = compiled.sight_obstacles.find(
+      (obstacle) =>
+        obstacle.projection_area && obstacle.points.every((point) => point.z_top >= 39.999),
+    );
+    assert.ok(receiver?.projection_area);
+    return receiver.projection_area[1];
+  };
   const open = compile();
-  const areas = open.motion_data.layers[0]!;
+  const areas = open.motion_data.layers[deckLayer(open)]!;
   assert.equal(areas.length, 1);
   assert.ok(pointInGameplayPolygon(crossing, areas[0]!.polygon.points));
   assert.ok(
     !areas[0]!.obstacles.some((o) => pointInGameplayPolygon(crossing, o.polygon.points, true)),
   );
   clearance.navigationHeight = 5;
-  const closed = compile().motion_data.layers[0]!;
+  const compiledClosed = compile();
+  const closed = compiledClosed.motion_data.layers[deckLayer(compiledClosed)]!;
   assert.ok(
     !closed.some(
       (a) =>

@@ -32,6 +32,10 @@ mod compiled_sight_barriers {
     include!("compiled_sight_barriers.rs");
 }
 
+mod compiled_spline_floors {
+    include!("compiled_spline_floors.rs");
+}
+
 #[test]
 fn exported_floor_flags_require_crouching_only_in_the_authored_room() {
     let bytes = include_bytes!(concat!(

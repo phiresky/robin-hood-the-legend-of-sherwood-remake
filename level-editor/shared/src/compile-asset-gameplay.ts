@@ -26,6 +26,7 @@ import {
 } from "./assemble-navigation-regions.ts";
 import { allocateLightReceivingLayers } from "./allocate-light-receiving-layers.ts";
 import { compactNavigationLayers } from "./compact-navigation-layers.ts";
+import { orderNavigationLayers } from "./order-navigation-layers.ts";
 import { lightReceiverIntersection } from "./light-receiver-segment.ts";
 import { preserveMovementBoundary } from "./preserve-movement-boundary.ts";
 import { navigationPosturePassages } from "./navigation-posture-passages.ts";
@@ -1870,6 +1871,7 @@ function compileAssetGameplayAttempt(
         );
     }
   allocateLightReceivingLayers(navigationRegions, lights, layers.length - 1, inside);
+  orderNavigationLayers(navigationRegions, warnings);
   const liftLayer = compactNavigationLayers(navigationRegions);
   // A raised receiving volume can supply the physical landing over a lower
   // navigation plane. Require an unambiguous ground binding and retain its
