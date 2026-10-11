@@ -8,7 +8,13 @@ import { serializeStoredMap, parseStoredMap } from "../shared/src/index.ts";
 const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", import.meta.url))(
   "fflate",
 );
-const output = await fs.mkdtemp("work/map-compile/building-passages-");
+const options = process.argv.slice(2);
+assert.ok(
+  options.every((option) => option === "--trap"),
+  "only --trap is supported",
+);
+const trap = options.includes("--trap");
+const output = await fs.mkdtemp(`work/map-compile/building-${trap ? "trap-" : ""}passages-`);
 console.log(output);
 const results = [];
 const report = (complete) =>
@@ -17,6 +23,7 @@ const report = (complete) =>
     JSON.stringify({
       complete,
       scope: "editable-building-passage-zips-awaiting-native-traversal",
+      trap,
       results,
     }),
   );
@@ -24,6 +31,8 @@ await report(false);
 for (const rotation of [0, 37, 90, 180])
   for (const height of [0, 40]) {
     const { document, assets, hut } = interiorPassageBarrierCompilerFixture();
+    if (trap)
+      for (const room of hut.gameplay.interiors) for (const door of room.doors) door.type = 2;
     // Leave room for one animation step before closure at every direction.
     // A barrier appearing over the actor tests crushing instead of suspension.
     for (const point of hut.gameplay.movementTransitions[0].applied[0].polygon) point[1] += 4;
@@ -39,6 +48,7 @@ for (const rotation of [0, 37, 90, 180])
     assert.equal(compiled.descriptor.asset_geometry.buildings.length, 2);
     for (const { Building } of compiled.descriptor.asset_geometry.buildings) {
       assert.equal(Building.doors.length, 2);
+      assert.ok(Building.doors.every((door) => door.door_type === (trap ? 2 : 1)));
       assert.deepEqual(
         Building.doors[0].passage_states.map((state) => state.allowed_states),
         [[1]],

@@ -529,7 +529,10 @@ pub(super) fn walk_exported_building_round_trip(
     sprite: &crate::sprite::Sprite,
 ) -> Result<bool, String> {
     let entrance = &engine.script_domains.interactables.doors[door];
-    assert_eq!(entrance.door_type, crate::gate::DoorType::Building);
+    assert!(matches!(
+        entrance.door_type,
+        crate::gate::DoorType::Building | crate::gate::DoorType::BuildingTrap
+    ));
     let inside = entrance.sector_in_index.expect("building interior sector");
     assert!(
         engine.world.fast_grid.level.sectors[usize::from(inside)]

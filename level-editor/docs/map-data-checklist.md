@@ -473,7 +473,14 @@ reopening. Sixteen blocked-exit checks keep the actor in its virtual room for
 sector and receiver. Screen hit-testing selects the outdoor landing without a
 goal override. The audit applies before resetting a patch and verifies its live
 passage state, since the reset operation exchanges the movement-state pair.
-Trap entrances, multiple actors and broader lock/permission
+The audit's `--trap` variant exports building-trap entrances from asset metadata
+and passes the same eight ZIP/reopen round trips, 16 native control round trips,
+96 mid-crossing closure cases, 48 player entry checks, 32 exits and 16 blocked
+exits. Full character animations exercise the native trap endpoint adaptation;
+no runtime changes are required. Evidence:
+`work/map-compile/building-trap-passages-ZkktWx/actor-building-report.json` and
+`work/map-compile/building-trap-passages-ZkktWx/actor-building-click-report.json`.
+Multiple actors, NPC trap restrictions and broader lock/permission
 interactions still need coverage. Changing mixed-posture passages
 and regions without explicit sockets still need broader coverage. This is not full crouch-area
 parity. No runtime solver was added.
