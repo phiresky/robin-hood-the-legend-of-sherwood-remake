@@ -11,7 +11,7 @@
  const initial=structuredClone(v.bindings.document());e.originalDocument=initial;
  check('Exact original group and part counts',initial.groups.length===86&&initial.objects.length===127);
  const refs=d=>[...(d.assetSources??[]),...(d.sceneAssets??[])];
- const pins=d=>{for(const[id,pin]of Object.entries(cfg.assets)){const ref=refs(d).find(r=>r.id===id);check('Exact source pins '+id,ref?.model_sha256===pin.model_sha256&&ref?.descriptor_sha256===pin.descriptor_sha256&&same(ref.resources??[],pin.resources??[]),ref);}};
+ const pins=(d,stored=false)=>{for(const[id,pin]of Object.entries(cfg.assets)){const ref=refs(d).find(r=>r.id===id);check('Exact source pins '+id,ref?.model===pin.model&&ref?.descriptor===pin.descriptor&&ref?.model_sha256===pin.model_sha256&&ref?.descriptor_sha256===pin.descriptor_sha256,ref);check('Descriptor-derived scene '+id,(stored&&ref.model_scene===undefined)||(ref.model_scene??'default')===(pin.model_scene??'default'),ref);check('Descriptor-derived resources '+id,(stored&&ref.resources===undefined)||same(ref.resources??[],pin.resources??[]),ref);}};
  pins(initial);
  for(const item of cfg.insertions){
   const group=initial.groups.find(g=>g.id===item.asset);check('Original group exists '+item.asset,!!group);
@@ -56,11 +56,12 @@
  const stored=JSON.parse(await(await(await maps.getFileHandle('croisement03.rhlos-map.json')).getFile()).text());e.savedDocument=stored;
  const originalIds=new Set(cfg.stage_map.placements.map(p=>p.id));
  check('All stored original placements preserved',stored.placements.filter(p=>originalIds.has(p.id)).length===originalIds.size&&cfg.stage_map.placements.every(p=>{const q=stored.placements.find(q=>q.id===p.id);return q&&Object.entries(p).every(([key,value])=>same(q[key],value));}));
- for(const inserted of e.inserted)check('Saved independent pose '+inserted.asset,stored.placements.some(p=>p.id===inserted.id&&p.transform.dx===inserted.x));pins(stored);
+ for(const inserted of e.inserted)check('Saved independent pose '+inserted.asset,stored.placements.some(p=>p.id===inserted.id&&p.transform.dx===inserted.x));pins(stored,true);
  await Promise.all(window.observedPublicationPending??[]);
  for(const[id,pin]of Object.entries(cfg.assets)){const path='/library/'+pin.model;const rows=(window.observedPublicationResponses??[]).filter(r=>r.path===path);check('Actual original GLB bytes '+id,rows.length>0&&rows.every(r=>r.sha256===pin.model_sha256),rows);e.http.push(...rows);}
  const bounds=new T.Box3();for(const item of e.inserted){const wrapper=v.groupViews.get(item.id).wrapper;wrapper.updateWorldMatrix(true,true);bounds.union(new T.Box3().setFromObject(wrapper));}const center=bounds.getCenter(new T.Vector3()),size=bounds.getSize(new T.Vector3()),el=initial.camera.elevation_deg*Math.PI/180;v.select(null);v.setPerspective(0);v.applyState(v.lookState(center.clone().addScaledVector(new T.Vector3(0,Math.sin(el),Math.cos(el)),Math.max(400,size.length()*2)),center,Math.max(size.x,size.y,size.z)*.7));await sleep(200);
+ for(const[id,pin]of Object.entries(cfg.assets)){const descriptor=v.scenery.descriptors.get(id);check('Actual catalog descriptor scene/resources '+id,descriptor&&((descriptor.model_scene??'default')===(pin.model_scene??'default'))&&same(descriptor.resources??[],pin.resources??[]));for(const resource of pin.resources??[]){const rows=window.observedPublicationResponses.filter(r=>r.path==='/library/'+resource.path);check('Actual resource bytes '+resource.path,rows.length>0&&rows.every(r=>r.sha256===resource.sha256),rows);}}const catalogs=window.observedPublicationResponses.filter(r=>r.path==='/library/3d-assets/index.json');check('Actual pinned catalog bytes',catalogs.length>0&&catalogs.every(r=>r.sha256===cfg.catalog_sha256),catalogs);
  await capture('c3-trio-editor-saved-insertions');
- e.reloadExpectation={groups:changed.groups,objects:changed.objects,assetSources:changed.assetSources,sceneAssets:changed.sceneAssets,inserted:e.inserted,assets:cfg.assets};window.c3InteractionReloadExpectation=structuredClone(e.reloadExpectation);
+ e.reloadExpectation={groups:changed.groups,objects:changed.objects,assetSources:changed.assetSources,sceneAssets:changed.sceneAssets,inserted:e.inserted,assets:cfg.assets,catalogSha256:cfg.catalog_sha256};window.c3InteractionReloadExpectation=structuredClone(e.reloadExpectation);
  return {status:'EDITOR_INTERACTIONS_EXECUTED_RELOAD_PENDING',checks:e.checks,evidence:e};
 })()
