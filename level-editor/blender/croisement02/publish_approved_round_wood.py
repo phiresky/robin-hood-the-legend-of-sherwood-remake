@@ -2,6 +2,7 @@
 import argparse
 import copy
 import json
+import os
 from pathlib import Path
 import shutil
 import restart58_publish_holes_mounds as shared
@@ -39,18 +40,22 @@ def validate_inputs():
 
 
 def overlay(source, destination, replacements):
+    """Materialize directories and hardlink regular files for Vite serving."""
     destination.mkdir()
     for child in source.iterdir():
         rel = child.relative_to(LIB)
+        target = destination / child.name
         if rel in replacements:
-            (destination / child.name).symlink_to(replacements[rel])
-        elif any(p.is_relative_to(rel) for p in replacements):
-            overlay(child, destination / child.name, replacements)
+            os.link(replacements[rel], target)
+        elif child.is_dir():
+            overlay(child, target, replacements)
+        elif child.is_file():
+            os.link(child.resolve(), target)
         else:
-            (destination / child.name).symlink_to(child)
+            raise ValueError('Unsupported library entry: ' + str(child))
     for rel, candidate in replacements.items():
         if rel.parent == source.relative_to(LIB) and not (destination / rel.name).exists():
-            (destination / rel.name).symlink_to(candidate)
+            os.link(candidate, destination / rel.name)
 
 
 def prepare(folder):
