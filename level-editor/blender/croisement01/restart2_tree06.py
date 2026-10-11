@@ -1,7 +1,7 @@
 """Native mask06 decorative tree, without inventing a gameplay obstacle association."""
 import argparse,json,math,random,shutil,sys
 from pathlib import Path
-import bpy,numpy as np
+import bpy,bmesh,numpy as np
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 from PIL import Image,ImageDraw,ImageChops
@@ -68,6 +68,20 @@ def main():
  for i in range(11):
   angle=math.tau*i/11;start=Vector((380,base_y,640+i%3*20));tip=Vector((380+math.cos(angle)*145,base_y+math.sin(angle)*173,775+rng.uniform(-35,35)));union(body,tube('Inferred supported bough',[start,start.lerp(tip,.55)+Vector((0,0,18)),tip],[7,3,.5]))
  bpy.context.view_layer.objects.active=body;modifier=body.modifiers.new('Continuous native wood','REMESH');modifier.mode='VOXEL';modifier.voxel_size=.9;modifier.use_remove_disconnected=False;bpy.ops.object.modifier_apply(modifier=modifier.name)
+ if args.revision>=11:
+  # Tiny detached voxel remnants own no native pixel-center samples in v10.
+  # Retain the entire continuous tree; fresh source coverage verifies this cleanup.
+  bm=bmesh.new();bm.from_mesh(body.data);remaining=set(bm.verts);components=[]
+  while remaining:
+   component={remaining.pop()};stack=list(component)
+   while stack:
+    vertex=stack.pop()
+    for edge in vertex.link_edges:
+     other=edge.other_vert(vertex)
+     if other in remaining:remaining.remove(other);component.add(other);stack.append(other)
+   components.append(component)
+  components.sort(key=len,reverse=True);assert len(components[0])>200000 and all(len(c)<=20 for c in components[1:])
+  bmesh.ops.delete(bm,geom=[v for c in components[1:] for v in c],context='VERTS');bm.to_mesh(body.data);bm.free();body.data.update()
  mesh=body.data.copy();bpy.data.objects.remove(body,do_unlink=True);dummy=bpy.data.meshes.new('Decorative wood slot');fallback=bpy.data.materials.new('Unknown decorative wood');fallback.diffuse_color=(.34,.34,.34,1);dummy.materials.append(fallback);obj=bpy.data.objects.new('Tree06 decorative wood',dummy);working.objects.link(obj);obj['source_node']=wood_node;obj['asset_group']=asset;obj['asset_name']=name;obj['part_name']='Scenery wood; no gameplay obstacle';assign_mesh(obj,mesh)
  verts=[];faces=[]
  for i in range(2200):
