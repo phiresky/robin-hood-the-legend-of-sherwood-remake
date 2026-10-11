@@ -38,6 +38,7 @@ def editor_proof(path,expected,plan):
 def verify_evidence(plan):
  require(sha(Path(__file__))==EXECUTOR_SHA,'Executor changed during execution')
  for item in plan['protected']+plan['evidence']+[plan['browser']]:core.verify_pin(item)
+ for name,value in plan['compiler_source_pins'].items():core.verify_pin({'path':name,'sha256':value})
  handoff=read(Path(plan['browser']['path']))
  require(handoff['approved_models']==plan['approved_models']and handoff['stage_map_sha256']==plan['map_sha256'],'Combined proof scope differs')
  for name,value in handoff['evidence'].items():core.verify_pin({'path':name,'sha256':value})
@@ -50,19 +51,20 @@ def clean_directories(created):
  for path in reversed(created):
   directory=Path(path)
   if directory.exists() and not any(directory.iterdir()):directory.rmdir();core.fsync_dir(directory.parent)
-def prepare(folder):
- subprocess.run([sys.executable,str(PLANNER),'--output',str(folder)],cwd=ROOT,check=True)
+def prepare(folder,compiler_baseline=None,compiler_sha256=None):
+ subprocess.run([sys.executable,str(PLANNER),'--output',str(folder)]+(['--compiler-baseline',str(compiler_baseline),'--compiler-sha256',compiler_sha256]if compiler_baseline and compiler_sha256 else[]),cwd=ROOT,check=True)
  plan=read(folder/'plan.json')
  require(sha(folder/'plan.json')==read(folder/'dry-run.json')['plan']['sha256'],'Prepared plan drift')
  return plan
 
 def main():
- ap=argparse.ArgumentParser();ap.add_argument('--output',type=Path,required=True);mode=ap.add_mutually_exclusive_group();mode.add_argument('--apply',action='store_true');mode.add_argument('--rollback',action='store_true');ap.add_argument('--root-reviewed',action='store_true');ap.add_argument('--readers-quiescent',action='store_true');ap.add_argument('--editor-proof',type=Path);ap.add_argument('--editor-sha256');args=ap.parse_args();folder=args.output.resolve()
+ ap=argparse.ArgumentParser();ap.add_argument('--output',type=Path,required=True);mode=ap.add_mutually_exclusive_group();mode.add_argument('--apply',action='store_true');mode.add_argument('--rollback',action='store_true');ap.add_argument('--root-reviewed',action='store_true');ap.add_argument('--readers-quiescent',action='store_true');ap.add_argument('--editor-proof',type=Path);ap.add_argument('--editor-sha256');ap.add_argument('--compiler-baseline',type=Path);ap.add_argument('--compiler-sha256');args=ap.parse_args();folder=args.output.resolve()
  require(folder.parent==RUNS,'Run directory outside C3 transaction scope')
  require(not(args.apply or args.rollback)or(args.root_reviewed and args.readers_quiescent),'Explicit root review and quiescent readers required')
  require(not args.apply or(args.editor_proof and args.editor_sha256),'Apply requires complete pinned editor interactions')
+ require(bool(args.compiler_baseline)==bool(args.compiler_sha256),'Baseline reuse needs path and hash')
  if not(args.apply or args.rollback):
-  plan=prepare(folder)
+  plan=prepare(folder,args.compiler_baseline,args.compiler_sha256)
   if args.editor_proof:
    evidence=editor_proof(args.editor_proof.resolve(),args.editor_sha256,plan);dump(folder/'editor-proof-check.json',{'status':'PASS','proof':evidence})
   print(json.dumps({'status':'PREPARED_NOT_APPLIED','folder':str(folder)}));return
@@ -75,7 +77,7 @@ def main():
    core.restore(journal['files'],folder/'transaction',journal);clean_directories(read(folder/'directory-journal.json')['created']);print('ROLLED_BACK');return
   # Reprepare under lock from the latest catalog. The planner rejects C3 target drift
   # while retaining unrelated current rows, their order and top-level metadata.
-  plan=prepare(folder);proof=editor_proof(args.editor_proof.resolve(),args.editor_sha256,plan);verify_evidence(plan);verify_records(plan['records'],'old_sha256')
+  plan=prepare(folder,args.compiler_baseline,args.compiler_sha256);proof=editor_proof(args.editor_proof.resolve(),args.editor_sha256,plan);verify_evidence(plan);verify_records(plan['records'],'old_sha256')
   plan_hash=sha(folder/'plan.json');authority={'plan':pin(folder/'plan.json'),'executor':pin(Path(__file__)),'protocol':pin(CORE),'editor':proof,'root_reviewed':True,'readers_quiescent':True}
   dump(folder/'execution-authority.json',authority)
   reserve=sum((Path(r['source']).stat().st_size if r['source']else 0)+(Path(r['target']).stat().st_size if Path(r['target']).exists()else 0)for r in plan['records'])
@@ -90,7 +92,7 @@ def main():
     verify_records(plan['records'],'new_sha256')
     for item in plan['protected']:core.verify_pin(item)
     validate_asset_index(ASSETS,read(ASSETS/'index.json'))
-    subprocess.run(['node',str(VALIDATOR),str(LIB/'scenes/croisement03.rhlos-map.json'),str(LIB),str(folder/'installed-strict-validation.json')],cwd=ROOT,check=True)
+    subprocess.run(['node',str(VALIDATOR),str(LIB/'scenes/croisement03.rhlos-map.json'),str(LIB),str(folder/'installed-strict-validation.json'),str(folder/'same-compiler-baseline.json')],cwd=ROOT,check=True)
    journal=protocol.commit(plan['records'],folder/'transaction',plan_hash,precommit,postcheck)
    dump(folder/'result.json',{'status':'INSTALLED_LIVE_EDITOR_PROOF_PENDING','plan':authority['plan'],'journal':pin(folder/'transaction/journal.json'),'editor':proof,'canonical_map_sha256':sha(LIB/'scenes/croisement03.rhlos-map.json')})
   except BaseException:
