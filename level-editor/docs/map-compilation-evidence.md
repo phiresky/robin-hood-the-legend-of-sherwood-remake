@@ -27,9 +27,13 @@ solid crossings and open gaps. Native sight/projectile checks pass all 33,160
 directed queries across those placements. Initial probes entirely inside solids
 were corrected to cross a surface, as required by the blocking-query semantics;
 the engine was not changed. These samples do not certify every boundary or
-microscopic gap. Draft warnings remain, and publication/full-map verification
-are pending. Saved-scene candidate `saved-map-exports-oSnjn8` is running with both
-repairs; the first-fence-only candidate `saved-map-exports-YP5uhf` fails on fence 95.
+microscopic gap. Both fence repairs are published, with guarded backups and an
+`applied: true` report under the stage's `publication` directory. The library index
+and Croisement02 scene pins are updated; draft warnings remain. Saved-scene
+candidate `saved-map-exports-oSnjn8` passes both fence checks and fails on
+`croisement02-supplemental-wood-09/wood-352`, another unstable cap. The remaining
+wood definitions need the same authoring audit before the map can export.
+The first-fence-only candidate `saved-map-exports-YP5uhf` fails on fence 95.
 
 ## Stable cap vertices for clipped solids (2026-10-12)
 
