@@ -161,7 +161,14 @@ for label,bank in enumerate(banks):
    polys.append(tuple(offset+k for k in face));polys.append(tuple(offset+n+k for k in reversed(face)))
    for x,y in zip(face,face[1:]+face[:1]):key=tuple(sorted((x,y)));counts[key]=(counts.get(key,(0,None))[0]+1,(x,y))
   for uses,(x,y) in counts.values():
-   if uses==1:polys.append((offset+x,offset+n+x,offset+n+y,offset+y))
+   if uses==1:
+    if a.revision>=7:
+     gx,gy=ordered[x];hx,hy=ordered[y]
+     adjacent=([(gx-1,min(gy,hy)),(gx,min(gy,hy))] if gx==hx else [(min(gx,hx),gy-1),(min(gx,hx),gy)])
+     # Owners share the same top grid. An internal wall is not a visible
+     # soil surface and opposing coplanar walls create grazing artifacts.
+     if all(0<=ii<len(xs)-1 and 0<=jj<len(ys)-1 and domain[ii:ii+2,jj:jj+2].all() for ii,jj in adjacent):continue
+    polys.append((offset+x,offset+n+x,offset+n+y,offset+y))
   components+=1
  exterior_face_start=len(polys)
  if bank['source_node']=='building-000':
