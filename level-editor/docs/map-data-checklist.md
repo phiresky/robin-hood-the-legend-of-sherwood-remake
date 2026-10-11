@@ -1809,8 +1809,13 @@ whole-footprint cut leaves no shifted obstruction and a preserved hole still
 blocks navigation. The synthetic ground gradient was separately corrected to
 stay constant across spline cross-sections in scene space; the oblique camera
 means a game-coordinate perpendicular is insufficient. All 287 selected
-compiler/export/spline tests pass. Broader curved placement and rendered actor
-integration remain open.
+compiler/export/spline tests pass. Curved flat-ground openings now additionally
+pass 16 exports at the same four rotations and two elevations: 192 collision
+probes, 96 bounded graph routes and 96 complete sprite crossings preserve the
+openings and intervening pillars. Maximum travelled distance is 39.990033 units
+for a 40-unit crossing. Use `--rotated --curved` with the same verifier; see the
+[curved traversal evidence](map-compilation-evidence.md#curved-spline-opening-traversal-2026-10-11).
+Curved longitudinal slopes and rendered actor integration remain open.
 Use the ignored native `exported_openings_support_complete_sprite_routes` test
 with `ROBIN_ASSET_MAP_DIAGNOSTICS` set to the generated directory and
 `ROBIN_CLIMB_RHS` set to a complete character sprite to reproduce the actor audit.

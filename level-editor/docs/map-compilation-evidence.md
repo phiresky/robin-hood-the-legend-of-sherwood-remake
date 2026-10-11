@@ -4,6 +4,37 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Curved spline opening traversal (2026-10-11)
+
+`node refinement/check-spline-clearance-planes.mjs --rotated --curved` now
+constructs an authored three-handle curved wall at 0/37/90/180 degrees and
+elevations 0/40, with clearances enabled and disabled. Its three sampled repeated
+sections each retain two openings separated by a solid pillar. Crossing probes
+use the local curve tangent instead of the whole path's endpoint direction.
+The clearance's physical height remains thirty units above its navigation height.
+No library definitions or extracted level records are needed by this fixture.
+
+The 16 exports in `work/map-compile/spline-clearance-planes-XHnw2M` pass native
+construction, all 192 thin collision probes, and 96 bounded actor-sized graph
+routes. All 96 complete sprite crossings also pass in both directions, checking
+collision, receiver and height every tick and waiting for the stopping animation
+and order queue to finish. Maximum travelled distance is 39.990033 units for a
+40-unit crossing, below the 45-unit limit that rejects wall-end detours. Native
+results are saved in `actor-opening-report.json` beside the exported descriptors
+and editable scenes.
+
+The existing straight/sloped audit was regenerated as
+`work/map-compile/spline-clearance-planes-TT69Ak`: 32 exports, 384 collision
+probes, 192 bounded graph routes and 192 complete sprite crossings pass. These
+tests exercise prepared navigation and grid collision only; they introduce no
+runtime solver or engine change.
+
+Best-effort warnings remain explicit: some rotated geometry is clipped to the
+export frame, and collapsed integer-grid wall-cut fragments are omitted. The
+sampled opening and pillar results do not certify every clipped fragment.
+Curved traversal on longitudinally rising terrain and rendered contact remain
+open; this curved batch deliberately uses flat receiving terrain at both heights.
+
 ## Continuous native receiver after XY vertex collapse (2026-10-11)
 
 The unpadded 90-degree/elevation-40 mismatch below came from one generated stair

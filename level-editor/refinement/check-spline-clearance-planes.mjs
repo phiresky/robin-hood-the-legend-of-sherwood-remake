@@ -9,12 +9,14 @@ import { sceneToGame } from "../shared/src/geometry.ts";
 // cutout is thirty units higher. No library or level records are read.
 const output = await fs.mkdtemp("work/map-compile/spline-clearance-planes-");
 const results = [];
+const curved = process.argv.includes("--curved");
 for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [0]) {
   const radians = (rotation * Math.PI) / 180;
   const direction = [Math.cos(radians), Math.sin(radians)];
   const start = [250 - 150 * direction[0], 250 - 150 * direction[1]];
   for (const elevation of [0, 40]) {
-    for (const rise of [0, 30]) {
+    // Flat receiving terrain isolates bending from longitudinal slope changes.
+    for (const rise of curved ? [0] : [0, 30]) {
       for (const enabled of [false, true]) {
         const { document, asset, assets, bounds } = wallSplineFixture();
         const sine = Math.sin((document.camera.elevation_deg * Math.PI) / 180);
@@ -27,6 +29,10 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
           [...start, elevation],
           [250 + 150 * direction[0], 250 + 150 * direction[1], elevation + rise],
         ];
+        if (curved) {
+          path.curved = true;
+          path.points.splice(1, 0, [250 - 50 * direction[1], 250 + 50 * direction[0], elevation]);
+        }
         for (const vertex of document.terrain.vertices)
           vertex.position[2] =
             elevation +
@@ -59,12 +65,6 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
           ];
         const compiled = compileMap(document, bounds, assets);
         const curve = splineCurve(path, document.camera);
-        const first = sceneToGame(document.camera, curve.getPointAt(0).toArray());
-        const last = sceneToGame(document.camera, curve.getPointAt(1).toArray());
-        const dx = last[0] - first[0],
-          dy = last[1] - last[2] - first[1] + first[2];
-        const length = Math.hypot(dx, dy);
-        const normal = [(-dy / length) * 20, (dx / length) * 20];
         const probes = [];
         for (let repeat = 0; repeat < 3; repeat++) {
           for (const [offset, opening] of [
@@ -73,7 +73,13 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
             [22, true],
             [45, false],
           ]) {
-            const centre = curve.getPointAt((repeat * 100 + 50 + offset) / curve.getLength());
+            const fraction = (repeat * 100 + 50 + offset) / curve.getLength();
+            const centre = curve.getPointAt(fraction);
+            const tangent = sceneToGame(document.camera, curve.getTangentAt(fraction).toArray());
+            const dx = tangent[0],
+              dy = tangent[1] - tangent[2];
+            const length = Math.hypot(dx, dy);
+            const normal = [(-dy / length) * 20, (dx / length) * 20];
             const [x, y, z] = sceneToGame(document.camera, centre.toArray());
             probes.push({
               layer: 0,
@@ -84,13 +90,14 @@ for (const rotation of process.argv.includes("--rotated") ? [0, 37, 90, 180] : [
           }
         }
         assert.equal(probes.length, 12);
-        const file = `clearance-${rotation}-${elevation}-${rise}-${enabled}.level.json`;
+        const file = `clearance-${curved ? "curved-" : ""}${rotation}-${elevation}-${rise}-${enabled}.level.json`;
         await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
         await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
         results.push({
           file,
           map: file,
           rotation,
+          curved,
           warnings: compiled.warnings,
           movement_probes: probes,
           route_probes: enabled
