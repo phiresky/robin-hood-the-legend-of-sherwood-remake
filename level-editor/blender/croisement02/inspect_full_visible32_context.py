@@ -48,7 +48,7 @@ def main():
     write_json(out/'crown-context.json',dict(glb=str(glb),glb_sha256=glb_hash,descriptor_sha256=descriptor_hash,bounds=bounds,scope='Current installed crown context only; source provenance colors displayed white; no canonical writes or inherited approval'))
     originals=wood+surfaces+crowns
     transforms={o:o.matrix_world.copy() for o in originals}
-    scene=bpy.data.scenes.new('Tree07 lower wood and bank contact');bpy.context.window.scene=scene
+    scene=bpy.data.scenes.new('Tree32 wood and installed crown context');bpy.context.window.scene=scene
     isolated=[]
     for original in originals:
         obj=original.copy();obj.parent=None;obj.matrix_world=transforms[original];obj.hide_render=False;obj['asset_group']=worker.name;scene.collection.objects.link(obj);isolated.append(obj)
@@ -72,7 +72,7 @@ def main():
         sheet.save(out/f'{mode}.png')
     for path,digest in hashes.items():
         if sha(Path(path)/'model.blend')!=digest:raise ValueError('Source worker changed')
-    write_json(out/'evidence.json',dict(workers=hashes,model=str(model),model_sha256=model_hash,objects=packet['object_names'],actual_sha256=sha(out/'textured.png') if (out/'textured.png').exists() else None,solid_sha256=sha(out/'solid.png'),camera_sha256=sha(out/'views.json'),limitation='Close lower wood and selected support only; crown and other foliage hidden. Other relief neighbours excluded; ground plane is a contact diagnostic. No model edits.'))
+    write_json(out/'evidence.json',dict(workers=hashes,model=str(model),model_sha256=model_hash,objects=packet['object_names'],actual_sha256=sha(out/'textured.png') if (out/'textured.png').exists() else None,solid_sha256=sha(out/'solid.png'),camera_sha256=sha(out/'views.json'),limitation='Candidate wood, pinned installed crown and selected ground support only. Other foliage and relief neighbours excluded. Crown is context, not part of the proposed wood revision. Ground is a contact diagnostic. No model edits.'))
     if sha(model)!=model_hash:raise ValueError('Reviewed model changed')
     if sha(glb)!=glb_hash or sha(descriptor)!=descriptor_hash:raise ValueError('Installed crown changed during review')
     print(out)
