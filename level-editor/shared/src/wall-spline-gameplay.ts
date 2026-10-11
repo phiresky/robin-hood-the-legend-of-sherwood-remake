@@ -379,7 +379,6 @@ export function wallSplineGameplay(
           const anchorCropped = run && (anchorSource[axis] < start || anchorSource[axis] > limit);
           let floorReceivers: Vec3[] | undefined;
           if (
-            anchorCropped &&
             !mask.receiverSegment &&
             !mask.receiverPolyline &&
             !mask.receiverPoints &&
@@ -399,8 +398,8 @@ export function wallSplineGameplay(
                   inferredFloorReceivers!.set(floorRepeat, points);
                 });
             }
-            floorReceivers = inferredFloorReceivers.get(repeat) ?? [];
-            if (!floorReceivers.length) {
+            floorReceivers = inferredFloorReceivers.get(repeat);
+            if (anchorCropped && !floorReceivers?.length) {
               warnings.push(
                 `Wall spline ${path.id}, mask ${mask.id}, repeat ${repeat}: cropped receiving anchor has no surviving unambiguous asset-owned floor; add receiver points or probes. Mask omitted.`,
               );

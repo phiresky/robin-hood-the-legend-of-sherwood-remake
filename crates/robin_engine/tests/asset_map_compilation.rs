@@ -219,16 +219,55 @@ fn spline_masks_repeat_coverage_boundaries_and_obstacle_altitudes_independently(
 
 #[test]
 fn cropped_spline_point_masks_keep_their_floor_and_volume_ownership() {
-    use robin_engine::coordinates::WorldPoint3D;
     let cases: Vec<serde_json::Value> =
         serde_json::from_slice(include_bytes!("fixtures/asset-spline-point-masks.json")).unwrap();
+    audit_spline_point_mask_receivers(cases);
+}
+
+#[test]
+#[ignore = "requires current compiled descriptors via ROBIN_SPLINE_MASK_CASES"]
+fn exported_spline_point_masks_follow_rising_floors() {
+    let path = std::env::var("ROBIN_SPLINE_MASK_CASES").unwrap();
+    let cases: Vec<serde_json::Value> =
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(cases.len(), 4);
+    audit_spline_point_mask_receivers(cases);
+}
+
+fn audit_spline_point_mask_receivers(cases: Vec<serde_json::Value>) {
+    use robin_engine::coordinates::WorldPoint3D;
     for case in cases {
         let mut assets = LevelAssets::new();
         let engine = construct(&serde_json::to_vec(&case).unwrap(), &mut assets);
         let grid = engine.fast_grid();
         assert_eq!(grid.level.masks.len(), 3);
-        assert!(grid.level.layers[0].mask_indices.is_empty());
-        assert_eq!(grid.level.layers[1].mask_indices.len(), 3);
+        let receiving: Vec<_> = grid
+            .level
+            .layers
+            .iter()
+            .enumerate()
+            .filter(|(_, layer)| !layer.mask_indices.is_empty())
+            .collect();
+        assert_eq!(receiving.len(), 1);
+        let (layer, registered) = receiving[0];
+        assert_eq!(registered.mask_indices.len(), 3);
+        let floors: Vec<_> = assets
+            .environment
+            .static_sight_obstacles
+            .iter()
+            .filter(|obstacle| {
+                obstacle
+                    .projection_area
+                    .is_some_and(|area| usize::from(u16::from(area.layer)) == layer)
+            })
+            .collect();
+        assert!(!floors.is_empty());
+        assert!(floors.iter().all(|floor| {
+            floor
+                .obstacle_points
+                .iter()
+                .all(|point| point.z_top >= 39.999)
+        }));
         let obstacles = robin_engine::sight_obstacle::ObstacleList::from_slice_all_active(
             &assets.environment.static_sight_obstacles,
         );
@@ -239,17 +278,27 @@ fn cropped_spline_point_masks_keep_their_floor_and_volume_ownership() {
             let points = &obstacle.obstacle_points;
             let x = points.iter().map(|p| p.x).sum::<f32>() / points.len() as f32;
             let y = points.iter().map(|p| p.y).sum::<f32>() / points.len() as f32;
+            let middle = points
+                .iter()
+                .map(|p| (p.z_bottom + p.z_top) / 2.)
+                .sum::<f32>()
+                / points.len() as f32;
+            let above = points
+                .iter()
+                .map(|p| p.z_top)
+                .fold(f32::NEG_INFINITY, f32::max)
+                + 10.;
             for (other, candidate) in grid.level.masks.iter().enumerate() {
                 assert_eq!(
                     candidate.is_applied_to_point_3d(
-                        WorldPoint3D::new(x, y, 50.),
+                        WorldPoint3D::new(x, y, middle),
                         false,
                         obstacles,
                     ),
                     other == index
                 );
                 assert!(!candidate.is_applied_to_point_3d(
-                    WorldPoint3D::new(x, y, 90.),
+                    WorldPoint3D::new(x, y, above),
                     false,
                     obstacles,
                 ));

@@ -130,10 +130,19 @@ test("cropped point masks preserve owned floors through native fixtures and ZIP 
       "utf8",
     ),
   );
-  for (const [index, curved] of [false, true].entries()) {
-    const f = wallPointMaskFloorFixture(curved);
+  for (const [index, [curved, rise]] of (
+    [
+      [false, 0],
+      [true, 0],
+      [false, 30],
+      [true, 30],
+    ] as const
+  ).entries()) {
+    const f = wallPointMaskFloorFixture(curved, rise);
     const compiled = compileMap(f.document, f.bounds, f.assets);
-    assert.deepEqual(JSON.parse(JSON.stringify(compiled.descriptor)), expected[index]);
+    const descriptor = JSON.parse(JSON.stringify(compiled.descriptor));
+    if (rise === 0) assert.deepEqual(descriptor, expected[index]);
+    assert.equal(compiled.descriptor.asset_geometry!.masks!.length, 3);
     const files = unzipSync(
       await packageCompiledMap(compiled, {
         color: new Uint8Array(500 * 500 * 4),
@@ -144,7 +153,7 @@ test("cropped point masks preserve owned floors through native fixtures and ZIP 
     assert.deepEqual(report.warnings, compiled.warnings);
     assert.deepEqual(
       JSON.parse(strFromU8(files[`Data/Levels/${compiled.name}.level.json`]!)),
-      expected[index],
+      descriptor,
     );
     const reopened = parseStoredMap(
       JSON.parse(strFromU8(files[report.editor_document]!)),

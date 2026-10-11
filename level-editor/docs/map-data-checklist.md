@@ -71,6 +71,14 @@ curved elevated cases pass editable ZIP round trips and native bitmap, layer,
 volume-ownership and altitude checks. No runtime changes were needed; see
 [receiver evidence](map-compilation-evidence.md#cropped-point-mask-receivers-2026-10-11).
 
+Rising-floor follow-up: directly warped anchors can miss the triangulated floor
+even when they were not cropped. Floor-derived sampling now covers all point-only
+masks with an unambiguous asset-owned receiver. A curved span rising 30 units
+previously lost two of its three masks; it now retains all three. Four straight/
+curved, flat/rising cases pass ZIP reopening and native layer/volume/altitude
+checks. Layer numbers are rebuilt and are not assumed to identify ground versus
+raised floors. Movement-grid rounding warnings remain separate unresolved findings.
+
 **Authored occupancy triggers (2026-10-11):** eight new map exports place two
 independent reusable trigger assets at 0/37/90/180 degrees and elevations 0/40.
 All ZIP extraction/editor reopen/recompile checks pass. Normal native player

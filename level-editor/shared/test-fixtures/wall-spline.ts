@@ -131,7 +131,7 @@ export function wallSplineFixture() {
   };
 }
 
-export function wallPointMaskFloorFixture(curved = false) {
+export function wallPointMaskFloorFixture(curved = false, rise = 0) {
   const fixture = wallMaterialFixture();
   const { document, asset } = fixture;
   const mask = asset.gameplay!.masks![0]!;
@@ -166,6 +166,7 @@ export function wallPointMaskFloorFixture(curved = false) {
         [345, 200, 40],
       ];
   path.repeatLength = splineCurve(path, document.camera).getLength() / 2.45;
+  path.points.forEach((point, i) => (point[2] += (rise * i) / (path.points.length - 1)));
   return fixture;
 }
 

@@ -4,6 +4,37 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Point masks on rising spline floors (2026-10-11)
+
+The floor-owned receiver repair also exposed a failure outside cropped repeats:
+on a curved path rising 30 units, directly warping an interior anchor did not put
+it on the independently triangulated receiving plane. The first two masks were
+omitted while the cropped third mask, using floor-derived samples, survived.
+Export now uses those samples for every point-only mask whose source anchor
+identifies one asset-owned floor. Explicit probes still take precedence; masks
+without an owned floor retain their authored anchor when it survives trimming.
+No scene-level fallback or runtime geometry solver is involved.
+
+`wallPointMaskFloorFixture(curved, rise)` now covers both path shapes with rises
+0 and 30. All four cases retain three masks, preserve source metadata, and pass
+ZIP descriptor/warning extraction, reopening and recompilation. The flat cases
+still match the checked-in native fixture exactly. The rising descriptors are
+generated from the same fixture and compiler into
+`work/map-compile/spline-point-mask-slopes-9EV27k/cases.json` rather than adding
+their larger prepared graphs to the repository.
+
+With `ROBIN_SPLINE_MASK_CASES` pointing to that file, the ignored native test
+`exported_spline_point_masks_follow_rising_floors` passes all four constructions,
+bitmap checks, volume-isolation and altitude queries. The regular two-case test
+also passes. Layer registration is checked against the native projection
+receivers' raised heights, not a fixed layer number: the curved rising floor is
+assigned layer 0. Some movement-grid rounding/collapsed-fragment warnings remain;
+these visibility checks do not certify that floor's complete navigation or
+rendered appearance.
+
+The 36 spline/app tests, 155 asset compiler tests, type checking, lint, formatting
+and game binary build pass. No production Rust code changes were needed.
+
 ## Cropped point-mask receivers (2026-10-11)
 
 Previously, spline cropping always omitted a mask whose only receiving anchor

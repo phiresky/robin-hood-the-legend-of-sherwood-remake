@@ -831,15 +831,23 @@ test("a surviving mask probe retains a cropped repeat when its point anchor is t
 });
 
 test("cropped point masks retain their own floor without borrowing other surfaces", () => {
-  for (const curved of [false, true]) {
-    const { document, asset, assets, bounds } = wallPointMaskFloorFixture(curved);
+  for (const [curved, rise] of [
+    [false, 0],
+    [true, 0],
+    [false, 30],
+    [true, 30],
+  ] as const) {
+    const { document, asset, assets, bounds } = wallPointMaskFloorFixture(curved, rise);
     const before = structuredClone(asset);
     const generated = wallSplineGameplay(document, assets, false);
     assert.deepEqual(generated.warnings, []);
     const masks = generated.descriptors[0]!.gameplay!.masks!;
     assert.equal(masks.length, 3);
     assert.ok(masks[2]!.receiverPoints!.length > 0);
-    assert.ok(masks[2]!.receiverPoints!.every((p) => p[2] === 40));
+    assert.ok(masks.every((mask) => mask.receiverPoints!.length > 0));
+    assert.ok(
+      masks.flatMap((mask) => mask.receiverPoints!).every((p) => p[2] >= 40 && p[2] <= 40 + rise),
+    );
     assert.equal(compileAssetGameplay(document, assets, bounds).masks!.length, 3);
     assert.deepEqual(asset, before);
     asset.gameplay!.surfaces.push({
