@@ -45,13 +45,20 @@ def main():
         phase_rows.append(dict(phase=phase,tick=phase*4,maximum_key_evaluation_error=max(errors)))
     scene.render.engine='CYCLES';scene.cycles.samples=12;scene.cycles.transparent_max_bounces=512;scene.render.resolution_x=384;scene.render.resolution_y=384;scene.render.resolution_percentage=100;scene.render.film_transparent=True;scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.view_settings.view_transform='Standard'
     camera_data=bpy.data.cameras.new('Saved source camera');camera_data.type='ORTHO';camera_data.clip_end=20000;camera=bpy.data.objects.new('Saved source camera',camera_data);scene.collection.objects.link(camera);scene.camera=camera
-    views=json.loads(args.views.read_text())['views'];images=[];recovered=[]
+    views=json.loads(args.views.read_text())['views'];images=[];recovered=[];framing=[]
     for phase,indices in [(0,[0]),(7,range(8)),(14,[0])]:
         scene.frame_set(phase*4)
         for index in indices:
             v=views[index];camera.matrix_world=Matrix(v['camera_matrix_world']);camera_data.ortho_scale=v['ortho_scale'];image=args.output/f'phase-{phase:02}-view-{index}.png'
+            bpy.context.view_layer.update();inverse=camera.matrix_world.inverted();corners=[]
+            for mesh_object in meshes:
+                evaluated=mesh_object.evaluated_get(bpy.context.evaluated_depsgraph_get());corners.extend(inverse@evaluated.matrix_world@Vector(corner) for corner in evaluated.bound_box)
+            required=float(np.max(np.abs(np.asarray(corners)[:,:2])))*2.12
+            camera_data.ortho_scale=max(float(v['ortho_scale']),required)
+            enlarged=camera_data.ortho_scale>float(v['ortho_scale'])+1e-4
+            framing.append(dict(phase=phase,view=index,camera_matrix_world=[list(r) for r in camera.matrix_world],ortho_scale=camera_data.ortho_scale,prior_ortho_scale=v['ortho_scale'],expanded_to_preserve_full_bounds=enlarged))
             prior=args.reuse_from/image.name if args.reuse_from else None
-            if prior and prior.exists():
+            if prior and prior.exists() and not enlarged:
                 assert Image.open(prior).size==(384,384)
                 shutil.copyfile(prior,image);recovered.append(dict(path=str(prior),sha256=sha(prior),scope='Recovered from the same owner interrupted render command; independent import/phase assertions rerun here.'))
             else:
@@ -63,7 +70,7 @@ def main():
     for index in range(8):
         image=Image.open(args.output/f'phase-07-view-{index}.png');x=index%4*384;y=index//4*404;sheet.paste(image,(x,y+20),image);draw.text((x+4,y+3),f'Phase 7 / view {index}',fill='black')
     sheet.save(args.output/'eight-view.png')
-    result=dict(status='SAVED_IMPORT_AND_15_POSES_PASS_VISUAL_REVIEW_PENDING',asset_id=args.asset,export_sha256=sha(args.export),model_sha256=sha(model),views_sha256=sha(args.views),phase_rows=phase_rows,recovered_captures=recovered,crown_meshes=len(crowns),static_wood_meshes=len(wood),native_loop_image_exact=True,images=images,limits=['Only this isolated derivative was imported; neighbor contacts/source mask ownership remain separate.','New inferred crown motion is unapproved.','Image view 0 reuses the asset own saved original-art camera.'])
+    result=dict(status='SAVED_IMPORT_AND_15_POSES_PASS_VISUAL_REVIEW_PENDING',asset_id=args.asset,export_sha256=sha(args.export),model_sha256=sha(model),views_sha256=sha(args.views),phase_rows=phase_rows,recovered_captures=recovered,framing=framing,crown_meshes=len(crowns),static_wood_meshes=len(wood),native_loop_image_exact=True,images=images,limits=['Only this isolated derivative was imported; neighbor contacts/source mask ownership remain separate.','New inferred crown motion is unapproved.','Image view 0 reuses the asset own saved original-art camera.'])
     (args.output/'report.json').write_text(json.dumps(result,indent=2)+'\n')
 
 
