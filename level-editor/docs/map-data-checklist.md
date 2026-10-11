@@ -425,12 +425,19 @@ height and destination posture; eight blocked cases retain zero doors. Evidence:
 `work/map-compile/posture-passages-DlAdIG/actor-posture-report.json`. Blank diagnostic
 rasters do not verify rendered appearance. A rotated opening clipped by an earlier
 test frame was correctly omitted; the final audit asserts that no case is clipped.
-Changing blockers and mixed-posture regions without explicit sockets still need
-coverage. Specifically, export currently prepares obstacle-state requirements only
-for lift doors, although native loading supports them for ordinary doors too;
-ordinary generated passages need this export data before changing-obstacle
-behavior can be certified. This is not full crouch-area parity.
-No runtime solver was added.
+Ordinary standalone doors now export obstacle-state requirements for both
+animation legs, using each receiving area's independent state word. Permanent
+cuts are retained for passage checks even when subtraction merges an obstacle
+into a floor boundary; authored solid-volume clearances are respected. A blocked
+passage stays unavailable and produces an export warning without overwriting
+script activation or lock settings. Compiler/export tests pin editable ZIP
+descriptors to native fixtures. Native loading and authorization tests verify
+permanent blocking, independent copied patch controls, reopening, and preservation
+of explicit deactivation. These checks do not yet certify interruption/resumption
+of ordinary animated crossings, initially closed generated socket placement, or
+virtual-room entrances. Changing mixed-posture passages and regions without
+explicit sockets still need broader coverage. This is not full crouch-area
+parity. No runtime solver was added.
 
 Spline-wall trimming now preserves disconnected closed mask contours as separate
 applications, including sloped and vertical boundaries. Moved, bent and rising

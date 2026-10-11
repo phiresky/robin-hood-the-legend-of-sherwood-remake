@@ -9,7 +9,10 @@ import type { ProjectionAssetDescriptor } from "@rle/shared";
 import { packageAppearanceRegions, type BakedAppearanceRegion } from "./map-appearance.ts";
 import { compileMission } from "./compile-mission.ts";
 import { compileLiftApproaches } from "../../shared/src/compile-lift-approaches.ts";
-import { compileLiftPassageStates } from "../../shared/src/compile-passage-states.ts";
+import {
+  compileLiftPassageStates,
+  compileOrdinaryPassageStates,
+} from "../../shared/src/compile-passage-states.ts";
 import { prepareStairPassages } from "../../shared/src/prepare-stair-passages.ts";
 import type { SceneryResources } from "./scenery-resources.ts";
 
@@ -115,6 +118,15 @@ export function compileMap(
   if (assetGeometry) {
     compileLiftApproaches(assetGeometry);
     prepareStairPassages(assetGeometry);
+    const ordinaryStates = compileOrdinaryPassageStates(assetGeometry);
+    assetGeometry.doors.forEach((door, index) => {
+      const requirements = [...(door.passage_states ?? []), ...ordinaryStates[index]!];
+      if (requirements.length) door.passage_states = requirements;
+      if (requirements.some((requirement) => requirement.allowed_states.length === 0))
+        (assetGeometry.warnings ??= []).push(
+          `Door ${index}: the animated passage intersects a permanent movement obstacle; this passage is unavailable.`,
+        );
+    });
     const passageStates = compileLiftPassageStates(assetGeometry);
     assetGeometry.lifts?.forEach((lift, index) => {
       lift.doors.forEach((door, doorIndex) => {

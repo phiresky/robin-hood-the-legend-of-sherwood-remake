@@ -1,5 +1,6 @@
 import { terrainGameplay } from "./authored-terrain.ts";
-import { compileNavigationGraph } from "./compile-navigation-graph.ts";
+import { compileNavigationGraph, prepareCorridorStates } from "./compile-navigation-graph.ts";
+import earcut, { flatten } from "earcut";
 import { placeGameplaySurface } from "./place-gameplay-surface.ts";
 import { compilePhysicalStairRegion } from "./compile-physical-stair-region.ts";
 import {
@@ -1491,7 +1492,22 @@ function compileAssetGameplayAttempt(
         group.navigationRegion,
         (navigationPlaneCounts.get(group.navigationRegion) ?? 0) + 1,
       );
+  const permanentPassageCuts = new Map<HeightPlane, Polygon[]>();
+  const passageCutKeys = new Map<HeightPlane, Set<string>>();
   for (const { layer, plane, lift, navigationRegion, forceCrouched, surfaces: group } of groups) {
+    const passageCuts = permanentPassageCuts.get(plane) ?? [];
+    permanentPassageCuts.set(plane, passageCuts);
+    const cutKeys = passageCutKeys.get(plane) ?? new Set<string>();
+    passageCutKeys.set(plane, cutKeys);
+    const recordPassageCuts = (cuts: Polygon[]) => {
+      for (const cut of cuts) {
+        const key = JSON.stringify(cut);
+        if (cutKeys.has(key)) continue;
+        cutKeys.add(key);
+        passageCuts.push(cut);
+      }
+    };
+    recordPassageCuts(group.flatMap((surface) => surface.holes.map((hole) => polygon(hole))));
     const joinedWall =
       navigationRegion !== undefined &&
       (navigationPlaneCounts.get(navigationRegion) ?? 0) > 1 &&
@@ -1519,6 +1535,9 @@ function compileAssetGameplayAttempt(
     // Subtract whole polygons so holes in blockers remain walkable islands.
     for (const blocker of movementBlockers) {
       if (!plane.every((n, i) => Math.abs(n - blocker.plane[i]!) < 1e-7)) continue;
+      recordPassageCuts([
+        [polygon(blocker.polygon)[0]!, ...blocker.holes.map((hole) => polygon(hole)[0]!)],
+      ]);
       if (preserve) {
         cutouts.push([polygon(blocker.polygon)[0]!, ...blocker.holes.map((h) => polygon(h)[0]!)]);
         contourGroups.push(blocker.movementContour);
@@ -1583,6 +1602,7 @@ function compileAssetGameplayAttempt(
             [polygon(clearance.polygon)[0]!, ...clearance.holes.map((h) => polygon(h)[0]!)],
           ]);
         }
+        recordPassageCuts(regions);
         if (preserve) {
           cutouts.push(...regions);
           contourGroups.push(...regions.map(() => undefined));
@@ -2796,6 +2816,30 @@ function compileAssetGameplayAttempt(
       return [id, area] as const;
     }),
   );
+  const passageChecks = new Map<HeightPlane, ReturnType<typeof prepareCorridorStates>>();
+  const passageCheck = (plane: HeightPlane) => {
+    let check = passageChecks.get(plane);
+    if (!check) {
+      const obstacles = (permanentPassageCuts.get(plane) ?? []).flatMap((cut) => {
+        const { vertices, holes, dimensions } = flatten(cut);
+        const indices = earcut(vertices, holes, dimensions);
+        return Array.from({ length: indices.length / 3 }, (_, i) => ({
+          state_id: 0,
+          polygon: {
+            points: indices
+              .slice(i * 3, i * 3 + 3)
+              .map((index): Point => [
+                vertices[index * dimensions]!,
+                vertices[index * dimensions + 1]!,
+              ]),
+          },
+        }));
+      });
+      check = prepareCorridorStates(obstacles);
+      passageChecks.set(plane, check);
+    }
+    return check;
+  };
   const compiledDoors = doors.map((door) => {
     // Ordinary passages can meet traversal surfaces; lift doors retain their explicit owner.
     const outside = resolveDoorOutside(door, door.lift ? undefined : null),
@@ -2815,7 +2859,29 @@ function compileAssetGameplayAttempt(
       return null;
     }
     const d = door.definition;
+    const permanentStates: NonNullable<CompiledAssetGeometry["doors"][number]["passage_states"]> =
+      [];
+    if (!door.lift && !door.interior) {
+      for (const [area, endpoint, anchor] of [
+        [outside, door.outside, door.outsideAnchor],
+        [inside, door.inside, door.insideAnchor],
+      ] as const) {
+        const receiving = areas.find(
+          (candidate) =>
+            candidate.sector === area.sector && containsNavigationAnchor(candidate, anchor),
+        );
+        if (receiving && !passageCheck(receiving.plane)(door.middle, project(endpoint)).length) {
+          const entry = motionBySector.get(area.sector)!;
+          permanentStates.push({
+            layer: area.layer,
+            area: layers[area.layer]!.indexOf(entry),
+            allowed_states: [],
+          });
+        }
+      }
+    }
     return {
+      ...(permanentStates.length ? { passage_states: permanentStates } : {}),
       ...(!door.lift && !door.interior
         ? {
             world_endpoints: {

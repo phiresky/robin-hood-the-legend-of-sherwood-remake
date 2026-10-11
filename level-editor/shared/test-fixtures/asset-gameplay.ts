@@ -715,6 +715,35 @@ export function movementTransitionCompilerFixture() {
   return fixture;
 }
 
+export function ordinaryPassageBarrierCompilerFixture() {
+  const fixture = movementTransitionCompilerFixture();
+  const transition = fixture.hut.gameplay!.movementTransitions![0]!;
+  transition.initial = [];
+  transition.applied = [
+    {
+      id: "passage-barrier",
+      node: "building-999",
+      height: 0,
+      polygon: [
+        [85, 40],
+        [95, 40],
+        [95, 60],
+        [85, 60],
+      ],
+    },
+  ];
+  const body = structuredClone(fixture.document.objects.find((object) => object.group)!);
+  body.id = "passage-copy-body";
+  body.group = "passage-copy";
+  fixture.document.objects.push(body);
+  fixture.document.groups.push({
+    id: "passage-copy",
+    transform: { ...IDENTITY_TRANSFORM, dx: 700 },
+  });
+  fixture.document.map = "Ordinary passage state fixture";
+  return fixture;
+}
+
 export function terrainTransitionCompilerFixture() {
   const fixture = movementTransitionCompilerFixture();
   const gameplay = fixture.hut.gameplay!;

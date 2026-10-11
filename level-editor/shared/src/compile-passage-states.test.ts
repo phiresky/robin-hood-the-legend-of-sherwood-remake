@@ -4,7 +4,12 @@ import { readFileSync } from "node:fs";
 import type { CompiledAssetGeometry } from "./asset-gameplay.ts";
 import type { Point } from "./level.ts";
 import { prepareCorridorStates } from "./compile-navigation-graph.ts";
-import { compileLiftPassageStates } from "./compile-passage-states.ts";
+import {
+  compileLiftPassageStates,
+  compileOrdinaryPassageStates,
+} from "./compile-passage-states.ts";
+import { ordinaryPassageBarrierCompilerFixture } from "../test-fixtures/asset-gameplay.ts";
+import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
 
 const rectangle: Point[] = [
   [3, -10],
@@ -13,6 +18,23 @@ const rectangle: Point[] = [
   [3, 10],
 ];
 const obstacle = (state_id: number) => ({ state_id, polygon: { points: rectangle } });
+
+test("ordinary passage states bind changing blockers to their own copied receiving areas", () => {
+  const { document, assets } = ordinaryPassageBarrierCompilerFixture();
+  const geometry = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+  const before = structuredClone(geometry);
+  const states = compileOrdinaryPassageStates(geometry);
+  assert.equal(states.length, 2);
+  assert.ok(states.every((requirements) => requirements.length === 1));
+  assert.deepEqual(
+    states.map((requirements) => requirements[0]!.allowed_states),
+    [[1], [1]],
+  );
+  assert.notEqual(states[0]![0]!.area, states[1]![0]!.area);
+  assert.deepEqual(geometry, before);
+  geometry.doors[0]!.sector_out = 65534;
+  assert.throws(() => compileOrdinaryPassageStates(geometry), /missing out area/);
+});
 
 test("passage clearance handles permanent, alternate and independent obstacle states", () => {
   const states = (...ids: number[]) => prepareCorridorStates(ids.map(obstacle))([0, 0], [10, 0]);

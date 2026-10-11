@@ -1,6 +1,55 @@
 use super::*;
 
 #[test]
+fn exported_ordinary_passage_states_follow_only_their_own_asset_patch() {
+    let (blocked_engine, blocked_assets) = compiled_walkway(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-ordinary-passage-permanent.level.json"
+    )));
+    assert_eq!(blocked_assets.navigation.passage_states.len(), 1);
+    assert!(blocked_engine.script_domains.interactables.doors[0].active);
+    assert!(blocked_engine.script_domains.interactables.doors[0].passage_blocked);
+    let (mut engine, assets) = compiled_walkway(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-ordinary-passage-states.level.json"
+    )));
+    assert_eq!(assets.navigation.passage_states.len(), 2);
+    let actor = crate::gate::ActorAuthInfo {
+        kind: crate::element::ElementKind::ActorPc,
+        pc_auth_bit: 1,
+        has_lockpick: false,
+        has_climb: false,
+        has_jump: false,
+        is_rider: false,
+        posture: Posture::Upright,
+    };
+    let sim = crate::sim_rng::test_context();
+    for changed in [0, 1] {
+        let patch = crate::patch::PatchIndex::new(changed).unwrap();
+        engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+        for (index, door) in engine.script_domains.interactables.doors.iter().enumerate() {
+            assert_eq!(door.passage_blocked, index == changed as usize);
+            for direct in [false, true] {
+                assert_eq!(
+                    door.is_actor_authorized(direct, &actor, true, false),
+                    index != changed as usize
+                );
+            }
+        }
+        engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+        for door in &engine.script_domains.interactables.doors {
+            assert!(!door.passage_blocked);
+            assert!(door.is_actor_authorized(true, &actor, true, false));
+        }
+    }
+    engine.script_domains.interactables.doors[0].active = false;
+    let patch = crate::patch::PatchIndex::new(0).unwrap();
+    engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+    engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+    assert!(!engine.script_domains.interactables.doors[0].active);
+}
+
+#[test]
 fn prepared_passage_state_preserves_script_activation_and_validates_bindings() {
     let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),

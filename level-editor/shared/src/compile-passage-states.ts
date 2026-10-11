@@ -10,14 +10,12 @@ export interface PassageStateRequirement {
 }
 
 /**
- * Compute clearance for both animation segments of a prepared lift entrance.
+ * Prepare corridor checks indexed by motion sector and layer.
  * Requirements from different areas must all hold. Their state words are local
  * to those areas, so equal bit numbers never couple unrelated placed assets.
  * This prepares data only; callers must bind it to native gate authorization.
  */
-export function compileLiftPassageStates(
-  geometry: CompiledAssetGeometry,
-): PassageStateRequirement[][][] {
+function passageAreas(geometry: CompiledAssetGeometry) {
   const areas = new Map<string, { area: number; allowed: (a: Point, b: Point) => number[] }>();
   let sector = 0;
   geometry.motion_data.layers.forEach((entries, layer) => {
@@ -26,6 +24,32 @@ export function compileLiftPassageStates(
       sector += 1 + entry.obstacles.length;
     });
   });
+  return areas;
+}
+
+/** Prepare both legs of ordinary passages using each receiving area's state word. */
+export function compileOrdinaryPassageStates(
+  geometry: CompiledAssetGeometry,
+): PassageStateRequirement[][] {
+  const areas = passageAreas(geometry);
+  return geometry.doors.map((door, index) => {
+    const result: PassageStateRequirement[] = [];
+    for (const side of ["in", "out"] as const) {
+      const layer = door[`layer_${side}`];
+      const entry = areas.get(`${door[`sector_${side}`]}/${layer}`);
+      if (!entry) throw new Error(`Door ${index}: missing ${side} area`);
+      const allowed_states = entry.allowed(door.point_mid, door[`point_${side}`]);
+      if (allowed_states.length !== 1 || allowed_states[0] !== 0)
+        result.push({ layer, area: entry.area, allowed_states });
+    }
+    return result;
+  });
+}
+
+export function compileLiftPassageStates(
+  geometry: CompiledAssetGeometry,
+): PassageStateRequirement[][][] {
+  const areas = passageAreas(geometry);
   return (geometry.lifts ?? []).map((lift, liftIndex) =>
     lift.doors.map((door, doorIndex) => {
       const result: PassageStateRequirement[] = [];

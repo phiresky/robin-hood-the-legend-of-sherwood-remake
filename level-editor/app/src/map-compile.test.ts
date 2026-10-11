@@ -14,6 +14,7 @@ import {
 } from "./map-bake-render.ts";
 import {
   assetCompilerFixture,
+  ordinaryPassageBarrierCompilerFixture,
   rotatedSceneryCompilerFixture,
   anchoredReceiverCompilerFixture,
   preservedBoundaryCompilerFixture,
@@ -68,6 +69,98 @@ import {
   doorAnchorCompilerFixture,
 } from "../../shared/test-fixtures/asset-gameplay.ts";
 import { readFile } from "node:fs/promises";
+
+test("permanent ordinary passage collisions warn and export an unavailable corridor", async () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  hut.gameplay!.movementBlockers = [
+    {
+      id: "door-wall",
+      node: "building-999",
+      height: 0,
+      polygon: [
+        [85, 40],
+        [95, 40],
+        [95, 60],
+        [85, 60],
+      ],
+    },
+  ];
+  const compiled = compileMap(document, [0, 0, 2000, 2000], assets);
+  assert.match(compiled.warnings.join("\n"), /Door 0:.*permanent movement obstacle/);
+  const door = compiled.descriptor.asset_geometry!.doors[0]!;
+  assert.equal(door.active, true);
+  assert.ok(door.passage_states!.some((requirement) => requirement.allowed_states.length === 0));
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-ordinary-passage-permanent.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled.descriptor, expected);
+});
+
+test("ordinary passage collision cuts retain authored solid clearances", () => {
+  const { document, assets, hut } = nonrenderingVolumeCompilerFixture();
+  hut.gameplay!.volumes![0]!.shape.points = [
+    [85, 40],
+    [95, 40],
+    [95, 60],
+    [85, 60],
+  ].map(([x, y]) => ({
+    x: x!,
+    y: y!,
+    z_bottom: 0,
+    z_top: 30,
+  }));
+  const blocked = compileMap(document, [0, 0, 2000, 2000], assets);
+  assert.ok(
+    blocked.descriptor.asset_geometry!.doors[0]!.passage_states!.some(
+      (state) => state.allowed_states.length === 0,
+    ),
+  );
+  hut.gameplay!.movementClearances = [
+    {
+      id: "door-cut",
+      node: "building-999",
+      height: 0,
+      polygon: [
+        [84, 39],
+        [96, 39],
+        [96, 61],
+        [84, 61],
+      ],
+    },
+  ];
+  const clear = compileMap(document, [0, 0, 2000, 2000], assets);
+  assert.equal(clear.descriptor.asset_geometry!.doors[0]!.passage_states, undefined);
+});
+
+test("ordinary passage export retains independent native obstacle-state bindings", async () => {
+  const { document, assets } = ordinaryPassageBarrierCompilerFixture();
+  const compiled = compileMap(document, [0, 0, 2000, 2000], assets);
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-ordinary-passage-states.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled.descriptor, expected);
+  const bytes = await packageCompiledMap(compiled, {
+    color: new Uint8Array(2000 * 2000 * 4),
+    depth: new Uint16Array(2000 * 2000),
+  });
+  const files = unzipSync(bytes);
+  assert.deepEqual(
+    JSON.parse(strFromU8(files[`Data/Levels/${compiled.name}.level.json`]!)),
+    expected,
+  );
+});
 
 test("rotated scenery exports the boundary checked by native display ordering", async () => {
   const { document, assets } = rotatedSceneryCompilerFixture();
