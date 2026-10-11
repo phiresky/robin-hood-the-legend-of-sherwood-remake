@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Full-circle editor climb audit (2026-10-12, incomplete)
+
+`work/map-compile/climb-angle-routes-CiujW9` contains 1,080 fresh editor descriptors:
+ladder, ordinary wall and crenel wall variants at every whole-degree rotation,
+raised 40 units. The initial-state native audit checks both directions using a
+complete character sprite. Of 2,160 prepared routes, 2,112 pass and 48 fail.
+All failures occur at 5–8 or 172–175 degrees, in both directions for each variant.
+Actors enter the lift but stop against the projected movement boundary. The
+exporter also warns that its inside approaches lack actor-sized clearance.
+
+This exposes a real export limitation distinct from the synthetic projected
+rotation failure described below. Clearance preparation currently targets stairs
+and excludes collision-bearing floors; extending it requires preserving physical
+support and independent obstacle states. No runtime solver has been added.
+The audit covers descriptors and prepared routes, not ZIPs, click selection,
+changed barrier states or full scene rendering. This category remains open.
+
+The refreshed native map integration suite separately passes 72 tests, with seven
+external-data audits left opt-in.
+
 ## Joined floors preserve placement precision automatically (2026-10-11)
 
 Surfaces belonging to an authored navigation region now retain fractional placed

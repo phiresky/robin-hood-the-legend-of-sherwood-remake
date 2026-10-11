@@ -139,6 +139,10 @@ and
 A separate projected-geometry climb sweep still fails at 158 degrees for one wall
 variant. Real editor exports at 157/158/159 degrees pass 36 prepared native routes;
 this narrows the failure but does not certify the synthetic sweep or all angles.
+The subsequent full-circle editor audit finds 48 failures among 2,160 directed
+routes: all three climb variants stop against projected boundaries at 5–8 and
+172–175 degrees. Static climb-clearance construction remains incomplete; see
+[full-circle evidence](map-compilation-evidence.md#full-circle-editor-climb-audit-2026-10-12-incomplete).
 
 **Authored occupancy triggers (2026-10-11):** eight new map exports place two
 independent reusable trigger assets at 0/37/90/180 degrees and elevations 0/40.
