@@ -19,10 +19,10 @@ def make_bvh(objects):
 # rectangle. New intersections lie on those original surfaces; no exterior
 # original vertex moves. Terrain inside is explicitly inferred.
 if a.revision>=8:
- nodes=['building-000',*[f'building-{i:03d}' for i in range(2,8)]]
+ nodes=([f'building-{i:03d}' for i in range(9)] if a.revision>=18 else ['building-000',*[f'building-{i:03d}' for i in range(2,8)]])
  banks=[o for o in collection.all_objects if o.type=='MESH' and o.get('source_node') in nodes]
  assert len(banks)==len(nodes)
-region=(80.,800.,-1240.,-320.) if a.revision>=11 else (200.,752.,-1100.,-400.) if a.revision>=9 else ((200.,750.,-1100.,-400.) if a.revision>=8 else (300.,640.,-980.,-540.))
+region=(-128.,800.,-1472.,0.) if a.revision>=18 else (80.,800.,-1240.,-320.) if a.revision>=11 else (200.,752.,-1100.,-400.) if a.revision>=9 else ((200.,750.,-1100.,-400.) if a.revision>=8 else (300.,640.,-980.,-540.))
 def split_polygon(poly,axis,bound,keep_low):
  inside=[];outside=[]
  for current,following in zip(poly,poly[1:]+poly[:1]):
@@ -74,8 +74,9 @@ regional=(xs[:,None]>=region[0])&(xs[:,None]<=region[1])&(ys[None,:]>=region[2])
 extension=regional&~closed;closed|=regional
 background=[o for o in collection.all_objects if o.type=='MESH' and o.get('source_node') in {'building-000','ground'}];background_tree,_=make_bvh(background)
 for i,j in np.argwhere(extension):
- hit,_,_,_=background_tree.ray_cast(Vector((xs[i],ys[j],5000)),Vector((0,0,-1)),10000);assert hit is not None
- z0[i,j]=hit.z;labels[i,j]=nodes.index('building-000')
+ hit,_,_,_=background_tree.ray_cast(Vector((xs[i],ys[j],5000)),Vector((0,0,-1)),10000)
+ assert hit is not None or a.revision>=18
+ z0[i,j]=float(hit.z) if hit is not None else 0.;labels[i,j]=nodes.index('building-000')
 outer_skirt=np.zeros_like(closed);excluded_background_overlap=0
 if a.revision>=16:
  # Infer a soil transition beyond the bank footprint instead of retaining

@@ -7,7 +7,7 @@ from mathutils.bvhtree import BVHTree
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 p=argparse.ArgumentParser();p.add_argument('worker',type=Path);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);acquire(slots=2)
-root=ROOT/'level-editor/work/croisement01-refinement/restart2';wood=root/'approved-tree08-bark-fill-v3/croisement01-tree-08/baked-v8-connected-gaps/worker.blend';bank=a.worker.resolve()/'model.blend'
+root=ROOT/'level-editor/work/croisement01-refinement/restart2';wood=root/'approved-tree08-bark-fill-v3/croisement01-tree-08/baked-v8-connected-gaps/worker.blend';bank=a.worker.resolve()/'model.blend';nodes=json.loads((bank.parents[2]/'construction.json').read_text())['changed_nodes']
 def tree(objects):
  p=[];f=[]
  for o in objects:
@@ -15,8 +15,8 @@ def tree(objects):
  return BVHTree.FromPolygons(p,f)
 assert hashlib.sha256(wood.read_bytes()).hexdigest()=='01dedc44df9d06962a76b6bbf6d4fc96715f219ee0af7eb782ba22677892767a'
 bpy.ops.wm.open_mainfile(filepath=str(wood));wb=tree([o for o in bpy.context.scene.objects if o.type=='MESH'])
-bpy.ops.wm.open_mainfile(filepath=str(root/'tree05-v7/assets/croisement01-tree-05/model.blend'));oldbb=tree([o for o in bpy.context.scene.objects if o.type=='MESH' and o.get('source_node') in ['building-000','building-002','building-003','building-004','building-005','building-006','building-007']])
-bpy.ops.wm.open_mainfile(filepath=str(bank));bb=tree([o for o in bpy.context.scene.objects if o.type=='MESH' and o.get('source_node') in ['building-000','building-002','building-003','building-004','building-005','building-006','building-007']]);s,c=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-c,s));mask=Image.open(root.parent/'baseline/masks/000008.png').convert('L');hits=0;hidden=[];new_hidden=[];old_hidden=0
+bpy.ops.wm.open_mainfile(filepath=str(root/'tree05-v7/assets/croisement01-tree-05/model.blend'));oldbb=tree([o for o in bpy.context.scene.objects if o.type=='MESH' and o.get('source_node') in nodes])
+bpy.ops.wm.open_mainfile(filepath=str(bank));bb=tree([o for o in bpy.context.scene.objects if o.type=='MESH' and o.get('source_node') in nodes]);s,c=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-c,s));mask=Image.open(root.parent/'baseline/masks/000008.png').convert('L');hits=0;hidden=[];new_hidden=[];old_hidden=0
 for y in range(mask.height):
  for x in range(mask.width):
   if not mask.getpixel((x,y)):continue
