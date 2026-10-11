@@ -18,17 +18,17 @@ round trips. Separate support layouts test door-height terrain and low-ground
 masks; the combined scene and rendering remain unverified. Croisement01's
 degenerate cap-plane crash is fixed: its fresh export loads natively and passes
 16 sampled ordinary walking routes and 130 directly dispatched jump/landing
-traversals. The separate player-click walk/jump/walk check fails 8 of 130 cases;
-those routes still need repair. It retains 45 non-draft warnings and takes about
+traversals. The corrected player-click walk/jump/walk check passes 129 of 130
+cases; one launch still stalls. It retains 45 non-draft warnings and takes about
 five minutes.
 Croisement02's collapsing caps are traced to mesh-derived wood assets. Published fence repairs
 pass 20 moved/rotated native exports and 33,160 mesh-derived sight/projectile
 checks, with measured loss below 0.003% of footprint and 0.002% of volume.
 Supplemental wood 09/44 repairs are now published too. Croisement02 exports and
 passes native loading plus six ordinary route samples, but retains 1,729 non-draft
-warnings and existing mesh/collision mismatches. The click-route audit is also
-being corrected to use authorized destinations rather than raw clicks; its
-failure counts are provisional. These results do not establish
+warnings and existing mesh/collision mismatches. The click-route audit now checks
+authorized destinations rather than raw clicks. Isolated stump tests still report
+30 of 640 cases with launch or selection-identity problems. These results do not establish
 full parity; see [the current evidence](map-compilation-evidence.md).
 
 **Matched runtime comparison (2026-10-11):** current code and the earlier

@@ -22,6 +22,8 @@ enum JumpStance {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct JumpArrival {
     final_distance: f32,
+    requested_goal: [f32; 2],
+    authorized_goal: [f32; 2],
     completed_turning_startup: bool,
     turning_distance_loss: f32,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -616,6 +618,11 @@ fn dispatch_jump(
                 destination.layer,
             ),
         ] {
+            if mode == JumpDispatch::Click && label == "landing" {
+                // A player click is authorized into a formation destination
+                // before movement. Check that actual destination below.
+                continue;
+            }
             if !engine
                 .world
                 .fast_grid
@@ -694,8 +701,33 @@ fn dispatch_jump(
         crate::sequence::FieldValue::Integer(destination_index),
     );
     let sim = crate::sim_rng::test_context();
+    let mut arrival_goal = goal;
     let sequence = if mode == JumpDispatch::Click {
         resolve_jump_click(&engine, owner, start, goal, index, destination_sector)?;
+        let planned = engine.plan_recorded_group_move(&assets, &[owner], goal, None, None, None);
+        match planned.as_slice() {
+            [
+                crate::engine::movement::formation::PlannedRecordedGroupMoveOutcome::Resolved(plan),
+            ] => {
+                arrival_goal = plan.destination;
+            }
+            _ => return Err(format!("click has no authorized arrival: {goal:?}")),
+        }
+        let footprint = engine
+            .world
+            .fast_grid
+            .try_move_box_half_diagonal(0)
+            .unwrap();
+        if !engine.world.fast_grid.is_reachable_thick(
+            destination.point_b + offset,
+            arrival_goal,
+            destination.layer,
+            footprint,
+        ) {
+            return Err(format!(
+                "authorized landing approach is blocked: {arrival_goal:?}"
+            ));
+        }
         engine.perform_group_move(
             TickCtx::new(&sim, &assets),
             &[owner],
@@ -821,8 +853,8 @@ fn dispatch_jump(
             .is_none_or(|selected| selected.orders.is_empty() || selected.command == Command::Wait);
         let completed_turning_startup = approach
             && finished_selection
-            && startup.completed_while_turning(&element.sprite, goal);
-        let final_distance = (element.position_map() - goal).length();
+            && startup.completed_while_turning(&element.sprite, arrival_goal);
+        let final_distance = (element.position_map() - arrival_goal).length();
         if flew
             && if approach {
                 finished_selection
@@ -906,6 +938,8 @@ fn dispatch_jump(
             }
             return Ok(JumpArrival {
                 final_distance,
+                requested_goal: [goal.x, goal.y],
+                authorized_goal: [arrival_goal.x, arrival_goal.y],
                 completed_turning_startup,
                 turning_distance_loss: startup.turning_loss,
                 trajectory,
@@ -917,7 +951,7 @@ fn dispatch_jump(
         .current_element_for_actor(owner)
         .and_then(|(id, index)| engine.seq().get_element(id, index));
     Err(format!(
-        "jump stalled: flew={flew}, position={:?}, posture={:?}, goal={goal:?}, startup={startup:?}, selected={selected:?}, carrier={:?}",
+        "jump stalled: flew={flew}, position={:?}, posture={:?}, goal={goal:?}, authorized_goal={arrival_goal:?}, startup={startup:?}, selected={selected:?}, carrier={:?}",
         engine.ent(owner).element_data().position(),
         engine.ent(owner).element_data().posture(),
         carrier.map(|id| (

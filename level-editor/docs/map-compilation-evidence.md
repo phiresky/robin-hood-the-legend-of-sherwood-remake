@@ -39,11 +39,17 @@ cases. The initial click audit reports 106 failures in 640 attempts: 64 stalls,
 An uncommitted metadata trial aligning opposing spans (`asset-jump-exports-JkYxsI`)
 still reports 102 failures and is not published.
 
-The click audit also incorrectly compares arrivals against raw clicks instead of
-the movement system's authorized formation destinations. A test-only correction
-is being verified; no production movement code is changed. The counts above are
-diagnostic evidence, not a final count of asset defects, and the remaining
-failures must be reassessed with the corrected audit.
+The click audit incorrectly compared arrivals against raw clicks instead of the
+movement system's authorized formation destinations. The corrected test records
+both points, validates the authorized landing approach and still checks final
+surface/layer and animation completion. No production movement code changes.
+The full Croisement01 click audit now passes 129/130 cases; line 21 at span 0.05
+still stalls before flying. The isolated cases pass 610/640: the remaining 18
+selection-identity failures and 12 launch-approach failures need further analysis,
+including whether their generated starting positions are valid. Raw-click reports
+are retained as `actor-jump-raw-click-report.json`. Three regular jump tests pass;
+the game build and formatting checks pass. These results do not certify all
+possible click locations or rendering.
 
 ## Mesh-derived fence cap repair candidates (2026-10-12)
 
@@ -147,8 +153,10 @@ rendered/ZIP check; the assets retain their draft warnings.
 Post-publication batches `york-component-exports-kvDOBj` and
 `york-component-exports-fvI5Ln` match all 32 staged descriptors and warning reports
 exactly. Reauthoring the four published definitions is idempotent. Saved-scene
-export `saved-map-exports-i9U8hr` has passed validation and remains in jump/door
-construction using its earlier compiler snapshot; full York parity is unverified.
+export `saved-map-exports-i9U8hr` completes in about 3,732 seconds using its earlier
+compiler snapshot and passes native construction. Fresh current-compiler export
+`saved-map-exports-YR17Lo` is running with the published definitions; full York
+parity is unverified.
 
 Completed Wychford and Croisement03 descriptors from older all-map batch
 `saved-map-exports-BCyaS7` pass native geometry construction as the explicitly
