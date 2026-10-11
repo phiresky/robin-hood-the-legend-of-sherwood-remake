@@ -8,7 +8,10 @@ import {
   compileLiftPassageStates,
   compileOrdinaryPassageStates,
 } from "./compile-passage-states.ts";
-import { ordinaryPassageBarrierCompilerFixture } from "../test-fixtures/asset-gameplay.ts";
+import {
+  ordinaryPassageBarrierCompilerFixture,
+  alternatingPostureCompilerFixture,
+} from "../test-fixtures/asset-gameplay.ts";
 import { compileAssetGameplay } from "./compile-asset-gameplay.ts";
 
 const rectangle: Point[] = [
@@ -18,6 +21,53 @@ const rectangle: Point[] = [
   [3, 10],
 ];
 const obstacle = (state_id: number) => ({ state_id, polygon: { points: rectangle } });
+
+test("posture seams retain distinct openings for alternate asset states", () => {
+  const { document, assets } = alternatingPostureCompilerFixture();
+  const geometry = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+  const states = compileOrdinaryPassageStates(geometry);
+  assert.equal(geometry.doors.length, 4, "two usable openings per copied seam");
+  for (const pair of [states.slice(0, 2), states.slice(2)]) {
+    assert.deepEqual(
+      pair.map((requirements) => requirements[0]!.allowed_states[0]!).sort((a, b) => a - b),
+      [1, 2],
+    );
+    assert.ok(pair.every((requirements) => requirements.every((r) => r.allowed_states.length > 0)));
+  }
+});
+
+test("rotated copied posture seams remain usable in each alternate state", () => {
+  for (const rotation of [0, 37, 90, 180]) {
+    const { document, assets } = alternatingPostureCompilerFixture();
+    document.size = [3000, 2000];
+    for (const group of document.groups)
+      group.transform = {
+        dx: group.id.startsWith("copy/") ? 1600 : 900,
+        dy: 900,
+        dz: 40,
+        rot_deg: rotation,
+      };
+    const geometry = compileAssetGameplay(document, assets, [0, 0, 3000, 2000]);
+    const states = compileOrdinaryPassageStates(geometry);
+    const copies = new Map<string, typeof states>();
+    geometry.doors.forEach((door, index) => {
+      const key = [door.sector_in, door.sector_out].sort((a, b) => a - b).join("/");
+      const entries = copies.get(key) ?? [];
+      entries.push(states[index]!);
+      copies.set(key, entries);
+    });
+    assert.equal(copies.size, 2);
+    for (const entries of copies.values())
+      for (const state of [1, 2]) {
+        assert.ok(
+          entries.some((requirements) =>
+            requirements.every((r) => r.allowed_states.some((mask) => (state & mask) === mask)),
+          ),
+          `rotation ${rotation}, state ${state}`,
+        );
+      }
+  }
+});
 
 test("ordinary passage states bind changing blockers to their own copied receiving areas", () => {
   const { document, assets } = ordinaryPassageBarrierCompilerFixture();

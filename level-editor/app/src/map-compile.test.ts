@@ -15,6 +15,7 @@ import {
 import {
   assetCompilerFixture,
   closedPostureCompilerFixture,
+  alternatingPostureCompilerFixture,
   ordinaryPassageBarrierCompilerFixture,
   interiorPassageBarrierCompilerFixture,
   rotatedSceneryCompilerFixture,
@@ -71,6 +72,32 @@ import {
   doorAnchorCompilerFixture,
 } from "../../shared/test-fixtures/asset-gameplay.ts";
 import { readFile } from "node:fs/promises";
+
+test("alternating posture openings survive native descriptor packaging", async () => {
+  const { document, assets } = alternatingPostureCompilerFixture();
+  const compiled = compileMap(document, [0, 0, 2000, 2000], assets);
+  assert.equal(compiled.descriptor.asset_geometry!.doors.length, 4);
+  const expected = JSON.parse(
+    await readFile(
+      new URL(
+        "../../../crates/robin_engine/tests/fixtures/asset-alternating-posture.level.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  assert.deepEqual(compiled.descriptor, expected);
+  const files = unzipSync(
+    await packageCompiledMap(compiled, {
+      color: new Uint8Array(2000 * 2000 * 4),
+      depth: new Uint16Array(2000 * 2000),
+    }),
+  );
+  assert.deepEqual(
+    JSON.parse(strFromU8(files[`Data/Levels/${compiled.name}.level.json`]!)),
+    expected,
+  );
+});
 
 test("initially closed posture connections export independent opening conditions", async () => {
   const { document, assets } = closedPostureCompilerFixture();

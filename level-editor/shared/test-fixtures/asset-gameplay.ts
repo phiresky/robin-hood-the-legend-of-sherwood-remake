@@ -1564,6 +1564,31 @@ export function joinedNavigationCompilerFixture() {
   return fixture;
 }
 
+export function alternatingPostureCompilerFixture() {
+  const fixture = closedPostureCompilerFixture();
+  const transition = fixture.hut.gameplay!.movementTransitions![0]!;
+  transition.initial[0]!.polygon = [
+    [90, 0],
+    [110, 0],
+    [110, 55],
+    [90, 55],
+  ];
+  transition.applied = [
+    {
+      ...structuredClone(transition.initial[0]!),
+      id: "other-opening",
+      polygon: [
+        [90, 45],
+        [110, 45],
+        [110, 100],
+        [90, 100],
+      ],
+    },
+  ];
+  fixture.document.map = "Alternating posture openings";
+  return fixture;
+}
+
 export function closedPostureCompilerFixture() {
   const fixture = joinedPostureCompilerFixture();
   const transition = structuredClone(

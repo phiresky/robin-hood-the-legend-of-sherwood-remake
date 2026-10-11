@@ -452,6 +452,17 @@ relevant asset control, checking independent copied availability, corridor
 adherence, final posture, height and sector. Evidence:
 `work/map-compile/closed-posture-passages-OuSqkE/actor-posture-report.json`.
 Closure during these posture-changing crossings remains open.
+Generated posture passages also retain separate openings when changing
+obstacles give different parts of the same boundary different availability.
+Previously, choosing one static midpoint could leave the connection blocked in
+both states even though each state had an unobstructed opening elsewhere.
+Compilation now partitions candidate crossings by their receiving-area state
+requirements and excludes candidates that can never be clear. Compiler checks
+cover rotated/raised copies; the packaged descriptor matches
+`asset-alternating-posture.level.json`. Native loading/apply/reset checks verify
+each copy keeps one usable opening in either state and its control exchanges
+only that copy's openings. Full actor routes through these alternate openings
+remain unverified.
 Virtual-room entrances now prepare their outdoor leg against the outdoor area's
 state word and retained permanent cuts; the virtual interior has no motion-area
 state word. Compiler and ZIP checks cover permanent blocking and warning output,

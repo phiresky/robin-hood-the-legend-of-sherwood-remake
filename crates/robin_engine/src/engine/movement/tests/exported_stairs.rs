@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn exported_alternating_posture_openings_follow_independent_asset_states() {
+    let (mut engine, assets) = compiled_walkway(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-alternating-posture.level.json"
+    )));
+    assert_eq!(engine.script_domains.interactables.doors.len(), 4);
+    let blocked = |engine: &EngineInner| {
+        engine
+            .script_domains
+            .interactables
+            .doors
+            .iter()
+            .map(|door| door.passage_blocked)
+            .collect::<Vec<_>>()
+    };
+    let initial = blocked(&engine);
+    assert_ne!(initial[0], initial[1]);
+    assert_ne!(initial[2], initial[3]);
+    let sim = crate::sim_rng::test_context();
+    for copy in [0, 1] {
+        let patch = crate::patch::PatchIndex::new(copy).unwrap();
+        engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+        for (index, current) in blocked(&engine).into_iter().enumerate() {
+            assert_eq!(current, initial[index] ^ (index / 2 == copy as usize));
+        }
+        engine.reset_patch(TickCtx::new(&sim, &assets), patch);
+        assert_eq!(blocked(&engine), initial);
+    }
+}
+
+#[test]
 fn exported_initially_closed_posture_connections_open_independently() {
     let (mut engine, assets) = compiled_walkway(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),

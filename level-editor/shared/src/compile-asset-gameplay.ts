@@ -2699,10 +2699,23 @@ function compileAssetGameplayAttempt(
           (a, b) => (a.middle[0] - b.middle[0]) * dx + (a.middle[1] - b.middle[1]) * dy,
         );
         const runs: (typeof candidates)[] = [];
+        const fromStates = prepareCorridorStates(motionBySector.get(from.sector)!.obstacles);
+        const toStates = prepareCorridorStates(motionBySector.get(to.sector)!.obstacles);
+        let previousStates: string | undefined;
         for (const candidate of candidates) {
+          const outsideStates = fromStates(candidate.outside, candidate.middle);
+          const insideStates = toStates(candidate.middle, candidate.inside);
+          if (!outsideStates.length || !insideStates.length) {
+            previousStates = undefined;
+            continue;
+          }
+          // Different state conditions need separate crossings even along one
+          // contiguous floor seam, so an obstacle cannot hide another opening.
+          const states = JSON.stringify([outsideStates, insideStates]);
           const previous = runs.at(-1)?.at(-1);
           if (
             !previous ||
+            states !== previousStates ||
             Math.max(
               Math.abs(candidate.middle[0] - previous.middle[0]),
               Math.abs(candidate.middle[1] - previous.middle[1]),
@@ -2710,6 +2723,7 @@ function compileAssetGameplayAttempt(
           )
             runs.push([]);
           runs.at(-1)!.push(candidate);
+          previousStates = states;
         }
         for (const run of runs) {
           const candidate = run[Math.floor(run.length / 2)]!;
