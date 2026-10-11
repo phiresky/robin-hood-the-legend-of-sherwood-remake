@@ -17,6 +17,39 @@ from physical_tree32_reviewed_domain_cpu import reviewed_source,BASE as DOMAIN
 from audit_tree32_source_islands import read
 
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def normalize_imported_alpha(obj):
+    """Reduce the verified glTF >= .5 graph to the ray tracer's same test.
+
+    Only the temporary imported material is touched. Vertex alpha must be one,
+    so multiplying it cannot alter physical coverage.
+    """
+    def upstream(socket):
+        if len(socket.links)!=1:raise ValueError('Expected one imported alpha input')
+        return socket.links[0]
+    for material in obj.data.materials:
+        if not material.get('foliage_physical_opacity'):continue
+        shaders=[n for n in material.node_tree.nodes if n.type=='BSDF_PRINCIPLED']
+        if len(shaders)!=1:raise ValueError('Ambiguous imported alpha shader')
+        socket=shaders[0].inputs['Alpha'];link=upstream(socket)
+        if link.from_node.type=='TEX_IMAGE':continue
+        subtract=link.from_node
+        if subtract.type!='MATH' or subtract.operation!='SUBTRACT' or subtract.inputs[0].is_linked or subtract.inputs[0].default_value!=1:raise ValueError('Unexpected imported alpha complement')
+        less=upstream(subtract.inputs[1]).from_node
+        if less.type!='MATH' or less.operation!='LESS_THAN' or less.inputs[1].is_linked or less.inputs[1].default_value!=.5:raise ValueError('Unexpected imported alpha cutoff')
+        link=upstream(less.inputs[0]);node=link.from_node
+        if node.type=='MATH' and node.operation=='MULTIPLY':
+            sources=[upstream(node.inputs[i])for i in (0,1)]
+            colors=[l for l in sources if l.from_node.type=='VERTEX_COLOR' and l.from_socket.name=='Alpha']
+            textures=[l for l in sources if l.from_node.type=='TEX_IMAGE' and l.from_socket.name=='Alpha']
+            if len(colors)!=1 or len(textures)!=1:raise ValueError('Unexpected imported alpha factors')
+            name=colors[0].from_node.layer_name
+            attributes=obj.data.color_attributes
+            index=attributes.render_color_index
+            attribute=attributes.get(name) if name else (attributes[index] if 0<=index<len(attributes) else None)
+            if attribute is None or any(v.color[3]!=1 for v in attribute.data):raise ValueError('Non-unit vertex alpha requires independent interpolation')
+            link=textures[0]
+        if link.from_node.type!='TEX_IMAGE' or link.from_socket.name!='Alpha':raise ValueError('Expected physical texture alpha')
+        material.node_tree.links.new(link.from_socket,socket)
 def installed(asset):
     path=ROOT/'level-editor/library/3d-assets/croisement02'/asset/'model.glb';descriptor=path.with_name('asset.json');digest=sha(path);description_sha=sha(descriptor);origin=Vector(json.loads(descriptor.read_text())['source_origin_scene'])
     bpy.ops.wm.read_factory_settings(use_empty=True);bpy.ops.import_scene.gltf(filepath=str(path));bpy.context.view_layer.update();objects=[o for o in bpy.data.objects if o.type=='MESH']
@@ -24,6 +57,7 @@ def installed(asset):
         world=obj.matrix_world.copy();obj.parent=None;obj.matrix_world=world;obj.location+=origin
     bpy.context.view_layer.update();points=[];triangles=[];owners=[];opacity=OpacityRegistry()
     for obj in objects:
+        normalize_imported_alpha(obj)
         obj.data.calc_loop_triangles();offset=len(points);points.extend(obj.matrix_world@v.co for v in obj.data.vertices)
         for triangle in obj.data.loop_triangles:
             opacity.add(obj,obj.data,triangle);triangles.append(tuple(offset+i for i in triangle.vertices));owners.append(dict(asset=asset,source_node=obj.get('source_node'),component=obj.get('projection_component')))
