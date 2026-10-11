@@ -190,9 +190,28 @@ on new editor terrain: 5000×5000 pixels, 141 sight obstacles and a 49,176,397-b
 ZIP. The downloaded artifact is
 `work/map-compile/browser-hall-reveal-20261011/rendered-hall-reveal.zip`.
 This uses the browser viewport and export worker with a bounded library containing
-only the two pinned reusable assets. It verifies rendered export/reopen fidelity;
-it does not establish native renderer switching or actor interaction. Existing
-best-effort geometry warnings remain visible and unresolved.
+only the two pinned reusable assets. It verifies rendered export/reopen fidelity.
+Existing best-effort geometry warnings remain visible and unresolved.
+
+The same ZIP now also passes the native OpenGL appearance gate. The archive's
+SHA-256 is `57e18d8618df5889605309080347f5c5d4db4eb1a0a5be5ebcc4dc3bda03f30f`.
+Its two independent regions are `[1022,720,805,857]` and
+`[3322,3020,805,857]`, bound to controls 0 and 1. The native loader mounts only
+the ZIP, decodes the background/depth/state resources, and installs them in the
+renderer. One changing-color/depth pixel per region is checked across all four
+control combinations plus reset, each with transition suppression enabled and
+disabled. All 30 color reads match decoded RGB565; all 60 sprite probes are
+correctly hidden/shown on opposite sides of each state's depth.
+
+Reproduce after building the `robin_rs` library test executable with
+`cargo test -p robin_rs --lib headless_downlevel_device_executes_every_multipass_profile --no-run`:
+set `WGPU_BACKEND=gl`, `RUST_MIN_STACK=33554432`, and
+`ASSET_APPEARANCE_EXPORT_ZIP` to the absolute path above, then run that executable
+with `gpu_upscale::tests::headless_downlevel_device_executes_every_multipass_profile
+--ignored --exact --nocapture`. The sandboxed run passed in 23.42 seconds.
+This directly assigns patch flags to isolate image binding and native rendering.
+It does not certify actor-triggered activation, complete scene compositing,
+every region pixel, or Vulkan execution. No production code changed.
 
 ## Separate walkway restores hall reveal binding (2026-10-11)
 

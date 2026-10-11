@@ -22,7 +22,11 @@ costs remain unverified; detailed measurements are in the runtime inventory.
 at 37 degrees now pass a 5000×5000 browser export/reopen/rebake check. Both reveal
 regions change color and depth independently; all applied-state PNG pixels,
 region bounds and control-index bindings survive ZIP packaging and reopening.
-Native rendered switching and actor interaction remain unverified by this check.
+The resulting ZIP also passes the native OpenGL appearance gate without a base
+datadir: both independent regions switch color/depth through all four control
+combinations, transition suppression and reset. Two changing-pixel probes check
+30 rendered colors and 60 sprite occlusion results. This assigns control flags
+directly; actor activation and full-scene compositing remain unverified.
 
 **Hall/walkway dependency (2026-10-11):** the hall's reveal waypoint belongs on
 the separate east-bailey west-curtain walkway. A flat-ground-only scene cannot
