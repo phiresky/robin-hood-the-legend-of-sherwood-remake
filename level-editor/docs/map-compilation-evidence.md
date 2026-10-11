@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Joined floors preserve placement precision automatically (2026-10-11)
+
+Surfaces belonging to an authored navigation region now retain fractional placed
+boundaries until their joined movement geometry is assembled. They no longer need
+`preserveMovementPrecision` to keep rotated matching-height seams available for
+floor partitioning. Only floating-point residue within eight relative machine
+epsilons of an integer is cleaned up; actual fractional coordinates are retained.
+No runtime code changed.
+
+`work/map-compile/overlapping-floor-routes-YgBdG3` removes that flag from every
+loop surface. All eight editable ZIPs reopen and recompile exactly, and all 64
+directed native walks pass across copied, rotated and elevated placements. The
+asset compiler suite passes 157 tests, including the unchanged posture-passage
+fixture and fractional receiving geometry checks. Type checking, lint and
+formatting pass.
+
+The broader packaging, terrain-path and spline suites pass 104 tests. Eleven
+native fixture files were regenerated: seven change only graph bytes; the ladder
+seam fixture also changes only its graph; the three climb collections additionally
+clean coordinate residue by at most 2.3e-13. Structural comparisons reject any
+other changes. Native validation of the refreshed embedded fixtures is pending.
+
+Saved Derby export `work/map-compile/saved-map-exports-90j2PF` succeeds. Compared
+with `saved-map-exports-XwDz7Y`, every geometry field except motion data and all
+warnings remain identical. Motion geometry has no structural changes; 50 numeric
+coordinates differ by at most 6.6e-12. Graph bytes grow from 420,927 to 456,627 due
+to the preceding long-edge entry-node fix. Existing authored seam and blocked
+passage warnings remain unresolved. The all-map audit is still incomplete.
+
 ## Partitioning joined floor loops (2026-10-11)
 
 The compiler now partitions conflicting receiving pieces within an ordinary joined
@@ -25,8 +54,9 @@ with two placements each at four rotations and two elevations. Reopening and
 recompiling reproduces their descriptors exactly. The 0- and 37-degree assemblies
 have generated sector passages; the 90- and 180-degree projections do not require
 the same split. No geometry-specific warnings remain in this batch. The fixture
-explicitly enables `preserveMovementPrecision`; rounded-only asset surfaces can
-still lose matching-height seam evidence and remain unsupported with warnings.
+explicitly enabled `preserveMovementPrecision`; the automatic precision follow-up
+above removes that requirement for joined regions. Already inconsistent authored
+edges can still lack matching-height seam evidence and remain unsupported.
 
 Native normal-click validation now passes all 64 directed walks in
 `work/map-compile/overlapping-floor-routes-Q3i0aT`, including per-tick receiving

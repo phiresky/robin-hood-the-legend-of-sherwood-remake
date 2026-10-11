@@ -2458,7 +2458,7 @@ test("ordinary local navigation regions join height planes without lift behavior
   assert.equal(compileAssetGameplay(document, assets, bounds).motion_data.layers.flat().length, 2);
 });
 
-test("a rotated precise authored loop exports sectors and checked passages where floors overlap", () => {
+test("a rotated authored loop exports connected floors without an explicit precision flag", () => {
   const { document, assets, hut } = assetCompilerFixture();
   const surface = (
     id: string,
@@ -2471,7 +2471,6 @@ test("a rotated precise authored loop exports sectors and checked passages where
     id,
     node: "building-999",
     navigationRegion: "loop",
-    preserveMovementPrecision: true,
     height: heights,
     polygon: [
       [x0, y0 + heights[0]],

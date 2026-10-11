@@ -32,7 +32,7 @@ export interface AssetWalkableSurface {
     /** Maximum horizontal outer-edge endpoint adjustment onto a level contour, before inset. */
     maxLevelAdjustment?: number;
   };
-  /** Retain fractional boundaries through movement assembly; only the final regions snap to the grid. */
+  /** Retain fractional boundaries through movement assembly; joined navigation regions do this automatically. */
   preserveMovementPrecision?: boolean;
   /** Keep this ordinary area's outer contour separate from crossing movement obstacles. */
   preserveMovementBoundary?: boolean;

@@ -72,7 +72,6 @@ for (const rotation of [0, 37, 90, 180])
         id,
         navigationRegion: "loop",
         node: "building-999",
-        preserveMovementPrecision: true,
         polygon: [
           [x0, y0 + heights[0]],
           [x1, y0 + heights[1]],

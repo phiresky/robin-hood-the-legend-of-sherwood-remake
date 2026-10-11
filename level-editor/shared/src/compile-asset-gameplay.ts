@@ -373,6 +373,13 @@ function compileAssetGameplayAttempt(
         );
   const transitionJoins = new Map<string, PlacedTransitionJoin>();
   const project = (p: Vec3): Point => [quantize(p[0]), quantize(p[1] - p[2])];
+  const preciseCoordinate = (value: number): number => {
+    const integer = Math.round(value);
+    // Remove transform arithmetic residue without snapping fractional geometry.
+    return Math.abs(value - integer) <= 8 * Number.EPSILON * Math.max(1, Math.abs(value))
+      ? integer
+      : value;
+  };
   const warnedDraftAssets = new Set<string>();
   const surfaces: {
     owner: string;
@@ -985,14 +992,18 @@ function compileAssetGameplayAttempt(
         options.bestEffort &&
         target === surfaces &&
         (roundedBoundary.length < 3 || Math.abs(signedArea(roundedBoundary)) < 0.5);
-      // Climbs need their authored landing seams before final grid rounding;
-      // rounding individual surfaces can disconnect a rotated entry.
+      // Climbs and joined floors need their authored seams before final grid
+      // rounding. Snapping separate pieces can disconnect a rotated entry or
+      // destroy the matching-height edge needed to partition stacked floors.
       const continuous =
         clearance ||
         deferFloorRounding ||
+        (target === surfaces && surface.navigationRegion !== undefined) ||
         surface.preserveMovementPrecision === true ||
         gameplay.lifts?.some((lift) => lift.type === 2 || lift.type === 3) === true;
-      const projectMovement = continuous ? ([x, y, z]: Vec3): Point => [x, y - z] : project;
+      const projectMovement = continuous
+        ? ([x, y, z]: Vec3): Point => [preciseCoordinate(x), preciseCoordinate(y - z)]
+        : project;
       const minimumArea = continuous ? 1e-8 : 0.5;
       const placed = {
         owner: placement.id,

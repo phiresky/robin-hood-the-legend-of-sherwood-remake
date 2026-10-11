@@ -127,8 +127,11 @@ seams in compiler/ZIP regressions. All eight editable loop ZIPs round-trip exact
 and all 64 native walks pass, including rotated passage handoffs. Long contour
 edges receive additional static graph nodes so the native bounded source search
 can enter a route even when its detour corners are far away.
-Rounded-only seams that cannot be reconnected retain the warning; this category
-is not yet certified gameplay-ready. See
+Joined regions now retain placement precision automatically: another eight ZIP
+round trips and 64 native walks pass without per-surface precision flags.
+Inconsistent authored seams that cannot be reconnected retain warnings; broad
+asset coverage remains unverified. See
+[automatic precision evidence](map-compilation-evidence.md#joined-floors-preserve-placement-precision-automatically-2026-10-11),
 [partitioning evidence](map-compilation-evidence.md#partitioning-joined-floor-loops-2026-10-11)
 and
 [self-overlap evidence](map-compilation-evidence.md#self-overlapping-navigation-regions-2026-10-11).
