@@ -461,8 +461,13 @@ requirements and excludes candidates that can never be clear. Compiler checks
 cover rotated/raised copies; the packaged descriptor matches
 `asset-alternating-posture.level.json`. Native loading/apply/reset checks verify
 each copy keeps one usable opening in either state and its control exchanges
-only that copy's openings. Full actor routes through these alternate openings
-remain unverified.
+only that copy's openings. The `--alternating` ZIP audit now passes eight
+reopen/recompile round trips at four rotations and floor elevations 40/80.
+Native player routes pass all 64 directed full-character crossings, including
+the initially usable and switched openings, with the expected corridor,
+destination posture, height and sector. Changing one copy leaves the other
+copy's availability unchanged. Evidence:
+`work/map-compile/alternating-posture-passages-XgD0Q0/actor-posture-report.json`.
 Virtual-room entrances now prepare their outdoor leg against the outdoor area's
 state word and retained permanent cuts; the virtual interior has no motion-area
 state word. Compiler and ZIP checks cover permanent blocking and warning output,

@@ -94,16 +94,18 @@ fn exported_posture_passage_zips_support_native_player_routes() {
         let count = entry["expected_doors"].as_u64().unwrap() as usize;
         let height = entry["height"].as_f64().unwrap() as f32;
         let initially_closed = entry["initially_closed"] == true;
+        let alternating = entry["alternating"] == true;
         let passed = audit_posture_passages_with_controls(
             &std::fs::read(directory.join(file)).unwrap(),
             height,
             count,
             initially_closed,
+            alternating,
         );
         crossings += passed;
         eprintln!("{file}: {passed} complete posture crossings");
         results.push(
-            serde_json::json!({"file":file, "crossings":passed, "doors":count, "height":height, "initially_closed":initially_closed}),
+            serde_json::json!({"file":file, "crossings":passed, "doors":count, "height":height, "initially_closed":initially_closed, "alternating":alternating}),
         );
     }
     assert!(crossings > 0);
@@ -113,7 +115,7 @@ fn exported_posture_passage_zips_support_native_player_routes() {
 }
 
 fn audit_posture_passages(bytes: &[u8], height: f32, expected_doors: usize) -> usize {
-    audit_posture_passages_with_controls(bytes, height, expected_doors, false)
+    audit_posture_passages_with_controls(bytes, height, expected_doors, false, false)
 }
 
 #[test]
@@ -127,7 +129,8 @@ fn initially_closed_posture_connections_support_player_routes_after_opening() {
             )),
             40.,
             2,
-            true
+            true,
+            false
         ),
         4
     );
@@ -138,6 +141,7 @@ fn audit_posture_passages_with_controls(
     height: f32,
     expected_doors: usize,
     open_controls: bool,
+    alternate_controls: bool,
 ) -> usize {
     let sprite = exported_stairs::complete_climb_sprite();
     let descriptor: serde_json::Value = serde_json::from_slice(bytes).unwrap();
@@ -157,6 +161,37 @@ fn audit_posture_passages_with_controls(
     for index in 0..expected_doors {
         for reverse in [false, true] {
             let (mut engine, mut assets) = compiled_walkway_with_dimensions(bytes, dimensions);
+            if alternate_controls {
+                let doors = &engine.script_domains.interactables.doors;
+                let copy = |i: usize| {
+                    usize::from(
+                        doors[i].sector_out_index != doors[0].sector_out_index
+                            || doors[i].sector_in_index != doors[0].sector_in_index,
+                    )
+                };
+                let owner_copy = copy(index);
+                let before: Vec<_> = doors
+                    .iter()
+                    .enumerate()
+                    .map(|(i, door)| (copy(i), door.passage_blocked))
+                    .collect();
+                if before[index].1 {
+                    let sim = crate::sim_rng::test_context();
+                    engine.apply_patch(
+                        TickCtx::new(&sim, &assets),
+                        crate::patch::PatchIndex::new(owner_copy as u32).unwrap(),
+                    );
+                }
+                assert!(!engine.script_domains.interactables.doors[index].passage_blocked);
+                for (i, (copy, blocked)) in before.into_iter().enumerate() {
+                    if copy != owner_copy {
+                        assert_eq!(
+                            engine.script_domains.interactables.doors[i].passage_blocked,
+                            blocked
+                        );
+                    }
+                }
+            }
             if open_controls {
                 assert!(
                     engine

@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import {
   joinedPostureCompilerFixture,
   closedPostureCompilerFixture,
+  alternatingPostureCompilerFixture,
 } from "../shared/test-fixtures/asset-gameplay.ts";
 import { compileMap, packageCompiledMap } from "../app/src/map-compile.ts";
 import { serializeStoredMap, parseStoredMap } from "../shared/src/index.ts";
@@ -12,10 +13,12 @@ const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", im
   "fflate",
 );
 const options = process.argv.slice(2);
-assert.ok(options.every((option) => option === "--initially-closed"));
+assert.ok(options.every((option) => ["--initially-closed", "--alternating"].includes(option)));
 const initiallyClosed = options.includes("--initially-closed");
+const alternating = options.includes("--alternating");
+assert.ok(!(initiallyClosed && alternating), "choose one changing-obstacle scenario");
 const output = await fs.mkdtemp(
-  `work/map-compile/${initiallyClosed ? "closed-" : ""}posture-passages-`,
+  `work/map-compile/${alternating ? "alternating-" : initiallyClosed ? "closed-" : ""}posture-passages-`,
 );
 console.log(output);
 const results = [];
@@ -31,11 +34,16 @@ const report = (complete) =>
 await report(false);
 for (const rotation of [0, 37, 90, 180])
   for (const elevation of [0, 40])
-    for (const obstruction of initiallyClosed ? ["clear"] : ["clear", "split", "blocked"]) {
+    for (const obstruction of initiallyClosed || alternating
+      ? ["clear"]
+      : ["clear", "split", "blocked"]) {
       const { document, assets, hut, upper } = joinedPostureCompilerFixture();
       if (initiallyClosed)
         hut.gameplay.movementTransitions =
           closedPostureCompilerFixture().hut.gameplay.movementTransitions;
+      if (alternating)
+        hut.gameplay.movementTransitions =
+          alternatingPostureCompilerFixture().hut.gameplay.movementTransitions;
       if (obstruction !== "clear")
         for (const asset of [hut, upper])
           asset.gameplay.movementBlockers = [
@@ -80,7 +88,14 @@ for (const rotation of [0, 37, 90, 180])
       document.size = [3000, 2000];
       const bounds = [0, 0, 3000, 2000];
       const compiled = compileMap(document, bounds, assets);
-      const expectedDoors = obstruction === "clear" ? 2 : obstruction === "split" ? 4 : 0;
+      const expectedDoors = alternating
+        ? compiled.descriptor.asset_geometry.doors.length
+        : obstruction === "clear"
+          ? 2
+          : obstruction === "split"
+            ? 4
+            : 0;
+      if (alternating) assert.ok(expectedDoors >= 4, "each copy needs alternate openings");
       assert.ok(
         !compiled.warnings.some((warning) => warning.includes("clipped to the export frame")),
       );
@@ -116,6 +131,7 @@ for (const rotation of [0, 37, 90, 180])
         height: 40 + elevation,
         obstruction,
         initially_closed: initiallyClosed,
+        alternating,
         expected_doors: expectedDoors,
         warnings: compiled.warnings,
       });
