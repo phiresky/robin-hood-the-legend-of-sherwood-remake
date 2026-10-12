@@ -88,6 +88,12 @@ eleven focused geometry tests pass. Full York recompilation is pending, so the
 earlier traversal counts do not certify the latest compiler. Central-south roof
 experiments remain unpublished: an inset improves isolated offset clicks from
 68/160 to 104/160, but 90/180-degree cases still need investigation.
+Its interior-click sweep passes 256/288 probes; all 32 failures are at 180 degrees,
+including incorrect ground-height landings. The main roof is almost edge-on at
+that rotation (world-to-screen plane determinant approximately -0.001856), making
+integer endpoint rounding significant. Replacing endpoints with unsnapped values
+alone still fails all forty offset probes at that rotation; this does not justify
+a format change or a runtime solver.
 
 The published west-lane roof correction passes all **72 interior-click traversals**
 across nine angles, two elevations and two copies. It restores the mesh-supported
