@@ -933,7 +933,11 @@ round trips and writes `actor-passage-control-report.json`. Set
 `reject_alternatives: true` on a probe to additionally require native gate search
 in both directions to find a route only in the open state. Use that option for
 isolated assemblies where no legitimate alternative entrance should exist.
-Neither mode proves player click selection.
+Open passages also require successful player-click movement in both directions
+between visible, actor-sized landings near their endpoints. The audit supplies
+neither a route nor a destination sector to player dispatch. Closed/reset checks
+remain prepared authorization and optional gate-search checks, not player-click
+dispatch checks.
 
 To snapshot a complete saved map, run
 `node refinement/stage-saved-map-browser.mjs derby` from `level-editor/`.

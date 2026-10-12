@@ -83,6 +83,19 @@ lock bypass through the gate graph, not player-click selection, disconnected
 neighbour cases, bank contact or mesh accuracy. The corrections remain unpublished.
 The audit changes test code only; no production runtime routing is added.
 
+The subsequent player-dispatch extension passes 192 directed open-state clicks
+across those 96 passages (8.85 seconds for the combined audit), and twelve clicks
+across the six drawbridge passages in `saved-map-exports-RZGaRh` (0.68 seconds).
+It selects visible, actor-sized positions near each endpoint, performs ordinary
+group movement without injecting a route or selected sector, and verifies arrival
+on the opposite floor with the correct projection receiver. Closed/reset checks
+remain prepared authorization and gate-search checks, not player-click checks.
+
+The existing mesh review still prevents publication: deck 058 has 24 unsupported
+interior samples out of 878, with maximum gap 3.307 game units; deck 059 has eight
+out of 880, with maximum gap 0.632. Boundary discrepancies reach 4.117 and 1.067
+units respectively. Passing movement does not establish visible mesh support.
+
 The follow-up `lincoln-drawbridge-disconnections-QrZQte` removes or raises the
 plateau in only the first copy across the same eight placements. All sixteen
 exports omit the three unsupported plateau entrances and retain three supported

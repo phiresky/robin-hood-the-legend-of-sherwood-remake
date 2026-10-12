@@ -122,8 +122,10 @@ unpublished. Incorporating a neighbouring plateau exclusion into its own walking
 outline restores all six open-state actor round trips, with closed/reset checks
 and wider movement regressions passing. Two-copy assemblies at four rotations
 and two elevations pass 96 open round trips, 192 closed/reset denials and 576
-directed gate-search checks, with routes available only when open. Player
-selection, bank contacts and mesh edges still need verification. Sixteen
+directed gate-search checks, with routes available only when open. All 192
+directed open-state player clicks pass across these placements, plus twelve in
+the staged full scene. Closed/reset player dispatch, bank contacts and mesh
+edges still need verification. Sixteen
 missing/raised-neighbour exports reject the three unsupported plateau entrances
 while native traversal and lock checks pass for the untouched copy. Invalid
 lighting receivers now produce explicit warnings in best-effort mode instead
