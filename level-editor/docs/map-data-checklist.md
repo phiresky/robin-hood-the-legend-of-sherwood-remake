@@ -140,6 +140,12 @@ of aborting these exports. The baseline full Lincoln browser archive also passes
 reopening/rebaking and native loading without base data; it excludes these staged
 drawbridge changes.
 
+The unpublished south-wall step stair candidate passes 32 directed player-click
+routes across four rotations and two elevations without navigation-preparation
+warnings. Its receiving plane still disagrees with the asset mesh (up to 0.514132
+units at the nearest top-triangle vertices), and turret clearance is unverified.
+It remains unpublished; passing routes alone do not establish usable mesh contact.
+
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and
 state guards. The published oak-platform footprint passes all 36 scripted

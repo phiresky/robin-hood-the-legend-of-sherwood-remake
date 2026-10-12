@@ -165,6 +165,12 @@ no archive result is yet claimed. The initial symlink-based private fixture was
 rejected by the HTTP library's containment check and was replaced without changing
 that server restriction.
 
+The first staged browser run was interrupted by a concurrent editor source edit:
+hot reload restarted the page during the second bake. Its partial transfer is not
+a usable archive or passing roundtrip. `refinement/serve-map-bake-fixture.mjs`
+now serves this fixture with file watching and hot reload disabled. The restarted
+roundtrip remains pending; this is test isolation, not an editor behavior change.
+
 `lincoln-drawbridge-disconnections-GHKqj4` repeats all sixteen missing/raised
 neighbour cases against the three-region plateau. Each rejects the three
 unsupported entrances, and the untouched copy passes the complete native
@@ -2130,6 +2136,27 @@ The failure persists with the upper wall present. This is not proof of a general
 runtime routing failure: the click audit targets the ramp's own sector. Review
 explicit stair metadata and its connected landings before publishing this endpoint
 candidate. Existing full-Lincoln drawbridge control checks remain a separate audit.
+
+An alternative unpublished asset candidate, `step-stair-TCPDMz`, defines an
+explicit stair with lower and upper landing doors using the asset's own receiving
+plane. Its footprint vertices are seated on that plane at their authored heights.
+`step-passage-assembly-GP6JaJ` prepares all sixteen rotated/elevated assemblies
+without stair-construction or actor-approach warnings. All 32 directed native
+player-click routes pass, including the 37-degree placements. Construction
+metadata is consumed during export; no runtime physical solver is added.
+
+This candidate is not ready for publication. The mesh-support audit rejects it:
+no whole top triangle lies within the diagnostic's 0.5-unit receiving-plane
+tolerance. The nearest three top triangles reach 0.514132 units of height error,
+and their boundary vertices differ from the gameplay footprint. Mesh contact and
+the separately placed turret's clearance still need review. Successful traversal
+alone must not certify either of these. The assembly helper now also rejects
+navigation-preparation warnings instead of accepting a projected-only result.
+
+`step-passage-assembly-9RWSMk` repeats the sixteen connected exports and checks
+32 missing/raised-landing cases: independently removing or raising either landing
+at every rotation/elevation omits the stair with an explicit connection warning.
+This guards newly assembled maps against retaining a connection to absent floors.
 
 The native failure is standalone passage 12 (runtime door 47), owned by
 `lincoln-south-wall-walk-step`. Its inside endpoint projects to `[1935,1559]`,
