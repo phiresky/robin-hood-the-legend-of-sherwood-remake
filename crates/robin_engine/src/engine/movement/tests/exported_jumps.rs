@@ -93,7 +93,11 @@ impl StartupWalkAudit {
         let moved = self.raw_distance - self.turning_loss;
         // End-transition insertion reserves this exact span even for a stop
         // animation with zero displacement. Require its observed completion.
-        let stop_span = if self.zero_distance_stop_finished { 0.01 } else { 0. };
+        let stop_span = if self.zero_distance_stop_finished {
+            0.01
+        } else {
+            0.
+        };
         if !self.finished
             || self.invalid_step
             || self.turning_loss <= 0.
@@ -367,7 +371,14 @@ fn resolve_jump_click(
     destination_sector: crate::position_interface::SectorHandle,
 ) -> Result<usize, String> {
     resolve_selected_jump_click(
-        engine, owner, start, goal, authorized_goal, required_line, destination_sector, false,
+        engine,
+        owner,
+        start,
+        goal,
+        authorized_goal,
+        required_line,
+        destination_sector,
+        false,
     )
 }
 
@@ -469,6 +480,77 @@ fn exported_jumps_complete_sword_dispatch_and_preserve_combat() {
 #[ignore = "requires exported jump pairs and ROBIN_CLIMB_RHS"]
 fn exported_jumps_resolve_player_clicks_and_complete_the_route() {
     audit_jump_dispatch(JumpDispatch::Click, JumpStance::Upright);
+}
+
+#[test]
+#[ignore = "requires explicit supported-floor click probes and ROBIN_CLIMB_RHS"]
+fn exported_jumps_resolve_supported_floor_clicks() {
+    let sprite = super::exported_stairs::complete_climb_sprite();
+    let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["complete"], true);
+    assert_eq!(manifest["supportedFloorClicks"], true);
+    let mut results = vec![];
+    for entry in manifest["results"].as_array().unwrap() {
+        let file = entry["file"].as_str().unwrap();
+        let bytes = std::fs::read(directory.join(file)).unwrap();
+        let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let dims = &descriptor["walkable_polygon"][2];
+        let (engine, assets) = compiled_walkway_with_dimensions(
+            &bytes,
+            (
+                dims[0].as_f64().unwrap() as f32 + 1.,
+                dims[1].as_f64().unwrap() as f32 + 1.,
+            ),
+        );
+        for probe in entry["click_probes"].as_array().unwrap() {
+            let point = |key: &str| {
+                MapPoint::new(
+                    probe[key][0].as_f64().unwrap() as f32,
+                    probe[key][1].as_f64().unwrap() as f32,
+                )
+            };
+            let index = probe["line"].as_u64().unwrap() as usize;
+            let mode = if probe["hidden"] == true {
+                JumpDispatch::HiddenClick
+            } else {
+                JumpDispatch::Click
+            };
+            let outcome = dispatch_jump(
+                engine.clone(),
+                assets.clone(),
+                &sprite,
+                index,
+                0.5,
+                mode,
+                4.,
+                JumpStance::Upright,
+                None,
+                Some([point("start"), point("goal")]),
+            );
+            results.push(serde_json::json!({
+                "file": file, "probe": probe, "passed": outcome.is_ok(),
+                "arrival": outcome.as_ref().ok(), "error": outcome.as_ref().err(),
+            }));
+        }
+    }
+    assert!(!results.is_empty());
+    let failed = results
+        .iter()
+        .filter(|result| result["passed"] != true)
+        .count();
+    let report = serde_json::json!({
+        "scope": "explicit-supported-floor-clicks-not-perpendicular-approach-coverage-or-rendering",
+        "complete": failed == 0, "results": results,
+    });
+    std::fs::write(
+        directory.join("actor-supported-floor-click-report.json"),
+        serde_json::to_vec_pretty(&report).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(failed, 0, "{failed} explicit supported-floor clicks failed");
 }
 
 #[test]
@@ -638,6 +720,7 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
                     carrier_sprite
                         .as_ref()
                         .filter(|_| case_stance == JumpStance::Shoulders),
+                    None,
                 );
                 results.push(serde_json::json!({
                     "file": file, "line": index, "t": t,
@@ -670,29 +753,27 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
         "complete": traversals > 0 && failed == 0,
         "traversal_cases": traversals, "occlusion_cases": occlusions, "results": results,
     });
-    let path = directory.join(
-        if mode == JumpDispatch::EndpointClick {
-            "actor-jump-endpoint-click-report.json"
-        } else if mode == JumpDispatch::HiddenClick {
-            "actor-jump-hidden-click-report.json"
-        } else if stance == JumpStance::Vertical && mode == JumpDispatch::Click {
-            "actor-jump-vertical-click-report.json"
-        } else if stance == JumpStance::Vertical {
-            "actor-jump-vertical-report.json"
-        } else if stance == JumpStance::Shoulders && mode == JumpDispatch::Click {
-            "actor-jump-shoulders-click-report.json"
-        } else if stance == JumpStance::Shoulders {
-            "actor-jump-shoulders-report.json"
-        } else if stance == JumpStance::Sword {
-            "actor-jump-sword-report.json"
-        } else if mode == JumpDispatch::Click {
-            "actor-jump-click-report.json"
-        } else if mode == JumpDispatch::Approach {
-            "actor-jump-approach-report.json"
-        } else {
-            "actor-jump-landing-report.json"
-        },
-    );
+    let path = directory.join(if mode == JumpDispatch::EndpointClick {
+        "actor-jump-endpoint-click-report.json"
+    } else if mode == JumpDispatch::HiddenClick {
+        "actor-jump-hidden-click-report.json"
+    } else if stance == JumpStance::Vertical && mode == JumpDispatch::Click {
+        "actor-jump-vertical-click-report.json"
+    } else if stance == JumpStance::Vertical {
+        "actor-jump-vertical-report.json"
+    } else if stance == JumpStance::Shoulders && mode == JumpDispatch::Click {
+        "actor-jump-shoulders-click-report.json"
+    } else if stance == JumpStance::Shoulders {
+        "actor-jump-shoulders-report.json"
+    } else if stance == JumpStance::Sword {
+        "actor-jump-sword-report.json"
+    } else if mode == JumpDispatch::Click {
+        "actor-jump-click-report.json"
+    } else if mode == JumpDispatch::Approach {
+        "actor-jump-approach-report.json"
+    } else {
+        "actor-jump-landing-report.json"
+    });
     std::fs::write(&path, serde_json::to_vec_pretty(&report).unwrap()).unwrap();
     assert!(traversals > 0);
     assert_eq!(
@@ -714,7 +795,11 @@ fn dispatch_jump(
     approach_depth: f32,
     stance: JumpStance,
     carrier_sprite: Option<&crate::sprite::Sprite>,
+    click_points: Option<[MapPoint; 2]>,
 ) -> Result<JumpArrival, String> {
+    assert!(
+        click_points.is_none() || matches!(mode, JumpDispatch::Click | JumpDispatch::HiddenClick)
+    );
     let approach = mode != JumpDispatch::Isolated;
     let source = engine.world.fast_grid.level.jump_lines[index].clone();
     let destination_index = source.associated_line_index.unwrap();
@@ -744,7 +829,7 @@ fn dispatch_jump(
         0.
     };
     let inset = crate::coordinates::MapVec::new(normal.x * distance, normal.y * distance);
-    let requested_start = source.point_a + offset - inset;
+    let requested_start = click_points.map_or(source.point_a + offset - inset, |points| points[0]);
     let owner = walking_pc(
         &mut engine,
         &mut assets,
@@ -774,7 +859,7 @@ fn dispatch_jump(
             .position_iface
             .set_map_position(start);
     }
-    let goal = destination.point_b + offset + inset;
+    let goal = click_points.map_or(destination.point_b + offset + inset, |points| points[1]);
     if approach && !mode.is_click() {
         let footprint = engine
             .world
@@ -878,7 +963,12 @@ fn dispatch_jump(
         let selected_index = hit.sector_idx;
         let selected_goal = hit.sector.map(|sector| (sector, hit.layer));
         let planned = engine.plan_recorded_group_move(
-            &assets, &[owner], goal, selected_goal, selected_index, None,
+            &assets,
+            &[owner],
+            goal,
+            selected_goal,
+            selected_index,
+            None,
         );
         match planned.as_slice() {
             [

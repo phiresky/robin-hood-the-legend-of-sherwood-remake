@@ -15,7 +15,11 @@ and its remaining runtime work are tracked in [the runtime inventory](map-runtim
 full-footprint passage endpoint checks permit eight bidirectional native walks
 across copied 90-degree roof/slab connections at two elevations. This remains a
 private prototype: the same assembly still fails all forty jump-click probes,
-and rendered selection is unverified. No production engine changes are involved.
+which use perpendicular edge offsets outside the narrow folded projection.
+Separate supported-floor probes pass all eight complete click routes (normal
+selection outward, hidden selection on return); isolated flight/landing checks
+pass 40/40. Rendered selection and production compiler integration are unverified.
+No production engine changes are involved.
 See the [folded passage diagnostic](map-compilation-evidence.md#folded-roof-passage-diagnostic-2026-10-12).
 
 **Moved-roof takeoffs repaired (2026-10-12):** clearance now uses the precise

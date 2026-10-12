@@ -6,6 +6,30 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Folded roof passage diagnostic (2026-10-12)
 
+Follow-up jump isolation on `roof-slab-placements-i3dcQ5` passes **40/40**
+complete native animations and receiving-floor landings. The standard click
+audit's forty failures therefore do not demonstrate a flight defect. Its
+perpendicular four-unit approach/continuation samples leave the narrow folded
+projection. A separate one-unit probe (`folded-jump-short-approach-tv48683n`)
+still fails forty cases: twenty unauthorized starts and twenty missing goal
+receivers. Both negative reports remain applicable to their probe layouts.
+
+`check-folded-roof-clicks.mjs` constructs a separate end-to-end click fixture
+from the compiled ordinary passage's slab endpoint and an interior point on
+the other roof, preserving all exported jump overlays and physical geometry.
+`folded-supported-clicks-MPJrFY` passes all four slab-to-roof clicks. Its four
+return clicks select the covering roof; hidden selection identifies the intended
+jump in each case. These explicit probes are separate from perpendicular edge
+coverage and do not establish rendered input or full placement parity.
+The follow-up `folded-supported-clicks-Xo1Kgi` uses normal selection outward
+and hidden-floor selection on return; **all eight complete click routes pass**,
+including approach, native animation, receiver checks and final arrival. The
+isolated forty-jump audit still passes after adding this separate probe mode.
+The test harness accepts explicit points only for click/hidden-click audits;
+existing edge-offset tests retain their original inputs. The game build and
+Rust/script formatting checks pass. The export prototype remains unpublished
+until its geometry preparation is implemented and verified in the compiler.
+
 The 90-degree roof/slab assembly folds across its shared world-space seam:
 the two projected interiors lie on the same side. A private export prototype
 orients the join in world space, partitions conflicting receivers, compensates
