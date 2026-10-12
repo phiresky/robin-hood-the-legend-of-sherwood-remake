@@ -4,6 +4,38 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Receiver coverage at compiled floor boundaries (2026-10-12)
+
+The upper-red-house landing failure below comes from thin uncovered strips
+between the walking contour and receiving faces. Those strips generate ground
+transfers during the landing animation. Two static corrections are under test:
+joined ordinary floors without a recoverable precise outline use their grid
+footprints for receivers; elevation-boundary preparation uses a supplied precise
+walking outline rather than its integer approximation. No movement-tick code
+changes are required.
+
+The eight-placement required-posture fixture originally passes 50/80 cases.
+Compiler-only exports `asset-jump-exports-ghZsl4` pass 60/80 against the previous
+loader. The corrected loader alone passes 60/80 on the old
+`nottingham-helper-receiver-mly9s8mq` exports. Combined, they pass **70/80**:
+all twenty receiver-loss failures are resolved. Ten descending click-overlay
+misses remain at 90 degrees, across both elevations; these are still failures.
+The current combined report is in `asset-jump-exports-ghZsl4`.
+
+All 159 compiler tests, 91 level-data tests, 203 movement tests and 72 native
+map integration tests pass. External-data tests remain ignored in the ordinary
+suites; the repaired eight-placement export separately passes native loading.
+The new focused tests cover joined fractional receiving edges
+and the distinction between an uncovered walking strip and space outside a
+precise walking boundary. Type checking, lint, formatting and the game build
+pass. Fresh ten-map exports and their traversal checks are pending; this is not
+full parity evidence.
+
+The Nottingham browser ZIP check was restarted by development-server hot reload
+while compiler edits were made. Earlier progress from that run does not prove
+a completed round trip, nor does the running candidate certify the previously
+published compiler state.
+
 ## Published Nottingham jump receivers and fresh York verification (2026-10-12)
 
 Fresh published York `saved-map-exports-Gnpyri` finishes in about 460 seconds,

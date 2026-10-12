@@ -2243,6 +2243,9 @@ function compileAssetGameplayAttempt(
       }
       // Movement contours may be rounded or widened for actor clearance. They
       // cannot define receiver heights on a nearly edge-on stair plane.
+      // A joined ordinary floor without a recoverable precise outline uses its
+      // grid footprint for receivers too. Keeping fractional outer edges there
+      // would turn rounding gaps inside the walkable region into ground strips.
       const receivingPolygon =
         physical && !physical.navigation.floor_patches
           ? physical.navigation.boundary.map(([x, y]): Point => [
@@ -2250,7 +2253,9 @@ function compileAssetGameplayAttempt(
               y - planeHeight(physical.navigation.plane, [x, y]),
             ])
           : !lift
-            ? (piece.receivingPolygon ?? piece.polygon)
+            ? pieces.length > 1 && !recoveredBoundary
+              ? piece.polygon
+              : (piece.receivingPolygon ?? piece.polygon)
             : piece.polygon;
       const preciseLanding =
         !lift &&

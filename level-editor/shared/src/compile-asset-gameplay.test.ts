@@ -2524,6 +2524,52 @@ test("ordinary local navigation regions join height planes without lift behavior
   assert.equal(compileAssetGameplay(document, assets, bounds).motion_data.layers.flat().length, 2);
 });
 
+test("grid-joined floors retain receiver coverage at their walking boundary", () => {
+  const { document, assets, hut } = multiPlaneRegionCompilerFixture();
+  hut.gameplay!.surfaces.forEach((surface, index) => {
+    const left = index * 100 + 0.25;
+    const right = (index + 1) * 100 - 0.25;
+    const projected = [
+      [left, 0.25],
+      [right, 0.25],
+      [right, 99.75],
+      [left, 99.75],
+    ];
+    const heights = projected.map(([x]) => (index ? 40 - x! * 0.1 : 20 + x! * 0.1));
+    surface.height = heights;
+    surface.polygon = projected.map(([x, y], i) => [x!, y! + heights[i]!]);
+  });
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  const areas = compiled.motion_data.layers.flat();
+  assert.equal(areas.length, 1);
+  const area = areas[0]!;
+  assert.equal(area.precise_polygon, undefined);
+  const points = area.polygon.points;
+  const center = points.reduce(
+    ([x, y], p) => [x + p[0] / points.length, y + p[1] / points.length],
+    [0, 0],
+  );
+  const receivers = compiled.sight_obstacles.filter((obstacle) =>
+    Array.isArray(obstacle.projection_area),
+  );
+  for (const point of points) {
+    const probe: [number, number] = [
+      point[0] * 0.999 + center[0]! * 0.001,
+      point[1] * 0.999 + center[1]! * 0.001,
+    ];
+    assert.ok(
+      receivers.some((receiver) =>
+        pointInGameplayPolygon(
+          probe,
+          receiver.points.map((p) => [p.x, p.y - p.z_top]),
+          true,
+        ),
+      ),
+      `walking boundary has no receiving floor at ${probe}`,
+    );
+  }
+});
+
 test("a rotated authored loop exports connected floors without an explicit precision flag", () => {
   const { document, assets, hut } = assetCompilerFixture();
   const surface = (

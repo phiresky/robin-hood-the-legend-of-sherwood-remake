@@ -1,5 +1,13 @@
 # Runtime changes introduced or extended for map compilation
 
+**2026-10-12 — precise floor boundary preparation under validation:** compiled
+elevation-line derivation now uses an area's supplied precise contour when
+available. This is static JSON-load preparation; it changes no movement tick,
+route search or actor state. Together with an export-side receiver footprint
+correction, it removes twenty jump-landing receiver losses in an eight-placement
+fixture. Broader validation is pending. The new regression distinguishes an
+actual uncovered walking strip from space outside the precise walking area.
+
 **2026-10-11 — compiled ordinary passage receiver handoff:**
 rotated, partitioned outdoor floors expose a missing receiving-plane transfer
 when an ordinary door changes sectors at its rounded midpoint. Explicit compiled

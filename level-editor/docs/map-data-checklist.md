@@ -11,6 +11,14 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**Boundary repair under validation (2026-10-12):** static export/load corrections
+bring the upper-red-house eight-placement jump fixture from 50/80 to 70/80,
+resolving all twenty receiver-loss cases. Ten rotated click-selection failures
+remain. All 159 compiler tests, 91 level-data tests, 203 movement tests and 72
+native integration tests pass, as does the game build. Fresh ten-map checks
+are pending. No per-tick geometry solver is added. See
+[the boundary evidence](map-compilation-evidence.md#receiver-coverage-at-compiled-floor-boundaries-2026-10-12).
+
 **Current export repairs (2026-10-12):** four split York assets now have published
 gameplay bindings and updated saved-scene pins. Thirty-two moved/rotated exports
 load natively, and both storehouses pass eight complete-character enter/exit

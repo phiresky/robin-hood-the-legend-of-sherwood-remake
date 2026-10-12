@@ -395,11 +395,15 @@ fn derive_with_spatial_index(
         for area in areas {
             area_polygons.insert(
                 (sector, layer as u16),
-                area.polygon
-                    .points
-                    .iter()
-                    .map(|p| [f64::from(p.0), f64::from(p.1)])
-                    .collect::<Vec<_>>(),
+                if area.precise_polygon.is_empty() {
+                    area.polygon
+                        .points
+                        .iter()
+                        .map(|p| [f64::from(p.0), f64::from(p.1)])
+                        .collect::<Vec<_>>()
+                } else {
+                    area.precise_polygon.clone()
+                },
             );
             sector = sector
                 .checked_add(
@@ -1061,6 +1065,30 @@ mod tests {
             (lines[0].left_obstacle_index, lines[0].right_obstacle_index),
             (1, 0)
         );
+    }
+
+    #[test]
+    fn precise_outer_boundary_does_not_create_a_ground_receiver_strip() {
+        let mut geometry = fixture();
+        let area = &mut geometry.motion_data.layers[0][0];
+        area.polygon.points = vec![(0, 0), (100, 0), (100, 100), (0, 100)];
+        area.precise_polygon = vec![[0.25, 0.25], [99.75, 0.25], [99.75, 99.75], [0.25, 99.75]];
+        geometry.sight_obstacles.truncate(1);
+        geometry.sight_obstacles[0].points = area
+            .precise_polygon
+            .iter()
+            .map(|&[x, y]| crate::level_data::RawObstaclePoint {
+                x: x as f32,
+                y: y as f32,
+                z_bottom: 0.,
+                z_top: 0.,
+            })
+            .collect();
+        assert!(derive(&geometry).unwrap().is_empty());
+
+        // With a genuinely larger walking area the uncovered strip is ground.
+        geometry.motion_data.layers[0][0].precise_polygon.clear();
+        assert_eq!(derive(&geometry).unwrap().len(), 4);
     }
 
     #[test]
