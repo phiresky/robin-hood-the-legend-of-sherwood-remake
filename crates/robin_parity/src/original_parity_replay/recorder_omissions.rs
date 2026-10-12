@@ -255,16 +255,25 @@ pub(super) fn original_motion_executor_order_id(
     entity_id: EntityId,
 ) -> Option<u32> {
     let sequence = actor.sequence_element.as_ref()?;
-    // Several locomotion transition actions are also installed in generic
-    // turn sequences. The original game explicitly routes those through action processing
-    // when the sequence is not movement.
-    sequence.movement.as_ref()?;
     let order = sequence.current_order.as_ref()?.to_json();
     let action = order
         .get("action")
         .and_then(serde_json::Value::as_u64)
         .and_then(|action| u32::try_from(action).ok())
         .and_then(|action| robin_engine::order::OrderType::try_from(action).ok())?;
+    // Generic jump sequences use motion for the long-jump launch and upward
+    // landing transitions. Other generic locomotion transitions can use plain
+    // action processing, so the broad movement execution family is insufficient.
+    let generic_jump_motion = entity_id.kind() == robin_engine::element::EntityIdKind::Pc
+        && matches!(
+            action,
+            robin_engine::order::OrderType::TransitionWaitingUprightJumpingLong
+                | robin_engine::order::OrderType::TransitionWaitingSwordJumpingLongSword
+                | robin_engine::order::OrderType::TransitionJumpingUpWaitingCrouched
+        );
+    if sequence.movement.is_none() && !generic_jump_motion {
+        return None;
+    }
     if !robin_engine::engine::original_actor_order_uses_motion_executor(entity_id, action) {
         return None;
     }
@@ -359,9 +368,11 @@ pub(super) fn original_reset_blocked_box_this_frame(
             == Some(robin_engine::element::Command::Move as u64)
     }) && current_order_id.is_some_and(|id| id != last_processed_order_id);
     if sword_motion_sprite
-        // Resuming the same directional sprite can retain its frame counter.
-        // The unadvanced action-only sentinel still cannot prove a reset.
-        && (sprite_frame_count == 0 || (postponed_movement && sprite_frame_count != u16::MAX))
+        // Repathing or resuming the same directional sprite retains its frame
+        // counter, even when the new movement remains current at the snapshot.
+        // The matching motion order (or its postponed replacement) proves the
+        // executor; the unadvanced action-only sentinel cannot prove a reset.
+        && sprite_frame_count != u16::MAX
         && prior_last_processed_order_id.is_some_and(|id| id != last_processed_order_id)
         && (live_sword_motion || postponed_movement)
     {
