@@ -1110,6 +1110,152 @@ mod suite {
     }
 
     #[test]
+    fn binary_elevation_chain_retains_last_receiver_outside_rounded_polygon() {
+        use crate::fast_find_grid::{GridLine, SectorIndex};
+        use crate::position_interface::{Layer, SectorHandle};
+        use crate::sight_obstacle::{ObstaclePoint, SightObstacle, SightObstacleIndex};
+
+        // Two integer seams cut across neighboring fractional ramp polygons.
+        // Re-selecting the containing polygon loses the final seam's receiver.
+        let ramps = [
+            [
+                [695.7143, 1292.2926, 100.00101],
+                [662.0659, 1280.7882, 115.00001],
+                [641.10175, 1262.0209, 115.00001],
+                [655.8461, 1256.6023, 100.00101],
+            ],
+            [
+                [695.6229, 1292.2498, 100.00101],
+                [555.3168, 1342.7551, 100.00101],
+                [555.472, 1318.9573, 115.00101],
+                [661.8481, 1280.6655, 115.00101],
+            ],
+        ];
+        for legacy in [false, true] {
+            let mut engine = EngineInner::new();
+            engine.world.fast_grid_mut().size_map(32, 32);
+            engine.world.fast_grid_mut().allocate_layers(3);
+            let mut assets = LevelAssets::new();
+            std::sync::Arc::make_mut(&mut assets.navigation.pathfinder_graph)
+                .static_mut()
+                .legacy_navigation = legacy;
+            let mut obstacles = vec![SightObstacle::new_default(0)];
+            obstacles[0].top_plane_points = [
+                [0.0, 0.0, 100.00101],
+                [1.0, 0.0, 100.00101],
+                [0.0, 1.0, 100.00101],
+            ];
+            for (index, points) in ramps.into_iter().enumerate() {
+                let mut obstacle = SightObstacle::new_default((index + 1) as u32);
+                obstacle
+                    .set_projection_area_ref(Layer::new(2).unwrap(), SectorIndex::new(0).unwrap());
+                obstacle.obstacle_points = points
+                    .map(|[x, y, z_top]| ObstaclePoint {
+                        x,
+                        y,
+                        z_top,
+                        z_bottom: 0.0,
+                    })
+                    .to_vec();
+                obstacle.top_plane_points = [points[1], points[2], points[0]];
+                obstacle.rebuild_geometry();
+                obstacles.push(obstacle);
+            }
+            assets.environment.static_sight_obstacles = std::sync::Arc::new(obstacles);
+            engine.world.static_sight_obstacle_active = vec![true; 3];
+            let mut pc = crate::engine::test_support::actors::unbound_pc(Posture::Upright);
+            pc.element.set_layer(2);
+            pc.element.set_sector(Some(
+                SectorHandle::new(89)
+                    .unwrap()
+                    .with_arena_index(SectorIndex::new(0).unwrap()),
+            ));
+            let owner = engine.add_test_entity(Entity::Pc(pc));
+            let index = SightObstacleIndex::new;
+            engine.set_obstacle_and_material(&assets, owner, index(0));
+            let first = engine.world.fast_grid_mut().add_line(
+                GridLine::new_elevation(
+                    MapPoint::new(665.0, 1165.0),
+                    MapPoint::new(695.0, 1192.0),
+                    index(1),
+                    index(0),
+                ),
+                2,
+            );
+            let second = engine.world.fast_grid_mut().add_line(
+                GridLine::new_elevation(
+                    MapPoint::new(662.0, 1165.0),
+                    MapPoint::new(695.0, 1192.0),
+                    index(1),
+                    index(2),
+                ),
+                2,
+            );
+            assert!(engine.check_for_elevation_line_crossing_indices(
+                &assets,
+                owner,
+                MapPoint::new(673.7717, 1172.1105),
+                MapPoint::new(670.8153, 1172.6198),
+                2,
+                vec![first, second],
+            ));
+            assert_eq!(
+                engine.ent(owner).element_data().obstacle_index(),
+                index(if legacy { 2 } else { 1 })
+            );
+            let z = engine.ent(owner).position_iface().get_position().z;
+            assert_eq!(z.to_bits(), if legacy { 0x42de1de7 } else { 0x42ddb3e3 });
+
+            engine.set_obstacle_and_material(&assets, owner, index(2));
+            engine.check_for_elevation_line_crossing_indices(
+                &assets,
+                owner,
+                MapPoint::new(678.1868, 1178.7512),
+                MapPoint::new(680.18414, 1178.6475),
+                2,
+                vec![first, second],
+            );
+            assert_eq!(
+                engine.ent(owner).element_data().obstacle_index(),
+                index(if legacy { 0 } else { 1 })
+            );
+            assert_eq!(
+                engine
+                    .ent(owner)
+                    .position_iface()
+                    .get_position()
+                    .z
+                    .to_bits(),
+                if legacy { 0x42c80084 } else { 0x42ca2545 }
+            );
+            if legacy {
+                // At an ambiguous fork, front insertion gives the second
+                // candidate priority. The other edge cannot then attach;
+                // a destination outside every plane leaves that choice intact.
+                engine.set_obstacle_and_material(&assets, owner, index(0));
+                let fork = engine.world.fast_grid_mut().add_line(
+                    GridLine::new_elevation(
+                        MapPoint::new(662.0, 1165.0),
+                        MapPoint::new(695.0, 1192.0),
+                        index(0),
+                        index(2),
+                    ),
+                    2,
+                );
+                engine.check_for_elevation_line_crossing_indices(
+                    &assets,
+                    owner,
+                    MapPoint::new(100.0, 100.0),
+                    MapPoint::new(101.0, 100.0),
+                    2,
+                    vec![first, fork],
+                );
+                assert_eq!(engine.ent(owner).element_data().obstacle_index(), index(2));
+            }
+        }
+    }
+
+    #[test]
     fn command_extraction_expands_move_box_like_original() {
         let bbox = MapBBox::from_coords(10.0, 20.0, 30.0, 40.0);
         let expanded = EngineInner::expand_move_box_for_command_extraction(bbox);

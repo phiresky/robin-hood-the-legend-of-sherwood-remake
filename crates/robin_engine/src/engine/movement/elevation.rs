@@ -480,8 +480,18 @@ impl EngineInner {
             "queried elevation crossings"
         );
         if indices.is_empty() {
-            return self.resolve_receiver_departure(assets, entity_id, old_pos, new_pos, layer);
+            return !assets
+                .navigation
+                .pathfinder_graph
+                .static_data
+                .legacy_navigation
+                && self.resolve_receiver_departure(assets, entity_id, old_pos, new_pos, layer);
         }
+
+        // Grouping inserts each elevation line at the front of the shared
+        // crossing list. Preserve that reversal before sorting by continuity;
+        // it decides which branch wins when several lines share one receiver.
+        indices.reverse();
 
         // Read the actor's current obstacle — used as the seed for the
         // sort when multiple lines are crossed.
@@ -552,7 +562,16 @@ impl EngineInner {
         // chain. Dispatching the whole chain then returns to a face the actor
         // has already left. Resolve the destination only when that happened;
         // ordinary edge crossings retain their directional ownership.
-        if indices.len() > 1 {
+        // Binary levels intentionally retain the last crossed line's receiver.
+        // Their rounded edges can place the endpoint outside its polygon;
+        // reselecting a face here changes recorded elevation and direction.
+        if indices.len() > 1
+            && !assets
+                .navigation
+                .pathfinder_graph
+                .static_data
+                .legacy_navigation
+        {
             let entity = self.expect_entity(entity_id, "elevation junction owner");
             let current = entity.element_data().obstacle_index();
             let sector = entity.position_iface().get_sector();

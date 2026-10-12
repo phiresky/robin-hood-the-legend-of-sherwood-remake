@@ -480,10 +480,10 @@ pub struct SectorToArea {
 /// load-time geometry.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, robin_state_hash_derive::StateHash)]
 pub struct PathGraphStatic {
-    /// Retain binary-level shortcut rounding without weakening exact clearance
-    /// checks for newly authored geometry.
+    /// Retain binary-level shortcut rounding and elevation-line ownership;
+    /// authored geometry uses exact clearance checks and receiver recovery.
     #[serde(default)]
-    pub legacy_shortcut_endpoints: bool,
+    pub legacy_navigation: bool,
     /// All links in the graph.
     pub links: Vec<PathGraphLink>,
     /// All link configurations.
@@ -2102,7 +2102,7 @@ impl PathSearch<'_> {
             let middle = path[i + 1];
             let last = path[i + 2];
 
-            let (test_first, test_last) = if self.graph.static_data.legacy_shortcut_endpoints {
+            let (test_first, test_last) = if self.graph.static_data.legacy_navigation {
                 // This inset is intentional compatibility behavior for binary
                 // levels. Removing it changes recorded waypoint selection.
                 let delta = last - first;
@@ -2425,7 +2425,7 @@ mod tests {
         }
         assert_eq!(path.first(), Some(&MapPoint::new(2433., 296.)));
         assert_eq!(path.last(), Some(&MapPoint::new(2450., 331.)));
-        graph.static_mut().legacy_shortcut_endpoints = true;
+        graph.static_mut().legacy_navigation = true;
         let legacy_search = PathSearch {
             graph: &graph,
             partition: &partition,

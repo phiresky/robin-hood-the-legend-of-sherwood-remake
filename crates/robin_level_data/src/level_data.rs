@@ -1396,10 +1396,10 @@ pub struct RawMotionArea {
     bitcode::Decode,
 )]
 pub struct RawMotionData {
-    /// Binary level routing tests slightly inset shortcut endpoints. Authored
-    /// geometry uses exact corridor checks to preserve corner clearance.
+    /// Retain binary-level shortcut rounding and elevation-line ownership.
+    /// Authored geometry uses exact corridor checks and receiver recovery.
     #[serde(default)]
-    pub legacy_shortcut_endpoints: bool,
+    pub legacy_navigation: bool,
     /// Motion areas per layer: `layers[layer][area]`.
     pub layers: Vec<Vec<RawMotionArea>>,
     /// Raw bytes of the pathfinder graph (parsed later by `PathGraph::load_from_proto_stream`).
@@ -2861,7 +2861,7 @@ impl LoadedLevel {
             })
             .collect();
         level.proto.motion_data = Some(RawMotionData {
-            legacy_shortcut_endpoints: false,
+            legacy_navigation: false,
             layers: vec![
                 vec![RawMotionArea {
                     precise_polygon: Vec::new(),
@@ -4095,7 +4095,7 @@ fn read_motion_data(
     );
 
     Ok(RawMotionData {
-        legacy_shortcut_endpoints: true,
+        legacy_navigation: true,
         layers,
         graph_bytes,
     })

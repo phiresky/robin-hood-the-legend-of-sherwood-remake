@@ -50,7 +50,7 @@ fn v15_payload_matches_frozen_wire_and_preparation_is_consuming() {
     let mut payload = ShippingMissionPayload::default();
     let mut level = LoadedLevel::empty();
     level.proto.motion_data = Some(robin_engine::level_data::RawMotionData {
-        legacy_shortcut_endpoints: true,
+        legacy_navigation: true,
         layers: vec![],
         graph_bytes: vec![],
     });
