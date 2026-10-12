@@ -55,8 +55,15 @@ and ordinary clicks improve from 60 to 64 successes out of 160 without a passing
 case regressing. The mesh reviewer now accepts an explicit map and
 `asset-id:surface-id` list. Review `roof-slab-mesh-review-W9Ty6B` measures the first
 face's maximum boundary distance at 0.380 units (previously 0.374), with the
-second face unchanged at 1.102. The world-XY overlay was inspected. This remains
-a staged asset edit pending full-map verification and broader connection checks.
+second face unchanged at 1.102. The world-XY overlay was inspected.
+
+The asset's other external connection rejects this candidate: baseline pair-61
+matrix `connected-jump-placements-R5DMWS` passes 160/160 ordinary clicks, whereas
+ridge-only `connected-jump-placements-J2cuaV` passes 140/160. Both copies at both
+elevations lose their returning receiver at 37 degrees. The jump records and
+zones are unchanged; motion and receiving coverage change. In the failing case,
+the receiving midpoint is outside both candidate roof polygons. The ridge edit
+must not be published on the strength of pair 62's four improved probes.
 
 ## Fresh York export after folded-floor preparation (2026-10-12)
 
