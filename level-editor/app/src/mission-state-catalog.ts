@@ -7,6 +7,7 @@ import {
   validateNativePatchPreview,
   type NativePatchPreviewContract,
   physicalEndpointSources,
+  physicalFamilyEndpoints,
   type NativeLoopPreviewContract,
   type StateDeliveryContract,
 } from "../../shared/src/state-delivery.ts";
@@ -125,10 +126,7 @@ export async function loadMissionStatePreview(
   if (native.mission !== entry.mission)
     throw new Error("State catalog mission differs from its contract");
   for (const family of loop || patch ? [] : (contract as StateDeliveryContract).families)
-    for (const binding of [
-      ...physicalEndpointSources(family.physical.initial),
-      ...physicalEndpointSources(family.physical.applied),
-    ])
+    for (const binding of physicalFamilyEndpoints(family).flatMap(physicalEndpointSources))
       if (!binding.position)
         throw new Error("Published state asset requires explicit local-origin placement");
   const source: MissionStateSource = {

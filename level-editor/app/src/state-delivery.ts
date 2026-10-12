@@ -3,6 +3,7 @@ import * as THREE from "three";
 import {
   validateStateDelivery,
   physicalEndpointSources,
+  physicalFamilyEndpoints,
   physicalPatchPose,
   type StateDeliveryContract,
 } from "../../shared/src/state-delivery.ts";
@@ -12,13 +13,14 @@ import { SceneAssetLoader, captureLoadedStateAppearance } from "./scene-assets.t
 import { disposeObjectResources } from "./resources.ts";
 
 export type StateDeliveryMode = "native-art" | "physical-endpoint" | "physical-motion";
+type FamilyRoots = { initial: THREE.Group; applied: THREE.Group; frames: THREE.Group[] };
 type Family = StateDeliveryContract["families"][number];
 /** One containing renderer owns the clock. Only explicitly reviewed patch poses support physical motion. */
 export class StateDelivery {
   readonly native = new NativeStatePresentation();
   readonly physical = new THREE.Group();
   private contract: StateDeliveryContract | undefined;
-  private roots = new Map<string, { initial: THREE.Group; applied: THREE.Group }>();
+  private roots = new Map<string, FamilyRoots>();
   private starts = new Map<string, number>();
   private nodePoses = new Map<string, ReviewedNodePoses>();
   private selectedFamily: string | undefined;
@@ -98,11 +100,14 @@ export class StateDelivery {
       release();
     };
     try {
-      const roots = new Map<string, { initial: THREE.Group; applied: THREE.Group }>();
+      const roots = new Map<string, FamilyRoots>();
       for (const family of frozen.families) {
-        const pair = { initial: new THREE.Group(), applied: new THREE.Group() };
-        for (const state of ["initial", "applied"] as const) {
-          for (const binding of physicalEndpointSources(family.physical[state])) {
+        const endpoints = physicalFamilyEndpoints(family);
+        const groups = endpoints.map(() => new THREE.Group());
+        const pair = { initial: groups[0]!, applied: groups[1]!, frames: groups.slice(2) };
+        for (const [index, endpoint] of endpoints.entries()) {
+          const state = index === 0 ? "initial" : index === 1 ? "applied" : `frame-${index - 2}`;
+          for (const binding of physicalEndpointSources(endpoint)) {
             const asset = await loader.load(binding);
             owned.add(asset);
             if (!current()) return false;
@@ -118,9 +123,9 @@ export class StateDelivery {
               endpoint: state,
               representation: "physical-endpoint",
             };
-            pair[state].add(clone);
+            groups[index]!.add(clone);
           }
-          pair[state].visible = false;
+          groups[index]!.visible = false;
         }
         if (family.physical.motion?.kind === "native-patch-node-poses")
           this.nodePoses.set(
@@ -132,7 +137,8 @@ export class StateDelivery {
       if (!current()) return false;
       this.roots = roots;
       this.contract = frozen;
-      for (const pair of roots.values()) this.physical.add(pair.initial, pair.applied);
+      for (const pair of roots.values())
+        this.physical.add(pair.initial, pair.applied, ...pair.frames);
       this.selectEndpoint(frozen.families[0]!.id, "initial");
       return true;
     } catch (error) {
@@ -174,6 +180,7 @@ export class StateDelivery {
       pair.applied.position.set(0, 0, 0);
       pair.initial.visible = key === id && endpoint === "initial";
       pair.applied.visible = key === id && endpoint === "applied";
+      for (const frame of pair.frames) frame.visible = false;
     }
     this.sampleMotion();
   }
@@ -228,8 +235,13 @@ export class StateDelivery {
     }
     pair.initial.position.fromArray(pose.translation);
     pair.applied.position.set(0, 0, 0);
-    pair.initial.visible = pose.endpoint === "initial";
-    pair.applied.visible = pose.endpoint === "applied";
+    if (pose.model_frame !== undefined && !pair.frames[pose.model_frame])
+      throw new Error("Reviewed model frame binding missing");
+    pair.initial.visible = pose.model_frame === undefined && pose.endpoint === "initial";
+    pair.applied.visible = pose.model_frame === undefined && pose.endpoint === "applied";
+    pair.frames.forEach((frame, index) => {
+      frame.visible = index === pose.model_frame;
+    });
   }
   get motionEndpoint(): "initial" | "applied" | undefined {
     if (this.mode !== "physical-motion" || !this.selectedFamily) return undefined;

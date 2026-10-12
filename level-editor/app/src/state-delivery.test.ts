@@ -563,3 +563,91 @@ test("appearing mechanisms reject an unbaked terminal pose before loading", asyn
   assert.equal(loaded, false);
   p.dispose();
 });
+
+async function discreteFixture() {
+  const f = await motionFixture();
+  const family = f.contract.families[0]!;
+  f.contract.native.patch_states![0]!.transition.length = 3;
+  family.body_terminal_tick = 5;
+  assert.ok(Array.isArray(family.physical.applied));
+  const applied = family.physical.applied[0]!;
+  family.physical.motion = {
+    kind: "native-patch-model-frames",
+    patch_id: "gate",
+    source_motion_sha256: "c".repeat(64),
+    model_frames: [
+      [{ ...applied, id: "transition-0", model: "transition-0.glb" }],
+      [{ ...applied, id: "transition-1", model: "transition-1.glb" }],
+      [structuredClone(applied)],
+    ],
+  };
+  return f;
+}
+
+test("discrete saved models retain all four poses on native timing without interpolation", async () => {
+  const f = await discreteFixture();
+  const loaded: string[] = [];
+  let disposed = 0;
+  f.template.position.set(2, 3, 4);
+  const p = new StateDelivery(() => ({
+    load: async (binding) => {
+      loaded.push(binding.model);
+      return f.template;
+    },
+    dispose() {
+      disposed++;
+    },
+  }));
+  await p.set(f.contract, f.source, f.library, f.read);
+  assert.equal(loaded.length, 5);
+  const groups = p.physical.children;
+  const visible = () => groups.map((g) => g.visible);
+  p.selectMode("physical-motion");
+  assert.deepEqual(visible(), [true, false, false, false, false]);
+  p.activate("trap");
+  p.setPlaying(true);
+  for (let tick = 0; tick < 9; tick++) {
+    const selected = tick >= 5 ? 1 : 2 + Math.floor(tick / 2);
+    assert.deepEqual(
+      visible(),
+      groups.map((_, i) => i === selected),
+    );
+    for (const g of groups) assert.deepEqual(g.children[0]!.position.toArray(), [22, 33, 44]);
+    assert.equal(p.motionEndpoint, tick >= 5 ? "applied" : "initial");
+    p.advance(1 / 25);
+  }
+  p.seekFamily("trap", 2);
+  assert.deepEqual(visible(), [false, false, false, true, false]);
+  p.selectMode("physical-endpoint");
+  assert.deepEqual(visible(), [true, false, false, false, false]);
+  p.selectMode("physical-motion");
+  assert.deepEqual(visible(), [false, false, false, true, false]);
+  p.reset("trap");
+  assert.deepEqual(visible(), [true, false, false, false, false]);
+  p.dispose();
+  assert.equal(disposed, 1);
+  assert.equal(p.physical.children.length, 0);
+});
+
+test("discrete model frames reject missing phases and unsafe transition bindings before loading", async () => {
+  for (const fault of ["count", "empty", "path", "hash", "position"] as const) {
+    const f = await discreteFixture();
+    const motion = f.contract.families[0]!.physical.motion!;
+    assert.equal(motion.kind, "native-patch-model-frames");
+    if (motion.kind !== "native-patch-model-frames") throw new Error("Fixture mismatch");
+    const binding = motion.model_frames[0]![0]!;
+    if (fault === "count") motion.model_frames.pop();
+    if (fault === "empty") motion.model_frames[0] = [];
+    if (fault === "path") binding.model = "../outside.glb";
+    if (fault === "hash") binding.model_sha256 = "wrong";
+    if (fault === "position") binding.position = [0, NaN, 0];
+    const p = new StateDelivery(() => {
+      throw new Error("must not load");
+    });
+    await assert.rejects(
+      p.set(f.contract, f.source, f.library, f.read),
+      /invalid (reviewed patch model frames|physical source)/,
+    );
+    p.dispose();
+  }
+});

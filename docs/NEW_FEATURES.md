@@ -2880,3 +2880,13 @@ to that absolute directory when launching the editor to browse these maps.
 These are geometry-only scenes: mission logic, navigation, dynamic patches, and
 material behavior are not imported, and no refinement or floating-part snapping
 is performed. Source game data and generated assets remain local.
+
+### Discrete physical patch previews
+
+Controlled state previews can bind independently reviewed saved models to every
+native patch transition frame with `native-patch-model-frames`. The preview uses
+the native frame delays and terminal tick, without interpolating between models.
+Initial and applied models remain separate, and all transition bindings undergo
+the same path, hash, resource, and placement validation as endpoint models.
+This supports private review contracts; publishing models and approving their
+appearance remain separate steps.

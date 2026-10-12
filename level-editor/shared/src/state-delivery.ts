@@ -55,6 +55,14 @@ export interface PhysicalPatchNodePoses {
   node_frames: ReviewedNodePose[][];
 }
 
+/** Independently reviewed saved models sampled without interpolation on native frame boundaries. */
+export interface PhysicalPatchModelFrames {
+  kind: "native-patch-model-frames";
+  patch_id: string;
+  source_motion_sha256: string;
+  model_frames: PhysicalStateBinding[][];
+}
+
 /** Exact artwork transitions and independently reviewed physical endpoints. */
 export interface StateDeliveryContract {
   version: 1;
@@ -71,7 +79,7 @@ export interface StateDeliveryContract {
     physical: {
       initial: PhysicalEndpoint;
       applied: PhysicalEndpoint;
-      motion?: PhysicalPatchTranslation | PhysicalPatchNodePoses;
+      motion?: PhysicalPatchTranslation | PhysicalPatchNodePoses | PhysicalPatchModelFrames;
     };
     static_replacements?: { initial: StaticStateReplacement[]; applied: StaticStateReplacement[] };
   }[];
@@ -202,6 +210,13 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
             .some(({ matrix }) => matrix.some((v, i) => v !== (i % 5 === 0 ? 1 : 0)))
         )
           fail("terminal node pose differs from baked applied model");
+      } else if (motion.kind === "native-patch-model-frames") {
+        if (
+          !Array.isArray(motion.model_frames) ||
+          motion.model_frames.length !== patch!.transition.length ||
+          motion.model_frames.some((frame) => !Array.isArray(frame) || !frame.length)
+        )
+          fail("invalid reviewed patch model frames");
       } else fail("unknown reviewed physical motion");
     }
     if (family.static_replacements !== undefined) {
@@ -213,7 +228,7 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
       )
         fail("invalid static replacements");
     }
-    for (const endpoint of [family.physical.initial, family.physical.applied]) {
+    for (const endpoint of physicalFamilyEndpoints(family)) {
       if (
         endpoint &&
         !Array.isArray(endpoint) &&
@@ -251,12 +266,29 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
   }
 }
 
+/** Every independently loaded physical phase, including discrete transition models. */
+export function physicalFamilyEndpoints(
+  family: StateDeliveryContract["families"][number],
+): PhysicalEndpoint[] {
+  const { initial, applied, motion } = family.physical;
+  return [
+    initial,
+    applied,
+    ...(motion?.kind === "native-patch-model-frames" ? motion.model_frames : []),
+  ];
+}
+
 /** Sample the native presentation timeline; callers own the clock and reset state. */
 export function physicalPatchPose(
   contract: StateDeliveryContract,
   id: string,
   tick?: number,
-): { endpoint: "initial" | "applied"; translation: [number, number, number]; node_frame?: number } {
+): {
+  endpoint: "initial" | "applied";
+  translation: [number, number, number];
+  node_frame?: number;
+  model_frame?: number;
+} {
   const family = contract.families.find((f) => f.id === id);
   const motion = family?.physical.motion;
   if (!family || !motion) throw new Error(`Missing physical motion: ${id}`);
@@ -270,6 +302,8 @@ export function physicalPatchPose(
   const frame = nativePresentationFrame({ frames: patch.transition, loop: false }, tick);
   if (motion.kind === "native-patch-node-poses")
     return { endpoint: "applied", translation: [0, 0, 0], node_frame: frame };
+  if (motion.kind === "native-patch-model-frames")
+    return { endpoint: "initial", translation: [0, 0, 0], model_frame: frame };
   const translation = motion.translation_frames[frame];
   if (!translation) throw new Error("Missing reviewed physical pose");
   return { endpoint: "initial" as const, translation };
