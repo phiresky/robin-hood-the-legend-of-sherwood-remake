@@ -80,7 +80,11 @@ checks: 709 traversals and eleven occluded lower-click cases**. The gable house'
 roof selection region now follows its existing walkable surface. The published
 asset passes 160/160 offset clicks at four rotations, two elevations and two
 copies (previously 80/160). Replaying the same 456 interior clicks before and
-after gives 12 improvements, zero regressions and 72 unresolved failures.
+after gives 12 normal-selection improvements and zero regressions. All 456
+routes now have verified coverage: 384 normal clicks and 72 requiring the
+existing hidden-floor selection mode. The rotated/raised browser ZIP also
+reopens and rebakes identically, loads without base-game data or mission
+content, and passes all 36 archived routes (18 normal, 18 hidden-floor).
 Stock placement success does not clear wider click coverage or all placements.
 See [selection-region evidence](map-compilation-evidence.md#gable-roof-selection-region-publication).
 See [interior-click evidence](map-compilation-evidence.md#york-interior-jump-clicks-2026-10-12).

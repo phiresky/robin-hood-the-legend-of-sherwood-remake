@@ -116,6 +116,40 @@ the asset and updates York's scene pin; the published gameplay and descriptor
 hash match the tested stage exactly. Rendered archive traversal and broader
 placement parity remain separate requirements.
 
+### Hidden selection and rendered gable-roof archive
+
+The apparent residual 180-degree interior failures above are covered by the
+existing hidden-floor selection path. That path selects the next surface behind
+the visible one; normal selection is still required for the visible surface.
+For exactly the same 288 placement probes, `interior-jump-clicks-B8YWRc` passes
+252 normal clicks and `interior-jump-clicks-q0nWeB` passes the remaining 36
+using hidden selection. No probe fails both modes. Replaying the complete
+456-case comparison with hidden selection in `hidden-combined-jump-clicks-lzirs5yb`
+likewise covers all 72 normal-selection failures; the other 384 pass normally.
+The individual all-normal/all-hidden test runs deliberately remain failing:
+the evidence is combined mode coverage, not universal normal-click success.
+
+`refinement/review-jump-click-modes.mjs` verifies matching descriptor SHA-256s,
+identical click inputs, selection-mode flags and complete native result coverage
+before reporting normal, hidden-only and unreachable counts. It neither drops
+failing probes nor changes export or runtime behavior.
+
+Browser fixture `render-connection-library-5iyBa8` uses complete published
+gable-house definitions, two independent copies, 180-degree rotation and
+40-unit elevation. Its 2500-by-2500 bake/reopen test reproduces stored editor
+data, compiled gameplay, warnings, color and 16-bit depth exactly. The resulting
+`york-gable-roof-rendered.zip` is 13,695,932 bytes with SHA-256
+`db28e95ba52ef4ab056852f8445ff441268a9a925c2adcf351aa4af05b2ab699`.
+The baked color image was inspected. This does not establish character contact
+or sprite depth compositing during in-game movement.
+
+The native empty-base archive test passes: color/depth/minimap and editor scene
+load, with 13 sight obstacles, two door projections, 8,800 grid blocks, no masks,
+no appearance controls and no mission content. Native traversal of the descriptor
+extracted from that exact ZIP passes all 36 sampled routes using the appropriate
+mode: 18 normal (`interior-jump-clicks-Vzej6D`) and 18 hidden-only
+(`interior-jump-clicks-a8AhUT`). The mode-review reports retain separate outcomes.
+
 ## Supported integer jump-span search (2026-10-12)
 
 `refinement/review-jump-supported-spans.mjs` generates diagnostic replacements
