@@ -24,7 +24,7 @@ assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlin
                 if x.startswith('MemAvailable:')))*1024 > 6*1024**3
 base = ROOT/'level-editor/work/croisement01-refinement/restart2'
 wood = base/'tree14-wood-v13-projected/assets/croisement01-tree-14'
-out = base/'tree14-crown94-geometry-v2'
+out = base/'tree14-crown94-geometry-v3'
 assert not out.exists()
 out.mkdir()
 model = wood/'model.blend'
@@ -82,6 +82,42 @@ assert cursor==len(crown.data.vertices)
 crown.data.update()
 report['after_geometry_sha256']=foliage.geometry_hash(crown)
 report['envelope_radii']=list(radii)
+# Interior fixed cross-sections are edge-on to the source camera. Subdivision
+# follows the shared envelope instead of spanning it with a single corner quad.
+vertices=[];faces=[];uvs=[];slots=[];materials=[]
+steps=16
+for lobe in evidence['lobes']:
+    x0,y0,x1,y1=lobe['bbox_source']
+    slot=len(materials)
+    materials.append(foliage.material('Crown94 inferred interior '+str(slot),lobe['unknown'],False,evidence,two_sided=True))
+    for fraction in (.2,.5,.8):
+        x=x0+(x1-x0)*fraction;start=len(vertices)
+        for j in range(steps+1):
+            v=j/steps;y=y0+(y1-y0)*v
+            back,front=surface(x,y,False),surface(x,y,True)
+            for i in range(steps+1):
+                u=i/steps;vertices.append(back.lerp(front,u));uvs.append((u,1-v))
+        for j in range(steps):
+            for i in range(steps):
+                a=start+j*(steps+1)+i;b=a+1;c=b+steps+1;d=a+steps+1
+                if (vertices[b]-vertices[a]).length<1e-6 or (vertices[c]-vertices[d]).length<1e-6:continue
+                faces.extend(((a,b,c),(a,c,d)));slots.extend((slot,slot))
+interior_mesh=bpy.data.meshes.new('Crown94 inferred interior fixed foliage')
+interior_mesh.from_pydata(vertices,[],faces);interior_mesh.update()
+for material in materials:interior_mesh.materials.append(material)
+uv_layer=interior_mesh.uv_layers.new(name='Foliage UV')
+ownership=interior_mesh.color_attributes.new(name='Source ownership',type='FLOAT_COLOR',domain='CORNER')
+interior_mesh.color_attributes.active_color=ownership
+for polygon,slot in zip(interior_mesh.polygons,slots):
+    polygon.material_index=slot
+    for loop in polygon.loop_indices:
+        uv_layer.data[loop].uv=uvs[interior_mesh.loops[loop].vertex_index]
+        ownership.data[loop].color=(0.,1.,1.,1.)
+interior=bpy.data.objects.new('Tree14 Crown94 inferred interior',interior_mesh)
+bpy.data.collections[config['collection_name']].objects.link(interior)
+interior['asset_group']=config['asset_id'];interior['source_node']='foliage-tree14-crown94-interior'
+interior['projection_component']='crown';interior['foliage_physical_opacity']=True
+report['interior_geometry_sha256']=foliage.geometry_hash(interior)
 assert protected == {o.name: foliage.geometry_hash(o) for o in wood_objects}
 points = [crown.matrix_world@v.co for v in crown.data.vertices]
 extent = [max(p[i] for p in points)-min(p[i] for p in points) for i in range(3)]
@@ -90,14 +126,14 @@ scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.transparent_max
 saved = out/'model.blend'
 bpy.ops.wm.save_as_mainfile(filepath=str(saved))
 packet=json.loads((wood/'input/views.json').read_text())
-packet['object_names']=[o.name for o in wood_objects]+[crown.name]
+packet['object_names']=[o.name for o in wood_objects]+[crown.name,interior.name]
 packet['render_object_names']=None
 data=bpy.data.cameras.new('Joint crown diagnostic');data.type='ORTHO'
 camera=bpy.data.objects.new(data.name,data);scene.collection.objects.link(camera)
 for view in packet['views']:
     view['crop']={'width':384,'height':384}
     camera.matrix_world=Matrix(view['camera_matrix_world'])
-    fit_camera(camera,wood_objects+[crown],1.,padding=1.2)
+    fit_camera(camera,wood_objects+[crown,interior],1.,padding=1.2)
     view['camera_matrix_world']=[list(row) for row in camera.matrix_world]
     view['ortho_scale']=data.ortho_scale
 manifest=out/'views.json';manifest.write_text(json.dumps(packet,indent=2)+'\n')
