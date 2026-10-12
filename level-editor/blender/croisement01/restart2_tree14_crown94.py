@@ -77,7 +77,10 @@ def surface(x,y,front):
     bb=2*sum(delta[i]*ray[i]/radii[i]**2 for i in range(3))
     cc=sum((delta[i]/radii[i])**2 for i in range(3))-1
     discriminant=max(0.,bb*bb-4*aa*cc)
-    depth=(-bb+(1 if front else -1)*math.sqrt(discriminant))/(2*aa)
+    # Broad uneven masses avoid a uniformly spherical reverse outline. This
+    # displacement follows source rays, so it cannot move painted leaf texels.
+    fullness=.96+.07*math.sin((x-649)*.037+(y-43)*.019)+.035*math.cos((y-43)*.051-(x-649)*.015)
+    depth=(-bb+(1 if front else -1)*math.sqrt(discriminant)*fullness)/(2*aa)
     return plane+ray*depth
 cursor=0
 for lobe in evidence['lobes']:
