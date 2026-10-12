@@ -150,9 +150,12 @@ Interior subsets `interior-jump-clicks-pTIFej` and `interior-jump-clicks-4YkyrM`
 pass **144/144** directions without unavailable probes. This is nine rotations
 and two elevations, not all possible placements or click positions.
 
-Full York candidate `saved-map-exports-Bwpp17` is still compiling. The lane edit
-remains unpublished pending that regression check; broader click-zone coverage,
-traffic behavior for the narrower span and a rendered round trip remain open.
+Full York candidate `saved-map-exports-Bwpp17` compiles in 490.5 seconds and
+passes native construction. Its 720 offset-click outcomes are unchanged
+case-by-case from `D4r29E`: 696 successful traversals, eleven occluded lower
+clicks and thirteen failures on lines 5/57/65. The internal-jump repair does not
+regress the saved placement. Traffic behavior for the narrower span and a
+rendered round trip of this correction remain open.
 
 The broader click-zone check now uses `check-jump-interior-clicks.mjs --samples=5`:
 five spatially separated supported points on each side, with every start/goal
@@ -168,7 +171,12 @@ surface. All sixty complete under explicit hidden selection in
 sampled routes complete using their tested selection mode, but this is not a
 claim that all points in the zone or simultaneous multi-character traffic work.
 The publication preview selects only the raised-lane asset and York scene pin,
-with `applied: false`.
+with `applied: false`. The subsequent `york-lane-level-jump-1A5IJ5/publication/report.json`
+records `applied: true`. Published gameplay equals the reviewed candidate exactly;
+the model hash is unchanged and the only saved-scene change is this asset's
+descriptor pin. Existing draft warnings remain.
+Fresh published complete-asset matrix `connected-jump-placements-8j4VaY`
+reproduces all eight native-validated `Q1Hj80` descriptors byte-for-byte.
 
 `check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,
 ordered by distance to the takeoff edge. Each point must pass static corridor

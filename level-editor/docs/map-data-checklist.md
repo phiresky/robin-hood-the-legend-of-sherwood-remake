@@ -11,13 +11,11 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
-**York interior jump clicks (2026-10-12):** a separate conservative footprint
-probe passes seven of eight tested directions, including lines 5, 57 and 65
-that fail some perpendicular-offset probes. Line 142 still stalls before
-takeoff; its reverse succeeds. Lines 50/51 have no sampled supported interior
-on one side and remain untested by this probe. These results narrow the
-investigation; they do not replace the full-map 28/720 failure count or prove
-rotated placements. See [interior-click evidence](map-compilation-evidence.md#york-interior-jump-clicks-2026-10-12).
+**York jump checks (2026-10-12):** the current full-map audit has 696 successful
+traversals, eleven occluded lower-click cases and thirteen failures out of 720.
+The remaining failures are lines 5, 57 and 65. All ten selected interior-click
+directions pass, but that does not clear wider click coverage or all placements.
+See [interior-click evidence](map-compilation-evidence.md#york-interior-jump-clicks-2026-10-12).
 
 The published west-lane roof correction passes all **72 interior-click traversals**
 across nine angles, two elevations and two copies. It restores the mesh-supported
@@ -31,16 +29,16 @@ draft status.
 
 Its published 180-degree/elevated browser fixture now passes lossless PNG/ZIP
 packaging, editor reopening and native loading without base-game data. Complete
-asset definitions reveal another gap: both copied internal raised-lane return
+asset definitions revealed another gap: both copied internal raised-lane return
 jumps stall after landing (6/8 directions pass, including all four repaired
-cross-asset directions). These additional failures remain open; the isolated
-72-click result does not cover every jump owned by the two assets.
+cross-asset directions). The following correction addresses those returns;
+the isolated 72-click result does not cover every jump owned by the two assets.
 
-A staged correction to those internal jumps now passes 360/360 internal offset
+The published correction to those internal jumps passes 360/360 internal offset
 probes and 144/144 complete-asset interior clicks across nine rotations and two
 elevations. It derives matching level spans from the lane's existing receiving
 surfaces; no runtime change or replacement terrain is involved. Full York
-regression checks are running, so this lane correction is not published yet.
+retains exactly the same thirteen previously recorded failures, with no regressions.
 An expanded internal-jump sweep passes 1,740 normal clicks and sixty explicit
 hidden-surface clicks across 1,800 start/destination combinations. Multi-character
 traffic and a rendered round trip of this lane correction remain unverified.
