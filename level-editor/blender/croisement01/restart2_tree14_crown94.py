@@ -24,7 +24,7 @@ assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlin
                 if x.startswith('MemAvailable:')))*1024 > 6*1024**3
 base = ROOT/'level-editor/work/croisement01-refinement/restart2'
 wood = base/'tree14-wood-v13-projected/assets/croisement01-tree-14'
-out = base/'tree14-crown94-geometry-v3'
+out = base/'tree14-crown94-geometry-v4'
 assert not out.exists()
 out.mkdir()
 model = wood/'model.blend'
@@ -94,6 +94,20 @@ for lobe in evidence['lobes']:
         x=x0+(x1-x0)*fraction;start=len(vertices)
         for j in range(steps+1):
             v=j/steps;y=y0+(y1-y0)*v
+            back,front=surface(x,y,False),surface(x,y,True)
+            for i in range(steps+1):
+                u=i/steps;vertices.append(back.lerp(front,u));uvs.append((u,1-v))
+        for j in range(steps):
+            for i in range(steps):
+                a=start+j*(steps+1)+i;b=a+1;c=b+steps+1;d=a+steps+1
+                if (vertices[b]-vertices[a]).length<1e-6 or (vertices[c]-vertices[d]).length<1e-6:continue
+                faces.extend(((a,b,c),(a,c,d)));slots.extend((slot,slot))
+    # A second family prevents the exact reverse camera seeing all interiors
+    # edge-on simultaneously. These remain edge-on to the original camera.
+    for fraction in (.2,.5,.8):
+        y=y0+(y1-y0)*fraction;start=len(vertices)
+        for j in range(steps+1):
+            v=j/steps;x=x0+(x1-x0)*v
             back,front=surface(x,y,False),surface(x,y,True)
             for i in range(steps+1):
                 u=i/steps;vertices.append(back.lerp(front,u));uvs.append((u,1-v))
