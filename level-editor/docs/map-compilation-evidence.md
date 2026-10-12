@@ -52,6 +52,17 @@ because a landing surface is unavailable; the remaining six exports retain
 their pairs but pass only 36/120 ordinary-click probes. The correction is not
 published: receiver binding and moved-assembly traversal need further work.
 
+The unchanged placement baseline `connected-jump-placements-J2ccej` passes
+40/120 probes and also loses both 37-degree pairs. Thus the staged height change
+is not an overall improvement. Export warnings now retain the failed landing
+anchor's resolution details instead of discarding them. Baseline re-export
+`connected-jump-placements-Hjkphe` identifies the central house's `jump-zone-71`:
+at 37 degrees its height is 246.8517, with no matching exported receiving floor.
+An exact-coordinate diagnostic (`connected-jump-placements-i967m9`) still loses
+the pair: removing screen rounding exposes a different roof at height 263.1897,
+not the required floor. That diagnostic compiler change was reverted. Anchor
+rounding alone does not explain or repair the missing connection.
+
 ## Published roof metadata and rendered ZIP round trip (2026-10-12)
 
 The slab, north stone house and upper green house definitions are published.

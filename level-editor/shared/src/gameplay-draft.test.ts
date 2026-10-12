@@ -139,6 +139,11 @@ test("best effort omits disconnected doors and jump pairs but rejects malformed 
   assert.ok(
     detached.warnings?.some((message) => message.includes("landing surface is unavailable")),
   );
+  assert.ok(
+    detached.warnings?.some(
+      (message) => message.includes("landing anchor") && message.includes("containing areas"),
+    ),
+  );
 });
 
 test("best effort omits a disconnected lift but retains the asset collision and landings", () => {
@@ -209,7 +214,9 @@ test("ambiguous stair sockets omit every competing piece instead of choosing a p
 
 test("best effort omits unavailable masks and their empty transitions without dangling references", () => {
   const { document, assets, hut } = maskAssetCompilerFixture();
-  for (const mask of hut.gameplay!.masks!) mask.anchor = [1900, 1900, 0];
+  // Off-map XY can still bind through rendered coverage at a valid plane height.
+  // Use an unavailable height to exercise removal of genuinely unbound masks.
+  for (const mask of hut.gameplay!.masks!) mask.anchor = [1900, 1900, 999];
   const geometry = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
   assert.equal(geometry.masks, undefined);
   assert.deepEqual(geometry.movement_transitions, []);

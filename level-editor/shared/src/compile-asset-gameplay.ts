@@ -2679,7 +2679,7 @@ function compileAssetGameplayAttempt(
     );
   // Detached edges have no runtime connection. Retain zones used by any remaining pair.
   if (options.bestEffort || cropped || generatedJumpZoneIds.size) {
-    const unavailable = new Set<string>();
+    const unavailable = new Map<string, string>();
     for (const zone of jumpZones) {
       if (!options.bestEffort && !cropped && !generatedJumpZoneIds.has(zone.id)) continue;
       try {
@@ -2692,14 +2692,17 @@ function compileAssetGameplayAttempt(
             !(error instanceof OutsideExportFrame))
         )
           throw error;
-        unavailable.add(zone.id);
+        unavailable.set(zone.id, error.message);
       }
     }
     for (let index = jumpPairs.length - 1; index >= 0; index--) {
       const pair = jumpPairs[index]!;
       if (!pair.edges.some((edge) => unavailable.has(edge.zone))) continue;
       warnings.push(
-        `Jump ${pair.id}: connection omitted because a landing surface is unavailable.`,
+        `Jump ${pair.id}: connection omitted because a landing surface is unavailable: ${pair.edges
+          .map((edge) => unavailable.get(edge.zone))
+          .filter((reason) => reason !== undefined)
+          .join("; ")}.`,
       );
       jumpPairs.splice(index, 1);
     }
