@@ -16,6 +16,26 @@ receiving floor at projected point `[1453,1260]`, layer nine, sector 64. The
 matrix pass can be inferred from these results. The saved Lincoln scene's
 16 passing routes remain valid but do not certify rearranged hall connections.
 
+The 90-degree authored point is inside its receiver before rounding, but
+`[1453,1260]` falls outside it; `[1452,1260]` retains support. Export now searches
+integer points within two projected units only when rounding loses support,
+restricts candidates to the same receiver containing the exact authored point,
+and reconstructs world elevation on that plane. Existing supported endpoints
+remain unchanged. This runs before static passage-state preparation; there is
+no engine change or load-time search extension.
+
+Diagnostic `great-hall-receiver-quantization-J7jV75` loads all four orientations
+and completes 40/48 GateSearch probes. The eight findings comprise receiver
+transition mismatches at 37/90 degrees and route-selection mismatches at 180
+degrees; they remain unresolved. Fresh compiler output
+`great-hall-quantized-fresh-etuERk` independently loads the 90-degree assembly,
+passes native geometry construction and retains ten passing routes with two
+receiver-transition failures. Three focused quantization regressions, six
+passage-state tests, app typechecking and focused lint/format checks pass.
+The broader map-export suite reports an existing multi-plane receiver snapshot
+mismatch: that fixture has no ordinary doors, and an explicit before/after
+check confirms receiver quantization leaves its geometry unchanged.
+
 ## Sherwood stair clearance investigation (2026-10-12)
 
 Fresh published export `saved-map-exports-pxNvRF` passes 50 ordinary route

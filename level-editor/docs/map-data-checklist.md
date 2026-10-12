@@ -48,9 +48,11 @@ Fresh Lincoln passes native construction, 182 ordinary route samples and all
 100 jump-click probes. Stair gate discovery now passes all 16 routes after
 including ordinary passages touching stairs in the existing load-time receiver
 cache. All authored connections remain. No new per-tick geometry work is added.
-Rearranged hall coverage is still incomplete: the fresh two-copy fixture passes
-12/12 routes at zero degrees, has two failures at 37 degrees, and fails level
-loading at 90 degrees because an ordinary passage endpoint lacks a receiver.
+Rearranged hall coverage is still incomplete. Export now keeps quantized ordinary
+endpoints on their receiving surface, fixing the 90-degree loading failure.
+The four-angle, zero-elevation audit passes 40/48 routes; receiver-transition
+and route-selection findings remain. A fresh 90-degree compile loads and passes
+native geometry validation, with two receiver-transition failures among twelve routes.
 See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-checks-2026-10-12).
 
 **Sherwood stair gap (2026-10-12):** fresh published data passes 50 ordinary
