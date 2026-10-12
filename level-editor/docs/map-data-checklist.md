@@ -6,6 +6,11 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
+**Current definition inventory (2026-10-12):** `gameplay-coverage-MKnQZD` checks
+1,279 indexed assets and finds zero missing definitions among placed assets in
+the saved scenes. Twenty-one unused assets lack definitions. This checks library
+definition presence and index hashes, not scene pins or gameplay completeness.
+
 This file also retains historical investigations. Results that depended on the
 retired physical-navigation solver do **not** establish current traversal parity;
 assets need verification against prepared-graph movement. The current architecture
