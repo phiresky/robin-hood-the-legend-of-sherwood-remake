@@ -7,7 +7,9 @@ def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  OUT.mkdir(exist_ok=True);cards=[];pins={}
  for n in (18,19,25,39):
-  d=B/f'tree{n}-gray-fill-input-oct12-v'+('2' if n==39 else '1');scope=json.loads((d/'scope.json').read_text());base=Image.open(d/'context/textured.png').convert('RGBA');mask=Image.open(d/'packet/textured.png').convert('RGBA').getchannel('A');overlay=Image.new('RGBA',base.size,(255,45,180,0));overlay.putalpha(mask.point(lambda x:190 if x else 0));base=Image.alpha_composite(base,overlay);target=OUT/f'tree{n}-scope-overlay.png';base.save(target)
+  d=B/(f'tree{n}-gray-fill-input-oct12-v'+('2' if n==39 else '1'));scope=json.loads((d/'scope.json').read_text());base=Image.open(d/'context/textured.png').convert('RGBA');mask=Image.new('L',base.size);
+  for i in range(8):mask.paste(Image.open(d/f'packet/views/view-{i}-solid.png').getchannel('A'),((i%4)*384,(i//4)*384))
+  overlay=Image.new('RGBA',base.size,(255,45,180,0));overlay.putalpha(mask.point(lambda x:190 if x else 0));base=Image.alpha_composite(base,overlay);target=OUT/f'tree{n}-scope-overlay.png';base.save(target)
   resources=[d/'scope.json',d/'worker.blend',d/'packet/views.json',d/'packet/solid.png',d/'packet/textured.png',d/'context/textured.png',target]
   resources.extend(sorted((d/'packet/views').glob('*.png')))
   resources.extend(Path(r['file']) for r in scope['permitted_material_references'])
