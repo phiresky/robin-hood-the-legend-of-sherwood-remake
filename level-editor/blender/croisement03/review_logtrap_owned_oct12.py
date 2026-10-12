@@ -19,6 +19,14 @@ def main():
  try:
   mem=dict(x.split(':',1) for x in Path('/proc/meminfo').read_text().splitlines());assert int(mem['MemAvailable'].split()[0])*1024>=6*1024**3;assert shutil.disk_usage(ROOT).free>=10*1024**3
   source=OUT/'candidate-v1/worker.blend';receipt['source_worker_sha256']=sha(source);receipt['status']='loading';save();bpy.ops.wm.open_mainfile(filepath=str(source));scene=bpy.context.scene;objects={name:[o for o in scene.objects if o.get('state_endpoint')==name] for name in ['initial','terminal']};reports={}
+  # Land the scattered endpoint on the inferred common support plane without
+  # changing any source-projected vertex. This is not a map terrain fit.
+  contact=[]
+  for ob in objects['terminal']:
+   low=min((ob.matrix_world@v.co).z for v in ob.data.vertices);delta=Vector((0,low*COS/SIN,-low));errors=[]
+   for vertex in ob.data.vertices:
+    old=vertex.co.copy();vertex.co+=delta;errors.append(abs((-old.y*SIN-old.z*COS)-(-vertex.co.y*SIN-vertex.co.z*COS)))
+   ob.data.update();contact.append({'object':ob.name,'old_min_z':low,'new_min_z':min(v.co.z for v in ob.data.vertices),'native_projection_max_error':max(errors),'translation':list(delta)})
   for state,group in objects.items():
    meshes=[]
    for ob in group:
@@ -46,7 +54,7 @@ def main():
      im=Image.open(destination/f'{state}-{mode}-{i}.png');sheet.paste(im,(i%4*384,i//4*384),im)
     sheet.save(destination/f'{state}-{mode}-eight.png')
   assert sha(source)==receipt['source_worker_sha256'];assert sha(destination/'worker.blend')==modelsha
-  (destination/'handoff.json').write_text(json.dumps({'status':'saved eight-view review required, unapproved endpoint geometry','model_sha256':modelsha,'source_worker_sha256':receipt['source_worker_sha256'],'views':views,'ownership':reports,'scope':['Own-source initial and terminal endpoints only.','No animated correspondence or terrain contact claim.','Initial inferred support and terminal smaller debris require visual review.']},indent=2)+'\n');receipt['status']='rendered, self-review pending';save()
+  (destination/'handoff.json').write_text(json.dumps({'status':'saved eight-view review required, unapproved endpoint geometry','model_sha256':modelsha,'source_worker_sha256':receipt['source_worker_sha256'],'views':views,'ownership':reports,'inferred_terminal_support':contact,'scope':['Own-source initial and terminal endpoints only.','No animated correspondence or terrain contact claim.','Initial inferred support and terminal smaller debris require visual review.']},indent=2)+'\n');receipt['status']='rendered, self-review pending';save()
  except BaseException as exc:
   receipt['status']='failed';receipt['error']=repr(exc);save();raise
  finally:release()
