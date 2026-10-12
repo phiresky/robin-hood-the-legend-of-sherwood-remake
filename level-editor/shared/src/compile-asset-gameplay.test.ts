@@ -3425,6 +3425,23 @@ test("light segments resolve after placement and refuse missing or ambiguous rec
     /exactly one walkable surface/,
   );
   gameplay.surfaces.pop();
+  const validSegment = gameplay.lights[0]!.receiverSegments![0]!;
+  gameplay.lights[0]!.receiverSegments = [
+    validSegment,
+    [
+      [50, 10, -10],
+      [50, 30, 10],
+    ],
+  ];
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /outside the light contour/);
+  const partial = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.deepEqual(partial.light_sectors, moved.light_sectors);
+  assert.ok(partial.warnings?.some((warning) => warning.includes("outside the light contour")));
+  gameplay.lights[0]!.receiverSegments = [gameplay.lights[0]!.receiverSegments![1]!];
+  assert.deepEqual(
+    compileAssetGameplay(document, assets, bounds, { bestEffort: true }).light_sectors,
+    [],
+  );
   gameplay.lights[0]!.receiverSegments = [
     [
       [20, 40, 20],

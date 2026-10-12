@@ -123,8 +123,11 @@ outline restores all six open-state actor round trips, with closed/reset checks
 and wider movement regressions passing. Two-copy assemblies at four rotations
 and two elevations pass 96 open round trips, 192 closed/reset denials and 576
 directed gate-search checks, with routes available only when open. Player
-selection, disconnected-neighbour rejection, bank contacts and mesh edges still
-need verification. The baseline full Lincoln browser archive also passes
+selection, bank contacts and mesh edges still need verification. Sixteen
+missing/raised-neighbour exports reject the three unsupported plateau entrances
+while native traversal and lock checks pass for the untouched copy. Invalid
+lighting receivers now produce explicit warnings in best-effort mode instead
+of aborting these exports. The baseline full Lincoln browser archive also passes
 reopening/rebaking and native loading without base data; it excludes these staged
 drawbridge changes.
 

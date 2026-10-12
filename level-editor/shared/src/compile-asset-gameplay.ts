@@ -3258,11 +3258,15 @@ function compileAssetGameplayAttempt(
                   const coverage = light.receiverGroup
                     ? lightCoverage.get(light.receiverGroup)!
                     : [light.receiverContour, light.polygon];
-                  if (!coverage.some((contour) => inside(projected, contour)))
-                    throw new Error(
+                  if (!coverage.some((contour) => inside(projected, contour))) {
+                    const error = new Error(
                       `${light.id}: receiver ${index} lies outside the light contour`,
                       { cause: { receiver: point, projected, coverage } },
                     );
+                    if (!options.bestEffort) throw error;
+                    warnings.push(`Light receiver omitted: ${error.message}.`);
+                    return [];
+                  }
                   try {
                     return [
                       resolve(point, `${light.id} receiver ${index}`, null, true, projected).layer,

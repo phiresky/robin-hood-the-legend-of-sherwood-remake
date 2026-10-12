@@ -83,6 +83,21 @@ lock bypass through the gate graph, not player-click selection, disconnected
 neighbour cases, bank contact or mesh accuracy. The corrections remain unpublished.
 The audit changes test code only; no production runtime routing is added.
 
+The follow-up `lincoln-drawbridge-disconnections-QrZQte` removes or raises the
+plateau in only the first copy across the same eight placements. All sixteen
+exports omit the three unsupported plateau entrances and retain three supported
+deck passages. The untouched copy retains all six passages: its 96 open round
+trips, 192 closed/reset denials and 576 directed gate searches pass. These native
+checks cover the untouched copy; they do not prove traversal of the disconnected
+copy's remaining deck passages.
+
+This exercise exposed an export abort when a lighting segment intersected a
+surface outside its light contour after the neighbour was raised. Best-effort
+export now warns and omits that receiver while preserving valid receivers;
+strict export still rejects it. All 165 compiler tests pass, including coverage
+for a mixed valid/invalid set and a set with no valid receivers. Lighting is
+constructed at export time; this introduces no runtime work.
+
 ## Native platform character captures (2026-10-12)
 
 `render-connection-library-G5JiC2/character-capture.json` mounts the previously
