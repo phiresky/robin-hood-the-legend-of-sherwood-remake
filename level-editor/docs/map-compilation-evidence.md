@@ -28,6 +28,22 @@ the same XY, including 1.556 at its midpoint. The next investigation is an
 asset-local takeoff correction checked in both directions and rotated copies.
 No asset correction or runtime change is published by this diagnostic.
 
+Staged candidate `york-west-lane-edge-stage-2l7ytaew` levels that edge at
+194.094543 asset-local units, the authored receiving plane's midpoint height.
+That differs from the pinned roof mesh by about 0.040 units at the midpoint.
+The descriptor/model hashes are checked before applying the staged definition.
+Copied pair-55 baseline `connected-jump-placements-4v773T` passes 40/160 ordinary
+clicks; candidate `connected-jump-placements-FVLOdR` passes 60/160. All twenty
+new successes are 37-degree outward jumps; exact case comparison finds zero
+regressions. All eight candidate descriptors construct native geometry.
+
+Interior-click subsets `interior-jump-clicks-Y99BB4` and
+`interior-jump-clicks-rjR0cx` improve from 8/16 to 12/16 successes. Both omit
+sixteen directions at 90/180 degrees because the conservative footprint sampler
+finds no supported house-side interior. Four 0-degree outward clicks still fail,
+and the broad audit retains 100 failures. The candidate remains unpublished;
+full-map traversal, remaining rotations and rendered contact are unverified.
+
 ## Preserve subpixel folded floors before normalization (2026-10-12)
 
 The 37-degree central-house floor exists in authored geometry but projects to a
