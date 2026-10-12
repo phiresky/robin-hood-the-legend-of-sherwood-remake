@@ -1,0 +1,21 @@
+"""Show all observed poses on a shared native pixel grid with full-domain silhouette residuals."""
+import json,importlib.util,hashlib
+from pathlib import Path
+import numpy as np
+from PIL import Image,ImageDraw
+from scipy.spatial import ConvexHull
+from matplotlib.path import Path as Polygon
+from scipy.spatial.transform import Rotation
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement02-refinement';P=B/'restart169-butterfly03-rounded-candidate-v1';O=B/'restart192-butterfly03-source-scale-v1';O.mkdir(exist_ok=False)
+f=json.loads((P/'fit.json').read_text());spec=importlib.util.spec_from_file_location('geo',P/'geometry.py');g=importlib.util.module_from_spec(spec);spec.loader.exec_module(g);rows=[];cards=[]
+for row in f['rows']:
+ a=np.asarray(Image.open(row['source']['source']).convert('RGBA'));mask=a[:,:,3]>0;yy,xx=np.nonzero(mask);center=np.array([xx.mean()+.5,yy.mean()+.5]);p=row['parameters'];shift=center+np.array(p[5:7]);bodies=g.body_components(p);_,wings=g.geometry(p);polys=[v[:,:2][ConvexHull(v[:,:2]).vertices]+shift for v in bodies]+[v[:,:2]+shift for v in wings];v=np.vstack(polys);lo=np.floor(np.minimum(v.min(0),[0,0])).astype(int)-2;hi=np.ceil(np.maximum(v.max(0),[a.shape[1],a.shape[0]])).astype(int)+2;gy,gx=np.mgrid[lo[1]:hi[1],lo[0]:hi[0]];q=np.c_[gx.ravel()+.5,gy.ravel()+.5];pred=np.zeros(len(q),bool)
+ for poly in polys:pred|=Polygon(poly).contains_points(q)
+ pred=pred.reshape(gx.shape);target=np.zeros_like(pred);bright=np.zeros_like(pred);target[-lo[1]:a.shape[0]-lo[1],-lo[0]:a.shape[1]-lo[0]]=mask;bright[-lo[1]:a.shape[0]-lo[1],-lo[0]:a.shape[1]-lo[0]]=mask&(a[:,:,:3].max(2)>=100);coverage=np.zeros((*pred.shape,3),np.uint8);coverage[:]=35;coverage[target&pred]=[80,170,80];coverage[target&~pred]=[255,65,65];coverage[pred&~target]=[70,145,255];native=Image.new('RGBA',(pred.shape[1],pred.shape[0]),(35,35,35,255));native.alpha_composite(Image.fromarray(a),(-lo[0],-lo[1]));scale=6;card=Image.new('RGB',(400,190),'#252525');draw=ImageDraw.Draw(card);native=native.convert('RGB');cov=Image.fromarray(coverage);card.paste(native.resize((native.width*scale,native.height*scale),Image.Resampling.NEAREST),(0,30));card.paste(cov.resize((cov.width*scale,cov.height*scale),Image.Resampling.NEAREST),(200,30));r=dict(phase=row['phase'],source=int(target.sum()),missing=int((target&~pred).sum()),extra=int((pred&~target).sum()),bright=int(bright.sum()),bright_missing=int((bright&~pred).sum()),predicted=int(pred.sum()),source_path=row['source']['source'],source_sha256=row['source']['sha256']);rows.append(r);draw.text((3,3),f"{row['phase']:02d} art / silhouette; miss {r['missing']}/{r['source']}",fill='white');cards.append(card)
+for start in range(0,99,20):
+ batch=cards[start:start+20];im=Image.new('RGB',(1600,((len(batch)+3)//4)*190),'#252525')
+ for i,c in enumerate(batch):im.paste(c,(i%4*400,i//4*190))
+ im.save(O/f'all99-{start:02d}.png')
+im=Image.new('RGB',(1200,380),'#252525')
+for i in range(6):im.paste(cards[23+i],(i%3*400,i//3*190))
+im.save(O/'turn23-28.png');total={k:sum(r[k] for r in rows) for k in ['source','missing','extra','bright','bright_missing','predicted']};total.update(missing_fraction=total['missing']/total['source'],extra_per_source=total['extra']/total['source'],bright_missing_fraction=total['bright_missing']/total['bright']);(O/'report.json').write_text(json.dumps({'totals':total,'rows':rows,'fit_sha256':hashlib.sha256((P/'fit.json').read_bytes()).hexdigest(),'method':'All99 poses on exact own-source pixel-center grid. Translation applied once: source centroid plus fitted registration. Full projected anatomy extent included; no3pixel fitting-domain clipping. Green covered, red missing source, blue extra geometry.6x nearest display, source and silhouette same scale/registration. Geometry projection independently matched to saved GLB native poses; not a new browser framebuffer alpha audit.','approval':'Unapproved inferred anatomy/motion. Quantitative residuals assist visual judgement, not an automatic acceptance threshold.'},indent=2)+'\n');print(total)
