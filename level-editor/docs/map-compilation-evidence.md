@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Wychford tower entrance requires an authored landing (2026-10-12)
+
+`refinement/audit-lift-supports.mjs` inspects saved editor scenes and pinned
+asset-local surfaces without reading level data or compiling a complete map.
+It records transformed lift endpoints, candidate supporting planes, terrain
+height, and surface definitions whose nodes are absent from the placement.
+This is a geometry ownership audit: it does not account for holes, collision
+cuts, or compiled spline-wall floors and does not prove native traversal.
+
+Leicester audit `lift-support-audit-Z6DJKL` identifies the lower entrance of
+`leicester-church-side-tower/building-191-lift` at world `[1553,958.001003,50.001003]`.
+Its support is the separate asset `leicester-lower-bailey-terrace`, surface
+`building-123-owned-top`, at exactly the same height. The other three tower
+lift endpoints resolve to its own `building-192-walk-0` and
+`building-198-walk-0` surfaces.
+
+Wychford audit `lift-support-audit-flrYdl` transforms the same lower entrance
+to `[2632.038674,536.471868,134.101013]`. No placed authored asset surface covers
+that projected point; terrain at its world XY has height 88.536119. The three
+other endpoints still match their own tower floors exactly at heights
+179.101020 and 304.101010. This corroborates the previously compiled missing
+landing, rather than indicating corrupt tower-internal connections.
+
+Making that Wychford entrance playable requires an actual supporting landing
+and route in the editor scene, or newly authored connecting geometry. Merely
+lowering the outside point or extending a receiver probe across the gap would
+not repair the visible/physical stairs. No asset metadata or user scene was
+changed by this audit; the missing Wychford connection remains outstanding.
+
 ## Unavailable joins no longer abort best-effort export (2026-10-12)
 
 Best-effort navigation assembly now rejects ambiguous/overlapping sockets with

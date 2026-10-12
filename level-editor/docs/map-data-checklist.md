@@ -40,8 +40,14 @@ unpublished; see the [candidate evidence](map-compilation-evidence.md#unpublishe
 See [partition verification](map-compilation-evidence.md#compiled-jump-receiving-face-partitions-2026-10-12).
 
 Fresh Wychford gameplay data loads natively and passes 96 sampled ordinary
-routes. Its church-side-tower entrance remains about 46 units above its support
-and is omitted with a warning. The baseline ten-map batch finished with nine
+routes. Its church-side-tower entrance remains about 46 units above terrain
+and is omitted with a warning. The asset expects a raised landing: Leicester's
+separate lower-bailey terrace supplies it, while Wychford has no authored asset
+floor there. The tower's other three endpoints match its internal floors.
+An actual landing/connecting route remains to be authored; changing only the
+endpoint would invent a floating connection. See the
+[support audit](map-compilation-evidence.md#wychford-tower-entrance-requires-an-authored-landing-2026-10-12).
+The baseline ten-map batch finished with nine
 successful exports and one Croisement03 fallen-log cap failure. An offline log
 repair passes ten placement loads and 17,880 sampled sight/projectile queries;
 full-scene re-export then exposes an equivalent timber-bridge cap failure.
