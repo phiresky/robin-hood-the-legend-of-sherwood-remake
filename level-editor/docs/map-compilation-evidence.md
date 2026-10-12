@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Croisement03 authored landing receiver (2026-10-12)
+
+The focused `croisement03-landing-eaq_n6ci/elevation-trace.log` confirms that
+both failing probes cross one elevation boundary during the landing animation's
+60-unit projected shift; the three passing probes cross none. The actor already
+holds receiver 68, so that boundary incorrectly switches it to ground.
+
+Stage `croisement03-surface-receiver-ghnr2dc9` removes only the collision-volume
+binding from `building-068-walk-0` in `croisement03-group-068`. The compiler now
+derives its receiver from the existing authored walkable surface. Models, solids,
+surface coordinates, heights and jump endpoints are unchanged. Full candidate
+export `saved-map-exports-IX7qb4` passes all 100 jump probes and 24 ordinary routes.
+
+The moved-asset comparison retains two copies at four rotations and two heights.
+Baseline `connected-jump-placements-jaJpqP` passes 132/160; candidate
+`connected-jump-placements-vdE8in` passes 156/160, with 24 improvements and zero
+regressions. Four remaining probes at the 90-degree span end have no authorized
+arrival. They are not receiver-loss failures and remain open. These tests do not
+establish rendered-character or arbitrary-placement coverage.
+
+`refinement/stage-surface-receiver.mjs` reproduces the edit using only the pinned
+asset descriptor and authored surface. Its `surface-receiver-gZWSOB` output
+matches the tested edit exactly. The guarded publication report records
+`applied: true` for that asset and its Croisement03 scene pin. Generated library
+metadata is published; concurrent scene authoring changes are outside this edit.
+Fresh export `saved-map-exports-zFkVOw` then produces an entire parsed descriptor
+identical to the tested candidate, verifying the published metadata and scene pin.
+No runtime code changes are needed. The staging helper's lint and format checks pass.
+
 ## Croisement helper threshold and landing trace (2026-10-12)
 
 `croisement-helper-full-4sny3wff` retains the complete Croisement02 descriptor
