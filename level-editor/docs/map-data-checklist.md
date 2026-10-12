@@ -174,9 +174,13 @@ caught and resolved an incorrect GLB scene name in the authoring tools. The asse
 remain unpublished. A subsequent swept-footprint check found that the opening's
 lintel intersected a 40-unit standing-height envelope at all eight lower
 approaches. Raising the opening to 42 units resolves those crossings and retains
-all 32 native routes. That taller candidate needs its updated rendered archive
-and derived library models before installation. Floor texturing and animated
-contact remain explicit draft limitations, not proof of full parity.
+all 32 native routes. The taller bundle passes its updated rendered roundtrip
+and native ZIP load. Derivative preparation exposed a transformed floor node and
+a thin-triangle density failure; both offline issues are repaired, all 32
+derivative tests pass, and both assets have valid lossy models and previews.
+Final derivative-enabled browser verification and guarded installation remain.
+Floor texturing and animated contact stay explicit draft limitations, not proof
+of full parity.
 
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and

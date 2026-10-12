@@ -143,8 +143,8 @@ for root in roots.values():
                         "minimumFaceArea": minimum_area})
 bpy.data.objects.remove(cutter, do_unlink=True)
 floor = prism("Draft doorway floor", config["floor"])
+floor.data.transform(floor_root.matrix_world.inverted())
 floor.parent = floor_root
-floor.matrix_parent_inverse = floor_root.matrix_world.inverted()
 floor.data.materials.append(floor_material)
 uv = floor.data.uv_layers.new(name="UVMap")
 for loop in floor.data.loops:

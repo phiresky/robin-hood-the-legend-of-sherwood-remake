@@ -2338,6 +2338,32 @@ archive and derived library models before installation. Remaining floor-texture
 and animated-contact limitations should stay explicit draft warnings, consistent
 with best-effort map export, rather than preventing installation indefinitely.
 
+The taller bundle's `connection-review-rendered-library-kNrh7G` browser roundtrip
+passes, producing a 14,726,013-byte archive with SHA-256
+`12494b080b5c87bf35dee06a9881b9803712c1a75ecfa7953e0f79ddf52f3e64`.
+Native loading without base data passes in 1.16 seconds with the same geometry
+counts as the preceding two-copy archive.
+
+Preparing library derivatives then found two offline authoring issues. The added
+floor carried a mesh-node transform, which the derivative pipeline rejects. The
+builder now bakes that transform into its local vertices. Result
+`turret-opening-a5VVCH` has hash
+`da98201bce4f90e02f8175c20567e67dbd7874411eb3817038435773bae6e9e4`.
+Its `turret-gameplay-FgdEpW` metadata equals the preceding taller candidate, and
+all 420,810 occupancy comparisons still pass. Its final packaging is not yet
+covered by the preceding archive, which used the transformed-node GLB.
+
+The derivative density measurement also became singular on a very thin triangle.
+It now computes its geometric basis in double precision and uses a triangular
+basis whose determinant is the face's double area. It retains the face rather
+than dropping geometry or substituting a fake density. All 32 derivative tests
+pass, including thin, ordinary and zero-area triangle cases. Staged publication
+`step-publication-_y6tbyx4` now has verified model/derivative receipt chains for
+both assets: step lossy GLB 41,696 bytes (544×544 atlas), turret 43,872 bytes
+(480×480 atlas), plus previews. Final derivative-enabled browser verification
+and guarded installation/scene repinning remain outstanding; visual limitations
+will stay explicit draft warnings.
+
 Neutral front/rear geometry renders show the new through-opening and floor. They
 are geometry inspections, not textured scene or animated-character verification.
 The new floor uses a provisional texel from the owning wall's cap because the

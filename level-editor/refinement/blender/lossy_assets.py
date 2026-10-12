@@ -126,32 +126,39 @@ def face_geometry(obj, layer_name):
                                 for i in range(len(coords)))) / 2)
     return np.array(areas), np.array(uv_areas)
 
+def triangle_texel_axes(e1, e2, texel):
+    """Principal texture densities, including very thin nondegenerate faces."""
+    e1, e2 = np.asarray(e1, dtype=np.float64), np.asarray(e2, dtype=np.float64)
+    length = np.linalg.norm(e1)
+    area = np.linalg.norm(np.cross(e1, e2))
+    if length == 0 or area == 0:
+        return (0.0, 0.0)
+    # A triangular basis avoids cancellation in a nearly parallel pair's
+    # second-axis dot product. Its determinant is the geometric double area.
+    local = np.array([[length, np.dot(e2, e1 / length)], [0.0, area / length]])
+    singular = np.linalg.svd(np.linalg.solve(local.T, np.asarray(texel).T).T, compute_uv=False)
+    return (float(singular.min()), float(singular.max()))
+
+
 def face_axes(obj, layer_name, width, height):
     """Per-face (min, max) texels per world unit along the principal axes of the UV map.
 
     Uses the largest fan triangle of each polygon; a stretched layout shows up as min << max.
     """
     mesh, matrix = obj.data, obj.matrix_world
-    world = [matrix @ v.co for v in mesh.vertices]
+    world = [np.asarray(matrix @ v.co, dtype=np.float64) for v in mesh.vertices]
     uv = mesh.uv_layers[layer_name].uv
     rows = []
     for poly in mesh.polygons:
         corners = list(zip(poly.vertices, poly.loop_indices))
-        best = max(range(1, len(corners) - 1), key=lambda i: (world[corners[i][0]] - world[corners[0][0]]).cross(
-            world[corners[i + 1][0]] - world[corners[0][0]]).length)
+        best = max(range(1, len(corners) - 1), key=lambda i: np.linalg.norm(np.cross(
+            world[corners[i][0]] - world[corners[0][0]],
+            world[corners[i + 1][0]] - world[corners[0][0]])))
         (v0, l0), (v1, l1), (v2, l2) = corners[0], corners[best], corners[best + 1]
         e1, e2 = world[v1] - world[v0], world[v2] - world[v0]
-        axis_x = e1.normalized() if e1.length > 0 else e1
-        axis_y = e1.cross(e2).cross(e1)
-        if e1.length == 0 or axis_y.length == 0:
-            rows.append((0.0, 0.0))
-            continue
-        axis_y.normalize()
-        local = np.array([[e1.dot(axis_x), e2.dot(axis_x)], [e1.dot(axis_y), e2.dot(axis_y)]])
         scale = np.array([width, height])
         texel = np.array([(uv[l1].vector - uv[l0].vector)[:], (uv[l2].vector - uv[l0].vector)[:]]).T * scale[:, None]
-        singular = np.linalg.svd(texel @ np.linalg.inv(local), compute_uv=False)
-        rows.append((float(singular.min()), float(singular.max())))
+        rows.append(triangle_texel_axes(e1, e2, texel))
     return np.array(rows)
 
 def build_material(name, image, layer, interpolation, extension, *, emission_from, target=None):

@@ -47,6 +47,18 @@ UNLIT = {'pbrMetallicRoughness': {'baseColorTexture': {'index': 0}}, 'extensions
 
 
 class LossyAssetsTest(unittest.TestCase):
+    def test_density_retains_thin_faces_without_a_singular_basis(self):
+        length = np.sqrt(20000)
+        actual = lossy_assets.triangle_texel_axes(
+            [100, 100, 0], [200, 200, 1e-10], [[length, 2 * length], [0, 1e-10]])
+        # The 1e12 aspect ratio amplifies double-precision rounding, but must
+        # neither become singular nor turn an isotropic mapping into a large stretch.
+        np.testing.assert_allclose(actual, [1, 1], atol=5e-4)
+        np.testing.assert_allclose(lossy_assets.triangle_texel_axes(
+            [2, 0, 0], [0, 3, 0], [[4, 0], [0, 9]]), [2, 3])
+        self.assertEqual(lossy_assets.triangle_texel_axes(
+            [1, 0, 0], [2, 0, 0], [[1, 2], [0, 0]]), (0.0, 0.0))
+
     def test_unsafe_box_pack_restarts_with_convex_without_mutating_settings(self):
         images, layers = Mock(), Mock()
         obj = SimpleNamespace(material_slots=[], data=SimpleNamespace(uv_layers=layers))
