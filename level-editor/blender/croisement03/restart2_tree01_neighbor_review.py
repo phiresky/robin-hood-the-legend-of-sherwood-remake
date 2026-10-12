@@ -15,6 +15,9 @@ def sha(p):
  import hashlib
  return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
+ global F,O
+ if '--folder' in sys.argv:F=Path(sys.argv[sys.argv.index('--folder')+1]).resolve()
+ if '--out' in sys.argv:O=Path(sys.argv[sys.argv.index('--out')+1]).resolve()
  assert not O.exists();common.resources();common.acquire(slots=2)
  try:
   common.resources();O.mkdir();model=F/'worker.blend';pins={str(model):sha(model)};bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;own=[o for o in scene.objects if o.type=='MESH' and (o.name.startswith('Tree01 ') or o.name.startswith('Provisional Tree01 wood'))];ownrows=[];textures={}
@@ -66,7 +69,14 @@ def main():
    if baseline is None:hole_pixels.append([int(x),int(y)])
    if baseline and other and other[2]<baseline[2]-1e-3:changes.append([int(x),int(y),baseline,other])
   checks['tree01']={'tested':int(domain.sum()),'baseline_holes':holes,'baseline_hole_pixels':hole_pixels,'neighbor_intrusions':changes};report={'status':'PASS_SOURCE_RECIPROCITY'if all(not r.get('tree01_intrusions',r.get('neighbor_intrusions')) and not r['baseline_holes'] for r in checks.values())else'HOLD_SOURCE_INTRUSIONS','pins':pins,'checks':checks,'limits':['Current private Tree01 and pinned approved Tree02/03 geometry; single native shared animation integration remains separate.','No original painted ground included; these are isolated neighboring volumes.']};(O/'firsthits.json').write_text(json.dumps(report,indent=2)+'\n')
-  points=[o.matrix_world@v.co for o in own+neighbors for v in o.data.vertices];scene.render.engine='CYCLES';scene.cycles.samples=16;scene.cycles.transparent_max_bounces=256;scene.render.threads_mode='FIXED';scene.render.threads=2;scene.render.resolution_x=768;scene.render.resolution_y=768;scene.render.resolution_percentage=100;scene.render.film_transparent=True;camera=bpy.data.objects.new('Neighbor review camera',bpy.data.cameras.new('Neighbor review camera'));scene.collection.objects.link(camera);camera.data.type='ORTHO';camera.data.clip_end=10000;scene.camera=camera
+  context=[]
+  if '--bank' in sys.argv:
+   bank=Path(sys.argv[sys.argv.index('--bank')+1]).resolve()/'worker.blend';pins[str(bank)]=sha(bank)
+   with bpy.data.libraries.load(str(bank),link=False)as(src,dst):dst.objects=[n for n in src.objects if n.startswith('Candidate bank')]
+   assert len(dst.objects)==3
+   for obj in dst.objects:scene.collection.objects.link(obj);obj.hide_render=False;context.append(obj)
+   report['render_context_only_bank']=str(bank);report['limits'].append('Bank included in uncropped images; this reciprocal tree ray test does not establish bank contact or source ownership.');(O/'firsthits.json').write_text(json.dumps(report,indent=2)+'\n')
+  points=[o.matrix_world@v.co for o in own+neighbors+context for v in o.data.vertices];scene.render.engine='CYCLES';scene.cycles.samples=16;scene.cycles.transparent_max_bounces=256;scene.render.threads_mode='FIXED';scene.render.threads=2;scene.render.resolution_x=768;scene.render.resolution_y=768;scene.render.resolution_percentage=100;scene.render.film_transparent=True;camera=bpy.data.objects.new('Neighbor review camera',bpy.data.cameras.new('Neighbor review camera'));scene.collection.objects.link(camera);camera.data.type='ORTHO';camera.data.clip_end=10000;scene.camera=camera
   for label,az in [('native',0),('oblique',45)]:
    a=math.radians(az);direction=Vector((math.sin(a)*common.C,-math.cos(a)*common.C,common.S));rot=(-direction).to_track_quat('-Z','Y');origin=Vector(np.array([list(p)for p in points]).mean(0));local=np.array([list(rot.conjugated()@(p-origin))for p in points]);center=(local[:,:2].min(0)+local[:,:2].max(0))/2;target=origin+rot@Vector((*center,0));camera.location=target+direction*5000;camera.rotation_euler=rot.to_euler();camera.data.ortho_scale=max(np.ptp(local[:,0]),np.ptp(local[:,1]))*1.12;scene.render.filepath=str(O/(label+'.png'));bpy.ops.render.render(write_still=True)
   assert all(sha(Path(p))==h for p,h in pins.items());assert sum(p.stat().st_size for p in O.rglob('*')if p.is_file())<32*1024**2;print(report['status'])
