@@ -56,6 +56,10 @@ routes and 24 player clicks. The full raised rotation matrix and rendered
 verification remain pending. Fresh Derby/Lincoln regressions retain all 44
 stair-click routes, 326 ordinary route samples, 100 Lincoln upright jump probes
 and twenty Derby posture-aware jump probes.
+Seven completed placements now pass 84/84 forced routes and 84/84 player clicks
+after integrated passage preparation. Raised 180-degree coverage and the final
+neighbour-rejection matrix remain pending; a rotated/raised browser ZIP audit
+is running.
 See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-checks-2026-10-12).
 
 **Sherwood stair gap (2026-10-12):** fresh published data passes 50 ordinary

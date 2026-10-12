@@ -95,6 +95,21 @@ isolated `derby-posture-regression-p01_r4zv` passes the twenty posture-aware
 probes. Running that vertical-only audit on the combined fixture encounters
 Lincoln's long-jump assertion, so the combined run is not passing evidence.
 
+Seven completed placement exports from the long-running neighbour audit were
+processed with receiver quantization, ordinary stair preparation and recomputed
+passage states in `hall-seven-placement-prepared-EtOJWX`. All **84/84 forced
+routes and 84/84 player-click routes** pass with zero forbidden routes and
+explicit expected-count coverage. Cases cover 0/37/90/180 degrees at elevation
+zero and 0/37/90 degrees at elevation forty. The raised 180-degree case and
+final missing/raised-neighbour manifest are not yet complete. These seven
+descriptors reuse previously compiled geometry; independent fresh-compilation
+coverage remains the two cases recorded above.
+
+Private browser fixture `render-connection-library-nFvrls` contains two published
+hall/ramp/annex assemblies at 90 degrees, elevation forty, on editor terrain.
+Its browser ZIP/reopen/rebake audit is running; preparation and browser startup
+are not archive or rendering validation.
+
 ## Sherwood stair clearance investigation (2026-10-12)
 
 Fresh published export `saved-map-exports-pxNvRF` passes 50 ordinary route
