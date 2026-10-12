@@ -15,10 +15,15 @@ definition presence and index hashes, not scene pins or gameplay completeness.
 in 825 seconds, including final stair-clearance preparation. This verifies the
 convex-region duplicate-comparison correction against a complete fresh export;
 the earlier baseline failed after roughly 52 minutes. Native construction and
-all 98 sampled ordinary routes pass. Full traversal and rendered ZIP checks
-remain pending. The church-side-tower connection
+all 98 sampled ordinary routes pass. The full 204 MB rendered ZIP now reopens
+and rebakes identically, loads without base-game data, and passes fresh native
+checks of 98 ordinary routes and four stair routes through both prepared and
+player-click dispatch. Its eight appearance-control combinations pass native
+GPU color/depth transition/reset probes. Animated character compositing and
+broader gameplay coverage remain open. The church-side-tower connection
 is still omitted because its outside endpoint has no matching-height support.
 See [the completed export](map-compilation-evidence.md#corrected-wychford-export-completion-2026-10-12).
+See also [the rendered archive](map-compilation-evidence.md#full-wychford-rendered-archive-2026-10-12).
 An exact-integer clipping patch reduces one measured terrain-generation run
 from 183 to 50 seconds with identical output; 289 focused tests and the editor
 build pass. A subsequent exact-product filter preserves the same terrain output

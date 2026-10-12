@@ -34,16 +34,39 @@ before changing mask data. The trace-enabled ordinary jump audit still reports
 the same two unauthorized endpoint clicks, ten successful traversals and eight
 expected occlusion checks; their existing hidden-selection coverage is unchanged.
 
-## Full Wychford browser round trip in progress (2026-10-12)
+## Full Wychford rendered archive (2026-10-12)
 
 Private fixture `wychford-rendered-library-sv656wxd` copies the current saved
 Wychford scene and references its published library, with a scene digest in
-`preparation.json`. The browser loaded all 96 asset sources, calibrated spline
-walls and entered gameplay compilation. The reusable
-`refinement/check-map-bake-browser.mjs` runner permits both compilation passes
-within a one-hour overall limit and tolerates individual status-query timeouts.
-This records a running verification, not a successful archive or parity claim.
-The runner's lint and formatting checks pass; full-map ZIP evidence is pending.
+`preparation.json`. The completed browser run loads all 96 asset sources and
+passes archive reopening and rebaking: editor document, gameplay, color, depth
+and appearance states match. `wychford-rendered.zip` is 204,176,681 bytes with
+SHA-256 `16109eceda603973a2a1bb7f306866665ab25c1d741ec77d5410994c8d5e6989`.
+The separately preserved first-pass ZIP has the same digest, so the native tests
+below exercise the exact archive retained by the round-trip runner.
+
+Native loading over an empty base filesystem passes in 22.51 seconds: 3600×2400
+color/depth, minimap, 15,581 sight obstacles, four masks, 31 door projections,
+64,638 grid blocks and one appearance region bound to three controls. The editor
+document is retained and mission entities/content are absent. The map image was
+also visually inspected. The complete parsed descriptor equals
+`saved-map-exports-ab3hoH`; its extracted JSON digest is
+`827847289b1c33e7809e6ae524b399cdee8ad1cb65818d5e3cf04f2a4af8f50d`.
+
+Fresh native verification of the archived descriptor passes all 98 ordinary
+route samples (22.76 seconds including construction), four prepared stair routes
+with complete character animations (35.84 seconds), and the same four routes
+through player-click dispatch (38.91 seconds). The offscreen GPU test passes
+all eight global control combinations plus reset, including transition behavior,
+at two color/depth probes in the appearance region (43.35 seconds).
+
+These checks do not establish animated character compositing, every gameplay
+interaction, or multi-actor traversal. The church-side-tower connection remains
+omitted because its placed outside endpoint lacks matching-height support;
+1,458 descriptor warnings remain, including draft-definition notices.
+Export performance also remains an issue: best-effort retries rebuild expensive
+geometry even though terrain generation is cached. No runtime code changed for
+this verification.
 
 ## Croisement03 authored landing receiver (2026-10-12)
 
