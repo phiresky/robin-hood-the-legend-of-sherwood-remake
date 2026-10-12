@@ -22,6 +22,24 @@ regression fails with this preparation disabled because no movement floor is
 emitted, and passes with it enabled. This is export-only preparation; no native
 movement code changes or asset publications are part of this fix.
 
+Follow-up published Nottingham assembly `roof-slab-placements-svy04E` passes
+native construction at all eight placements. Six descriptors match the earlier
+published matrix exactly; only the two 37-degree descriptors change. Their
+isolated subset `roof-slab-early-clearance-37-c20hgwd1` retains all 40 successful
+ordinary-click routes.
+
+The staged York height/span edit, recompiled as
+`connected-jump-placements-E9K9I3`, passes **160/160 isolated flights and receiver
+landings** but only 56/160 ordinary perpendicular click probes. Separate interior
+movement-box probes in `york-interior-clicks-vob2w028` pass 20/32: all 0/37-degree
+routes and half the 90-degree routes. They still expose 90-degree approach
+failures and 180-degree unauthorized starts/arrivals. These interior probes are
+not independent proof of physical floor support or rendered input.
+Binding the edge's zone to the other roof face (`90Qgvp`), or moving that binding
+to the clipped face interior (`4hkiyx`), does not repair the placement matrix.
+Those candidate asset definitions remain unpublished. Complete flight success
+must not be substituted for complete click-to-arrival success.
+
 ## Fresh York export after folded-floor preparation (2026-10-12)
 
 `saved-map-exports-YQaMEL` compiles the published York scene in 389.66 seconds
