@@ -83,22 +83,31 @@ fn exported_overlapping_floors_respect_prepared_layers_and_clearance() {
 #[test]
 #[ignore = "requires partitioned loop exports and ROBIN_CLIMB_RHS"]
 fn exported_loop_floors_cross_generated_sector_passages() {
-    check_exported_loop_floors(false);
+    check_exported_loop_floors(false, false);
 }
 
 #[test]
 #[ignore = "requires partitioned loop exports and ROBIN_CLIMB_RHS"]
 fn exported_partitioned_loops_transfer_receivers_at_generated_passages() {
-    check_exported_loop_floors(true);
+    check_exported_loop_floors(true, false);
 }
 
-fn check_exported_loop_floors(partitioned_only: bool) {
+#[test]
+#[ignore = "requires copied folded-floor passage exports and ROBIN_CLIMB_RHS"]
+fn exported_folded_floors_cross_prepared_passages() {
+    check_exported_loop_floors(false, true);
+}
+
+fn check_exported_loop_floors(partitioned_only: bool, folded: bool) {
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
             .unwrap();
     assert_eq!(manifest["complete"], true);
-    assert_eq!(manifest["loopFloor"], true);
+    assert_eq!(
+        manifest[if folded { "foldedFloor" } else { "loopFloor" }],
+        true
+    );
     let sprite = exported_stairs::complete_climb_sprite();
     let mut walks = 0;
     for entry in manifest["results"].as_array().unwrap() {
@@ -166,14 +175,33 @@ fn check_exported_loop_floors(partitioned_only: bool) {
                 assert!(receiver.is_some());
                 engine.set_obstacle_and_material(&assets, owner, receiver);
                 let sim = crate::sim_rng::test_context();
+                if folded {
+                    let planned = engine.plan_recorded_group_move(
+                        &assets,
+                        &[owner],
+                        goal,
+                        Some((goal_handle.number(), goal_layer)),
+                        goal_handle.arena_index(),
+                        None,
+                    );
+                    assert!(
+                        matches!(
+                            planned.as_slice(),
+                            [crate::engine::movement::formation::PlannedRecordedGroupMoveOutcome::Resolved(_)]
+                        ),
+                        "{file}: passage {probe_index} direction {start_index}->{goal_index} rejects destination {goal:?} on layer {goal_layer} before movement; result {planned:?}, map box {:?}, world box {:?}",
+                        engine.ent(owner).position_iface().get_move_box_map(),
+                        engine.ent(owner).position_iface().get_move_box(),
+                    );
+                }
                 engine.perform_group_move(
                     TickCtx::new(&sim, &assets),
                     &[owner],
                     goal,
                     false,
                     false,
-                    None,
-                    None,
+                    folded.then_some((goal_handle.number(), goal_layer)),
+                    folded.then_some(goal_handle.arena_index()).flatten(),
                     None,
                     &[],
                     &[],
@@ -184,6 +212,34 @@ fn check_exported_loop_floors(partitioned_only: bool) {
                     .try_move_box_half_diagonal(0)
                     .unwrap();
                 let mut previous = start;
+                let mut previous_world = engine.ent(owner).element_data().position();
+                let world_floors: Vec<geo::Polygon<f32>> = if folded {
+                    entry["world_floors"][probe_index]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|polygon| {
+                            geo::Polygon::new(
+                                geo::LineString::from(
+                                    polygon
+                                        .as_array()
+                                        .unwrap()
+                                        .iter()
+                                        .map(|p| {
+                                            (
+                                                p[0].as_f64().unwrap() as f32,
+                                                p[1].as_f64().unwrap() as f32,
+                                            )
+                                        })
+                                        .collect::<Vec<_>>(),
+                                ),
+                                vec![],
+                            )
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
                 let mut previous_sector = handle;
                 let mut distance = 0.;
                 let mut crossings = 0;
@@ -290,18 +346,20 @@ fn check_exported_loop_floors(partitioned_only: bool) {
                             );
                             (position - mid).length() < 20. && (previous - mid).length() < 20.
                         });
-                    if current != previous_sector
+                    let crosses_collision = current != previous_sector
                         || !engine.world.fast_grid.is_reachable_thick(
                             previous,
                             position,
                             current_layer,
                             half,
-                        )
-                    {
+                        );
+                    if crosses_collision {
                         assert!(
                             near_passage,
                             "{file}: crossed collision away from a passage {previous:?} -> {position:?}"
                         );
+                    }
+                    if folded || crosses_collision {
                         // Near a door, the footprint legitimately straddles sectors before
                         // the actor center changes owner. Both floors must support it.
                         for t in [0., 0.25, 0.5, 0.75, 1.] {
@@ -312,11 +370,32 @@ fn check_exported_loop_floors(partitioned_only: bool) {
                             for dx in [-half.x, 0., half.x] {
                                 for dy in [-half.y, 0., half.y] {
                                     let p = MapPoint::new(center.x + dx, center.y + dy);
-                                    assert!([(layer, handle), (goal_layer, goal_handle)].iter().any(|&(floor_layer, floor)| {
+                                    let supported = if folded {
+                                        // Projection-compensated movement contours are not
+                                        // physical floors. Check the authored world footprint.
+                                        let world = element.position();
+                                        let corner = geo::Point::new(
+                                            previous_world.x
+                                                + (world.x - previous_world.x) * t
+                                                + dx,
+                                            previous_world.y
+                                                + (world.y - previous_world.y) * t
+                                                + dy,
+                                        );
+                                        world_floors.iter().any(|floor| {
+                                            geo::Intersects::intersects(floor, &corner)
+                                        })
+                                    } else {
+                                        [(layer, handle), (goal_layer, goal_handle)].iter().any(|&(floor_layer, floor)| {
                                         matches!(engine.world.fast_grid.get_sector(p, p, floor_layer),
                                             crate::fast_find_grid::SectorHit::Found { sector_idx, sector_number, .. }
                                             if crate::position_interface::SectorHandle::from_number(sector_number).with_arena_index(sector_idx) == floor)
-                                    }), "{file}: unsupported footprint at passage {p:?}");
+                                    })
+                                    };
+                                    assert!(
+                                        supported,
+                                        "{file}: unsupported footprint at passage {p:?}"
+                                    );
                                 }
                             }
                         }
@@ -326,6 +405,7 @@ fn check_exported_loop_floors(partitioned_only: bool) {
                     }
                     distance += step;
                     previous = position;
+                    previous_world = element.position();
                     previous_sector = current;
                     if (position - goal).length() < 0.1 && current == goal_handle {
                         let expected_z = entry["world_probes"][probe_index][goal_index][2]
@@ -345,17 +425,39 @@ fn check_exported_loop_floors(partitioned_only: bool) {
                     usize::from(handle != goal_handle),
                     "{file}: wrong number of sector passages"
                 );
+                let minimum_distance = if folded {
+                    let middle = &descriptor["asset_geometry"]["doors"][probe_index]["point_mid"];
+                    let middle = MapPoint::new(
+                        middle[0].as_f64().unwrap() as f32,
+                        middle[1].as_f64().unwrap() as f32,
+                    );
+                    (middle - start).length() + (goal - middle).length() - 0.1
+                } else {
+                    (goal - start).length() * 2.
+                };
                 assert!(
-                    distance > (goal - start).length() * 2.,
-                    "{file}: shortcut across stacked floors"
+                    distance > minimum_distance,
+                    "{file}: shortcut across stacked floors: travelled {distance}, required {minimum_distance}"
                 );
                 walks += 1;
             }
         }
     }
-    assert_eq!(walks, if partitioned_only { 32 } else { 64 });
+    assert_eq!(
+        walks,
+        if folded {
+            manifest["expectedWalks"].as_u64().unwrap() as usize
+        } else if partitioned_only {
+            32
+        } else {
+            64
+        }
+    );
+    assert!(walks > 0);
     std::fs::write(
-        directory.join(if partitioned_only {
+        directory.join(if folded {
+            "folded-floor-actor-report.json"
+        } else if partitioned_only {
             "partitioned-loop-actor-report.json"
         } else {
             "loop-floor-actor-report.json"

@@ -11,6 +11,13 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**Folded-roof export prototype (2026-10-12):** static projection correction and
+full-footprint passage endpoint checks permit eight bidirectional native walks
+across copied 90-degree roof/slab connections at two elevations. This remains a
+private prototype: the same assembly still fails all forty jump-click probes,
+and rendered selection is unverified. No production engine changes are involved.
+See the [folded passage diagnostic](map-compilation-evidence.md#folded-roof-passage-diagnostic-2026-10-12).
+
 **Moved-roof takeoffs repaired (2026-10-12):** clearance now uses the precise
 exported motion contour used for elevation-boundary preparation. This removes
 fictitious ground drops without bypassing collision checks. Eight copied,

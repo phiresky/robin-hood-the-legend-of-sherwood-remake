@@ -4,6 +4,37 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Folded roof passage diagnostic (2026-10-12)
+
+The 90-degree roof/slab assembly folds across its shared world-space seam:
+the two projected interiors lie on the same side. A private export prototype
+orients the join in world space, partitions conflicting receivers, compensates
+projection-collapsed movement contours, and prepares ordinary passages. Physical
+support is checked against receiving polygons, not the expanded movement contours.
+Fixed-grid union is necessary to avoid tiny cracks between matching floor edges.
+
+The first staggered candidate, `roof-slab-placements-nYdHbF`, passed a forward
+walk but rejected the reverse destination before gate routing. The diagnostic
+`folded-floor-passages-gp74kF` now identifies that authorization failure directly.
+Walking's inset footprint alone does not certify a clickable endpoint; the full
+native footprint must also fit. The revised private candidate
+`roof-slab-placements-i3dcQ5` requires full-box endpoint clearance and physical
+support. Its isolated ordinary-passage fixture `folded-floor-passages-zwncCG`
+passes eight directed walks: two independent copies at elevations zero and forty.
+The audit checks authorization, receiver/height, collision, physical footprint
+samples at every step, one sector transfer, and arrival through the prepared midpoint.
+
+This is **not a published compiler repair**. The fixture removes jump overlays
+and selects explicit destination floors; rendered selection is unverified. The
+same full candidate still fails all forty jump-click probes: twenty cannot find
+an authorized start and twenty have no elevated landing receiver. The green-roof
+assembly and jump approaches remain unresolved. No production runtime solver or
+movement change is introduced by this diagnostic. The existing partitioned-loop
+fixture `overlapping-floor-routes-fgOxzq` still passes its 32 partitioned walks;
+its broader 64-walk test fails a separate 90-degree prepared-route lookup.
+The game build, Rust formatting and fixture-script formatting checks pass.
+Two ordinary-passage receiver-binding tests also pass.
+
 ## Combined Nottingham candidate and endpoint clicks (2026-10-12)
 
 `saved-map-exports-sIO9tO` combines the published ground click band with staged
