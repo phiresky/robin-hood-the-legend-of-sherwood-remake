@@ -5,7 +5,7 @@ HERE=Path(__file__).resolve().parent;sys.path.insert(0,str(HERE));import qualify
 
 def main():
     dest=q.OUT/'profile04-geometry-card-v1';assert not dest.exists()
-    construction=json.loads((q.OUT/'geometry-v8-short-support04-v4/report.json').read_text());junction_dir=q.OUT/'geometry-v8-short-support04-review-v6-geometry-junctions';junctions=json.loads((junction_dir/'report.json').read_text());review=json.loads((junction_dir/'self-review.json').read_text());assert review['status']=='PASS_TARGETED_SUPPORT_GEOMETRY_WITH_DISCLOSURES';assert len(junctions['reviews'])==11
+    construction=json.loads((q.OUT/'geometry-v8-short-support04-v4/report.json').read_text());junction_dir=q.OUT/'support04-junction-sections-v1';junctions=json.loads((junction_dir/'report.json').read_text());review=json.loads((junction_dir/'self-review.json').read_text());assert review['status']=='PASS_TARGETED_SUPPORT_GEOMETRY_WITH_DISCLOSURES';assert len(junctions['reviews'])==11
     assert construction['model']==junctions['model']==review['model'];assert q.pin(q.ROOT/construction['model']['path'])==construction['model']
     dest.mkdir();pins=[construction['model']];parts=[]
     def img(path,label):
@@ -16,7 +16,7 @@ def main():
     for phase in ['initial','transition-0','transition-1','applied']:
         base=q.OUT/('geometry-v8-short-support04-review-v3-junctions'if phase in ['initial','transition-0']else'geometry-v8-short-support04-review-v4-remaining')/phase
         parts.append('<h2>'+html.escape(phase)+'</h2>');parts.append(img(base/'textured-eight.png','Saved model — existing source texture / gray unknown surfaces'));parts.append(img(base/'solid-eight.png','Saved model — solid geometry'))
-    parts.append('<details><summary>Measured support junctions — diagnostic colors</summary><p>Orange marks the inferred support; brown is exact target wood geometry. Other receivers are hidden in these closeups; a separate full-scene finite-volume audit checked every support.</p>')
+    parts.append('<details><summary>Measured support junctions — exact mesh cross-sections</summary><p>Orange marks the saved inferred support; brown is the target wood and green is the foliage surface. Two perpendicular local slices expose the tiny junctions that foliage and trunk surfaces obscure in ordinary closeups. These are geometry diagrams, not texture appearance previews. Other receivers are excluded here; a separate full-scene finite-volume audit checked every support.</p>')
     for row in junctions['reviews']:
         p=q.ROOT/row['sheet']['path'];assert q.pin(p)==row['sheet'];parts.append(img(p,row['phase']+' / component '+str(row['component'])))
     parts.append('</details>')
