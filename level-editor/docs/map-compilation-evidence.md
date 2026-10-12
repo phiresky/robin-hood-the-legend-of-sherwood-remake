@@ -2108,6 +2108,17 @@ opening and its receiving floor, rather than disabling collision.
 
 ## Lincoln passage receiver and obstruction audit (2026-10-12)
 
+`step-passage-assembly-9VYseo` isolates the endpoint candidate with the independently
+placed angled curtain wall, then adds the cone turret. Without the turret the
+ordinary passage has no unavailable-state restriction. Adding the turret gives
+that same passage an empty allowed-state set and an explicit permanent-obstacle
+warning. The diagnostic asserts this distinction; native actor traversal of this
+isolated candidate is still pending. The turret authoring definition describes
+a six-unit doorway recess inside a closed wall body, explaining why repositioning
+the step endpoint alone cannot restore this assembly. A usable through-opening
+needs an asset-level geometry/clearance review; collision must not be disabled
+in the compiler or runtime to force the saved layout to pass.
+
 The native failure is standalone passage 12 (runtime door 47), owned by
 `lincoln-south-wall-walk-step`. Its inside endpoint projects to `[1935,1559]`,
 outside the exported receiving floor, while its separately authored binding
