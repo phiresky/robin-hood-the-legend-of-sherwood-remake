@@ -191,3 +191,94 @@ test("resizing omits out-of-frame mission markers even in strict export and reta
   assert.match(result.warnings.join("\n"), /guard.*outside.*retained/);
   assert.deepEqual(doc, before);
 });
+
+test("native source staging keeps complete patch slots and script topology without claiming execution", async () => {
+  const { prepareNativeMissionSource } = await import("./compile-mission.ts");
+  const { readFile } = await import("node:fs/promises");
+  const source = new URL("../../library/mission-states/croisement02/source/", import.meta.url);
+  const bytes = new Map([
+    [
+      "Data/Levels/Emb05_FoB_MP.rhm.json",
+      new Uint8Array(await readFile(new URL("Emb05_FoB_MP.rhm.json", source))),
+    ],
+    [
+      "Data/Levels/Croisement02.rhp.json",
+      new Uint8Array(await readFile(new URL("Croisement02.rhp.json", source))),
+    ],
+    // Pinning alone deliberately does not attest that a program decodes or can execute.
+    ["Data/Levels/Emb05_FoB_MP.scb", new Uint8Array([1, 2, 3])],
+  ]);
+  const pin = async (path: string) => ({
+    path,
+    sha256: Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes.get(path)!)))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join(""),
+  });
+  const request = {
+    version: 1 as const,
+    mission: "Emb05_FoB_MP",
+    map: "Croisement02",
+    mission_data: await pin("Data/Levels/Emb05_FoB_MP.rhm.json"),
+    level_data: await pin("Data/Levels/Croisement02.rhp.json"),
+    script: await pin("Data/Levels/Emb05_FoB_MP.scb"),
+    runtime_resources: [],
+  };
+  const read = async (path: string) => {
+    const row = bytes.get(path);
+    if (!row) throw Error("Missing " + path);
+    return row;
+  };
+  const result = await prepareNativeMissionSource(request, read);
+  assert.equal(result.level.patches.length, 9);
+  assert.equal(
+    result.identities.find((r) => r.kind === "mission-patch" && r.index === 0)!.patch_slot,
+    9,
+  );
+  assert.equal(result.identities.filter((r) => r.kind === "map-animation").length, 15);
+  assert.ok(result.required_script_classes.includes("filet01_80000019"));
+  assert.deepEqual(
+    result.files.get(request.mission_data.path),
+    bytes.get(request.mission_data.path),
+  );
+  assert.equal(result.status, "source-pinned-runtime-validation-required");
+  assert.equal(result.runtime_validation_required, true);
+  bytes.get(request.script.path)![0] = 4;
+  await assert.rejects(prepareNativeMissionSource(request, read), /hash differs/);
+  await assert.rejects(
+    prepareNativeMissionSource(
+      { ...request, script: { ...request.script, path: "Data/Levels/other.scb" } },
+      read,
+    ),
+    /script path/,
+  );
+});
+
+test("native appearance mapping is exhaustive and has one authoritative patch per compiled transition", async () => {
+  const { validateNativeAppearanceBindings: validate } =
+    await import("../../shared/src/compile-appearance-bindings.ts");
+  const identities = [
+    { kind: "mission-patch" as const, index: 0 },
+    { kind: "map-animation" as const, index: 1 },
+  ];
+  const bindings = [
+    {
+      source: identities[0]!,
+      delivery: { kind: "compiled-transition" as const, transition_id: "gate" },
+    },
+    { source: identities[1]!, delivery: { kind: "source-native" as const } },
+  ];
+  assert.deepEqual(
+    [...validate(identities, bindings, [{ id: "gate" }])],
+    [["gate", "mission-patch:0"]],
+  );
+  assert.throws(() => validate(identities, bindings.slice(0, 1), [{ id: "gate" }]), /Incomplete/);
+  assert.throws(() => validate(identities, bindings, []), /Missing/);
+  assert.throws(() => validate(identities, [...bindings, bindings[0]!], [{ id: "gate" }]), /owner/);
+  assert.throws(
+    () =>
+      compileMap({ map: "native" } as Level3D, [0, 0, 32, 32], undefined, {
+        missionMode: "native-scripted",
+      }),
+    /sandbox fallback is forbidden/,
+  );
+});

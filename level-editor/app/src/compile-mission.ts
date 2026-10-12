@@ -165,3 +165,137 @@ export function compileMission(
   }
   return { spawn_points, soldiers, warnings };
 }
+
+/** Source-only staging boundary. Runtime decoding and gameplay binding are still required. */
+export interface NativeMissionSourceRequest {
+  version: 1;
+  mission: string;
+  map: string;
+  mission_data: { path: string; sha256: string };
+  level_data: { path: string; sha256: string };
+  script: { path: string; sha256: string };
+  runtime_resources: { path: string; sha256: string }[];
+}
+
+export interface NativeSourceIdentity {
+  kind: "map-patch" | "mission-patch" | "map-animation";
+  index: number;
+  /** Runtime patch index includes every map patch, including invisible rows. */
+  patch_slot?: number;
+}
+
+/** Freeze exact source bytes; never rebuild script identities from editor preview markers. */
+export async function prepareNativeMissionSource(
+  request: NativeMissionSourceRequest,
+  read: (path: string) => Promise<Uint8Array>,
+) {
+  const spec = structuredClone(request);
+  if (
+    spec.version !== 1 ||
+    !/^[A-Za-z0-9_-]+$/.test(spec.mission) ||
+    !/^[A-Za-z0-9_-]+$/.test(spec.map) ||
+    spec.mission_data.path !== `Data/Levels/${spec.mission}.rhm.json` ||
+    spec.level_data.path !== `Data/Levels/${spec.map}.rhp.json` ||
+    spec.script.path !== `Data/Levels/${spec.mission}.scb`
+  )
+    throw new Error("Invalid native mission source identity or script path");
+  const files = new Map<string, Uint8Array>();
+  for (const resource of [
+    spec.mission_data,
+    spec.level_data,
+    spec.script,
+    ...spec.runtime_resources,
+  ]) {
+    if (
+      !resource.path.startsWith("Data/") ||
+      /[\\\0]/.test(resource.path) ||
+      resource.path.split("/").some((part) => !part || part === "." || part === "..") ||
+      !/^[a-f0-9]{64}$/.test(resource.sha256) ||
+      files.has(resource.path)
+    )
+      throw new Error(`Invalid or duplicate native source resource: ${resource.path}`);
+    const bytes = new Uint8Array(await read(resource.path));
+    const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+    if (hash !== resource.sha256)
+      throw new Error(`Native source resource hash differs: ${resource.path}`);
+    if (!bytes.length) throw new Error(`Empty native source resource: ${resource.path}`);
+    files.set(resource.path, bytes);
+  }
+  const parse = (path: string) =>
+    JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(files.get(path)!));
+  const mission = parse(spec.mission_data.path),
+    level = parse(spec.level_data.path);
+  if (mission.header?.map_filename !== spec.map || mission.format !== level.format)
+    throw new Error("Native mission map or source format differs");
+  // Only this construction layout has a qualified patch-index translation.
+  if (
+    JSON.stringify(level.element_chunk_order) !== JSON.stringify(["Animation", "Patch"]) ||
+    JSON.stringify(mission.element_chunk_order) !==
+      JSON.stringify(["Patch", "Element", "Bonus", "Scroll", "Mobile"]) ||
+    JSON.stringify(mission.element_group_order) !==
+      JSON.stringify(["Animal", "BeamMe", "Civilian", "PcToRescue", "Soldier", "Target"])
+  )
+    throw new Error("Unsupported native source construction order");
+  const requiredMissionArrays = [
+    "mission_patches",
+    "beam_mes",
+    "soldiers",
+    "civilians",
+    "targets",
+    "bonuses",
+    "pcs_to_rescue",
+    "scrolls",
+    "building_tenants",
+    "hiking_paths",
+    "mobile_elements",
+  ];
+  for (const key of requiredMissionArrays)
+    if (!Array.isArray(mission[key])) throw new Error(`Missing native mission source rows: ${key}`);
+  for (const key of ["patches", "animations", "masks", "sight_obstacles", "buildings", "lifts"])
+    if (!Array.isArray(level[key])) throw new Error(`Missing native level source rows: ${key}`);
+  if (!level.motion_data || !mission.script_objects || !mission.tactic_data)
+    throw new Error("Missing native navigation or script topology");
+  const identities: NativeSourceIdentity[] = [
+    ...level.patches.map((_: unknown, index: number) => ({
+      kind: "map-patch" as const,
+      index,
+      patch_slot: index,
+    })),
+    ...mission.mission_patches.map((_: unknown, index: number) => ({
+      kind: "mission-patch" as const,
+      index,
+      patch_slot: level.patches.length + index,
+    })),
+    ...level.animations.map((_: unknown, index: number) => ({
+      kind: "map-animation" as const,
+      index,
+    })),
+  ];
+  const classes = new Set<string>();
+  const inspect = (value: unknown): void => {
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      if ((key === "script_class" || key === "script") && child != null) {
+        if (typeof child !== "string" || !child.length)
+          throw new Error("Invalid native script class identity");
+        classes.add(child);
+      }
+      inspect(child);
+    }
+  };
+  inspect(mission);
+  return {
+    version: 1 as const,
+    status: "source-pinned-runtime-validation-required" as const,
+    request: spec,
+    files,
+    mission,
+    level,
+    identities,
+    required_script_classes: [...classes].sort(),
+    // A pinned SCB is not proof that classes, profiles and runtime resources resolve.
+    runtime_validation_required: true as const,
+  };
+}

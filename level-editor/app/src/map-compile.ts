@@ -95,8 +95,16 @@ export function compileMap(
   document: Level3D,
   requestedBounds: BakeBounds,
   assets?: ReadonlyMap<string, ProjectionAssetDescriptor>,
-  options: { bestEffort?: boolean; onProgress?: (stage: string) => void } = {},
+  options: {
+    bestEffort?: boolean;
+    onProgress?: (stage: string) => void;
+    missionMode?: "sandbox" | "native-scripted";
+  } = {},
 ) {
+  if (options.missionMode !== undefined && options.missionMode !== "sandbox")
+    throw new Error(
+      "Native scripted export requires a source-topology runtime loader and complete approved state bindings; sandbox fallback is forbidden.",
+    );
   // TODO: Compile visual/depth state resources and recover remaining asset mask definitions.
   const bounds = validateBakeBounds(requestedBounds);
   const slug =
