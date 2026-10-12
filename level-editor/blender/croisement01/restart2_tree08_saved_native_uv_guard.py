@@ -15,7 +15,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 out=R/(sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'tree08-wood-prototype-v18-connected')
 assert out.resolve().parent==R.resolve()
 acquire(slots=2)

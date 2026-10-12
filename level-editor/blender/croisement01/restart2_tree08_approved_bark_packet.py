@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from refinement_review import render_review
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 MODEL=R/'tree08-wood-prototype-v23-smooth-join/model.blend'
 OUT=R/'approved-tree08-bark-fill-v3/croisement01-tree-08'
 APPROVAL=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/three-tree-geometry-oct11-v1/user-approval.json'

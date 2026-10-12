@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from review_evidence import sha
 from render_slots import acquire
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 E=R/'approved-tree00-wood-fill-v1/croisement01-tree-00/experiment'
 
 def main():

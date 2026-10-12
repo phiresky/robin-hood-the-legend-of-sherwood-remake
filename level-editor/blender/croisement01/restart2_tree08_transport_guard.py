@@ -4,7 +4,7 @@ from pathlib import Path
 import bpy,numpy as np
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';W=R/'approved-tree08-bark-fill-v3/croisement01-tree-08'
+R=ROOT/'level-editor/work/active/croisement01/restart2';W=R/'approved-tree08-bark-fill-v3/croisement01-tree-08'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def digest():
  o=next(o for o in bpy.context.scene.objects if o.type=='MESH')

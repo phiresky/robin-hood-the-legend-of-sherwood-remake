@@ -8,7 +8,7 @@ from render_slots import acquire
 from texture_staging import validate_texture_handoff,verify_baked_geometry
 from export_editor import export_asset_library
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';asset='croisement01-central-ivy-stump';case=R/'approved-stump69-wood-fill-v1'/asset
+R=ROOT/'level-editor/work/active/croisement01/restart2';asset='croisement01-central-ivy-stump';case=R/'approved-stump69-wood-fill-v1'/asset
 
 def signatures(objects):
     result=[]
@@ -52,7 +52,7 @@ def main():
     catalog['groups']=groups;catalog['canonical_owners']={f"building-{p['obstacle']:03}" if 'obstacle' in p else p['node']:g['id'] for g in groups for p in g['parts']}
     out=R/'stump69-integration-v2';out.mkdir(exist_ok=False)
     (out/'export-catalog.json').write_text(json.dumps(catalog,indent=2)+'\n')
-    report=export_asset_library('Croisement01',out/'assets',ROOT/'level-editor/work/croisement01-refinement/baseline/Croisement01.rhp.json',asset_ids=[asset],catalog=catalog)
+    report=export_asset_library('Croisement01',out/'assets',ROOT/'level-editor/work/active/croisement01/baseline/Croisement01.rhp.json',asset_ids=[asset],catalog=catalog)
     proof=dict(scope='Private exact approved surface export partition; no live publication',geometry=guard,export=report,approved_user_decision_sha256=sha(case/'user-texture-decision.json'),source_cap_probe_sha256=sha(R/'stump69-cap-partition-probe-v1.json'),source_faces=count,body_faces=len(body.data.polygons),cap_faces=len(cap.data.polygons),union_of_local_surface_positions_uv_corner_ownership_materials_and_smoothing_exact=True,object_world_transforms_unchanged=True,surface_fingerprint_sha256=hashlib.sha256(json.dumps(original).encode()).hexdigest(),native_gameplay_parts_preserved=['building-057','building-058'])
     (out/'export-proof.json').write_text(json.dumps(proof,indent=2)+'\n');print(out)
 if __name__=='__main__':main()

@@ -1,7 +1,7 @@
 """Restore the reviewed normal arrays after a local-pivot-only GLB export."""
 import hashlib,json,struct,shutil
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/active/croisement01/restart2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def load(p):
  raw=p.read_bytes();n=struct.unpack_from('<I',raw,12)[0];return json.loads(raw[20:20+n]),bytearray(raw),28+n

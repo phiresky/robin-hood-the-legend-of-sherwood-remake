@@ -3,7 +3,7 @@ import {mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {chromeEndpoint,socketOpen,evaluate} from '../../app/tests/cdp.mjs';
 const live=process.argv.includes('--live');
-const base=resolve('level-editor/work/croisement01-refinement/restart2/combined-integration-batch-v1');
+const base=resolve('level-editor/work/active/croisement01/restart2/combined-integration-batch-v1');
 const origin=process.argv.find(value=>value.startsWith('http://'))??'http://127.0.0.1:5180';
 const verificationAssets=live?resolve('level-editor/library/3d-assets'):base+'/assets';
 const originalScene=live?base+'/publication-backup-v1/croisement01.rhlos-map.json':resolve('level-editor/library/scenes/croisement01.rhlos-map.json');

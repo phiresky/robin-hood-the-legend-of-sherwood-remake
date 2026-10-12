@@ -5,7 +5,7 @@ import json
 import math
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-R=ROOT/'level-editor/work/croisement01-refinement/restart2/rock29-integration-v1'
+R=ROOT/'level-editor/work/active/croisement01/restart2/rock29-integration-v1'
 def sha(p): return hashlib.sha256(p.read_bytes()).hexdigest()
 def read(p): return json.loads(p.read_text())
 live=ROOT/'level-editor/library/scenes/croisement01.rhlos-map.json'

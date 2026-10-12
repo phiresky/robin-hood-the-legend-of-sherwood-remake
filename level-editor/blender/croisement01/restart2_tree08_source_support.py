@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 from restart2_tree08_transport import strip_orientation
 from restart2_tree08_transport_audit import coverage
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2'
 p=R/'tree08-v11-curvature-cpu-v5';out=R/'tree08-v11-curvature-cpu-v7';out.mkdir(exist_ok=False)
 report=json.loads((p/'report.json').read_text());archive=np.load(p/'mesh.npz');payload={k:archive[k] for k in archive.files};sections=[];before=[];audits=[]
 assert hashlib.sha256((p/'mesh.npz').read_bytes()).hexdigest()==report['mesh_sha256']

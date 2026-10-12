@@ -7,7 +7,7 @@ from mathutils.bvhtree import BVHTree
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';source=R/'tree08-v12-chain-cpu-v3';out=R/'tree08-wood-prototype-v12-local-junctions';parser=argparse.ArgumentParser();parser.add_argument('--round-cap-mib',type=int,default=32);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);cap=args.round_cap_mib*1024**2;round_cap=128*1024**2;floor=10*1024**3
+R=ROOT/'level-editor/work/active/croisement01/restart2';source=R/'tree08-v12-chain-cpu-v3';out=R/'tree08-wood-prototype-v12-local-junctions';parser=argparse.ArgumentParser();parser.add_argument('--round-cap-mib',type=int,default=32);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);cap=args.round_cap_mib*1024**2;round_cap=128*1024**2;floor=10*1024**3
 
 def guard(reserve=1024**2):
  available=next(int(line.split()[1])*1024 for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:'));assert available>=6*1024**3,('6GiB available-memory floor',available)

@@ -17,7 +17,7 @@ def main():
     parser.add_argument('--revision', type=int, default=1)
     args = parser.parse_args()
     faulthandler.dump_traceback_later(30, repeat=True)
-    root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
+    root = Path(__file__).resolve().parents[2] / 'work/active/croisement01/restart2'
     packet = root / 'tree08-v12-local-fork-cpu-v1'
     output = root / (f'tree08-v12-fiveway-v{args.revision}' if args.fiveway else f'tree08-v12-threeway-v{args.revision}')
     output.mkdir(exist_ok=True)

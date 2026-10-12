@@ -11,7 +11,7 @@ sys.path.insert(0,str(Path(__file__).parent))
 from render_slots import acquire
 from review_evidence import sha
 import render_candidate
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 case=R/'approved-tree-fills-v1/croisement01-tree-18'
 stage=R/'tree18-integration-v1';asset=stage/'assets/croisement01-tree-18'
 acquire()

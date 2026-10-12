@@ -5,7 +5,7 @@ import bpy,numpy as np
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'));sys.path.insert(0,str(Path(__file__).parent))
 from render_slots import acquire
 from restart2_bake_texture_candidate import snapshot,pixels,array_hash
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';C=R/'approved-tree02-fill-v1/croisement01-tree-02';B=C/'baked-v2-two-sided-crown';O=C/'baked-v3-same-leaf-crown';P=R/'tree02-leaf-donor-probe-v1';D=R/'tree02-same-leaf-fill-cpu-v1'
+R=ROOT/'level-editor/work/active/croisement01/restart2';C=R/'approved-tree02-fill-v1/croisement01-tree-02';B=C/'baked-v2-two-sided-crown';O=C/'baked-v3-same-leaf-crown';P=R/'tree02-leaf-donor-probe-v1';D=R/'tree02-same-leaf-fill-cpu-v1'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 assert not O.exists();assert shutil.disk_usage(R).free>=10*1024**3+32*1024**2;assert next(int(s.split()[1]) for s in Path('/proc/meminfo').read_text().splitlines() if s.startswith('MemAvailable:'))>=6*1024**2
 plan=json.loads((D/'report.json').read_text());assert sha(B/'worker.blend')==plan['model_sha256'];assert sha(P/'mesh.json')==plan['probe_mesh_sha256'] and sha(P/'atlas.npz')==plan['probe_atlas_sha256'];assert plan['planned_texels']==316;assert all(x['max_distance_fraction']<=.2 for x in plan['leaves']);acquire();O.mkdir();bpy.context.preferences.filepaths.save_version=0;bpy.ops.wm.open_mainfile(filepath=str(B/'worker.blend'))

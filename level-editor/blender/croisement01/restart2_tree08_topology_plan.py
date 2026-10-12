@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 import numpy as np
 ROOT=Path(__file__).resolve().parents[3]
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 out=R/'tree08-topology-plan-v1';out.mkdir(exist_ok=False)
 trace_path=R/'tree08-source-trace-v2/trace.json';trace=json.loads(trace_path.read_text())
 semantic=R/'tree08-semantic-source-v1';core=np.asarray(Image.open(semantic/'bark-core-proposal.png'))>0
@@ -42,7 +42,7 @@ anchors=[dict(name='A upper flare',native=[557,369],constraint='Visible bark wid
 notes=[dict(region=[701,206,752,296],label='X1',meaning='Native8/14 crossing: connected projection does not prove wood junction. Keep overlapping branch/leaf surfaces separate until depth/owner proof.'),dict(region=[490,190,550,245],label='X2',meaning='Hanging narrow strands beneath central branch are deferred vines/twigs; do not thicken into load-bearing trunks.'),dict(region=[470,125,610,245],label='X3',meaning='Major fork cores remain continuous through gold-leaf clusters. Infer hidden wood continuation under foreground leaves; do not paint leaf pixels onto wood automatically.'),dict(region=[649,43,777,300],label='X4',meaning='Crown93/94 and wood8/14 ownership stays unresolved locally, independently of bark/leaf material class.')]
 record=dict(status='Private source-topology construction plan; not geometry/user approval',native_camera=True,source_trace_sha256=hashlib.sha256(trace_path.read_bytes()).hexdigest(),semantic_sha256=hashlib.sha256((semantic/'classification.json').read_bytes()).hexdigest(),root_native=root,total_trace_paths=len(trace['polylines']),retained_scaffold_trace_paths=len(selected),deferred_trace_paths=len(trace['polylines'])-len(selected),root_component_pixels=len(dist),all_paths_preserved=True,structural_routes=routes,path_classification=classifications,root_terrain_anchors=anchors,crossings_and_hidden_continuations=notes,limitations=['2D graph junctions are projected hypotheses, not proof of 3D branch attachment.','Source radius is projected width only. No ground elevation is derived from character thresholds.','Gold leaves can occlude a connected branch: inferred supports preserve uncertain edge obligations.','No geometry, source alpha, terrain, canonical asset or gameplay data changed.'])
 (out/'plan.json').write_text(json.dumps(record,indent=2)+'\n')
-source=Image.open(ROOT/'level-editor/work/croisement01-refinement/baseline/covered.png').convert('RGB');box=(325,0,795,490);orig=source.crop(box);mark=orig.copy();draw=ImageDraw.Draw(mark)
+source=Image.open(ROOT/'level-editor/work/active/croisement01/baseline/covered.png').convert('RGB');box=(325,0,795,490);orig=source.crop(box);mark=orig.copy();draw=ImageDraw.Draw(mark)
 xy=lambda p:(p[0]-box[0],p[1]-box[1])
 for i,path in enumerate(trace['polylines']):
  if len(path)>1:draw.line([xy(p) for p in path],fill=(40,230,240) if i in selected else (150,100,150),width=2 if i in selected else 1)

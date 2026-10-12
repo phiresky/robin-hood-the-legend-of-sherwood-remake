@@ -5,7 +5,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 from PIL import Image,ImageDraw
 from restart2_tree08_hierarchy import build_hierarchy_sections
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';packet=R/'tree08-wood-prototype-v11';out=packet/'cpu-junction-review';out.mkdir(exist_ok=False)
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2';packet=R/'tree08-wood-prototype-v11';out=packet/'cpu-junction-review';out.mkdir(exist_ok=False)
 plan=R/'tree08-v11-curvature-cpu-v7';report=json.loads((plan/'report.json').read_text());data=np.load(plan/'mesh.npz');receipt=json.loads((packet/'receipt.json').read_text());old_coverage=json.loads((R/'tree08-wood-prototype-v10/coverage.json').read_text())
 traces=json.loads((R/'tree08-source-trace-v2/trace.json').read_text())['polylines'];selected=[p['trace_id'] for p in json.loads((R/'tree08-wood-prototype-v8/construction.json').read_text())['sections'] if isinstance(p['trace_id'],int)];root=json.loads((R/'tree08-topology-plan-v1/plan.json').read_text())['root_native'];oldmiss=json.loads((R/'tree08-wood-prototype-v8/coverage.json').read_text())['miss_native_pixels'];core=np.asarray(Image.open(R/'tree08-semantic-source-v1/bark-core-proposal.png'))>0;support=[[int(x)+331,int(y)+11] for y,x in np.argwhere(core)]
 old,_,_=build_hierarchy_sections(traces,selected,root,oldmiss,support,True,True,False);old={s['trace_id']:s for s in old}

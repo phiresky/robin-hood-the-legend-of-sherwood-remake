@@ -17,7 +17,7 @@ from evidence_io import sha
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--grass-revision',type=int,default=9);parser.add_argument('--joint-revision',type=int,default=5);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
-    out=ROOT/'level-editor/work/croisement01-refinement'
+    out=ROOT/'level-editor/work/active/croisement01'
     worker=out/f'restart2/grass75-volume-v{args.grass_revision}/assets/croisement01-grass-75'
     branch=out/'restart2/branch-source-fit-v3/branch-round-10/assets/croisement01-east-fallen-branch'
     dest=out/f'restart2/branch-grass-joint-v{args.joint_revision}';dest.mkdir(exist_ok=False)

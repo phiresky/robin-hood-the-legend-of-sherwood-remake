@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 LIB = ROOT / 'level-editor/library'
-WORK = ROOT / 'level-editor/work/croisement01-refinement'
+WORK = ROOT / 'level-editor/work/active/croisement01'
 AUDIT = ROOT / 'level-editor/work/croisement02-refinement/four-map-completion-audit-oct11-v1'
 
 

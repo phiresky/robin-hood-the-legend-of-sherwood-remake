@@ -3,7 +3,7 @@ import {mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {chromeEndpoint,socketOpen,evaluate} from '../../app/tests/cdp.mjs';
 const live=process.argv.includes('--live');
-const base=resolve('level-editor/work/croisement01-refinement/restart2/rock29-integration-v1');
+const base=resolve('level-editor/work/active/croisement01/restart2/rock29-integration-v1');
 const {createServer}=await import('../../app/node_modules/vite/dist/node/index.js');
 const server=await createServer({root:resolve('level-editor/app'),configFile:resolve('level-editor/app/vite.config.ts'),cacheDir:base+'/browser-vite-cache',optimizeDeps:{entries:[]},server:{host:'127.0.0.1',port:0}});await server.listen();
 const origin='http://127.0.0.1:'+server.httpServer.address().port;

@@ -20,7 +20,7 @@ a = p.parse_args(sys.argv[sys.argv.index('--')+1:])
 acquire(slots=2)
 assert shutil.disk_usage(ROOT).free > 10*1024**3
 assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024 > 6*1024**3
-base = ROOT/'level-editor/work/croisement01-refinement'
+base = ROOT/'level-editor/work/active/croisement01'
 assert a.revision >= 5
 old = base/f'restart2/tree14-wood-v{a.revision}'
 dest = base/f'restart2/tree14-wood-v{a.revision}-projected'

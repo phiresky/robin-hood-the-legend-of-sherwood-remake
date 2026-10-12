@@ -7,7 +7,7 @@ from vtkmodules.vtkCommonCore import reference
 from vtkmodules.vtkCommonDataModel import vtkGenericCell,vtkStaticCellLocator
 from restart2_tree08_fork_kernel import poly
 from restart2_tree08_local_fork import audit
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2'
 prior=R/sys.argv[1];out=R/sys.argv[2]
 assert prior.resolve().parent==out.resolve().parent==R.resolve() and not out.exists()
 a=np.load(prior/'candidate.npz');v,f=a['before_vertices'],a['faces'];delta=a['vertices']-v

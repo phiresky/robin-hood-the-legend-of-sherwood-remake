@@ -9,7 +9,7 @@ sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 import hashlib
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
-OUT=ROOT/'level-editor/work/croisement01-refinement'
+OUT=ROOT/'level-editor/work/active/croisement01'
 DEST=OUT/'restart2/tree03-ownership-v2';DEST.mkdir(exist_ok=False)
 acquire();source=OUT/'croisement01-grouped.blend';bpy.ops.wm.open_mainfile(filepath=str(source))
 S,C=math.sin(math.radians(35)),math.cos(math.radians(35))

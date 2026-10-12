@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(Path(__file__).parent))
 from restart2_tree08_hierarchy import build_hierarchy_sections
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';out=R/'tree08-v10-cpu-frame-audit';out.mkdir(exist_ok=False)
+R=ROOT/'level-editor/work/active/croisement01/restart2';out=R/'tree08-v10-cpu-frame-audit';out.mkdir(exist_ok=False)
 tr=json.loads((R/'tree08-source-trace-v2/trace.json').read_text())['polylines'];old=json.loads((R/'tree08-wood-prototype-v8/construction.json').read_text());selected=[p['trace_id'] for p in old['sections'] if isinstance(p['trace_id'],int)];root=json.loads((R/'tree08-topology-plan-v1/plan.json').read_text())['root_native'];miss=json.loads((R/'tree08-wood-prototype-v8/coverage.json').read_text())['miss_native_pixels'];cores=[[int(x)+331,int(y)+11] for y,x in np.argwhere(np.asarray(Image.open(R/'tree08-semantic-source-v1/bark-core-proposal.png'))>0)]
 sections,obligations,hierarchy=build_hierarchy_sections(tr,selected,root,miss,cores,continuous_nodes=True,continuous_trunk=True)
 records=[];profiles={}

@@ -12,7 +12,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 from review_evidence import sha
-OUT=ROOT/'level-editor/work/croisement01-refinement'
+OUT=ROOT/'level-editor/work/active/croisement01'
 R=OUT/'restart2';w=R/'tree21-v5/assets/croisement01-tree-21'
 acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'))
 working=bpy.data.collections['Croisement01 Working'];s,c=math.sin(math.radians(35)),math.cos(math.radians(35))

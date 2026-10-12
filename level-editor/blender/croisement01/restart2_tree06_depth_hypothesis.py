@@ -6,7 +6,7 @@ from mathutils import Vector
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';src=R/'tree06-v7/assets/croisement01-tree-06';out=R/'tree06-v8/assets/croisement01-tree-06';assert not out.exists();acquire();bpy.ops.wm.open_mainfile(filepath=str(src/'model.blend'));bpy.context.preferences.filepaths.save_version=0
+R=ROOT/'level-editor/work/active/croisement01/restart2';src=R/'tree06-v7/assets/croisement01-tree-06';out=R/'tree06-v8/assets/croisement01-tree-06';assert not out.exists();acquire();bpy.ops.wm.open_mainfile(filepath=str(src/'model.blend'));bpy.context.preferences.filepaths.save_version=0
 shift=Vector((0,20/math.tan(math.radians(35)),-20));changed=[];max_projection=0
 for obj in bpy.context.scene.objects:
  if obj.type!='MESH' or obj.get('asset_group')!='croisement01-tree-06':continue

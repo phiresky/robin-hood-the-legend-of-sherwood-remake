@@ -3,7 +3,7 @@ import hashlib,json
 from pathlib import Path
 import numpy as np
 from restart2_tree08_local_fork import audit
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';prior=R/'tree08-implicit-collar-v5-clean';out=R/'tree08-implicit-collar-v6-seam-clean';assert not out.exists()
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2';prior=R/'tree08-implicit-collar-v5-clean';out=R/'tree08-implicit-collar-v6-seam-clean';assert not out.exists()
 p=prior/'candidate.npz';proof=json.loads((prior/'intersection-guard-fast.json').read_text());assert proof['candidate_sha256']==hashlib.sha256(p.read_bytes()).hexdigest()
 assert not proof['new_intersections'] and {tuple(x['faces']) for x in proof['retained_intersections']}=={(47283,332132),(47284,332132)}
 a=np.load(p);v,f=a['vertices'],a['faces'];remove,keep=4810,167693

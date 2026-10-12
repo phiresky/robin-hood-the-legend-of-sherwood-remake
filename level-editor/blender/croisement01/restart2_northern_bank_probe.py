@@ -17,7 +17,7 @@ from render_slots import acquire
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
-BASE = ROOT / 'level-editor/work/croisement01-refinement/restart2'
+BASE = ROOT / 'level-editor/work/active/croisement01/restart2'
 PLAN = BASE / 'northern-wood-construction-plan-v1'
 BANK = BASE / 'tree05-regional-banks-v18/assets/croisement01-tree-05/model.blend'
 BANK_SHA = '7926500e407950bd66b78d13e0ce65b3829dd2263d7db4ba5c57a7ece5dbc818'

@@ -2,7 +2,7 @@
 import hashlib,json
 from pathlib import Path
 import numpy as np
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';p=R/'tree08-v12-chain-cpu-v3';r=json.loads((p/'report.json').read_text());data=np.load(p/'mesh.npz');h=json.loads((R/'tree08-wood-prototype-v10/rooted-depth-hierarchy.json').read_text());arcs={q['trace_id']:q for q in h['arcs']};s,c=np.sin(np.radians(35)),np.cos(np.radians(35));eligible={q['index']:q for q in r['mesh_sections'] if not q['held_crossing']};points={};centers={};ends={}
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2';p=R/'tree08-v12-chain-cpu-v3';r=json.loads((p/'report.json').read_text());data=np.load(p/'mesh.npz');h=json.loads((R/'tree08-wood-prototype-v10/rooted-depth-hierarchy.json').read_text());arcs={q['trace_id']:q for q in h['arcs']};s,c=np.sin(np.radians(35)),np.cos(np.radians(35));eligible={q['index']:q for q in r['mesh_sections'] if not q['held_crossing']};points={};centers={};ends={}
 for i,section in eligible.items():
  points[i]={tuple(point[:2]) for trace_id in section['source_traces'] for point in arcs[trace_id]['source_points']}
  centers[i]=data[f'vertices_{i}'].reshape(-1,16,3).mean(1)

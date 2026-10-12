@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from render_slots import acquire
 from review_evidence import sha
 
-R = ROOT / 'level-editor/work/croisement01-refinement/restart2'
+R = ROOT / 'level-editor/work/active/croisement01/restart2'
 acquire(slots=2)
 parser = argparse.ArgumentParser(); parser.add_argument('--revision', type=int, default=10)
 args = parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])

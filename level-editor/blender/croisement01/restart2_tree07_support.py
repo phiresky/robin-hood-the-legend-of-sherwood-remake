@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 acquire(slots=2)
-base=ROOT/'level-editor/work/croisement01-refinement/restart2'
+base=ROOT/'level-editor/work/active/croisement01/restart2'
 assert shutil.disk_usage(base).free>10*1024**3
 available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024
 assert available>6*1024**3

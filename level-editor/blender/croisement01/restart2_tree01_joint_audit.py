@@ -10,7 +10,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-edito
 from render_slots import acquire
 from review_evidence import sha
 from restart2_tree18 import SIN,COS
-r=ROOT/'level-editor/work/croisement01-refinement/restart2';worker=Path(sys.argv[sys.argv.index('--')+1]).resolve();acquire();bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'));cfg=json.loads((worker/'workspace.json').read_text());objects=list(bpy.data.collections[cfg['collection_name']].all_objects)
+r=ROOT/'level-editor/work/active/croisement01/restart2';worker=Path(sys.argv[sys.argv.index('--')+1]).resolve();acquire();bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'));cfg=json.loads((worker/'workspace.json').read_text());objects=list(bpy.data.collections[cfg['collection_name']].all_objects)
 def bvh(objects):
  verts=[];faces=[]
  for obj in objects:

@@ -5,7 +5,7 @@ from PIL import Image
 from shapely.geometry import box
 from shapely.ops import unary_union
 from shapely import constrained_delaunay_triangles
-R=pathlib.Path(__file__).resolve().parents[3];O=R/'level-editor/work/croisement01-refinement/mission-net01-oct12-v1'
+R=pathlib.Path(__file__).resolve().parents[3];O=R/'level-editor/work/active/croisement01/mission-net01-oct12-v1'
 def main():
  ap=argparse.ArgumentParser();ap.add_argument('--separate-rope',action='store_true');args=ap.parse_args()
  s=json.loads((O/'source.json').read_text())['sources'];specs=[('initial-ground','initial',270,325),('applied-ground','g',0,105),('initial-weight','initial',0,61),('e-weight','e',82,118),('i-weight','i',82,118)];result={}

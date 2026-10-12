@@ -2,7 +2,7 @@
 import json,shutil
 from pathlib import Path
 from restart2_tree08_remaining_forks import inputs,reconstruct
-R=Path(__file__).resolve().parents[2]/'work/croisement01-refinement/restart2'
+R=Path(__file__).resolve().parents[2]/'work/active/croisement01/restart2'
 def main():
  meshes,adj,groups,origin=inputs(R)
  prior=json.loads((R/'tree08-v12-local-contact-plan.json').read_text())

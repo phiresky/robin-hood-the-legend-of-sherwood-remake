@@ -6,7 +6,7 @@ import {validateNativeStatePresentation} from '../../shared/src/native-state-pre
 import {verifyNativePresentationSource} from '../../app/src/native-state-presentation.ts';
 import {validateNativePatchPreview} from '../../shared/src/state-delivery.ts';
 
-const root=resolve('.'), work=join(root,'level-editor/work/croisement01-refinement');
+const root=resolve('.'), work=join(root,'level-editor/work/active/croisement01');
 const lib=join(root,'level-editor/library'), out=join(work,'restart2/native-controls-private-oct11-v2');
 await mkdir(out); await mkdir(join(out,'contracts')); await mkdir(join(out,'profiles'));
 const read=async p=>JSON.parse(await readFile(p,'utf8'));

@@ -12,7 +12,7 @@ sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(Path(__file__).parent)]
 from render_slots import acquire,release
 from review_evidence import sha
 from restart2_tree08_union import topology
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 source=R/'tree08-connected-tip-cleanup-v2/candidate.npz'
 out=R/'tree08-volumetric-anatomy-v1'
 assert not out.exists()

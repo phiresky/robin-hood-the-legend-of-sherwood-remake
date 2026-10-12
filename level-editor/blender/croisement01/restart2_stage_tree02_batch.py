@@ -1,7 +1,7 @@
 """Stage approved Tree02 and exact retained group005 on the current saved C1 map."""
 import copy,hashlib,json,math,os,struct,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/croisement01-refinement/restart2';LIB=ROOT/'level-editor/library'
+ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/active/croisement01/restart2';LIB=ROOT/'level-editor/library'
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from asset_index import write_asset_index
 O=R/'tree02-integration-batch-v1';assert not O.exists()

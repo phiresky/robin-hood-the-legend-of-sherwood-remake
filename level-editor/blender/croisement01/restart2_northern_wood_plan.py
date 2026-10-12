@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/croisement01-refinement'
+BASE = ROOT / 'level-editor/work/active/croisement01'
 OUT = BASE / 'restart2/northern-wood-construction-plan-v1'
 IDS = (9, 10, 11, 12, 13, 15, 16, 17, 23)
 

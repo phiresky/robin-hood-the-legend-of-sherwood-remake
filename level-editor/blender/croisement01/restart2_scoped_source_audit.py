@@ -22,7 +22,7 @@ def main():
  for o in objects:
   offset=len(vertices);vertices.extend(o.matrix_world@v.co for v in o.data.vertices);faces.extend(tuple(offset+i for i in f.vertices) for f in o.data.polygons)
  tree=BVHTree.FromPolygons(vertices,faces)
- base=ROOT/'level-editor/work/croisement01-refinement/baseline/masks'
+ base=ROOT/'level-editor/work/active/croisement01/baseline/masks'
  row=next(r for r in json.loads((base/'manifest.json').read_text())['masks'] if r['index']==a.mask)
  domain=a.domain.resolve(strict=True)
  expected=np.array(Image.open(domain).convert('L'))>0

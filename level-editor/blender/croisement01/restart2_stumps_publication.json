@@ -11,12 +11,12 @@
     "3d-assets/croisement01/croisement01-east-ivy-stump/asset.json": "948ad19ce5e820cea97e425b02c91ad89a5d5a602a95b562974d5f4713eecf09"
   },
   "private_full_editor": {
-    "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/stumps64-67-69-integration-batch-v1/full-editor-private-v2/result.json",
+    "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/active/croisement01/restart2/stumps64-67-69-integration-batch-v1/full-editor-private-v2/result.json",
     "sha256": "ce8834f64917ee319a29b76c316a24458d1891715b2de19cfeacee4d7fa0066a",
     "config_sha256": "6b232e44bc0276981bc6cbf6a5b205aa0a14820f512b4bbb6f86933f796c96de",
     "checker_provenance_sha256": "531e18e660c79d4d772b5e87f0a91ec7e0db1ffab2df9ed6ba2ea325ccb05ff7"
   },
-  "backup": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/stumps64-67-69-integration-batch-v1/publication-backup-v1",
+  "backup": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/active/croisement01/restart2/stumps64-67-69-integration-batch-v1/publication-backup-v1",
   "unchanged_other_placements": 56,
   "unrelated_palette_entries_preserved": 1300,
   "protected_existing_asset_files": 358,
@@ -34,6 +34,6 @@
     "croisement01-central-ivy-stump-live-browser.png": "742cd0f6f2f92225b7f687d821a0523319afbf0b9233c437e3b26018268251e9",
     "croisement01-east-ivy-stump-live-browser.png": "5b6473be160f24b3b8ab9b95ebfd14c10ad31081d7cf4031260fc1a14687dcb5"
   },
-  "publication_path": "level-editor/work/croisement01-refinement/restart2/stumps64-67-69-integration-batch-v1/publication.json",
+  "publication_path": "level-editor/work/active/croisement01/restart2/stumps64-67-69-integration-batch-v1/publication.json",
   "publication_sha256": "6f4210bb88094ddfedacfe455852ccb8609489f413109746a180574a5d5765a0"
 }

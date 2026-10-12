@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from review_evidence import sha
-stage=ROOT/'level-editor/work/croisement01-refinement/restart2/approved-integration-batch-v2';live=ROOT/'level-editor/library';out=stage/'private-library';out.mkdir(exist_ok=False)
+stage=ROOT/'level-editor/work/active/croisement01/restart2/approved-integration-batch-v2';live=ROOT/'level-editor/library';out=stage/'private-library';out.mkdir(exist_ok=False)
 for entry in live.iterdir():
  if entry.name not in ['3d-assets','scenes']:(out/entry.name).symlink_to(entry,target_is_directory=entry.is_dir())
 (out/'scenes').mkdir()

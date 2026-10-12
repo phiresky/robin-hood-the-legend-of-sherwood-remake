@@ -10,7 +10,7 @@ from render_slots import acquire
 from evidence_io import sha
 from refinement_workspace import prepare,modified,validate
 from refinement_inventory import inventory
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';BASE=R.parent
+R=ROOT/'level-editor/work/active/croisement01/restart2';BASE=R.parent
 
 def main():
  if shutil.disk_usage(ROOT).free<25*1024**3:raise ValueError('Disk floor:25GiB required before a new candidate')

@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from restart2_tree08_remaining_forks import inputs
 from restart2_tree08_cap_plan import section_loops,serialize,read_paths,triangulate
-R=Path(__file__).resolve().parents[2]/'work/croisement01-refinement/restart2'
+R=Path(__file__).resolve().parents[2]/'work/active/croisement01/restart2'
 OUT=R/'tree08-v12-distinct-stems-clearance-v1'
 KERNEL=R/'tree08-v12-local-fork-cpu-v1/cap-intersect'
 def operate(subject,clips,intersection=False):

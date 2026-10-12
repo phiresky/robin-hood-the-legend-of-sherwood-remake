@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import numpy as np
 
-R = Path(__file__).resolve().parents[3] / 'level-editor/work/croisement01-refinement/restart2'
+R = Path(__file__).resolve().parents[3] / 'level-editor/work/active/croisement01/restart2'
 P = R / 'tree02-filtered-gap-probe-v3/report.json'
 report = json.loads(P.read_text())
 packet = report['packets']['Tree02 inferred crown']

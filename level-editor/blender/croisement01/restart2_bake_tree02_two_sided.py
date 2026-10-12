@@ -5,7 +5,7 @@ import bpy
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(Path(__file__).parent))
 from restart2_bake_texture_candidate import run
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';case=R/'approved-tree02-fill-v1/croisement01-tree-02';e=case/'experiment';out=case/'baked-v2-two-sided-crown'
+R=ROOT/'level-editor/work/active/croisement01/restart2';case=R/'approved-tree02-fill-v1/croisement01-tree-02';e=case/'experiment';out=case/'baked-v2-two-sided-crown'
 assert not out.exists()
 assert shutil.disk_usage(R).free>=10*1024**3+32*1024**2
 available=next(int(line.split()[1])*1024 for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:'))

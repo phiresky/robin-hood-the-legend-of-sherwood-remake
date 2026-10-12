@@ -18,7 +18,7 @@ from evidence_io import sha
 acquire(slots=2)
 assert shutil.disk_usage(ROOT).free>10*1024**3
 assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024>6*1024**3
-r=ROOT/'level-editor/work/croisement01-refinement/restart2'
+r=ROOT/'level-editor/work/active/croisement01/restart2'
 w=r/'tree14-crown94-geometry-v6';out=w/'native-first-hit-v1';assert not out.exists();out.mkdir()
 model=w/'model.blend';before=sha(model);bpy.ops.wm.open_mainfile(filepath=str(model))
 packet=json.loads((w/'source-partition.json').read_text());frame=packet['frame_records'][0]

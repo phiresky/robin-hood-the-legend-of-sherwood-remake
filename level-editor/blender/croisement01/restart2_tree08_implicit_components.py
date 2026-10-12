@@ -8,7 +8,7 @@ from PIL import Image
 from vtkmodules.vtkCommonCore import reference
 from vtkmodules.vtkCommonDataModel import vtkGenericCell,vtkStaticCellLocator
 from restart2_tree08_fork_kernel import poly
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';out=R/sys.argv[1];assert out.resolve().parent==R.resolve()
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2';out=R/sys.argv[1];assert out.resolve().parent==R.resolve()
 a=np.load(out/'candidate.npz');v,f=a['vertices'],a['faces'];edges=np.concatenate([f[:,[0,1]],f[:,[1,2]],f[:,[2,0]]]);graph=coo_matrix((np.ones(len(edges)),(edges[:,0],edges[:,1])),shape=(len(v),len(v))).tocsr();n,labels=connected_components(graph,directed=False);flabel=labels[f[:,0]]
 s,c=np.sin(np.radians(35)),np.cos(np.radians(35));ray=np.array([0.,-c,s]);down=np.array([0.,-s,-c]);counts=np.zeros(n,int);lost=0
 loc=vtkStaticCellLocator();loc.SetDataSet(poly(v,f));loc.BuildLocator();cell=vtkGenericCell()

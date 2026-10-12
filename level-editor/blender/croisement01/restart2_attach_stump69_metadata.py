@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from review_evidence import sha
 from asset_index import write_asset_index
-R=ROOT/'level-editor/work/croisement01-refinement/restart2/stump69-integration-v2';LIB=ROOT/'level-editor/library';asset='croisement01-central-ivy-stump'
+R=ROOT/'level-editor/work/active/croisement01/restart2/stump69-integration-v2';LIB=ROOT/'level-editor/library';asset='croisement01-central-ivy-stump'
 def main():
     path=R/'assets'/asset/'asset.json';d=json.loads(path.read_text());assert 'gameplay' not in d
     original=copy.deepcopy(d);x,y,z=d['source_origin_scene'];after=[x,-y*math.sin(math.radians(35)),z*math.cos(math.radians(35))]

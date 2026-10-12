@@ -1,7 +1,7 @@
 """Prepare CPU-only normal-editor Tree08 proof; browser owner runs it separately."""
 import hashlib,json,os,shutil,subprocess
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/croisement01-refinement/restart2';os.chdir(ROOT)
+ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/active/croisement01/restart2';os.chdir(ROOT)
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def read(p):return json.loads(p.read_text())
 def write(p,x):p.write_text(json.dumps(x,indent=2)+'\n')
@@ -21,7 +21,7 @@ index['assets']=[entry if x['id']=='croisement01-group-033' else x for x in inde
 p=lib/'3d-assets/index.json';p.unlink();p.write_text(json.dumps(index,separators=(',',':'))+'\n')
 for name in ['run.mjs','editor.tsx','observe-library.js','check.js']:
  s=(base/name).read_text().replace(rel(base),rel(out)).replace(rel(oldlib),rel(lib)).replace('tree02','tree08').replace('Tree02','Tree08').replace('croisement01-tree-02','croisement01-tree-08')
- if name=='run.mjs':s=s.replace('level-editor/work/croisement01-refinement/restart2/tree08-browser-private-v1/reload-check.js',rel(out/'reload-check.js'))
+ if name=='run.mjs':s=s.replace('level-editor/work/active/croisement01/restart2/tree08-browser-private-v1/reload-check.js',rel(out/'reload-check.js'))
  if name=='observe-library.js':s=s.replace('(tree-02|group-005)','tree-08')
  if name=='check.js':
   s=s.replace("x.id==='tree08-approved'","x.id==='group-033'")

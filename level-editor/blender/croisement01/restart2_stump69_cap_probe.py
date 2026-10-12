@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';case=R/'approved-stump69-wood-fill-v1/croisement01-central-ivy-stump'
+R=ROOT/'level-editor/work/active/croisement01/restart2';case=R/'approved-stump69-wood-fill-v1/croisement01-central-ivy-stump'
 model=case/'baked-v1-luminance/worker.blend';out=R/'stump69-cap-partition-probe-v1.json';assert not out.exists()
 acquire();bpy.ops.wm.open_mainfile(filepath=str(model));cfg=json.loads((case/'approved-workspace/workspace.json').read_text());obj=next(o for o in bpy.data.collections[cfg['collection_name']].all_objects if o.type=='MESH' and o.get('asset_group')==cfg['asset_id'])
 faces=[]

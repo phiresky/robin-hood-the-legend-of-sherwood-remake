@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/croisement01-refinement'
+OUT = ROOT / 'level-editor/work/active/croisement01'
 PROPS = [
     ('east-ivy-stump', 'East Ivy Stump', [54], 67),
     ('southwest-cut-stump', 'Southwest Cut Stump', [55], 65),

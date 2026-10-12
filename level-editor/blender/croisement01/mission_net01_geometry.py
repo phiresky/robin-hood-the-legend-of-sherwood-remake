@@ -8,7 +8,7 @@ from mission_net01_intersections import intersection_points
 import bpy,bmesh,numpy as np
 from mathutils import Vector
 from PIL import Image
-OUT=ROOT/'level-editor/work/croisement01-refinement/mission-net01-oct12-v1';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN));UP=Vector((0,SIN,COS))
+OUT=ROOT/'level-editor/work/active/croisement01/mission-net01-oct12-v1';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN));UP=Vector((0,SIN,COS))
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def point(x,y,z):return Vector((x,-(y+z*COS)/SIN,z))
 def guard():

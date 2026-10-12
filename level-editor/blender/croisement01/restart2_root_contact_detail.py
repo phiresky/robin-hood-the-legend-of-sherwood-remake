@@ -22,7 +22,7 @@ def main():
   imported=[o for o in dst.objects if o is not None]
   for obj in imported:bpy.context.scene.collection.objects.link(obj)
   bpy.context.view_layer.update();targets=[o for o in imported if o.type=='MESH' and o.get('asset_group')==a.overlay_asset];assert targets
-  reference_root=ROOT/'level-editor/work/croisement01-refinement/restart2';reference_files=[reference_root/'bank-neighbor-transform-reference-v2.json',*reference_root.glob('bank-neighbor-transform-reference-tree06-v*.json')];matches=[(path,row) for path in reference_files for row in json.loads(path.read_text())['sources'] if row['model_sha256']==sha(model)];assert matches;reference_path,reference=matches[-1]
+  reference_root=ROOT/'level-editor/work/active/croisement01/restart2';reference_files=[reference_root/'bank-neighbor-transform-reference-v2.json',*reference_root.glob('bank-neighbor-transform-reference-tree06-v*.json')];matches=[(path,row) for path in reference_files for row in json.loads(path.read_text())['sources'] if row['model_sha256']==sha(model)];assert matches;reference_path,reference=matches[-1]
   for obj in targets:
    expected=[row for row in reference['objects'] if row['source_node']==obj.get('source_node')]
    if not expected:

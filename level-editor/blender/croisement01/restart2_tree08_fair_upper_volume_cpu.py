@@ -6,7 +6,7 @@ from scipy.sparse import coo_matrix,diags
 from PIL import Image
 from restart2_tree08_local_fork import audit
 from restart2_tree08_junction_proof import native_depth
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2'
 mode=sys.argv[1] if len(sys.argv)>1 else 'taubin'
 assert mode in ['taubin','central-diffusion']
 O=R/('tree08-upper-volume-fairing-v1' if mode=='taubin' else 'tree08-upper-volume-fairing-v3-central')

@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from review_evidence import sha
 from bake_reviewed_asset import stage
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';W=R/'approved-tree08-bark-fill-v3/croisement01-tree-08';E=W/'experiment';src=W/'baked-v3-native-exact';out=W/'baked-v5-bounded-gaps'
+R=ROOT/'level-editor/work/active/croisement01/restart2';W=R/'approved-tree08-bark-fill-v3/croisement01-tree-08';E=W/'experiment';src=W/'baked-v3-native-exact';out=W/'baked-v5-bounded-gaps'
 acquire(slots=2)
 try:
  assert shutil.disk_usage(R).free>=10*1024**3

@@ -9,7 +9,7 @@ from render_slots import acquire, release
 from texture_staging import validate_texture_handoff, verify_baked_geometry
 from export_editor import export_asset_library
 from review_evidence import sha
-R = ROOT / 'level-editor/work/croisement01-refinement/restart2'
+R = ROOT / 'level-editor/work/active/croisement01/restart2'
 case = R / 'approved-rock29-fill-v2/croisement01-small-bank-stones'
 acquire()
 try:
@@ -20,7 +20,7 @@ try:
     out.mkdir(exist_ok=False)
     catalog = json.loads((R / 'rock29-v4/catalog.json').read_text())
     report = export_asset_library('Croisement01', out / 'assets',
-        ROOT / 'level-editor/work/croisement01-refinement/baseline/Croisement01.rhp.json',
+        ROOT / 'level-editor/work/active/croisement01/baseline/Croisement01.rhp.json',
         asset_ids=['croisement01-small-bank-stones'], catalog=catalog)
     (out / 'export-proof.json').write_text(json.dumps(dict(
         scope='Private approved rock export; live map unchanged', geometry=proof, export=report,

@@ -19,7 +19,7 @@ p=argparse.ArgumentParser();p.add_argument('--revision',type=int,required=True)
 a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);acquire(slots=2)
 assert shutil.disk_usage(ROOT).free>10*1024**3
 assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024>6*1024**3
-r=ROOT/'level-editor/work/croisement01-refinement/restart2'
+r=ROOT/'level-editor/work/active/croisement01/restart2'
 w=r/f'tree14-wood-v{a.revision}/assets/croisement01-tree-14'
 model=w/'baseline.blend';before=sha(model);bpy.ops.wm.open_mainfile(filepath=str(model))
 out=w/'inspection/solid-preview-v1';assert not out.exists()

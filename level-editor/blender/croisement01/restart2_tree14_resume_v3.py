@@ -10,7 +10,7 @@ from refinement_workspace import prepare,modified,validate
 acquire(slots=2)
 assert shutil.disk_usage(ROOT).free>10*1024**3+512*1024**2
 assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024>6*1024**3
-base=ROOT/'level-editor/work/croisement01-refinement';old=base/'restart2/tree14-wood-v3';dest=base/'restart2/tree14-wood-v3-resumed';dest.mkdir(exist_ok=False)
+base=ROOT/'level-editor/work/active/croisement01';old=base/'restart2/tree14-wood-v3';dest=base/'restart2/tree14-wood-v3-resumed';dest.mkdir(exist_ok=False)
 model=old/'assets/croisement01-tree-14/baseline.blend';assert sha(model)=='8397f55fe5620707ee2dd291ac5e36e5d3b8a4c045893624a9dec4a2e32a211a'
 bpy.ops.wm.open_mainfile(filepath=str(model));bpy.context.preferences.filepaths.save_version=0
 shutil.copy2(old/'wood-domain.png',dest/'wood-domain.png');worker=dest/'assets/croisement01-tree-14'

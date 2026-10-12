@@ -7,7 +7,7 @@ sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinem
 from render_slots import acquire,release
 from export_editor import export_asset_library
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 asset='croisement01-tree-08'
 receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json'
 assert sha(receipt)=='d435a76b08eb3ac616f1ae2ffcdf19a7875969e515dd01f65de1871ca886ef1d'
@@ -33,7 +33,7 @@ try:
  catalog=dict(version=1,map='Croisement01',groups=[dict(id=asset,name='Tree08 branching wood',parts=[dict(node=node,name='Approved trunk, branches and roots')])],canonical_owners={node:asset},review_notes=['Wood appearance and shape approved; canopy and native obstacle association excluded.'])
  out=R/'tree08-approved-wood-export-v2';out.mkdir()
  (out/'grouping.json').write_text(json.dumps(catalog,indent=2)+'\n')
- report=export_asset_library('Croisement01',out/'assets',ROOT/'level-editor/work/croisement01-refinement/baseline/Croisement01.rhp.json',asset_ids=[asset],catalog=catalog)
+ report=export_asset_library('Croisement01',out/'assets',ROOT/'level-editor/work/active/croisement01/baseline/Croisement01.rhp.json',asset_ids=[asset],catalog=catalog)
  descriptor=json.loads((out/'assets'/asset/'asset.json').read_text());assert [p['node'] for p in descriptor['parts']]==[node]
  assert all('source_obstacle' not in p and 'obstacle_local_game' not in p for p in descriptor['parts'])
  assert geometry(obj)==before and sha(model)==decision['model_sha256']

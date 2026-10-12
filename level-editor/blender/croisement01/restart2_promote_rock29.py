@@ -10,7 +10,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from review_evidence import sha
 from asset_index import validate_asset_index
-R=ROOT/'level-editor/work/croisement01-refinement/restart2/rock29-integration-v1'
+R=ROOT/'level-editor/work/active/croisement01/restart2/rock29-integration-v1'
 def read(p):return json.loads(p.read_text())
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 proof=read(R/'scene-splice-proof.json');browser=read(R/'browser-export-proof.json');visual=read(R/'glb-review-v1/inspection/self-review.json')

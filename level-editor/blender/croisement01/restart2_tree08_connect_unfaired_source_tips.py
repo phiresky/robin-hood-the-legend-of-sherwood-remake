@@ -13,7 +13,7 @@ from render_slots import acquire, release
 from restart2_tree08_union import topology
 from review_evidence import sha
 
-R = ROOT/'level-editor/work/croisement01-refinement/restart2'
+R = ROOT/'level-editor/work/active/croisement01/restart2'
 source = R/'tree08-inferred-shell-cleanup-v3-pocket/candidate.npz'
 out = R/'tree08-connected-tip-union-v2-unfaired'
 assert not out.exists()

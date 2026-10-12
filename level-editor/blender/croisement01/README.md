@@ -1,9 +1,19 @@
 # Croisement01 refinement
 
-Private candidates and evidence live in `work/croisement01-refinement/`.
+Private candidates and evidence live in `work/active/croisement01/`.
 Publication receipts identify the exact approved scopes already installed in the
 library; a private candidate is not evidence of publication. All background
 Blender work acquires the shared four-slot render pool before opening a scene.
+
+The October 2026 relocation preserves historical approvals and review packets
+without rewriting their bytes. Its explicit path/hash map and dependency audit
+are in `work/storage-maintenance/migration-20261012/croisement01/`.
+Current wood texture packets are rebound under
+`work/active/croisement01/operations/migration-20261012/approved-four-wood-fills/`;
+the corresponding Net01 operational handoff is beside them in `net01/`.
+Use these operational manifests when resuming work. Resolve a historical pin
+through `refinement/work_relocation.py` and its recorded relocation map rather
+than changing the original approval or recreating an old directory.
 
 The frozen source is 1408 × 960 pixels, with 85 sight-obstacle parts,
 103 masks on layers 0 and 1, 13 animation records, six native patches and
@@ -22,8 +32,8 @@ foliage, full crowns, terrain and mission visuals remain separate work.
 Run from the repository root, creating the work directory first:
 
 ```sh
-mkdir -p level-editor/work/croisement01-refinement
-node level-editor/pipeline/src/export-interior-layers.ts Croisement01 level-editor/work/croisement01-refinement/source-states
+mkdir -p level-editor/work/active/croisement01
+node level-editor/pipeline/src/export-interior-layers.ts Croisement01 level-editor/work/active/croisement01/source-states
 python3 level-editor/blender/croisement01/source_inventory.py
 python3 level-editor/blender/croisement01/survey.py
 python3 level-editor/blender/croisement01/catalog.py

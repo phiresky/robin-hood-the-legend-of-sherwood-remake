@@ -5,7 +5,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from review_evidence import sha
 from asset_index import write_asset_index
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 kind=sys.argv[1];assert kind in {'tree21','tree22','tree71'}
 group='062' if kind=='tree71' else '061'
 asset='croisement01-tree-'+kind[4:];stage=R/(kind+'-integration-v2');p=stage/'assets'/asset/'asset.json'

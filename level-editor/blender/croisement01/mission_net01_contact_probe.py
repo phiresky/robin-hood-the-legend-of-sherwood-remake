@@ -8,7 +8,7 @@ from mission_net01_intersections import intersection_points
 import bpy
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
-OUT=ROOT/'level-editor/work/croisement01-refinement/mission-net01-oct12-v1'
+OUT=ROOT/'level-editor/work/active/croisement01/mission-net01-oct12-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 acquire(slots=2)
 try:

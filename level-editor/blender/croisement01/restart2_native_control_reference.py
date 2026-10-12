@@ -3,7 +3,7 @@ from pathlib import Path
 import json,hashlib,math
 import numpy as np
 from PIL import Image
-b=Path('level-editor/work/croisement01-refinement/restart2/native-controls-private-oct11-v2');lib=Path('level-editor/library');manifest=json.loads((b/'manifest.json').read_text());resources={r['path']:Path(r['source']) for r in manifest['resources']};images={}
+b=Path('level-editor/work/active/croisement01/restart2/native-controls-private-oct11-v2');lib=Path('level-editor/library');manifest=json.loads((b/'manifest.json').read_text());resources={r['path']:Path(r['source']) for r in manifest['resources']};images={}
 def image(f):
  p=f['path']
  if p not in images:

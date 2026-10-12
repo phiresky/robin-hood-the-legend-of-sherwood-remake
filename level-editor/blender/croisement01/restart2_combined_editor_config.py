@@ -9,7 +9,7 @@ from scene_manifest import scene_metadata
 from prepare_publication_browser import bound_patches
 from asset_index import write_asset_index
 from review_evidence import sha
-stage=ROOT/'level-editor/work/croisement01-refinement/restart2/combined-integration-batch-v1'
+stage=ROOT/'level-editor/work/active/croisement01/restart2/combined-integration-batch-v1'
 revision = sys.argv[1] if len(sys.argv) > 1 else 'full-editor-private-v1'
 live_mode=revision.startswith('full-editor-live-v')
 assert (live_mode or revision.startswith('full-editor-private-v')) and Path(revision).name == revision

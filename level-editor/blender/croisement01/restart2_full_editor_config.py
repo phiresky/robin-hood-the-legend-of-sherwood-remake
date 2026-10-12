@@ -9,7 +9,7 @@ from scene_manifest import scene_metadata
 from prepare_publication_browser import bound_patches
 from asset_index import write_asset_index
 from review_evidence import sha
-library=ROOT/'level-editor/library';stage=ROOT/'level-editor/work/croisement01-refinement/restart2/tree18-integration-v1'
+library=ROOT/'level-editor/library';stage=ROOT/'level-editor/work/active/croisement01/restart2/tree18-integration-v1'
 revision = sys.argv[1] if len(sys.argv) > 1 else 'full-editor-live-v2'
 assert revision.startswith('full-editor-live-v') and Path(revision).name == revision
 out=stage/revision;out.mkdir(exist_ok=False)

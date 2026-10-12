@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from scipy.optimize import minimize
 
-R = Path(__file__).resolve().parents[3] / 'level-editor/work/croisement01-refinement/restart2/tree02-filtered-gap-probe-v3'
+R = Path(__file__).resolve().parents[3] / 'level-editor/work/active/croisement01/restart2/tree02-filtered-gap-probe-v3'
 probe = json.loads((R / 'report.json').read_text())
 plan = json.loads((R / 'wrapped-bark-donor-plan.json').read_text())
 packet = probe['packets']['Tree02 upper stems']

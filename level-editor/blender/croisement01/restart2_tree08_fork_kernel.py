@@ -28,7 +28,7 @@ def poly(vertices, faces):
 
 def main():
     vtkSMPTools.Initialize(2)
-    root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
+    root = Path(__file__).resolve().parents[2] / 'work/active/croisement01/restart2'
     source = root / 'tree08-v12-local-fork-cpu-v1'
     data = np.load(source / 'minimal-forks.npz')
     origin = np.array([488., -667., 230.])

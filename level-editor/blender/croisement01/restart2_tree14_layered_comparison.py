@@ -24,7 +24,7 @@ sys.path[:0] = [str(ROOT/'level-editor/refinement'), str(ROOT/'level-editor/refi
 from render_slots import acquire
 from foliage_trees import geometry_hash
 
-BASE = ROOT/'level-editor/work/croisement01-refinement'
+BASE = ROOT/'level-editor/work/active/croisement01'
 R = BASE/'restart2'
 OUT = R/'tree14-layered-comparison-v1'
 MODEL = R/'tree14-wood-v16-projected/assets/croisement01-tree-14/model.blend'

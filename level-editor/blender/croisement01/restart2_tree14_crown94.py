@@ -23,7 +23,7 @@ acquire(slots=2)
 assert shutil.disk_usage(ROOT).free > 10*1024**3 + 512*1024**2
 assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines()
                 if x.startswith('MemAvailable:')))*1024 > 6*1024**3
-base = ROOT/'level-editor/work/croisement01-refinement/restart2'
+base = ROOT/'level-editor/work/active/croisement01/restart2'
 wood = base/'tree14-wood-v16-projected/assets/croisement01-tree-14'
 out = base/'tree14-crown94-geometry-v6'
 assert not out.exists()

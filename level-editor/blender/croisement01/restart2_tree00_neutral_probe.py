@@ -11,7 +11,7 @@ sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
 from texture_camera import orthographic_extents
 from render_slots import acquire
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 B=R/'approved-tree00-wood-fill-v1/croisement01-tree-00/baked-v3-luminance'
 W=B/'actual-review-v1'
 def main():

@@ -9,7 +9,7 @@ from vtkmodules.vtkCommonDataModel import vtkGenericCell, vtkStaticCellLocator
 from restart2_tree08_fork_kernel import poly
 from restart2_tree08_local_fork import audit
 
-R = Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
+R = Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2'
 out = R/(sys.argv[1] if len(sys.argv)>1 else 'tree08-inferred-shell-union-v1')
 assert out.resolve().parent == R.resolve()
 before = np.load(R/'tree08-source-guarded-fairing-cpu-v2-oriented/candidate.npz')

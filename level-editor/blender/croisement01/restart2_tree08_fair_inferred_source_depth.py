@@ -7,7 +7,7 @@ import numpy as np
 from scipy.sparse import coo_matrix,diags
 from restart2_tree08_local_fork import audit
 
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2'
 packet=R/sys.argv[1]
 assert packet.resolve().parent==R.resolve()
 out=R/'tree08-projected-depth-fairing-v1'

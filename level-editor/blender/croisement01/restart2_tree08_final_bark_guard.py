@@ -6,7 +6,7 @@ from PIL import Image
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';W=R/'approved-tree08-bark-fill-v3/croisement01-tree-08';O=W/'baked-v8-connected-gaps'
+R=ROOT/'level-editor/work/active/croisement01/restart2';W=R/'approved-tree08-bark-fill-v3/croisement01-tree-08';O=W/'baked-v8-connected-gaps'
 def geometry():
  o=next(o for o in bpy.context.scene.objects if o.type=='MESH')
  return hashlib.sha256(b''.join([np.array(o.matrix_world).tobytes(),np.array([v.co[:] for v in o.data.vertices]).tobytes(),np.array([p.vertices[:] for p in o.data.polygons]).tobytes(),np.array([n.vector[:] for n in o.data.corner_normals]).tobytes()])).hexdigest()

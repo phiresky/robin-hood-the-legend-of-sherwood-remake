@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image,ImageDraw
 from scipy.interpolate import PchipInterpolator
 from restart2_tree08_junction_proof import native_depth
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';out=R/'tree08-root-ray-cpu-v2';out.mkdir(exist_ok=True);origin=np.array([552.,-672.,235.]);s,c=np.sin(np.radians(35)),np.cos(np.radians(35));ray=np.array([0,-c,s]);source=R/'tree08-v12-chain-cpu-v3';audit=json.loads((source/'report.json').read_text());archive=np.load(source/'mesh.npz');plan=json.loads((source/'fork-union-plan.json').read_text());used={i for g in plan['groups'] for i in g};sections=[]
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2';out=R/'tree08-root-ray-cpu-v2';out.mkdir(exist_ok=True);origin=np.array([552.,-672.,235.]);s,c=np.sin(np.radians(35)),np.cos(np.radians(35));ray=np.array([0,-c,s]);source=R/'tree08-v12-chain-cpu-v3';audit=json.loads((source/'report.json').read_text());archive=np.load(source/'mesh.npz');plan=json.loads((source/'fork-union-plan.json').read_text());used={i for g in plan['groups'] for i in g};sections=[]
 for name in ['tree08-v12-remaining-group0-stitched-v3-conformed-stable-depth-corrected','tree08-v12-remaining-group1-stitched-v2-stable']:
  a=np.load(R/name/'candidate.npz');sections.append((a['vertices'],a['faces']))
 for entry in audit['mesh_sections']:

@@ -2,7 +2,7 @@
 import copy,hashlib,json,struct
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 LIB=ROOT/'level-editor/library'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')

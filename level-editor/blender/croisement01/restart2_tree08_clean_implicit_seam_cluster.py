@@ -3,7 +3,7 @@ import hashlib,json
 from pathlib import Path
 import numpy as np
 from restart2_tree08_local_fork import audit
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';prior=R/'tree08-implicit-collar-v6-seam-clean';out=R/'tree08-implicit-collar-v7-seam-cluster';assert not out.exists()
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2';prior=R/'tree08-implicit-collar-v6-seam-clean';out=R/'tree08-implicit-collar-v7-seam-cluster';assert not out.exists()
 a=np.load(prior/'candidate.npz');v,f=a['vertices'],a['faces'];keep=167692;remove=[167690,167693]
 assert np.linalg.norm(v[remove]-v[keep],axis=1).max()<.015
 assert set(f[47283])=={4815,167690,167692} and set(f[332130])=={167690,167521,167693}

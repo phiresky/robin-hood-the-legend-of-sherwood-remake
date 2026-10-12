@@ -17,7 +17,7 @@ from render_slots import acquire,release
 from review_evidence import sha
 from restart2_tree08_union import topology
 from tree08_join_normals import apply_join_normals
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 packet=R/'tree08-implicit-collar-v19-loft-seam'
 parent=R/'tree08-wood-prototype-v17-bank-bands/model.blend'
 out=R/'tree08-wood-prototype-v23-smooth-join'

@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[3]
-R = ROOT/'level-editor/work/croisement01-refinement/restart2'
+R = ROOT/'level-editor/work/active/croisement01/restart2'
 OUT = R/'tree14-upper-branch-profiles-v2'
 OUT.mkdir(exist_ok=False)
 prep = json.loads((R/'tree14-source-preparation-v1/preparation.json').read_text())

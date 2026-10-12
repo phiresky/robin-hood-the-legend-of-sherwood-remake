@@ -5,7 +5,7 @@ import subprocess
 import sys
 
 ROOT=Path(__file__).resolve().parents[3]
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 recipes=Path(__file__).parent
 prior=['tree08-main-stem-radial-fairing-v2-oriented','tree08-main-stem-radial-fairing-v3-crossing-buffer','tree08-main-stem-radial-fairing-v4-constraints']
 result=R/'tree08-stem-constraint-solve-v1.json'

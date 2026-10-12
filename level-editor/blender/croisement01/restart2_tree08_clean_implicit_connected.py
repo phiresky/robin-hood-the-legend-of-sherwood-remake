@@ -7,7 +7,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 from restart2_tree08_local_fork import audit
 
-R = Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
+R = Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2'
 smooth_transition='--smooth-transition' in sys.argv
 source = R/('tree08-implicit-collar-v12-smooth-connected' if smooth_transition else 'tree08-implicit-collar-v4-connected')/'candidate.npz'
 data = np.load(source)

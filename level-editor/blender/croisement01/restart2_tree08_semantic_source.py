@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.ndimage import label,convolve
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];base=ROOT/'level-editor/work/croisement01-refinement/baseline';p=argparse.ArgumentParser();p.add_argument('output',type=Path);a=p.parse_args();a.output.mkdir(exist_ok=False);rows={r['index']:r for r in json.loads((base/'masks/manifest.json').read_text())['masks']};src=Image.open(base/'covered.png').convert('RGB');masks={}
+ROOT=Path(__file__).resolve().parents[3];base=ROOT/'level-editor/work/active/croisement01/baseline';p=argparse.ArgumentParser();p.add_argument('output',type=Path);a=p.parse_args();a.output.mkdir(exist_ok=False);rows={r['index']:r for r in json.loads((base/'masks/manifest.json').read_text())['masks']};src=Image.open(base/'covered.png').convert('RGB');masks={}
 for index in [8,93]:
  canvas=Image.new('L',src.size);canvas.paste(Image.open(base/'masks'/rows[index]['png']),tuple(rows[index]['box_top_left']));masks[index]=np.asarray(canvas)>0
 shared=masks[8]&masks[93];rgb=np.asarray(src);values=rgb.astype(float);R,G,B=values.transpose(2,0,1);v=values.max(2);sat=(v-values.min(2))/np.maximum(v,1)

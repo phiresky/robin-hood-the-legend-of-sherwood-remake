@@ -3,7 +3,7 @@ import hashlib,json,subprocess,sys
 from pathlib import Path
 import numpy as np
 from restart2_tree08_local_fork import audit
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';prior=R/'tree08-implicit-collar-v7-seam-cluster';out=R/'tree08-implicit-collar-v8-native-margin';assert not out.exists()
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2';prior=R/'tree08-implicit-collar-v7-seam-cluster';out=R/'tree08-implicit-collar-v8-native-margin';assert not out.exists()
 source=prior/'candidate.npz';proofpath=prior/'intersection-guard-fast.json';proof=json.loads(proofpath.read_text());assert proof['status']=='PASS_NO_INTERSECTIONS' and proof['candidate_sha256']==hashlib.sha256(source.read_bytes()).hexdigest()
 a=np.load(source);v,f=a['vertices'],a['faces'];assert np.all(v[f[271511],0]==732.5)
 center=np.array([732.5,-672.,286.8128900683257]);distance=np.linalg.norm(v-center,axis=1);weight=np.clip(1-distance/4,0,1);weight=weight*weight*(3-2*weight)

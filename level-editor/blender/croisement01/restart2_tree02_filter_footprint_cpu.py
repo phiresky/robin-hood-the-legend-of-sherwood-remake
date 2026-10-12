@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
-R = ROOT / 'level-editor/work/croisement01-refinement/restart2'
+R = ROOT / 'level-editor/work/active/croisement01/restart2'
 P = R / 'tree02-rendered-gap-probe-v2/report.json'
 B = R / 'approved-tree02-fill-v1/croisement01-tree-02/baked-v4-bounded-bark-gaps'
 O = R / 'tree02-filter-footprint-cpu-v1'

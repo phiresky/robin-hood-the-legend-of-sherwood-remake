@@ -34,7 +34,7 @@ def main():
     parser.add_argument('--section', type=int, choices=[29, 93, 33, 96], default=29)
     args = parser.parse_args()
     suffix = '' if args.section == 29 else f'-{args.section}'
-    root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
+    root = Path(__file__).resolve().parents[2] / 'work/active/croisement01/restart2'
     packet = root / 'tree08-v12-local-fork-cpu-v1'
     output = root / f'tree08-v12-planar-junction{suffix}-v1'
     output.mkdir(exist_ok=False)

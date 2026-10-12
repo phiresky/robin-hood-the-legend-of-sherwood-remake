@@ -5,7 +5,7 @@ import bpy,bmesh
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'));sys.path.insert(0,str(Path(__file__).parent))
 from render_slots import acquire,release
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';p=argparse.ArgumentParser();p.add_argument('--tree',type=int,choices=[4,5],required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);v={4:6,5:7}[a.tree];asset=f'croisement01-tree-{a.tree:02d}';source=R/f'tree{a.tree:02d}-v{v}';dest=R/f'tree{a.tree:02d}-v{v+1}';w=source/'assets'/asset;out=dest/'assets'/asset;proof=json.loads((w/'inspection/independent-wood-coverage-v2.json').read_text());assert sha(w/'model.blend')==proof['model_sha256'];assert not dest.exists();assert all(h==0 for row in proof['topology'] for n,h in zip(row['components'],row['component_source_hits']) if n<100);acquire(slots=2)
+R=ROOT/'level-editor/work/active/croisement01/restart2';p=argparse.ArgumentParser();p.add_argument('--tree',type=int,choices=[4,5],required=True);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);v={4:6,5:7}[a.tree];asset=f'croisement01-tree-{a.tree:02d}';source=R/f'tree{a.tree:02d}-v{v}';dest=R/f'tree{a.tree:02d}-v{v+1}';w=source/'assets'/asset;out=dest/'assets'/asset;proof=json.loads((w/'inspection/independent-wood-coverage-v2.json').read_text());assert sha(w/'model.blend')==proof['model_sha256'];assert not dest.exists();assert all(h==0 for row in proof['topology'] for n,h in zip(row['components'],row['component_source_hits']) if n<100);acquire(slots=2)
 try:
  dest.mkdir();out.mkdir(parents=True)
  for file in source.iterdir():

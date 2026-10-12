@@ -10,7 +10,7 @@ sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
 from render_slots import acquire
 from evidence_io import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 W=R/'grass75-volume-v13/assets/croisement01-grass-75'
 def main():
  acquire();bpy.ops.wm.open_mainfile(filepath=str(W/'model.blend'))

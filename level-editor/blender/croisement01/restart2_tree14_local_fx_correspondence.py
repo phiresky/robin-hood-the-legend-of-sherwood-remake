@@ -8,7 +8,7 @@ from PIL import Image
 from scipy.ndimage import uniform_filter
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/croisement01-refinement/restart2'
+BASE = ROOT / 'level-editor/work/active/croisement01/restart2'
 OUT = BASE / 'tree14-local-fx-correspondence-v1'
 OUT.mkdir(exist_ok=False)
 frames = json.loads((BASE / 'tree14-native-crown-animation-source-v1/source.json').read_text())['frames']

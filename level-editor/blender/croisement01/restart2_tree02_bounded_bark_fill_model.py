@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'));sys.path.insert(0,str(Path(__file__).parent))
 from render_slots import acquire,release
 from restart2_bake_texture_candidate import snapshot,pixels,array_hash
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';C=R/'approved-tree02-fill-v1/croisement01-tree-02';B=C/'baked-v3-same-leaf-crown';O=C/'baked-v4-bounded-bark-gaps';P=R/'tree02-rendered-gap-probe-v2'
+R=ROOT/'level-editor/work/active/croisement01/restart2';C=R/'approved-tree02-fill-v1/croisement01-tree-02';B=C/'baked-v3-same-leaf-crown';O=C/'baked-v4-bounded-bark-gaps';P=R/'tree02-rendered-gap-probe-v2'
 residual='--residual' in sys.argv
 if residual:
  B=C/'baked-v4-bounded-bark-gaps';O=C/'baked-v5-filtered-bark-gaps';P=R/'tree02-filtered-gap-probe-v3'

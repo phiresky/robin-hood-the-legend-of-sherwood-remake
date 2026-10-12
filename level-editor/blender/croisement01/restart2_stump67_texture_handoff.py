@@ -9,7 +9,7 @@ from review_evidence import sha
 def read(p):return json.loads(p.read_text())
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main():
-    r=ROOT/'level-editor/work/croisement01-refinement/restart2'
+    r=ROOT/'level-editor/work/active/croisement01/restart2'
     case=r/'approved-stump67-wood-fill-v1/croisement01-east-ivy-stump';asset='croisement01-east-ivy-stump'
     base=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches'
     user=base/'batch-v7/user-approval.json';adapter=base/'adapters-v7/stump67-texture.json';gallery=base/'batch-v7/evidence.json'

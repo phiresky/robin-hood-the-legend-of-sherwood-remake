@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from asset_index import write_asset_index
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2/rock29-integration-v1'
+R=ROOT/'level-editor/work/active/croisement01/restart2/rock29-integration-v1'
 scene=json.loads((ROOT/'level-editor/library/scenes/croisement01.rhlos-map.json').read_text())
 p=R/'assets/croisement01-small-bank-stones/asset.json';d=json.loads(p.read_text())
 assert 'gameplay' not in d

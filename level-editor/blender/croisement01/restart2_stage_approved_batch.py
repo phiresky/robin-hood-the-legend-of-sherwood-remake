@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from asset_index import write_asset_index
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 CASES=[('rock29-integration-v1','croisement01-small-bank-stones','018','rock-29-approved'),('tree20-integration-v2','croisement01-tree-20','082','tree-20-approved'),('stump68-integration-v2','croisement01-southeast-small-stump','059','stump-68-wood-approved')]
 out=R/'approved-integration-batch-v2';out.mkdir(exist_ok=False)
 library=ROOT/'level-editor/library';live=library/'scenes/croisement01.rhlos-map.json';original=json.loads(live.read_text());result=copy.deepcopy(original)

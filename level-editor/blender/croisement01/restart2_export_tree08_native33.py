@@ -8,7 +8,7 @@ from render_slots import acquire,release
 from export_editor import export_asset_library
 from asset_index import write_asset_index
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 asset='croisement01-tree-08'
 receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json'
 assert sha(receipt)=='d435a76b08eb3ac616f1ae2ffcdf19a7875969e515dd01f65de1871ca886ef1d'
@@ -36,7 +36,7 @@ try:
  catalog=dict(version=1,map='Croisement01',groups=[dict(id=asset,name='Tree08 branching wood',parts=[dict(obstacle=33,name='Approved trunk, branches and roots')])],canonical_owners={node:asset},review_notes=['Wood appearance and shape approved. Source/art comparison identifies existing033 trunk proxy; retain all existing033 gameplay, create no new mask association.'])
  out=R/'tree08-native33-export-v1';out.mkdir()
  (out/'grouping.json').write_text(json.dumps(catalog,indent=2)+'\n')
- report=export_asset_library('Croisement01',out/'assets',ROOT/'level-editor/work/croisement01-refinement/baseline/Croisement01.rhp.json',asset_ids=[asset],catalog=catalog,standalone_pivots={asset:old['source_origin_scene']})
+ report=export_asset_library('Croisement01',out/'assets',ROOT/'level-editor/work/active/croisement01/baseline/Croisement01.rhp.json',asset_ids=[asset],catalog=catalog,standalone_pivots={asset:old['source_origin_scene']})
  descriptor=json.loads((out/'assets'/asset/'asset.json').read_text());assert [p['node'] for p in descriptor['parts']]==[node]
  assert descriptor['source_origin_scene']==old['source_origin_scene']
  generated=descriptor['parts'][0]['obstacle_local_game'];existing=old['parts'][0]['obstacle_local_game'];assert {k:v for k,v in generated.items() if k!='points'}=={k:v for k,v in existing.items() if k!='points'}

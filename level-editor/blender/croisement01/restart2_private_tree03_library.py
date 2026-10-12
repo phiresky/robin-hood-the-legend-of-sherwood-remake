@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from review_evidence import sha
-stage=ROOT/'level-editor/work/croisement01-refinement/restart2/tree03-integration-batch-v1';live=ROOT/'level-editor/library';out=stage/'private-library-v1';out.mkdir(exist_ok=False)
+stage=ROOT/'level-editor/work/active/croisement01/restart2/tree03-integration-batch-v1';live=ROOT/'level-editor/library';out=stage/'private-library-v1';out.mkdir(exist_ok=False)
 for entry in live.iterdir():
  if entry.name not in ['3d-assets','scenes']:(out/entry.name).symlink_to(entry,target_is_directory=entry.is_dir())
 (out/'scenes').mkdir()
@@ -16,7 +16,7 @@ for entry in (live/'3d-assets').iterdir():
  if entry.name not in ['croisement01','index.json','blobs']:(out/'3d-assets'/entry.name).symlink_to(entry,target_is_directory=entry.is_dir())
 (out/'3d-assets/blobs').mkdir()
 for entry in (live/'3d-assets/blobs').iterdir():(out/'3d-assets/blobs'/entry.name).symlink_to(entry,target_is_directory=entry.is_dir())
-for entry in (ROOT/'level-editor/work/croisement01-refinement/restart2/tree03-visual-transfer-v1/3d-assets/blobs').iterdir():
+for entry in (ROOT/'level-editor/work/active/croisement01/restart2/tree03-visual-transfer-v1/3d-assets/blobs').iterdir():
  target=out/'3d-assets/blobs'/entry.name
  if not target.exists():target.symlink_to(entry)
 staged=json.loads((stage/'assets/index.json').read_text())['assets'];staged_ids={e['id'] for e in staged}

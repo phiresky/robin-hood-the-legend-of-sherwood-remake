@@ -11,7 +11,7 @@ from texture_staging import verify_baked_geometry
 from export_editor import export_asset_library
 from review_evidence import sha
 
-R = ROOT/'level-editor/work/croisement01-refinement/restart2'
+R = ROOT/'level-editor/work/active/croisement01/restart2'
 asset = 'croisement01-tree-02'
 receipt = ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/next-tree02-channels-mounds-v1/user-approval.json'
 approval = json.loads(receipt.read_text())
@@ -42,7 +42,7 @@ try:
     out = R/'tree02-approved-integration-v1'
     out.mkdir(exist_ok=False)
     catalog = json.loads(grouping.read_text())
-    report = export_asset_library('Croisement01', out/'assets', ROOT/'level-editor/work/croisement01-refinement/baseline/Croisement01.rhp.json', asset_ids=[asset], catalog=catalog)
+    report = export_asset_library('Croisement01', out/'assets', ROOT/'level-editor/work/active/croisement01/baseline/Croisement01.rhp.json', asset_ids=[asset], catalog=catalog)
     assert sha(model) == decision['model_sha256']
     files = {str(p.relative_to(out)): sha(p) for p in out.rglob('*') if p.is_file()}
     (out/'export-proof.json').write_text(json.dumps(dict(scope='Private approved tree02 export; no canonical writes', geometry=proof, export=report, approval_sha256=sha(receipt), grouping_sha256=sha(grouping), files=files), indent=2)+'\n')

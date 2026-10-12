@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
-import {readStoredMap} from '../../../../pipeline/src/stored-map.ts';
-import {readSceneAsset} from '../../../../pipeline/src/scene-assets.ts';
+import {readStoredMap} from '../../../../../pipeline/src/stored-map.ts';
+import {readSceneAsset} from '../../../../../pipeline/src/scene-assets.ts';
 const [file,library]=process.argv.slice(2);
 const raw=JSON.parse(await fs.readFile(file,'utf8'));
 const document=await readStoredMap(file,library);

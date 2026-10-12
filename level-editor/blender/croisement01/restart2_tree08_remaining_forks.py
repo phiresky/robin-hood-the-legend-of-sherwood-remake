@@ -107,7 +107,7 @@ def main():
     parser.add_argument('--local-contacts', action='store_true')
     parser.add_argument('--revision', type=int, default=1)
     args = parser.parse_args()
-    root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
+    root = Path(__file__).resolve().parents[2] / 'work/active/croisement01/restart2'
     output = root / f'tree08-v12-remaining-group{args.group}-v{args.revision}'
     output.mkdir(exist_ok=True)
     meshes, adjacency, groups, origin = inputs(root)

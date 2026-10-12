@@ -3,7 +3,7 @@ import copy,hashlib,json,math,struct
 from pathlib import Path
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/croisement01-refinement/restart2';LIB=ROOT/'level-editor/library';source=LIB/'3d-assets/croisement01/croisement01-group-005';out=R/'tree03-visual-transfer-v1';out.mkdir(exist_ok=False);asset=out/'3d-assets/croisement01/croisement01-group-005';asset.mkdir(parents=True);blobs=out/'3d-assets/blobs';blobs.mkdir()
+ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/active/croisement01/restart2';LIB=ROOT/'level-editor/library';source=LIB/'3d-assets/croisement01/croisement01-group-005';out=R/'tree03-visual-transfer-v1';out.mkdir(exist_ok=False);asset=out/'3d-assets/croisement01/croisement01-group-005';asset.mkdir(parents=True);blobs=out/'3d-assets/blobs';blobs.mkdir()
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 b=(source/'model.glb').read_bytes();length=struct.unpack_from('<I',b,12)[0];original=json.loads(b[20:20+length]);g=copy.deepcopy(original);descriptor=json.loads((source/'asset.json').read_text());node=next(n for n in g['nodes'] if n.get('name')=='building-017');mesh=g['meshes'][node['mesh']];assert len(mesh['primitives'])==1;primitive=mesh['primitives'][0]

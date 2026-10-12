@@ -7,7 +7,7 @@ from mathutils.bvhtree import BVHTree
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 p=argparse.ArgumentParser();p.add_argument('worker',type=Path);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);acquire(slots=2)
-root=ROOT/'level-editor/work/croisement01-refinement/restart2';wood=root/'tree06-v13/assets/croisement01-tree-06/model.blend';bank=a.worker.resolve()/'model.blend'
+root=ROOT/'level-editor/work/active/croisement01/restart2';wood=root/'tree06-v13/assets/croisement01-tree-06/model.blend';bank=a.worker.resolve()/'model.blend'
 def tree(objects):
  p=[];f=[]
  for o in objects:

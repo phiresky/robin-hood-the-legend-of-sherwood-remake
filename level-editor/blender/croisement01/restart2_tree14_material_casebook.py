@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw
 from scipy.ndimage import label, binary_erosion
 
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement01-refinement'
+BASE=ROOT/'level-editor/work/active/croisement01'
 PRIOR=BASE/'restart2/tree14-layered-comparison-v1'
 OUT=BASE/'restart2/tree14-complete-material-casebook-v1'
 assert not OUT.exists()

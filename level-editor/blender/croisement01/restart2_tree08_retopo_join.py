@@ -5,7 +5,7 @@ from collections import Counter,defaultdict
 import numpy as np
 from PIL import Image
 from restart2_tree08_local_fork import audit
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';source=R/'tree08-implicit-collar-v13-smooth-clean/candidate.npz';out=R/'tree08-implicit-collar-v19-loft-seam';assert not out.exists()
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2';source=R/'tree08-implicit-collar-v13-smooth-clean/candidate.npz';out=R/'tree08-implicit-collar-v19-loft-seam';assert not out.exists()
 assert shutil.disk_usage(R).free>=10*1024**3
 assert next(int(line.split()[1]) for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:'))>=6*1024**2
 a=np.load(source);v,f=a['vertices'],a['faces'];s,c=np.sin(np.radians(35)),np.cos(np.radians(35));down=np.array([0.,-s,-c]);ray=np.array([0.,-c,s]);ny=v@down

@@ -8,7 +8,7 @@ import sys
 import numpy as np
 
 ROOT=Path(__file__).resolve().parents[3]
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 packet=R/sys.argv[1]
 assert packet.resolve().parent==R.resolve()
 baseline=R/'tree08-connected-tip-cleanup-v2'

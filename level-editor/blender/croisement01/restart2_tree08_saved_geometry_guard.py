@@ -5,7 +5,7 @@ import bpy
 import numpy as np
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';model=R/'tree08-wood-prototype-v23-smooth-join/model.blend';packet=R/'tree08-implicit-collar-v19-loft-seam/candidate.npz'
+R=ROOT/'level-editor/work/active/croisement01/restart2';model=R/'tree08-wood-prototype-v23-smooth-join/model.blend';packet=R/'tree08-implicit-collar-v19-loft-seam/candidate.npz'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 acquire(slots=2)
 try:

@@ -11,7 +11,7 @@ sys.path.insert(0,str(Path(__file__).parent))
 from render_slots import acquire
 from review_evidence import sha
 import render_candidate
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 identifier='croisement01-tree-08'
 case=R/'approved-tree08-bark-fill-v3'/identifier
 stage=R/'tree08-approved-wood-export-v2';asset=stage/'assets'/identifier

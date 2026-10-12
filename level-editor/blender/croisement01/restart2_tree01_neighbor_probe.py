@@ -4,7 +4,7 @@ from pathlib import Path
 import bpy
 sys.path.insert(0,str(Path(__file__).resolve().parents[3]/'level-editor/refinement'))
 from render_slots import acquire
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';acquire();bpy.ops.wm.open_mainfile(filepath=str(R/'tree01-soil-joint-v8/assets/croisement01-tree-01/model.blend'))
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2';acquire();bpy.ops.wm.open_mainfile(filepath=str(R/'tree01-soil-joint-v8/assets/croisement01-tree-01/model.blend'))
 rows=[]
 for obj in bpy.data.objects:
  if obj.type!='MESH' or obj.get('source_node') not in {'building-007','building-008','building-029','tree01-local-soil-joint'}:continue

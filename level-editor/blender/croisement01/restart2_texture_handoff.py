@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from texture_decisions import evidence, fields
 from texture_staging import validate_texture_handoff
 from review_evidence import sha
-R = ROOT / 'level-editor/work/croisement01-refinement/restart2'
+R = ROOT / 'level-editor/work/active/croisement01/restart2'
 def read(p): return json.loads(p.read_text())
 def write(p, d): p.write_text(json.dumps(d, indent=2) + '\n')
 def main(kind='tree18'):

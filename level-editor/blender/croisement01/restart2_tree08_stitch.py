@@ -21,7 +21,7 @@ def main():
     parser.add_argument('--triangle-packet', type=Path)
     args = parser.parse_args()
     suffix = '' if args.section == 29 else f'-{args.section}'
-    root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
+    root = Path(__file__).resolve().parents[2] / 'work/active/croisement01/restart2'
     source = root / f'tree08-v12-planar-junction{suffix}-v1'
     output = root / f'tree08-v12-planar-junction{suffix}-stitched-v1'
     if args.threeway:

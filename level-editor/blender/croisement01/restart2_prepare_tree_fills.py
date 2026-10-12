@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from prepare_texture_packet import prepare
 from review_evidence import sha
-OUT=ROOT/'level-editor/work/croisement01-refinement/restart2'
+OUT=ROOT/'level-editor/work/active/croisement01/restart2'
 READY=OUT/'ready-trees18-20-v2'
 def read(p):return json.loads(p.read_text())
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')

@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/croisement01-refinement'
+BASE = ROOT / 'level-editor/work/active/croisement01'
 
 
 def main():

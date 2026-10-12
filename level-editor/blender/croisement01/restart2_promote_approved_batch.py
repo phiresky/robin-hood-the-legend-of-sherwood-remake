@@ -10,7 +10,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from review_evidence import sha
 from asset_index import validate_asset_index
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';stage=R/'approved-integration-batch-v2';library=ROOT/'level-editor/library'
+R=ROOT/'level-editor/work/active/croisement01/restart2';stage=R/'approved-integration-batch-v2';library=ROOT/'level-editor/library'
 def read(p):return json.loads(p.read_text())
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 proof=read(stage/'scene-splice-proof.json');runtime=read(stage/'browser-export-proof.json')

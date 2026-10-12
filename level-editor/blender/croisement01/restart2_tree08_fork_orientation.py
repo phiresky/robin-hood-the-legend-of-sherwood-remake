@@ -43,7 +43,7 @@ def orient(faces):
 
 
 def main():
-    root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
+    root = Path(__file__).resolve().parents[2] / 'work/active/croisement01/restart2'
     packet = root / 'tree08-v12-local-fork-kernel-v1'
     data = np.load(packet / 'pair-29.npz')
     vertices, faces = data['vertices'], data['faces']

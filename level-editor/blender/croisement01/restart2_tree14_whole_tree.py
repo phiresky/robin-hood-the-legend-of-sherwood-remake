@@ -16,7 +16,7 @@ from PIL import Image, ImageDraw
 from scipy.ndimage import binary_dilation
 
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement01-refinement';R=BASE/'restart2'
+BASE=ROOT/'level-editor/work/active/croisement01';R=BASE/'restart2'
 OUT=R/'tree14-whole-tree-v1';ROLE=R/'tree14-whole-source-role-proposal-v1'
 WOOD=R/'tree14-wood-v16-projected/assets/croisement01-tree-14/model.blend'
 CROWN=R/'tree14-crown94-geometry-v6/model.blend'

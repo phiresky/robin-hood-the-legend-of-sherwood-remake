@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from restart2_tree08_local_fork import audit
 
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2'
 source=R/'tree08-connected-tip-cleanup-v2/candidate.npz'
 out=R/'tree08-main-stem-radial-fairing-v2-oriented'
 assert not out.exists()

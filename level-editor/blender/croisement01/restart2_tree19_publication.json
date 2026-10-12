@@ -7,12 +7,12 @@
     "3d-assets/croisement01/croisement01-tree-19/asset.json": "e808661531bbbbbbd1cd91bf2f546d95c2a115cf8c5fc0777d854efef9e96ad5"
   },
   "private_full_editor": {
-    "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree19-integration-batch-v1/full-editor-private-v3/result.json",
+    "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/active/croisement01/restart2/tree19-integration-batch-v1/full-editor-private-v3/result.json",
     "sha256": "48428ca9b3d90571d928da565bc5aa061c5ff7cd29480d1db173dd731f535346",
     "config_sha256": "259bbe244e7686c68b16455d3a83c4490b0b1e0599ddc5749cd07750318efb28",
     "checker_provenance_sha256": "531e18e660c79d4d772b5e87f0a91ec7e0db1ffab2df9ed6ba2ea325ccb05ff7"
   },
-  "backup": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree19-integration-batch-v1/publication-backup-v1",
+  "backup": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/active/croisement01/restart2/tree19-integration-batch-v1/publication-backup-v1",
   "unchanged_other_placements": 58,
   "unrelated_palette_entries_preserved": 1302,
   "protected_existing_asset_files": 366,
@@ -28,6 +28,6 @@
     "croisement01-tree-19-live-browser.png": "37cfc2a31129c07b9ffc638e843caf7d2c4cca6bb5f82edeb5dbde39ef05b591",
     "live-browser.png": "37cfc2a31129c07b9ffc638e843caf7d2c4cca6bb5f82edeb5dbde39ef05b591"
   },
-  "publication_path": "level-editor/work/croisement01-refinement/restart2/tree19-integration-batch-v1/publication.json",
+  "publication_path": "level-editor/work/active/croisement01/restart2/tree19-integration-batch-v1/publication.json",
   "publication_sha256": "b810af8ae63025d644ccb3598125dd862dde43eebdfcff736318051a183cccb9"
 }

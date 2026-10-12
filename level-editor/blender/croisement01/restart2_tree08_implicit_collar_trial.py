@@ -15,7 +15,7 @@ from vtkmodules.vtkFiltersCore import vtkFlyingEdges3D,vtkTriangleFilter
 from vtkmodules.util.numpy_support import vtk_to_numpy,numpy_to_vtk
 from restart2_tree08_fork_kernel import poly
 from restart2_tree08_local_fork import audit
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2'
 support='--restore-source' in sys.argv
 smooth_transition='--smooth-transition' in sys.argv
 base=('tree08-implicit-collar-v10-smooth-source' if support else 'tree08-implicit-collar-v9-smooth') if smooth_transition else ('tree08-implicit-collar-v2-source' if support else 'tree08-implicit-collar-v1')

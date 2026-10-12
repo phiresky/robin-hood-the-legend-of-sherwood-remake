@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 from restart2_tree08_junction_proof import native_depth
 from restart2_tree08_local_fork import audit
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';out=R/('tree08-root-ray-cpu-v4' if '--fit' in sys.argv else 'tree08-root-ray-cpu-v3');out.mkdir(exist_ok=False);parent=np.load(R/'tree08-root-ray-cpu-v1/candidate.npz');original=parent['before_vertices'];oldfaces=parent['faces'];s,c=np.sin(np.radians(35)),np.cos(np.radians(35));ray=np.array([0,-c,s]);down=np.array([0,-s,-c]);origin=np.array([552.,-672.,235.]);yn=-original[:,1]*s-original[:,2]*c
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2';out=R/('tree08-root-ray-cpu-v4' if '--fit' in sys.argv else 'tree08-root-ray-cpu-v3');out.mkdir(exist_ok=False);parent=np.load(R/'tree08-root-ray-cpu-v1/candidate.npz');original=parent['before_vertices'];oldfaces=parent['faces'];s,c=np.sin(np.radians(35)),np.cos(np.radians(35));ray=np.array([0,-c,s]);down=np.array([0,-s,-c]);origin=np.array([552.,-672.,235.]);yn=-original[:,1]*s-original[:,2]*c
 fit=json.loads((R/'tree08-root-ray-depth-fit-v1/report.json').read_text()) if '--fit' in sys.argv else None;fit_knots=np.array(fit['knots_native_y_ray_delta']) if fit else None;wanted=sorted(set(fit_knots[:,0].tolist()+[469,469.1])) if fit else [320,340,369,406,439,469,469.1,485];planes=[]
 for target in wanted:
  nearby=sorted(set([target-.04,target+.04]+[float(x) for x in yn if target-.04<x<target+.04]));lo,hi=max(zip(nearby,nearby[1:]),key=lambda pair:pair[1]-pair[0]);planes.append((lo+hi)/2)

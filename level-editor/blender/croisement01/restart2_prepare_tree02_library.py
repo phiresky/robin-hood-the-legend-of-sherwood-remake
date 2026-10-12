@@ -1,7 +1,7 @@
 """Prepare a private C1 library with scoped Tree02 catalog rows and retained payloads."""
 import copy,hashlib,json,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/croisement01-refinement/restart2';D=R/'tree02-publication-plan-v1';S=R/'tree02-integration-batch-v1';L=ROOT/'level-editor/library';A=L/'3d-assets';O=D/'private-library'
+ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/active/croisement01/restart2';D=R/'tree02-publication-plan-v1';S=R/'tree02-integration-batch-v1';L=ROOT/'level-editor/library';A=L/'3d-assets';O=D/'private-library'
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from asset_index import write_asset_index,validate_asset_index
 IDS={'croisement01-tree-02','croisement01-group-005'}

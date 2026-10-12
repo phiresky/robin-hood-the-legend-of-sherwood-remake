@@ -6,7 +6,7 @@ from mathutils import Matrix,Vector
 from mathutils.bvhtree import BVHTree
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';case=R/'approved-tree02-fill-v1/croisement01-tree-02';model=case/'baked-v1-luminance/worker.blend';out=case/'baked-v1-luminance/exact-crown-facing-probe.json';assert not out.exists();acquire();digest=hashlib.sha256(model.read_bytes()).hexdigest();bpy.ops.wm.open_mainfile(filepath=str(model));frames=json.loads((case/'experiment/views.json').read_text());o=bpy.data.objects['Tree02 inferred crown'];vertices=[];faces=[];offsets={}
+R=ROOT/'level-editor/work/active/croisement01/restart2';case=R/'approved-tree02-fill-v1/croisement01-tree-02';model=case/'baked-v1-luminance/worker.blend';out=case/'baked-v1-luminance/exact-crown-facing-probe.json';assert not out.exists();acquire();digest=hashlib.sha256(model.read_bytes()).hexdigest();bpy.ops.wm.open_mainfile(filepath=str(model));frames=json.loads((case/'experiment/views.json').read_text());o=bpy.data.objects['Tree02 inferred crown'];vertices=[];faces=[];offsets={}
 for name in frames['object_names']:
  obj=bpy.data.objects[name];offsets[name]=len(faces);base=len(vertices);vertices.extend(obj.matrix_world@v.co for v in obj.data.vertices);faces.extend(tuple(base+i for i in p.vertices) for p in obj.data.polygons)
 tree=BVHTree.FromPolygons(vertices,faces);cameras=[(v,Matrix(v['camera_matrix_world']).inverted(),Matrix(v['camera_matrix_world']).to_3x3()@Vector((0,0,1))) for v in frames['views']];no_one=[];no_two=[];witness=[]

@@ -6,7 +6,7 @@ from mathutils import Vector
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';revision=int(sys.argv[sys.argv.index('--revision')+1]) if '--revision' in sys.argv else 3;p=R/f'tree08-wood-prototype-v{revision}';actual='--actual' in sys.argv;out=p/('actual8-v2' if actual else 'solid8-v4');floor=10*1024**3;budget=128*1024**2
+R=ROOT/'level-editor/work/active/croisement01/restart2';revision=int(sys.argv[sys.argv.index('--revision')+1]) if '--revision' in sys.argv else 3;p=R/f'tree08-wood-prototype-v{revision}';actual='--actual' in sys.argv;out=p/('actual8-v2' if actual else 'solid8-v4');floor=10*1024**3;budget=128*1024**2
 
 policy_path=Path(sys.argv[sys.argv.index('--disk-policy')+1]).resolve() if '--disk-policy' in sys.argv else None
 policy=json.loads(policy_path.read_text()) if policy_path else None

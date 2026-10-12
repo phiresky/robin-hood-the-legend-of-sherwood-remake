@@ -1,7 +1,7 @@
 """Assemble immutable saved-model sheets and aligned source comparisons for net01."""
 import argparse,hashlib,json,math,pathlib
 from PIL import Image,ImageDraw
-ROOT=pathlib.Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement01-refinement/mission-net01-oct12-v1'
+ROOT=pathlib.Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement01/mission-net01-oct12-v1'
 def sha(p):return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
 def main():
  ap=argparse.ArgumentParser();ap.add_argument('--candidate',default='candidate-v1');args=ap.parse_args();p=OUT/args.candidate;r=json.loads((p/'report.json').read_text());s=json.loads((OUT/'source.json').read_text());assert sha(p/'model.blend')==r['model_sha256'];dest=p/'review';dest.mkdir(exist_ok=False);base=Image.open(OUT.parent/'baseline/covered.png').convert('RGBA');records=[]

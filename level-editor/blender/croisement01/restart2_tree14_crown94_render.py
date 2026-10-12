@@ -13,7 +13,7 @@ from render_multiview_asset import render
 acquire(slots=2)
 assert shutil.disk_usage(ROOT).free>10*1024**3
 assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024>6*1024**3
-out=ROOT/'level-editor/work/croisement01-refinement/restart2/tree14-crown94-geometry-v1'
+out=ROOT/'level-editor/work/active/croisement01/restart2/tree14-crown94-geometry-v1'
 checkpoint=json.loads((out/'checkpoint.json').read_text())
 assert sha(out/'model.blend')==checkpoint['model_sha256']
 bpy.ops.wm.open_mainfile(filepath=str(out/'model.blend'))

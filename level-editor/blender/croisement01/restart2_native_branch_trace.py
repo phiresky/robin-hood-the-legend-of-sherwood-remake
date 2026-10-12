@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.ndimage import distance_transform_edt,label
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];base=ROOT/'level-editor/work/croisement01-refinement';p=argparse.ArgumentParser();p.add_argument('mask',type=int);p.add_argument('output',type=Path);p.add_argument('--resume-incomplete',action='store_true');a=p.parse_args();assert not (a.output/'trace.json').exists();a.output.mkdir(exist_ok=a.resume_incomplete);row=next(r for r in json.loads((base/'baseline/masks/manifest.json').read_text())['masks'] if r['index']==a.mask);path=base/'baseline/masks'/row['png'];original=np.asarray(Image.open(path).convert('L'))>0;sk=original.copy();radius=distance_transform_edt(original)
+ROOT=Path(__file__).resolve().parents[3];base=ROOT/'level-editor/work/active/croisement01';p=argparse.ArgumentParser();p.add_argument('mask',type=int);p.add_argument('output',type=Path);p.add_argument('--resume-incomplete',action='store_true');a=p.parse_args();assert not (a.output/'trace.json').exists();a.output.mkdir(exist_ok=a.resume_incomplete);row=next(r for r in json.loads((base/'baseline/masks/manifest.json').read_text())['masks'] if r['index']==a.mask);path=base/'baseline/masks'/row['png'];original=np.asarray(Image.open(path).convert('L'))>0;sk=original.copy();radius=distance_transform_edt(original)
 for iteration in range(1000):
  removed=0
  for phase in range(2):

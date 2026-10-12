@@ -3,7 +3,7 @@ import hashlib,json
 from pathlib import Path
 import numpy as np
 from scipy.optimize import minimize,LinearConstraint,Bounds
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';out=R/'tree08-root-ray-depth-fit-v1';out.mkdir(exist_ok=False);field=np.load(R/'tree08-receiver-depth-cpu-v1/native-depth.npz');plan=json.loads((R/'tree08-topology-plan-v1/plan.json').read_text());y=np.arange(320,486,dtype=float);lower=np.zeros(len(y));samples=[]
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2';out=R/'tree08-root-ray-depth-fit-v1';out.mkdir(exist_ok=False);field=np.load(R/'tree08-receiver-depth-cpu-v1/native-depth.npz');plan=json.loads((R/'tree08-topology-plan-v1/plan.json').read_text());y=np.arange(320,486,dtype=float);lower=np.zeros(len(y));samples=[]
 for route in plan['structural_routes']:
  if route['name'] not in ['left basal root','descending root']:continue
  for x,py in route['source_path']:

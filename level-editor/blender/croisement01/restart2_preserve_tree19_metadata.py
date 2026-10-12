@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from asset_index import write_asset_index
 from review_evidence import sha
 
-R = ROOT / 'level-editor/work/croisement01-refinement/restart2/tree19-integration-v2'
+R = ROOT / 'level-editor/work/active/croisement01/restart2/tree19-integration-v2'
 scene_path = ROOT / 'level-editor/library/scenes/croisement01.rhlos-map.json'
 scene = json.loads(scene_path.read_text())
 path = R / 'assets/croisement01-tree-19/asset.json'

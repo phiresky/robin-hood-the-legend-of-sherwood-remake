@@ -6,7 +6,7 @@ from mathutils import Vector
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'));sys.path.insert(0,str(Path(__file__).parent))
 from render_slots import acquire
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';src=R/'tree05-v8';dest=R/'tree05-basal-depth-v8';w=src/'assets/croisement01-tree-05';out=dest/'assets/croisement01-tree-05';assert not dest.exists();acquire(slots=2)
+R=ROOT/'level-editor/work/active/croisement01/restart2';src=R/'tree05-v8';dest=R/'tree05-basal-depth-v8';w=src/'assets/croisement01-tree-05';out=dest/'assets/croisement01-tree-05';assert not dest.exists();acquire(slots=2)
 for f in src.iterdir():
  if f.is_file():dest.mkdir(exist_ok=True);shutil.copy2(f,dest/f.name)
 out.mkdir(parents=True)

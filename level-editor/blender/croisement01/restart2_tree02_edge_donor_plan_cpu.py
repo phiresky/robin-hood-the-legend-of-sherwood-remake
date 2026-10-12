@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
-P = ROOT / 'level-editor/work/croisement01-refinement/restart2' / ('tree02-filtered-gap-probe-v3' if '--residual' in sys.argv else 'tree02-rendered-gap-probe-v2')
+P = ROOT / 'level-editor/work/active/croisement01/restart2' / ('tree02-filtered-gap-probe-v3' if '--residual' in sys.argv else 'tree02-rendered-gap-probe-v2')
 report = json.loads((P / 'report.json').read_text())
 plans = []
 rejected = []

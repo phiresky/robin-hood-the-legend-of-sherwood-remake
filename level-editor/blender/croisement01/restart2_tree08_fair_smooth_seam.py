@@ -6,7 +6,7 @@ import numpy as np
 from scipy.sparse import coo_matrix,diags
 from PIL import Image
 from restart2_tree08_local_fork import audit
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2'
 taubin='--taubin' in sys.argv
 gentle='--gentle' in sys.argv
 iterations=2 if gentle else (30 if taubin else 160)

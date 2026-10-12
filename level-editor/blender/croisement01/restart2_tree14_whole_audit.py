@@ -21,7 +21,7 @@ from evidence_io import sha
 from foliage_trees import geometry_hash
 from render_multiview_asset import render
 
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';OUT=R/'tree14-whole-tree-v1'
+R=ROOT/'level-editor/work/active/croisement01/restart2';OUT=R/'tree14-whole-tree-v1'
 if '--' in sys.argv:
  args=sys.argv[sys.argv.index('--')+1:]
  assert len(args)==1

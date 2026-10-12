@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from asset_index import write_asset_index
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';LIB=ROOT/'level-editor/library'
+R=ROOT/'level-editor/work/active/croisement01/restart2';LIB=ROOT/'level-editor/library'
 def read(p):return json.loads(p.read_text())
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 asset='croisement01-tree-03';residual='croisement01-group-005';case=R/'approved-tree03-fill-v1'/asset;transfer=R/'tree03-visual-transfer-v1';proof=read(transfer/'proof.json');old=LIB/'3d-assets/croisement01'/residual

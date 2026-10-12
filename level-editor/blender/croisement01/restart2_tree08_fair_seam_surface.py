@@ -6,7 +6,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 from PIL import Image
 from restart2_tree08_local_fork import audit
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2'
 source=R/'tree08-implicit-collar-v13-smooth-clean/candidate.npz';out=R/'tree08-implicit-collar-v16-surface-seam';assert not out.exists()
 assert shutil.disk_usage(R).free>=10*1024**3
 assert next(int(line.split()[1]) for line in Path('/proc/meminfo').read_text().splitlines() if line.startswith('MemAvailable:'))>=6*1024**2

@@ -17,7 +17,7 @@ from evidence_io import sha
 from foliage_trees import geometry_hash
 from render_multiview_asset import render
 
-BASE = ROOT/'level-editor/work/croisement01-refinement/restart2'
+BASE = ROOT/'level-editor/work/active/croisement01/restart2'
 OLD = BASE/'tree14-whole-tree-v1'
 OUT = BASE/'tree14-whole-tree-v2'
 EXPECTED = '0903bce89abb49d6c1418c06ebefda21bfe488899b2047d7988441c9fc070765'

@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement01-refinement/mission-net01-oct12-v1'
+OUT=ROOT/'level-editor/work/active/croisement01/mission-net01-oct12-v1'
 def main():
  ap=argparse.ArgumentParser();ap.add_argument('--continuous',action='store_true');args=ap.parse_args()
  sources=json.loads((OUT/'source.json').read_text())['sources'];result={}

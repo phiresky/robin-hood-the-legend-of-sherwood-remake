@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];r=ROOT/'level-editor/work/croisement01-refinement';base=r/'restart2'
+ROOT=Path(__file__).resolve().parents[3];r=ROOT/'level-editor/work/active/croisement01';base=r/'restart2'
 out=base/'tree14-static-crown-material-partition-v1';out.mkdir(exist_ok=False)
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 meta=json.loads((r/'baseline/masks/manifest.json').read_text());meta={m['index']:m for m in meta['masks']}

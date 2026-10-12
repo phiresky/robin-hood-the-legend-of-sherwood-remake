@@ -8,7 +8,7 @@ from PIL import Image
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';revision=int(sys.argv[sys.argv.index('--')+1]) if '--' in sys.argv else 6;v=R/f'tree02-v{revision}';w=v/'assets/croisement01-tree-02';out=v/'miss-classification-v1.json';assert not out.exists();acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'));cfg=json.loads((w/'workspace.json').read_text());verts=[];faces=[]
+R=ROOT/'level-editor/work/active/croisement01/restart2';revision=int(sys.argv[sys.argv.index('--')+1]) if '--' in sys.argv else 6;v=R/f'tree02-v{revision}';w=v/'assets/croisement01-tree-02';out=v/'miss-classification-v1.json';assert not out.exists();acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'));cfg=json.loads((w/'workspace.json').read_text());verts=[];faces=[]
 for o in bpy.data.collections[cfg['collection_name']].all_objects:
  if o.type!='MESH' or o.get('asset_group')!=cfg['asset_id']:continue
  offset=len(verts);verts.extend(o.matrix_world@x.co for x in o.data.vertices);faces.extend(tuple(offset+i for i in f.vertices) for f in o.data.polygons)

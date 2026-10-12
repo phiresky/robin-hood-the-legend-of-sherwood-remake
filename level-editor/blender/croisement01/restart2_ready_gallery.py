@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
 from build_review_gallery import build
 from restart2_review_labels import labeled_sheet
-OUT=ROOT/'level-editor/work/croisement01-refinement/restart2'
+OUT=ROOT/'level-editor/work/active/croisement01/restart2'
 CASES=[('tree18-v4','croisement01-tree-18','Northeast Forked Forest Tree','95b1fc167963cc59bb2722f26296b8e10b11fe9ec7984218ef129930f5ca97cb'),('tree20-v3','croisement01-tree-20','Northern Shaded Forest Tree','58060c730823ea1ac2bf31e82e5bb20d923fb68f1cb10b1517a5f691fc035472')]
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main(destination='ready-trees18-20-v2', cases=CASES, map_title='Crossings01 tree geometry', notes_override=None):

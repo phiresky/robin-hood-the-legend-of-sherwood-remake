@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw
 from scipy.ndimage import binary_dilation, binary_erosion, distance_transform_edt
 
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement01-refinement'
+BASE=ROOT/'level-editor/work/active/croisement01'
 R=BASE/'restart2';OUT=R/'tree14-whole-source-role-proposal-v1';assert not OUT.exists();OUT.mkdir()
 P=R/'tree14-layered-comparison-v1';CASE=R/'tree14-complete-material-casebook-v1'
 read=lambda name:np.asarray(Image.open(P/(name+'.png')).convert('L'))>0

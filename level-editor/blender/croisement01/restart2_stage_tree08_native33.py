@@ -5,7 +5,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from asset_index import write_asset_index
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';LIB=ROOT/'level-editor/library'
+R=ROOT/'level-editor/work/active/croisement01/restart2';LIB=ROOT/'level-editor/library'
 def read(p):return json.loads(p.read_text())
 def write(p,v):p.write_text(json.dumps(v,indent=2)+'\n')
 asset='croisement01-tree-08';old_id='croisement01-group-033';source=R/'tree08-native33-export-v2/assets'/asset

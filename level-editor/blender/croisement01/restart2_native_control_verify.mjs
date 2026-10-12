@@ -6,7 +6,7 @@ import {createRequire} from 'node:module';
 import {NativeStatePresentation} from '../../app/src/native-state-presentation.ts';
 const require=createRequire(resolve('level-editor/app/package.json'));
 const {encode}=require('fast-png');
-const out=resolve('level-editor/work/croisement01-refinement/restart2/native-controls-private-oct11-v2');
+const out=resolve('level-editor/work/active/croisement01/restart2/native-controls-private-oct11-v2');
 const lib=resolve('level-editor/library'),read=async p=>JSON.parse(await readFile(p,'utf8'));
 const manifest=await read(join(out,'manifest.json')),resources=new Map(manifest.resources.map(r=>[r.path,r.source]));
 const level=await read(join(lib,'game-data/Data/Levels/Croisement01.rhp.json')),records=[],shown=new Set();

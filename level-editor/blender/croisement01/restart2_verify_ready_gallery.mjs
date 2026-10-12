@@ -4,7 +4,7 @@ import {resolve, join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {chromeEndpoint, socketOpen, evaluate} from '../../app/tests/cdp.mjs';
 
-const out=resolve(process.argv[2]??'level-editor/work/croisement01-refinement/restart2/ready-trees18-20-v2/gallery');
+const out=resolve(process.argv[2]??'level-editor/work/active/croisement01/restart2/ready-trees18-20-v2/gallery');
 const artifactStem=process.argv[3]??'ready-trees18-20';
 if(!/^[a-zA-Z0-9_-]+$/.test(artifactStem))throw Error('Unsafe artifact stem');
 const evidence=JSON.parse(await readFile(join(out,'evidence.json'),'utf8'));

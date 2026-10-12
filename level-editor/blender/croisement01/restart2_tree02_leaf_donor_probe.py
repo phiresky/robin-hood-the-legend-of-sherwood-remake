@@ -4,7 +4,7 @@ from pathlib import Path
 import bpy,numpy as np
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';B=R/'approved-tree02-fill-v1/croisement01-tree-02/baked-v2-two-sided-crown';O=R/'tree02-leaf-donor-probe-v1'
+R=ROOT/'level-editor/work/active/croisement01/restart2';B=R/'approved-tree02-fill-v1/croisement01-tree-02/baked-v2-two-sided-crown';O=R/'tree02-leaf-donor-probe-v1'
 assert not O.exists();assert shutil.disk_usage(R).free>=10*1024**3+2*1024**2
 assert next(int(s.split()[1]) for s in Path('/proc/meminfo').read_text().splitlines() if s.startswith('MemAvailable:'))>=6*1024**2
 acquire();O.mkdir();p=B/'worker.blend';sha=lambda q:hashlib.sha256(q.read_bytes()).hexdigest();digest=sha(p);assert digest=='bcf4ffac8bdd81eae32873b4ab26d4d932ed34addcfbf06caad182d4107ad42d';bpy.ops.wm.open_mainfile(filepath=str(p))

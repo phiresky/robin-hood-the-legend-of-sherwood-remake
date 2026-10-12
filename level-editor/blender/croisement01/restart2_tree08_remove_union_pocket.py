@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from restart2_tree08_local_fork import audit
 
-R = Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
+R = Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2'
 source = R/'tree08-inferred-shell-cleanup-v2-diagnostic/diagnostic.npz'
 data = np.load(source)
 v, f = data['vertices'], data['faces']

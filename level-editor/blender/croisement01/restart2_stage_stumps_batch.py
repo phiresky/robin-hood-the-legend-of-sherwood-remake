@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from asset_index import write_asset_index
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 LIB=ROOT/'level-editor/library'
 CASES=[
  ('stump64','croisement01-southwest-broken-stump','approved-stump64-wood-fill-v1/croisement01-southwest-broken-stump',{'building-060'}),

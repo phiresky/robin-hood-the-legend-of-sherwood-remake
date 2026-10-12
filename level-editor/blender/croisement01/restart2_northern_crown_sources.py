@@ -5,7 +5,7 @@ import json
 import numpy as np
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
-r=ROOT/'level-editor/work/croisement01-refinement';out=r/'restart2/northern-native-crown-sources-v1';out.mkdir(exist_ok=False)
+r=ROOT/'level-editor/work/active/croisement01';out=r/'restart2/northern-native-crown-sources-v1';out.mkdir(exist_ok=False)
 source=json.loads((r/'animation-references/manifest.json').read_text())
 audit=json.loads((r/'restart2/native-controls-private-oct11-v2/animation-frame-audit.json').read_text())
 pins={(x['animation'],x['frame']):x for x in audit['records']}

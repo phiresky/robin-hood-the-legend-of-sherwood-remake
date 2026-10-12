@@ -8,7 +8,7 @@ from refinement_workspace import prepare,modified,validate
 from refinement_inventory import inventory
 from restart2_tree18 import SIN,COS
 from evidence_io import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';parent=R/'tree01-soil-joint-v10/assets/croisement01-tree-01';out=R/'bank008-approved-receiver-v2';out.mkdir(exist_ok=False);acquire();bpy.ops.wm.open_mainfile(filepath=str(parent/'model.blend'));bpy.context.preferences.filepaths.save_version=0;cfg=json.loads((parent/'workspace.json').read_text());collection=bpy.data.collections[cfg['collection_name']];bank=next(o for o in collection.all_objects if o.type=='MESH' and o.get('source_node')=='building-008')
+R=ROOT/'level-editor/work/active/croisement01/restart2';parent=R/'tree01-soil-joint-v10/assets/croisement01-tree-01';out=R/'bank008-approved-receiver-v2';out.mkdir(exist_ok=False);acquire();bpy.ops.wm.open_mainfile(filepath=str(parent/'model.blend'));bpy.context.preferences.filepaths.save_version=0;cfg=json.loads((parent/'workspace.json').read_text());collection=bpy.data.collections[cfg['collection_name']];bank=next(o for o in collection.all_objects if o.type=='MESH' and o.get('source_node')=='building-008')
 def geometry(o):return dict(vertices=[list(o.matrix_world@v.co) for v in o.data.vertices],faces=[list(p.vertices) for p in o.data.polygons])
 before=geometry(bank)
 for other in list(bpy.data.objects):

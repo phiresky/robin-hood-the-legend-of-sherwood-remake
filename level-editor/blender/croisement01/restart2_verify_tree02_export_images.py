@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
 from review_evidence import sha
-R = ROOT/'level-editor/work/croisement01-refinement/restart2'
+R = ROOT/'level-editor/work/active/croisement01/restart2'
 model = R/'ready-tree02-texture-v3/model.blend'
 out = R/'tree02-approved-integration-v1'
 glb = out/'assets/croisement01-tree-02/model.glb'

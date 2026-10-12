@@ -3,7 +3,7 @@ import argparse,hashlib,json
 from pathlib import Path
 from PIL import Image,ImageDraw,ImageChops
 ROOT=Path(__file__).resolve().parents[3]
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);p.add_argument('--separate-root-fragments',action='store_true');p.add_argument('--preserve-native-basal-wood',action='store_true');a=p.parse_args();dest=a.output;dest.mkdir(exist_ok=False);source=R/'tree06-source-v1'
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def pixels(image):return sum(value>0 for value in image.get_flattened_data())

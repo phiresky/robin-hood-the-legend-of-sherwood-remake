@@ -7,7 +7,7 @@ from mathutils import Matrix
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(Path(__file__).parent)]
 from render_slots import acquire,release
 from restart2_tree08_union import topology
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 smooth_transition='--smooth-transition' in sys.argv
 O=R/('tree08-implicit-collar-v11-smooth-stitched' if smooth_transition else 'tree08-implicit-collar-v3-stitched');assert not O.exists()
 upper_path=R/('tree08-implicit-collar-v10-smooth-source' if smooth_transition else 'tree08-implicit-collar-v2-source')/'candidate.npz';lower_path=R/'tree08-connected-tip-cleanup-v2/candidate.npz'

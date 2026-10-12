@@ -5,7 +5,7 @@ import bpy,numpy as np
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';acquire(slots=2)
+R=ROOT/'level-editor/work/active/croisement01/restart2';acquire(slots=2)
 try:
  rows=[]
  for revision in [14,15]:

@@ -3,7 +3,7 @@ import hashlib,json
 from pathlib import Path
 import numpy as np
 from scipy.spatial import cKDTree
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';P=R/'tree02-leaf-donor-probe-v1';O=R/'tree02-same-leaf-fill-cpu-v1';O.mkdir(exist_ok=False)
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2';P=R/'tree02-leaf-donor-probe-v1';O=R/'tree02-same-leaf-fill-cpu-v1';O.mkdir(exist_ok=False)
 d=json.loads((P/'mesh.json').read_text());a=np.load(P/'atlas.npz');own=a['ownership'];h,w=own.shape;rgba=np.stack([a['values_'+str(c)][a['index_'+str(c)]] for c in range(4)],axis=-1);tri={x['face']:x for x in d['triangles']};vertices={int(k):np.array(v) for k,v in d['vertices_world'].items()};rows=[];changes=[]
 def samples(face):
  t=tri[face];uv=np.array(t['uv'])*[w,h];lo=np.maximum(0,np.floor(uv.min(0)-.5).astype(int));hi=np.minimum([w-1,h-1],np.ceil(uv.max(0)-.5).astype(int));yy,xx=np.mgrid[lo[1]:hi[1]+1,lo[0]:hi[0]+1];pixels=np.c_[xx.ravel(),yy.ravel()];bary=np.linalg.solve(np.vstack([uv.T,np.ones(3)]),np.vstack([(pixels+.5).T,np.ones(len(pixels))])).T;inside=(bary.min(1)>=1e-6);pixels=pixels[inside];points=bary[inside]@np.array([vertices[v] for v in t['vertices']]);return pixels,points

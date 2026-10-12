@@ -17,13 +17,13 @@
     "3d-assets/croisement01/croisement01-group-061/asset.json": "32cd404d081ab1117b6f63ad85f35167a3fdd3b2b7f74e67814e40e380b42eaf"
   },
   "full_editor": {
-    "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/combined-integration-batch-v1/full-editor-private-v2/result.json",
+    "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/active/croisement01/restart2/combined-integration-batch-v1/full-editor-private-v2/result.json",
     "sha256": "66f06f806c5a18193c4383cbac29a1f4c87ef679f2608e19a351309120235554",
     "config_sha256": "ac6484b7fc4e6a7e1e9609456d757af75ea220ddc1879a67d83e6bceab034fa5",
     "checker_provenance_sha256": "531e18e660c79d4d772b5e87f0a91ec7e0db1ffab2df9ed6ba2ea325ccb05ff7"
   },
   "bounded_live": {
-    "path": "level-editor/work/croisement01-refinement/restart2/combined-integration-batch-v1/live-browser-proof.json",
+    "path": "level-editor/work/active/croisement01/restart2/combined-integration-batch-v1/live-browser-proof.json",
     "sha256": "7a1c701ffadb2fd475194137d97fc67b702798dce80e55bb01505d53255e5dc0",
     "normal_http": true,
     "exact_models_and_descriptors": true,
@@ -43,7 +43,7 @@
     "visual_review": "Four browser screenshots personally viewed; they confirm installed appearance. Existing full saved-model eight-view reviews remain authoritative for complete geometry/contact scope."
   },
   "publication_receipt": {
-    "path": "level-editor/work/croisement01-refinement/restart2/combined-integration-batch-v1/publication.json",
+    "path": "level-editor/work/active/croisement01/restart2/combined-integration-batch-v1/publication.json",
     "sha256": "50747da116c6f820f8506bf80d961d38905b6205d0954d8084c86ffc03c79bf4"
   },
   "unchanged_other_placements": 56,

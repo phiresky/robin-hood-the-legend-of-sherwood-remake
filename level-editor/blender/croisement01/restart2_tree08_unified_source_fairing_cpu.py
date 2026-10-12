@@ -20,7 +20,7 @@ from restart2_tree08_fork_kernel import poly
 from restart2_tree08_local_fork import audit
 from restart2_tree08_junction_proof import native_depth
 
-R = Path(__file__).resolve().parents[3] / 'level-editor/work/croisement01-refinement/restart2'
+R = Path(__file__).resolve().parents[3] / 'level-editor/work/active/croisement01/restart2'
 orientation_guard = True
 O = R / 'tree08-unified-source-fairing-cpu-v1'
 assert not O.exists()

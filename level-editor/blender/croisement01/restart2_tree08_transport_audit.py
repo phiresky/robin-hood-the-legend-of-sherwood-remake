@@ -6,7 +6,7 @@ from PIL import Image
 from restart2_tree08_hierarchy import build_hierarchy_sections
 from restart2_tree08_transport import curvature_limited_sweep,strip_orientation
 ROOT=Path(__file__).resolve().parents[3]
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 
 
 def coverage(sections):

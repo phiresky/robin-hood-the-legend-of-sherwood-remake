@@ -4,7 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 import numpy as np
 from restart2_tree08_local_fork import audit
-R=Path(__file__).resolve().parents[2]/'work/croisement01-refinement/restart2'
+R=Path(__file__).resolve().parents[2]/'work/active/croisement01/restart2'
 source=R/'tree08-v12-distinct-stems-clearance-v1-stitched';out=source.with_name(source.name+'-flipped');out.mkdir(exist_ok=False)
 m=np.load(source/'candidate.npz');v=m['vertices'];f=m['faces'].copy();changes=[]
 tri=v[f];area=np.linalg.norm(np.cross(tri[:,1]-tri[:,0],tri[:,2]-tri[:,0]),axis=1)

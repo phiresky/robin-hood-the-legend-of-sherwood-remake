@@ -1,6 +1,6 @@
 from pathlib import Path
 import os,json,hashlib
-R=Path('level-editor/work/croisement01-refinement/restart2')
+R=Path('level-editor/work/active/croisement01/restart2')
 source=R/'tree02-publication-plan-v1/private-library'
 target=R/'tree02-publication-plan-v1/browser-private-library-v2'
 packet=R/'tree02-browser-private-v2'

@@ -3,7 +3,7 @@ import argparse,hashlib,json,struct
 from pathlib import Path
 import numpy as np
 ROOT=Path(__file__).resolve().parents[3]
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 P=R/'tree08-wood-prototype-v14-root-ray'
 O=R/'tree08-root-embedding-cpu-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()

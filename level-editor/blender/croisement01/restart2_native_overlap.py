@@ -3,7 +3,7 @@ import argparse,hashlib,json,math,struct
 from pathlib import Path
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement01-refinement'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement01'
 def main():
  p=argparse.ArgumentParser();p.add_argument('mask',type=int);p.add_argument('output',type=Path);a=p.parse_args();a.output.mkdir(exist_ok=False)
  path=BASE/'baseline/croisement01-volumes.scene.glb';b=path.read_bytes();n=struct.unpack_from('<I',b,12)[0];g=json.loads(b[20:20+n]);raw=b[28+n:]

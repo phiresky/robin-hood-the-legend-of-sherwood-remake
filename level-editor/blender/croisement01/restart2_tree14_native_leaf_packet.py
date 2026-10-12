@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image
 
 ROOT=Path(__file__).resolve().parents[3]
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 out=R/'tree14-native-crown-animation-source-v3';out.mkdir(exist_ok=False)
 source=json.loads((R/'tree14-native-crown-animation-source-v1/source.json').read_text())
 left=min(f['bbox'][0] for f in source['frames']);top=min(f['bbox'][1] for f in source['frames'])

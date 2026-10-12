@@ -145,7 +145,7 @@ def triangulate(paths):
 
 
 def main():
-    root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
+    root = Path(__file__).resolve().parents[2] / 'work/active/croisement01/restart2'
     packet = root / 'tree08-v12-local-fork-cpu-v1'
     mesh = np.load(packet / 'minimal-forks.npz')
     output = root / 'tree08-v12-original-cap-plan-v2'

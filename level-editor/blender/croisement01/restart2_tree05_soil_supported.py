@@ -7,7 +7,7 @@ from mathutils.bvhtree import BVHTree
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';source=R/'tree05-v7/assets/croisement01-tree-05';dest=R/'tree05-soil-joint-v3';worker=dest/'assets/croisement01-tree-05';assert not dest.exists();acquire();bpy.ops.wm.open_mainfile(filepath=str(source/'model.blend'));bpy.context.preferences.filepaths.save_version=0;cfg=json.loads((source/'workspace.json').read_text());collection=bpy.data.collections[cfg['collection_name']];before=sha(source/'model.blend')
+R=ROOT/'level-editor/work/active/croisement01/restart2';source=R/'tree05-v7/assets/croisement01-tree-05';dest=R/'tree05-soil-joint-v3';worker=dest/'assets/croisement01-tree-05';assert not dest.exists();acquire();bpy.ops.wm.open_mainfile(filepath=str(source/'model.blend'));bpy.context.preferences.filepaths.save_version=0;cfg=json.loads((source/'workspace.json').read_text());collection=bpy.data.collections[cfg['collection_name']];before=sha(source/'model.blend')
 def geometry(o):return hashlib.sha256(json.dumps([[list(v.co) for v in o.data.vertices],[list(f.vertices) for f in o.data.polygons]],separators=(',',':')).encode()).hexdigest()
 def closed_mesh(name,verts,faces):
  mesh=bpy.data.meshes.new(name);mesh.from_pydata(verts,[],faces);mesh.update();bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));assert all(e.is_manifold for e in bm.edges),name;bm.to_mesh(mesh);bm.free();return mesh

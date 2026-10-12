@@ -9,7 +9,7 @@ from mathutils.bvhtree import BVHTree
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';W=R/'approved-tree08-bark-fill-v3/croisement01-tree-08'
+R=ROOT/'level-editor/work/active/croisement01/restart2';W=R/'approved-tree08-bark-fill-v3/croisement01-tree-08'
 model=W/'baked-v1/worker.blend'
 if '--' in sys.argv:model=Path(sys.argv[sys.argv.index('--')+1]).resolve()
 acquire(slots=2)

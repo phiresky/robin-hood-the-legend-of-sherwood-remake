@@ -9,7 +9,7 @@ from refinement_workspace import _geometry
 from render_multiview_asset import render
 from refinement_review import _tile
 from array import array
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';W=R/'approved-tree08-bark-fill-v3/croisement01-tree-08';src=W/'baked-v1';out=W/'baked-v3-native-exact'
+R=ROOT/'level-editor/work/active/croisement01/restart2';W=R/'approved-tree08-bark-fill-v3/croisement01-tree-08';src=W/'baked-v1';out=W/'baked-v3-native-exact'
 acquire(slots=2)
 try:
  assert shutil.disk_usage(R).free>=10*1024**3

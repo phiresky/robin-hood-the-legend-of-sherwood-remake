@@ -7,7 +7,7 @@ from mathutils.bvhtree import BVHTree
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';out=R/'tree08-current-contact-v2';lib=ROOT/'level-editor/library';model=R/'tree08-wood-prototype-v12-local-junctions/model.blend';cap=32*1024**2
+R=ROOT/'level-editor/work/active/croisement01/restart2';out=R/'tree08-current-contact-v2';lib=ROOT/'level-editor/library';model=R/'tree08-wood-prototype-v12-local-junctions/model.blend';cap=32*1024**2
 parser=argparse.ArgumentParser();parser.add_argument('--model',type=Path);parser.add_argument('--output',type=Path);args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);model=args.model.resolve() if args.model else model;out=args.output.resolve() if args.output else out
 assert not out.exists()
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()

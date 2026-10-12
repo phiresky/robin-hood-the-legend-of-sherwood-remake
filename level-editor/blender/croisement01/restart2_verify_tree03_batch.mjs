@@ -5,7 +5,7 @@ import {resolve} from 'node:path';
 import {chromeEndpoint,socketOpen,evaluate} from '../../app/tests/cdp.mjs';
 const live=process.argv.includes('--live');
 if(!live)throw Error('This bounded verifier requires installed --live scope');
-const base=resolve('level-editor/work/croisement01-refinement/restart2/tree03-integration-batch-v1');
+const base=resolve('level-editor/work/active/croisement01/restart2/tree03-integration-batch-v1');
 if(process.argv.some(value=>value.startsWith('http://')))throw Error('Sandbox proof owns its local server; external origins are forbidden');
 const {createServer}=await import('../../app/node_modules/vite/dist/node/index.js');
 const server=await createServer({configFile:resolve('level-editor/app/vite.config.ts'),root:resolve('level-editor/app'),cacheDir:base+'/sandbox-vite-cache',server:{host:'127.0.0.1',port:0,watch:null,hmr:false}});

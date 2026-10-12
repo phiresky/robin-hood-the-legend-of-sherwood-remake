@@ -30,7 +30,7 @@ def main():
         for triangle in bm.loop_triangles:
             start=len(points);points.extend(branch.matrix_world@bm.vertices[i].co for i in triangle.vertices);faces.append((start,start+1,start+2));registry.add(branch,bm,triangle);known.append(False)
     tree=registry.wrap(BVHTree.FromPolygons(points,faces,all_triangles=True))
-    base=ROOT/'level-editor/work/croisement01-refinement/baseline';native=json.loads((base/'masks/manifest.json').read_text());row=next(r for r in native['masks'] if r['index']==args.mask)
+    base=ROOT/'level-editor/work/active/croisement01/baseline';native=json.loads((base/'masks/manifest.json').read_text());row=next(r for r in native['masks'] if r['index']==args.mask)
     expected=np.array(Image.open(base/'masks'/row['png']).convert('L'))>127;x,y=row['box_top_left'];h,w=expected.shape
     sine,cosine=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-cosine,sine));actual=np.zeros_like(expected);observed=np.zeros_like(expected);foreground=np.zeros_like(expected)
     for py in range(h):

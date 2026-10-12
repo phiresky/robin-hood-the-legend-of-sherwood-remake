@@ -7,7 +7,7 @@ from mathutils.bvhtree import BVHTree
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';source=R/'tree08-v11-curvature-cpu-v7';out=R/'tree08-wood-prototype-v11';cap=32*1024**2;round_cap=128*1024**2;floor=8*1024**3
+R=ROOT/'level-editor/work/active/croisement01/restart2';source=R/'tree08-v11-curvature-cpu-v7';out=R/'tree08-wood-prototype-v11';cap=32*1024**2;round_cap=128*1024**2;floor=8*1024**3
 
 def guard(reserve=1024**2):
  used=sum(p.stat().st_size for p in out.rglob('*') if p.is_file()) if out.exists() else 0

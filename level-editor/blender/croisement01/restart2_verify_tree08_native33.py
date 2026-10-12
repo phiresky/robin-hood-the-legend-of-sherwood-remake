@@ -3,7 +3,7 @@ import hashlib,json,struct
 from pathlib import Path
 import numpy as np
 ROOT=Path(__file__).resolve().parents[3]
-R=ROOT/'level-editor/work/croisement01-refinement/restart2'
+R=ROOT/'level-editor/work/active/croisement01/restart2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def load(p):
  raw=p.read_bytes();n=struct.unpack_from('<I',raw,12)[0];return json.loads(raw[20:20+n]),raw[28+n:]

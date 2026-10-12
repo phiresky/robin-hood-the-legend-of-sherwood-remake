@@ -19,7 +19,7 @@ def audit(vertices, faces):
 
 
 def main():
-    root = Path(__file__).resolve().parents[2] / 'work/croisement01-refinement/restart2'
+    root = Path(__file__).resolve().parents[2] / 'work/active/croisement01/restart2'
     source = root / 'tree08-v12-chain-cpu-v3'
     output = root / 'tree08-v12-local-fork-cpu-v1'
     output.mkdir(exist_ok=False)

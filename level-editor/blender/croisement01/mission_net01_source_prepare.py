@@ -3,7 +3,7 @@ import hashlib,json,math,pathlib
 import numpy as np
 from PIL import Image
 from scipy.optimize import least_squares
-R=pathlib.Path(__file__).resolve().parents[3];P=R/'level-editor/work/croisement01-refinement/mission-endpoint-preparation-oct12-v1';O=R/'level-editor/work/croisement01-refinement/mission-net01-oct12-v1'
+R=pathlib.Path(__file__).resolve().parents[3];P=R/'level-editor/work/active/croisement01/mission-endpoint-preparation-oct12-v1';O=R/'level-editor/work/active/croisement01/mission-net01-oct12-v1'
 def sha(p):return hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()
 SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));F=np.array([0,.1,.25,.4,.55,.7,.85,1.])
 OUTLINES={'e':[(40,137),(48,144),(55,157),(59,170),(58,181),(53,194),(48,203),(40,205),(34,201),(29,190),(30,177),(33,162),(36,148)],'i':[(41,137),(49,145),(58,155),(67,169),(72,185),(70,199),(61,209),(47,215),(31,214),(20,208),(14,199),(13,187),(16,173),(23,159),(32,147)]}

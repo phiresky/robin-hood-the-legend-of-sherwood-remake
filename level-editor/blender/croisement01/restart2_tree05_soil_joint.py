@@ -7,7 +7,7 @@ from mathutils.bvhtree import BVHTree
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';source=R/'tree05-v6/assets/croisement01-tree-05';dest=R/'tree05-soil-joint-v1';worker=dest/'assets/croisement01-tree-05'
+R=ROOT/'level-editor/work/active/croisement01/restart2';source=R/'tree05-v6/assets/croisement01-tree-05';dest=R/'tree05-soil-joint-v1';worker=dest/'assets/croisement01-tree-05'
 assert not dest.exists();assert (source/'inspection/actual-materials/sheet.png').exists();acquire();bpy.ops.wm.open_mainfile(filepath=str(source/'model.blend'));bpy.context.preferences.filepaths.save_version=0;before=sha(source/'model.blend');cfg=json.loads((source/'workspace.json').read_text());collection=bpy.data.collections[cfg['collection_name']]
 def geometry(o):return hashlib.sha256(json.dumps([[list(v.co) for v in o.data.vertices],[list(f.vertices) for f in o.data.polygons]],separators=(',',':')).encode()).hexdigest()
 protected={o.get('source_node'):geometry(o) for o in collection.all_objects if o.type=='MESH'};vertices=[];faces=[]

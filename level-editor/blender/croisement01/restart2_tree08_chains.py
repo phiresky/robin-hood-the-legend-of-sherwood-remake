@@ -7,7 +7,7 @@ from scipy.spatial import cKDTree
 from PIL import Image
 from restart2_tree08_transport import curvature_limited_sweep,strip_orientation
 from restart2_tree08_transport_audit import coverage
-R=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2'
+R=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2'
 S,C=math.sin(math.radians(35)),math.cos(math.radians(35));RAY=np.array([0,-C,S]);DOWN=np.array([0,-S,-C]);RIGHT=np.array([1.,0,0])
 
 

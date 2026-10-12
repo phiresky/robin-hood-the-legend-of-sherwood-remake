@@ -2,7 +2,7 @@
 import json,itertools
 from pathlib import Path
 import numpy as np
-R=Path(__file__).resolve().parents[2]/'work/croisement01-refinement/restart2';p=R/'tree08-v12-remaining-group0-stitched-v3-conformed-stable';m=np.load(p/'candidate.npz');v=m['vertices'];f=m['faces'];origin=np.array([552.,-672.,235.]);local=(v-origin).astype(np.float32);q=local.astype(float)+origin;s,c=np.sin(np.radians(35)),np.cos(np.radians(35));target=np.array([497.5,96.5]);reference=json.loads((p/'depth-outliers.json').read_text())['outliers'][0]['reference']
+R=Path(__file__).resolve().parents[2]/'work/active/croisement01/restart2';p=R/'tree08-v12-remaining-group0-stitched-v3-conformed-stable';m=np.load(p/'candidate.npz');v=m['vertices'];f=m['faces'];origin=np.array([552.,-672.,235.]);local=(v-origin).astype(np.float32);q=local.astype(float)+origin;s,c=np.sin(np.radians(35)),np.cos(np.radians(35));target=np.array([497.5,96.5]);reference=json.loads((p/'depth-outliers.json').read_text())['outliers'][0]['reference']
 def samples(vertices,faces):
  t=vertices[faces];xy=np.stack([t[:,:,0],-t[:,:,1]*s-t[:,:,2]*c],axis=2);a,b,d=xy[:,0],xy[:,1]-xy[:,0],xy[:,2]-xy[:,0];det=b[:,0]*d[:,1]-b[:,1]*d[:,0];safe=abs(det)>1e-10;delta=target-a;u=np.divide(delta[:,0]*d[:,1]-delta[:,1]*d[:,0],det,where=safe,out=np.zeros_like(det));w=np.divide(b[:,0]*delta[:,1]-b[:,1]*delta[:,0],det,where=safe,out=np.zeros_like(det));valid=safe&(u>=-1e-8)&(w>=-1e-8)&(u+w<=1+1e-8);depth=-t[:,:,1]*c+t[:,:,2]*s;result=depth[:,0]+u*(depth[:,1]-depth[:,0])+w*(depth[:,2]-depth[:,0]);result[~valid]=-np.inf;return result
 base=samples(q,f);owner=int(np.argmax(base));affected_vertices=list(map(int,f[owner]));candidates=[]

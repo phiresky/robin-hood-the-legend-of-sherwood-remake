@@ -9,7 +9,7 @@ from review_evidence import sha
 def read(p):return json.loads(p.read_text())
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main(kind):
-    r=ROOT/'level-editor/work/croisement01-refinement/restart2'
+    r=ROOT/'level-editor/work/active/croisement01/restart2'
     asset,excluded={'tree03':('croisement01-tree-03',1201)}[kind]
     case=r/('approved-'+kind+'-fill-v1')/asset
     base=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches'

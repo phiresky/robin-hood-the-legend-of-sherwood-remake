@@ -9,7 +9,7 @@ from render_slots import acquire
 acquire(slots=2)
 assert shutil.disk_usage(ROOT).free>10*1024**3
 assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024>6*1024**3
-base=ROOT/'level-editor/work/croisement01-refinement/restart2';source=base/'tree05-regional-banks-v18/assets/croisement01-tree-05/model.blend';out=base/'tree14-source-ground-support-v1';out.mkdir(exist_ok=False)
+base=ROOT/'level-editor/work/active/croisement01/restart2';source=base/'tree05-regional-banks-v18/assets/croisement01-tree-05/model.blend';out=base/'tree14-source-ground-support-v1';out.mkdir(exist_ok=False)
 bpy.ops.wm.open_mainfile(filepath=str(source));bpy.context.view_layer.update();v=[];f=[];owners=[]
 for o in bpy.context.scene.objects:
  if o.type!='MESH' or o.get('source_node') not in ['ground',*[f'building-{i:03d}' for i in range(10)]]:continue

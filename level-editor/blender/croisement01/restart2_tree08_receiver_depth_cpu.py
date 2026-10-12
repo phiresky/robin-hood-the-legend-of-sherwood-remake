@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from restart2_tree08_junction_proof import native_depth
-ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/croisement01-refinement/restart2';lib=ROOT/'level-editor/library';out=R/'tree08-receiver-depth-cpu-v1';out.mkdir(exist_ok=False)
+ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/active/croisement01/restart2';lib=ROOT/'level-editor/library';out=R/'tree08-receiver-depth-cpu-v1';out.mkdir(exist_ok=False)
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def raw_mesh(asset):
  path=lib/asset['model'];assert sha(path)==asset['model_sha256'];b=path.read_bytes();n,kind=struct.unpack_from('<II',b,12);assert kind==0x4e4f534a;g=json.loads(b[20:20+n]);buffers=[]

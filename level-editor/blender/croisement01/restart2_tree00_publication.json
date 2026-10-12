@@ -10,29 +10,29 @@
   },
   "retired_derivatives": {
     "3d-assets/croisement01/croisement01-group-005/preview.glb": {
-      "archive": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/publication-backup-v1/retired-derived-files/preview.glb",
+      "archive": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/active/croisement01/restart2/tree00-integration-batch-v1/publication-backup-v1/retired-derived-files/preview.glb",
       "sha256": "d0212374205ce4e2f876d2b3980badc3d9b52a24cab3a49068300f3c4b5c785f"
     },
     "3d-assets/croisement01/croisement01-group-005/preview.glb.receipt.json": {
-      "archive": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/publication-backup-v1/retired-derived-files/preview.glb.receipt.json",
+      "archive": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/active/croisement01/restart2/tree00-integration-batch-v1/publication-backup-v1/retired-derived-files/preview.glb.receipt.json",
       "sha256": "6fe9f0c721485855d7622b75dd5a1e9e1a56b676dcd995fa8bfd4256e6cf6638"
     },
     "3d-assets/croisement01/croisement01-group-005/lossy.glb": {
-      "archive": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/publication-backup-v1/retired-derived-files/lossy.glb",
+      "archive": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/active/croisement01/restart2/tree00-integration-batch-v1/publication-backup-v1/retired-derived-files/lossy.glb",
       "sha256": "25cc953fc70f856b0b1e2ae081c9f32efffe4d4b7bc4a6e901adaee9129150dc"
     },
     "3d-assets/croisement01/croisement01-group-005/lossy.glb.receipt.json": {
-      "archive": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/publication-backup-v1/retired-derived-files/lossy.glb.receipt.json",
+      "archive": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/active/croisement01/restart2/tree00-integration-batch-v1/publication-backup-v1/retired-derived-files/lossy.glb.receipt.json",
       "sha256": "c5bb30445f462780780844086aad5349023aab5ecaf53706e07d9c39b9caef82"
     }
   },
   "private_full_editor": {
-    "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/full-editor-private-v2/result.json",
+    "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/active/croisement01/restart2/tree00-integration-batch-v1/full-editor-private-v2/result.json",
     "sha256": "89728530d34c04beb320fea71f2a7b6f2ea454360924e37d9b1c39a977c17fd2",
     "config_sha256": "d322cf3c22af5e87d2e86742c57b7e238b2bde043349cd179c8c757bc50cccf6",
     "runtime_source_sha256": "b0eece9e5af166bb2ce6262234adeea5b106ba42ad3ecba33b8f47794593b270"
   },
-  "backup": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/publication-backup-v1",
+  "backup": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/active/croisement01/restart2/tree00-integration-batch-v1/publication-backup-v1",
   "unchanged_other_placements": 59,
   "unrelated_palette_entries_preserved": 1295,
   "scope": "Only approved building030 WOOD. Retained crown context remains unapproved and unpublished;029 and seven other native parts unchanged.",
@@ -46,6 +46,6 @@
     "croisement01-tree-00-live-browser.png": "d6255000ac2729680334b1ef08db72b4d9fe9795784d31d416b28db5e7c2e08e",
     "live-browser.png": "d6255000ac2729680334b1ef08db72b4d9fe9795784d31d416b28db5e7c2e08e"
   },
-  "publication_path": "level-editor/work/croisement01-refinement/restart2/tree00-integration-batch-v1/publication.json",
+  "publication_path": "level-editor/work/active/croisement01/restart2/tree00-integration-batch-v1/publication.json",
   "publication_sha256": "7959016857ee690042542cbc00f9fc345c9f19e757af9021310a45dc709fedd6"
 }

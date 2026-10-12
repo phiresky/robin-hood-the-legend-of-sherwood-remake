@@ -3,7 +3,7 @@ import argparse,json
 from pathlib import Path
 import numpy as np
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement01-refinement/mission-net01-oct12-v1'
+OUT=ROOT/'level-editor/work/active/croisement01/mission-net01-oct12-v1'
 def main():
  ap=argparse.ArgumentParser();ap.add_argument('--input',default='domains.json');ap.add_argument('--output',default='domains-rounded-v1.json');args=ap.parse_args()
  domains=json.loads((OUT/args.input).read_text())

@@ -7,7 +7,7 @@ from mathutils.bvhtree import BVHTree
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 from review_evidence import sha
-p=argparse.ArgumentParser();p.add_argument('tree',type=int);p.add_argument('revision',type=int);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);r=ROOT/'level-editor/work/croisement01-refinement/restart2';w=r/f'tree{a.tree:02d}-v{a.revision}'/f'assets/croisement01-tree-{a.tree:02d}';out=w/'inspection/bank-joint-probe.json';assert not out.exists();acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'));s,c=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-c,s));banks=[];trees=[]
+p=argparse.ArgumentParser();p.add_argument('tree',type=int);p.add_argument('revision',type=int);a=p.parse_args(sys.argv[sys.argv.index('--')+1:]);r=ROOT/'level-editor/work/active/croisement01/restart2';w=r/f'tree{a.tree:02d}-v{a.revision}'/f'assets/croisement01-tree-{a.tree:02d}';out=w/'inspection/bank-joint-probe.json';assert not out.exists();acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'));s,c=math.sin(math.radians(35)),math.cos(math.radians(35));ray=Vector((0,-c,s));banks=[];trees=[]
 for obj in bpy.data.objects:
  node=obj.get('source_node','')
  if obj.type!='MESH' or node not in {'building-000','building-002','building-003','building-004','building-005','building-006','building-007','building-008'}:continue

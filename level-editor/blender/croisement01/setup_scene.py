@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/croisement01-refinement'
+OUT = ROOT / 'level-editor/work/active/croisement01'
 
 
 def sha(path):

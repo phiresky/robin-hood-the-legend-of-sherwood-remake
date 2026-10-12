@@ -8,7 +8,7 @@ from render_slots import acquire,release
 from texture_staging import validate_texture_handoff,verify_baked_geometry
 from export_editor import export_asset_library
 from review_evidence import sha
-R=ROOT/'level-editor/work/croisement01-refinement/restart2';asset='croisement01-tree-01';case=R/'approved-tree01-isolated-wood-fill-v1'/asset
+R=ROOT/'level-editor/work/active/croisement01/restart2';asset='croisement01-tree-01';case=R/'approved-tree01-isolated-wood-fill-v1'/asset
 assert shutil.disk_usage(R).free >= 10*1024**3+32*1024**2, 'Disk floor plus output reserve'
 acquire()
 try:
@@ -19,7 +19,7 @@ try:
  group=next(g for g in catalog['groups'] if g['id']==asset);excluded=[p for p in group['parts'] if p.get('obstacle')!=29];assert len(excluded)==1 and excluded[0]['node']=='foliage-tree01-inferred-crown';group['parts']=[p for p in group['parts'] if p.get('obstacle')==29];assert len(group['parts'])==1
  catalog['canonical_owners'].pop('foliage-tree01-inferred-crown')
  crown=next(o for o in bpy.data.objects if o.type=='MESH' and o.get('source_node')=='foliage-tree01-inferred-crown');crown.hide_render=True
- out=R/'tree01-wood-integration-v1';out.mkdir(exist_ok=False);report=export_asset_library('Croisement01',out/'assets',ROOT/'level-editor/work/croisement01-refinement/baseline/Croisement01.rhp.json',asset_ids=[asset],catalog=catalog)
+ out=R/'tree01-wood-integration-v1';out.mkdir(exist_ok=False);report=export_asset_library('Croisement01',out/'assets',ROOT/'level-editor/work/active/croisement01/baseline/Croisement01.rhp.json',asset_ids=[asset],catalog=catalog)
  descriptor=json.loads((out/'assets'/asset/'asset.json').read_text());assert [p['node'] for p in descriptor['parts']]==['building-029'];assert sha(approved)==before
  assert sum(p.stat().st_size for p in out.rglob('*') if p.is_file()) <= 32*1024**2, 'Private export output cap'
  (out/'export-proof.json').write_text(json.dumps(dict(scope='WOOD ONLY: native029; excluded gray crown remains untouched in saved worker and is not published',geometry=proof,export=report,approved_user_decision_sha256=sha(case/'user-texture-decision-32-card-v1.json'),original_catalog_sha256=sha(grouping),excluded_context_parts=excluded,approved_worker_unchanged_sha256=before),indent=2)+'\n');print(out)

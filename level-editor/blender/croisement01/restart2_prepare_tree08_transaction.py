@@ -1,6 +1,6 @@
 """Prepare the guarded native Tree08 publisher; never applies canonical writes."""
 from pathlib import Path
-r=Path(__file__).resolve().parents[3]/'level-editor/work/croisement01-refinement/restart2';d=r/'tree08-publication-plan-v1';d.mkdir();s=(r/'tree02-publication-plan-v1/transaction.py').read_text().replace("S=D.parent/'tree02-integration-batch-v1'; B=D.parent/'tree02-browser-private-v1'","S=D.parent/'tree08-native33-integration-stage-v2'; B=D.parent/'tree08-browser-private-v1'").replace("IDS={'croisement01-tree-02','croisement01-group-005'}","IDS={'croisement01-tree-08'}")
+r=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement01/restart2';d=r/'tree08-publication-plan-v1';d.mkdir();s=(r/'tree02-publication-plan-v1/transaction.py').read_text().replace("S=D.parent/'tree02-integration-batch-v1'; B=D.parent/'tree02-browser-private-v1'","S=D.parent/'tree08-native33-integration-stage-v2'; B=D.parent/'tree08-browser-private-v1'").replace("IDS={'croisement01-tree-02','croisement01-group-005'}","IDS={'croisement01-tree-08'}")
 a=s.index('def evidence(');b=s.index('\ndef strict(',a)
 s=s[:a]+'''def evidence(require_browser=False):
  proof=json.loads((S/'stage-proof.json').read_text())
