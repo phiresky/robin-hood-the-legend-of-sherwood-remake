@@ -42,17 +42,20 @@ foliage.CONFIG[94] = dict(mask=94, ground=412., canopy_bottom=343,
 evidence = foliage.source_packet(wood,94,out/'source-lobes')
 wood_domain=base/'tree14-source-restoration-proposal-v1/wood-domain.png'
 protected_bark=np.asarray(Image.open(wood_domain).convert('L'))>0
+leaf_domain=base/'tree14-source-restoration-proposal-v1/crown94-excluding-reviewed-wood-domains.png'
+leaf_alpha=np.asarray(Image.open(leaf_domain).convert('L'))>0
 for lobe in evidence['lobes']:
     left,top,right,bottom=lobe['bbox_source']
     for field in ('source','unknown'):
         path=Path(lobe[field]);rgba=np.asarray(Image.open(path).convert('RGBA')).copy()
-        x0,y0=max(left,689),max(top,122);x1,y1=min(right,689+protected_bark.shape[1]),min(bottom,122+protected_bark.shape[0])
-        if x1>x0 and y1>y0:
-            region=rgba[y0-top:y1-top,x0-left:x1-left,3]
-            region[protected_bark[y0-122:y1-122,x0-689:x1-689]]=0
+        rgba[:,:,3]*=leaf_alpha[top-43:bottom-43,left-649:right-649]
         Image.fromarray(rgba).save(path);lobe[field+'_sha256']=sha(path)
+    lobe['native_pixels']=int(np.count_nonzero(np.asarray(Image.open(lobe['source']))[:,:,3]))
 evidence['protected_observed_wood_domain_sha256']=sha(wood_domain)
 evidence['protected_observed_wood_pixels']=int(protected_bark.sum())
+evidence['corrected_leaf_domain_sha256']=sha(leaf_domain)
+evidence['canopy_pixels']=int(leaf_alpha.sum())
+evidence['source_confirmed_foreign_wood_masks']=[9,11,12,15,16]
 evidence['ownership_correction']='Observed native14 branch bark excluded from physical leaf alpha, not synthesized or flattened onto canopy.'
 (out/'source-lobes/source-partition-corrected.json').write_text(json.dumps(evidence,indent=2)+'\n')
 for lobe in evidence['lobes']:
