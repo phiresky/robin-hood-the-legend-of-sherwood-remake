@@ -1733,6 +1733,7 @@ impl EngineInner {
                 | Command::EnterHelpingClimb
                 | Command::LeaveHelpingClimb
                 | Command::EnterCloak
+                | Command::LeaveTree
         ) {
             let has_carried = entity.pc_data().is_some_and(|pc| pc.carried.is_some());
             let animations: &[crate::order::OrderType] = if command == Command::LeaveHelpingClimb {

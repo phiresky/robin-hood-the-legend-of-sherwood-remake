@@ -1773,3 +1773,75 @@ fn quit_instruction_unlinks_but_defers_state_change_to_lowering_start() {
         "accepted Instruct must publish the translated order through mpOrder"
     );
 }
+
+#[test]
+fn stand_up_from_tree_retains_exit_prefix_until_animation_done() {
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    let mut assets = LevelAssets::new();
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles
+        .characters
+        .push(crate::profiles::CharacterProfile::default());
+    assets.profile_manager = std::sync::Arc::new(profiles);
+    let mut engine = EngineInner::new();
+
+    let pc_id = engine.add_test_entity(crate::element::Entity::Pc(crate::element::ActorPc {
+        element: {
+            let mut initial_element =
+                crate::element::ElementData::from_initial_posture(crate::element::Posture::Tree);
+            initial_element.kind = crate::element::ElementKind::ActorPc;
+            initial_element
+        },
+        actor: crate::element::ActorData {
+            action_state: crate::element::ActionState::Waiting,
+            ..Default::default()
+        },
+        human: Default::default(),
+        pc: crate::element::PcData {
+            life_points: 50,
+            ..Default::default()
+        },
+    }));
+
+    engine.players.seats[0].selection = vec![pc_id];
+    complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.apply_commands(
+        &crate::sim_rng::test_context(),
+        &mut display,
+        &mut InputState::default(),
+        &assets,
+        &[crate::player_command::PlayerCommand::StandUp.into()],
+    );
+    let result = engine
+        .perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev)
+        .code;
+
+    assert_eq!(result, GameCode::LevelInProgress);
+    let pc = engine.ent(pc_id);
+    assert_eq!(
+        pc.element_data().posture(),
+        crate::element::Posture::Tree,
+        "Translate must not apply the DONE-side posture early"
+    );
+    assert_eq!(
+        pc.actor_data().unwrap().action_state,
+        crate::element::ActionState::Waiting
+    );
+    let (sequence_id, element_index) = engine
+        .world
+        .entities
+        .current_element_for_actor(pc_id)
+        .expect("tree-exit command remains selected while its animation runs");
+    let element = engine
+        .orders
+        .sequence_manager
+        .get_element(sequence_id, element_index)
+        .expect("selected tree-exit element still exists");
+    assert_eq!(element.command, crate::element::Command::LeaveTree);
+    assert_eq!(element.state, crate::sequence::SequenceState::InProgress);
+    assert_eq!(
+        element.current_order().map(|order| order.order_type),
+        Some(crate::order::OrderType::TransitionWaitingHiddenWaitingUpright)
+    );
+}
