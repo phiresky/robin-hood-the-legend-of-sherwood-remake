@@ -27,6 +27,18 @@
  }
  check('Loop restores initial composed bytes',states.at(-1).sha256===initial);
  v.seekNativeArt(74,focus);await capture('b05-physical-over-art-tick74');
+ if(cfg.refined){
+   const receiver=document.querySelector('[aria-label="Refined map background"]');check('Refined receiver UI offered',receiver);
+   v.scene.updateMatrixWorld(true);
+   const sceneState=()=>{const rows=[];v.scene.traverse(o=>rows.push([o.uuid,o.visible,o.matrixWorld.elements]));return JSON.stringify(rows)};
+   const beforeState=sceneState(),beforeImage=await digest(v.nativePreviewPixels());
+   receiver.click();check('Refined receiver enabled',receiver.checked&&v.physicalNativeReceiverEnabled);
+   const refined=await digest(v.nativePreviewPixels());check('Actual geometry replaces artwork receiver',refined!==beforeImage,{refined,original:beforeImage});
+   check('Static receiver render restores scene poses and visibility',sceneState()===beforeState);
+   await capture('b05-refined-map-tick74');
+   receiver.click();check('Original receiver restores exact bytes',!v.physicalNativeReceiverEnabled&&await digest(v.nativePreviewPixels())===beforeImage);
+ }
+
  v.seekNativeArt(0,focus);checkbox.click();check('Checkbox disables substitution',!v.physicalNativeEffectsEnabled&&await digest(v.nativePreviewPixels())===art);
  await capture('b05-original-art-tick0');
  select('State preview view','initial');await wait(()=>v.statePresentationMode==='physical','ordinary physical mode');
@@ -34,5 +46,5 @@
  select('State preview view','art');
  select('Mission','');await wait(()=>!v.bindings.document()?.mission?.importedFrom,'mission retired');
  check('Physical substitution retires with mission',!v.physicalNativeEffects&&!v.physicalNativeEffectsEnabled);
- return {status:'SCATTER_EXECUTED_PENDING_VISUAL_REVIEW',checks,states,scope:'Real UI and source-bound saved B05 geometry on native artwork; no geometry approval, actor crossing, or refined-terrain closure.'};
+ return {status:'SCATTER_EXECUTED_PENDING_VISUAL_REVIEW',checks,states,scope:'Real UI and source-bound saved B05 geometry on native artwork; no geometry approval, actor crossing, or whole-map closure. Refined receiver is exercised only when requested.'};
 })()

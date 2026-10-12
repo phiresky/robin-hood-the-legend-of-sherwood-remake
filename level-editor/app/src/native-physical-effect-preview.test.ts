@@ -26,6 +26,7 @@ function rendererFixture() {
   let scissorTest = true;
   const renderer = {
     xr: { enabled: false },
+    shadowMap: { enabled: true, needsUpdate: true },
     capabilities: { maxTextureSize: 4096 },
     autoClear: true,
     toneMapping: THREE.ACESFilmicToneMapping,
@@ -74,6 +75,8 @@ function rendererFixture() {
     assert.deepEqual(color.toArray(), [0.1, 0.2, 0.3]);
     assert.equal(renderer.autoClear, true);
     assert.equal(renderer.toneMapping, THREE.ACESFilmicToneMapping);
+    assert.equal(renderer.shadowMap.enabled, true);
+    assert.equal(renderer.shadowMap.needsUpdate, true);
   };
   return { renderer, events, restored };
 }

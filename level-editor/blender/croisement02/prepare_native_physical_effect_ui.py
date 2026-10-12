@@ -4,7 +4,7 @@ from pathlib import Path
 R=Path.cwd();LIB=R/'level-editor/library'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def dump(p,v):p.write_text(json.dumps(v,indent=2)+'\n')
-def prepare(out):
+def prepare(out,refined=False):
  old=R/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1/canonical-postinstall-smoke-v2'
  reqpath=R/'level-editor/work/croisement02-refinement/restart217-butterfly05-private-contract-v1/request.json';req=json.loads(reqpath.read_text())
  for row in [req['contract'],req['model'],*req['source_files']]:assert sha(Path(row['path']))==row['sha256'],row
@@ -26,10 +26,10 @@ def prepare(out):
  dump(out/'runtime-inputs.json',{**snap,**pins})
  for name in ['editor.tsx','observe-library.js']:shutil.copy2(old/name,out/name)
  shutil.copy2(R/'level-editor/blender/croisement02/native_physical_effect_ui_proof.js',out/'check.js')
- contract=json.loads(Path(req['contract']['path']).read_text());dump(out/'check-config.json',{'entry':req['entry'],'focus':contract['focus_element_id']})
+ contract=json.loads(Path(req['contract']['path']).read_text());dump(out/'check-config.json',{'entry':req['entry'],'focus':contract['focus_element_id'],'refined':refined})
  run=(old/'run.mjs').read_text().replace(str(old.relative_to(R)),str(out.relative_to(R)))
  run=run.replace('const privateRoutes=new Map();','const privateRoutes=new Map(Object.entries('+json.dumps(routes)+'));')
- run=run.replace("if(p.stage.name!=='canonical-source-camera')throw Error('Unexpected capture');", "if(!/^b05-(physical-over-art|original-art)-tick[0-9]+$/.test(p.stage.name))throw Error('Unexpected capture');")
+ run=run.replace("if(p.stage.name!=='canonical-source-camera')throw Error('Unexpected capture');", "if(!/^b05-(physical-over-art|original-art|refined-map)-tick[0-9]+$/.test(p.stage.name))throw Error('Unexpected capture');")
  run=run.replace("await evaluate('window.scatterCaptures[\"canonical-source-camera\"]=true')", "await evaluate('window.scatterCaptures['+JSON.stringify(p.stage.name)+']=true')")
  run=run.replace("await readFile(join(privateLibrary,path))", "await readFile(privateRoutes.get('/library/'+path)??join(privateLibrary,path))")
  (out/'run.mjs').write_text(run)
@@ -39,4 +39,4 @@ def prepare(out):
  dump(out/'request.json',{'status':'PREPARED_NOT_LAUNCHED','run':str(out/'run.mjs'),'run_sha256':sha(out/'run.mjs'),'scope':'Actual editor UI physical-effects/native-art prototype, normal frame seek and loop restoration. Original camera. No geometry approval or whole-map completion.','input_request':str(reqpath),'input_sha256':sha(reqpath)})
  print(out)
 if __name__=='__main__':
- p=argparse.ArgumentParser();p.add_argument('--out',type=Path,required=True);prepare(p.parse_args().out.resolve())
+ p=argparse.ArgumentParser();p.add_argument('--out',type=Path,required=True);p.add_argument('--refined',action='store_true');a=p.parse_args();prepare(a.out.resolve(),a.refined)

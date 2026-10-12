@@ -144,6 +144,8 @@ export function renderPhysicalEffect(
   const clearColor = renderer.getClearColor(new THREE.Color()),
     clearAlpha = renderer.getClearAlpha();
   const toneMapping = renderer.toneMapping;
+  const shadowEnabled = renderer.shadowMap.enabled,
+    shadowNeedsUpdate = renderer.shadowMap.needsUpdate;
   const output = new THREE.WebGLRenderTarget(width, height, {
     depthBuffer: true,
     colorSpace: THREE.SRGBColorSpace,
@@ -153,7 +155,10 @@ export function renderPhysicalEffect(
     renderer.setViewport(0, 0, width, height);
     renderer.setScissorTest(false);
     renderer.autoClear = false;
-    if (!preserveToneMapping) renderer.toneMapping = THREE.NoToneMapping;
+    if (!preserveToneMapping) {
+      renderer.toneMapping = THREE.NoToneMapping;
+      renderer.shadowMap.enabled = false;
+    }
     renderer.setClearColor(0, 0);
     renderer.clear(true, true, false);
     renderer.render(scene, camera);
@@ -179,6 +184,8 @@ export function renderPhysicalEffect(
     renderer.setClearColor(clearColor, clearAlpha);
     renderer.autoClear = autoClear;
     renderer.toneMapping = toneMapping;
+    renderer.shadowMap.enabled = shadowEnabled;
+    renderer.shadowMap.needsUpdate = shadowNeedsUpdate;
     output.dispose();
   }
 }
