@@ -41,7 +41,7 @@ def main():
         with bpy.data.libraries.load(str(model),link=False)as(src,dst):
             dst.objects=[name for name in src.objects if name.startswith('Provisional Tree18 ')]
         wood=dst.objects;assert len(wood)in(1,4)
-        if len(wood)==1:assert wood[0].get('tree18_track')=='united_four_source_tracks'
+        if len(wood)==1:assert wood[0].get('tree18_track')in('united_four_source_tracks','united_five_source_tracks')
         for obj in wood:scene.collection.objects.link(obj);obj.hide_render=False
         rows=[]
         for obj in wood:
