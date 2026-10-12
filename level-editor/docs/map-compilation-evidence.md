@@ -33,6 +33,21 @@ Fresh export `saved-map-exports-zFkVOw` then produces an entire parsed descripto
 identical to the tested candidate, verifying the published metadata and scene pin.
 No runtime code changes are needed. The staging helper's lint and format checks pass.
 
+Follow-up hidden-floor selection passes the four previously rejected 90-degree
+span-end clicks with identical file, line, interpolation and approach depth.
+`connected-jump-placements-vdE8in/jump-dispatch-coverage.json` records descriptor
+hashes and matched outcomes: 140 ordinary traversals, four hidden traversals and
+sixteen ordinary checks of an occluded lower target. The broader hidden audit
+passes only 4/24; its other inputs do not replace already valid ordinary input.
+All 160 combined checks pass, but this is not evidence of 160 executed flights.
+
+Rendered fixture `render-connection-library-G5JiC2` contains two complete
+published copies rotated 90 degrees and raised 40 units. Its first browser
+attempt terminated on a CDP status-query timeout before producing an archive.
+A second attempt tolerates individual status-query timeouts while preserving
+the twenty-minute overall limit and all round-trip assertions. ZIP evidence
+remains pending until that run completes.
+
 ## Croisement helper threshold and landing trace (2026-10-12)
 
 `croisement-helper-full-4sny3wff` retains the complete Croisement02 descriptor

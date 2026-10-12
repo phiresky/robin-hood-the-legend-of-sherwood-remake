@@ -45,8 +45,10 @@ natively and pass 16/6/24 ordinary route samples. Croisement01 passes all 130
 jump probes; Croisement02 covers all 40 with the appropriate helper posture.
 Croisement03 now passes 100/100 after deriving one asset's receiver from its
 existing walkable surface. The published change improves rotated/raised copies
-from 132/160 to 156/160 with no regressions; four destination-selection probes
-remain open. These exports include concurrent local scene edits and do not
+from 132/160 to 156/160 with no regressions; the four remaining checks pass with
+hidden-floor selection. The combined 160 checks comprise 144 actual traversals
+and sixteen expected occlusion checks, not 160 traversals.
+These exports include concurrent local scene edits and do not
 establish rendered ZIP fidelity. See [the receiver correction](map-compilation-evidence.md#croisement03-authored-landing-receiver-2026-10-12).
 
 The published restoration of four asset-local keep movement contours improves Leicester
