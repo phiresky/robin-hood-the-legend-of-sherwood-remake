@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Roof jump zones follow their receiving planes (2026-10-12)
+
+The remaining 37/180-degree click failures came from asset click-zone vertices
+stored at one constant height despite lying across a sloping roof. Rotation
+therefore moved the zone independently of the receiving floor. Authoring script
+`stage-roof-jump-zone-planes.mjs` stages the slab's zone on its revised floor
+and the green house's zone on its anchor's actual receiving face,
+`building-159-walk-0`. Original projected contours are retained while local
+vertex elevations and owning nodes follow those floors. This remains an
+unpublished candidate, not a compiler dependency on any saved level.
+
+Candidate `roof-jump-zone-planes-vyKK7C` exports six moved/copied assemblies in
+`roof-slab-placements-HZ6l3z`: 0/37/180 degrees at elevations 0/40. All six
+construct natively and all 120 native click traversals pass. Full Nottingham
+`saved-map-exports-taMfvg` constructs natively and retains exactly the same
+390 pass/error outcomes as the preceding support-volume candidate: 374 pass,
+ten expected helper restrictions and six unrelated overlay-selection failures.
+
+The 90-degree case remains unresolved. A diagnostic-only world-XY winding
+experiment bypasses the projected overlapping-join rejection and emits both
+copies at both elevations (`roof-slab-placements-sOSCI2`), but all 40 native
+click traversals fail: twenty unauthorized starts and twenty missing landing
+receivers. It also reports overlapping receiving planes and unavailable jump
+partitions. No join-orientation change was applied to production. The asset
+candidate remains unpublished pending this case and mesh coverage review.
+
 ## Explicit receiving seams survive fractional placement (2026-10-12)
 
 The moved roof assembly exposed an export defect separate from asset authoring.
