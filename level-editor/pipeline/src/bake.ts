@@ -1,6 +1,6 @@
 // Bake a 3D level document back into game files.
 //
-//   node src/bake.ts --map york [--doc library/scenes/york.rhlos-map.json] [--out work/york-bake]
+//   node src/bake.ts --map york [--doc library/scenes/york.rhlos-map.json] [--out work/active/york/york-bake]
 //       [--fill proc|synth] [--ambiance Day]
 //
 // Reconstructs the map's volumes and textures exactly like volumes.ts (the

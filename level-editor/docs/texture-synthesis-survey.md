@@ -81,7 +81,7 @@ Facts from web sources; speeds unverified unless cited.
 
 ### Trial on York tiles (2026-09-03)
 
-Inputs: `--fill none` tiles (own pixels, alpha-0 holes) of the cathedral wall (33 % visible), the nave wall (90 %), a roof (45 %), two ground crops; exemplar crops 190² stone and 150² ground. Sheet: `work/york-scene/compare-gmic-vs-texture-synthesis.png`.
+Inputs: `--fill none` tiles (own pixels, alpha-0 holes) of the cathedral wall (33 % visible), the nave wall (90 %), a roof (45 %), two ground crops; exemplar crops 190² stone and 150² ground. Sheet: `work/active/york/york-scene/compare-gmic-vs-texture-synthesis.png`.
 
 | tile | G'MIC `inpaint` patch 11 | G'MIC `inpaint_matchpatch` | texture-synthesis `--inpaint` |
 |---|---|---|---|

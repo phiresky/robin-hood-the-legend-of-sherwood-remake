@@ -8,11 +8,9 @@ export const repoRoot = path.resolve(editorRoot, "..");
 export const libraryDir = path.join(editorRoot, "library");
 export const workDir = path.join(editorRoot, "work", "active");
 
-/** Existing in-progress maps keep their workspaces during the storage migration. */
+/** Keep each map's generated inputs and diagnostics in its active workspace. */
 export function mapWorkRoot(map: string): string {
-  return ["york", "croisement01", "croisement02", "croisement03"].includes(map.toLowerCase())
-    ? path.join(editorRoot, "work")
-    : workDir;
+  return path.join(workDir, map.toLowerCase());
 }
 
 /** Explicit/lazy initialization: importing geometry/provider modules never mutates process.env. */

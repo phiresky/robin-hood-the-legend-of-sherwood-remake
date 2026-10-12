@@ -30,7 +30,7 @@ rotates the whole scene to glTF Y-up.
 ```
 pnpm volumes --map york --render [--fill synth|proc|smear|none] [--closeups x,y;x,y]
 # -> library/scenes/york-volumes[-proc|-smear|-holes].scene.{glb,json},
-#    work/york-scene/volumes[-proc|-smear|-holes]-{atlas,ground,compare,view-1,view-2,closeups}.*
+#    work/active/york/york-scene/volumes[-proc|-smear|-holes]-{atlas,ground,compare,view-1,view-2,closeups}.*
 ```
 
 Every sight obstacle in the level is a polygon with a `z_bottom`/`z_top`

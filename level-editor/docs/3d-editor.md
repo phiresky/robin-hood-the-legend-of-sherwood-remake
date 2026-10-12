@@ -244,7 +244,7 @@ or new animation. The narrow exception preserves the older static-map bake
 workflow without turning the preview into a fake sight obstacle.
 
 ```
-pnpm bake --map york [--doc library/scenes/york.rhlos-map.json] [--out work/york-bake] [--fill proc|synth]
+pnpm bake --map york [--doc library/scenes/york.rhlos-map.json] [--out work/active/york/york-bake] [--fill proc|synth]
 ```
 
 Reconstructs the map like `volumes.ts` (textures always come from the

@@ -64,7 +64,7 @@ microsoft/MoGe; bytedance-seed/depth-anything-3; facebookresearch/map-anything.
 ## Trial on six York buildings (2026-09-02)
 
 `pnpm reconstruct --asset <id> --backend trellis2|tripo|hunyuan` then
-`pnpm compare-backends --assets ...` → `work/york-scene/backends.png`.
+`pnpm compare-backends --assets ...` → `work/active/york/york-scene/backends.png`.
 Inputs: the same masks as an RGBA cutout with 8% margin; fit by the yaw
 search (no pose from these models). IoU = silhouette vs. mask under the map
 camera, app = colour agreement of the unlit render with the crop.
