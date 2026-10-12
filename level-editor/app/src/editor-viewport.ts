@@ -1,4 +1,7 @@
-import { NativePhysicalEffectPreview } from "./native-physical-effect-preview.ts";
+import {
+  NativePhysicalEffectPreview,
+  renderNativeStaticReceiver,
+} from "./native-physical-effect-preview.ts";
 import {
   verifySourceCoverPlacements,
   type SourceCoverVisibility,
@@ -684,14 +687,28 @@ export class EditorViewport {
   }
   private physicalNativeEffects: NativePhysicalEffectPreview | undefined;
   private physicalNativeEffectsEnabled = false;
+  private physicalNativeReceiverEnabled = false;
+  private physicalNativeImageRevision = 0;
   setNativePhysicalEffects(enabled: boolean) {
     if (enabled && (!this.physicalNativeEffects || !this.loopClocks.ready))
       throw new Error("No source-bound physical effects are loaded");
     this.physicalNativeEffectsEnabled = enabled;
+    if (!enabled) this.physicalNativeReceiverEnabled = false;
     try {
       this.nativeSurface?.update(this.nativePreviewPixels());
     } catch (error) {
       this.physicalNativeEffectsEnabled = false;
+      throw error;
+    }
+  }
+  setNativePhysicalReceiver(enabled: boolean) {
+    if (enabled && !this.physicalNativeEffectsEnabled)
+      throw new Error("Enable 3D effects before selecting the refined receiver");
+    this.physicalNativeReceiverEnabled = enabled;
+    try {
+      this.nativeSurface?.update(this.nativePreviewPixels());
+    } catch (error) {
+      this.physicalNativeReceiverEnabled = false;
       throw error;
     }
   }
@@ -700,9 +717,55 @@ export class EditorViewport {
     if (this.physicalNativeEffectsEnabled) {
       if (!this.renderer || !this.physicalNativeEffects)
         throw new Error("Physical effect preview is not ready");
-      const sampled = this.physicalNativeEffects.sample(this.renderer, snapshot());
+      let source = snapshot();
+      if (this.physicalNativeReceiverEnabled) {
+        const document = this.bindings.document();
+        if (
+          !document ||
+          document.camera.elevation_deg !== this.physicalNativeEffects.cameraElevation
+        )
+          throw new Error("Refined receiver camera differs from source effect camera");
+        const excluded: THREE.Object3D[] = [];
+        if (this.loopStaticReplacements) {
+          verifyStaticReplacementRows(this.loopStaticReplacements, document);
+          for (const replacement of this.loopStaticReplacements) {
+            const view = this.partViews.get(replacement.object_id);
+            if (!view) throw new Error("Missing physical effect's replaced static receiver");
+            excluded.push(view.wrapper);
+          }
+        }
+        const materials = [...this.tinted].map(([mesh, original]) => {
+          const tinted = mesh.material;
+          mesh.material = original;
+          return { mesh, tinted };
+        });
+        try {
+          source = {
+            ...source,
+            background: renderNativeStaticReceiver(
+              this.renderer,
+              this.scene,
+              [
+                this.objectsRoot,
+                this.terrain.root,
+                this.scenery.root,
+                this.sunlight.root,
+                ...(this.ground ? [this.ground] : []),
+                ...this.splines.assetObjects(),
+              ],
+              excluded,
+              source,
+              document.camera.elevation_deg,
+            ),
+          };
+        } finally {
+          for (const { mesh, tinted } of materials) mesh.material = tinted;
+        }
+      }
+      const sampled = this.physicalNativeEffects.sample(this.renderer, source);
       // A separate image revision prevents cached artwork surviving the preview toggle.
-      snapshot = () => ({ ...sampled, revision: -sampled.revision - 1 });
+      const imageRevision = --this.physicalNativeImageRevision;
+      snapshot = () => ({ ...sampled, revision: imageRevision });
       if (!this.actorPreview) return this.currentNativeArt.composeLoopSnapshot(sampled);
     }
     if (!this.actorPreview) return this.currentNativeArt.pixels();
@@ -1300,6 +1363,7 @@ export class EditorViewport {
   }
   clearNativeArtPresentation() {
     this.physicalNativeEffectsEnabled = false;
+    this.physicalNativeReceiverEnabled = false;
     this.physicalNativeEffects = undefined;
     this.clearNativeActorPreview();
     this.loopEpoch++;

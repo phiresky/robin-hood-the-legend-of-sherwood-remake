@@ -13,7 +13,11 @@ export interface PhysicalEffectBinding {
 }
 
 /** The viewport's Y-up coordinates projected into the untouched source-art frame. */
-export function nativeEffectCamera(box: THREE.Box3, elevation: number) {
+export function nativeEffectCamera(
+  box: THREE.Box3,
+  elevation: number,
+  frame?: { x: number; y: number; width: number; height: number },
+) {
   if (!Number.isFinite(elevation) || elevation <= 0 || elevation >= 90 || box.isEmpty())
     throw new Error("Invalid native physical effect camera");
   const angle = (elevation * Math.PI) / 180,
@@ -24,10 +28,12 @@ export function nativeEffectCamera(box: THREE.Box3, elevation: number) {
     for (const y of [box.min.y, box.max.y])
       for (const z of [box.min.z, box.max.z])
         projected.expandByPoint(new THREE.Vector2(x, z * sin - y * cos));
-  const x = Math.floor(projected.min.x) - 1,
-    y = Math.floor(projected.min.y) - 1;
-  const width = Math.ceil(projected.max.x) + 1 - x,
-    height = Math.ceil(projected.max.y) + 1 - y;
+  const x = frame?.x ?? Math.floor(projected.min.x) - 1,
+    y = frame?.y ?? Math.floor(projected.min.y) - 1;
+  const width = frame?.width ?? Math.ceil(projected.max.x) + 1 - x,
+    height = frame?.height ?? Math.ceil(projected.max.y) + 1 - y;
+  if (![x, y, width, height].every(Number.isSafeInteger) || width < 1 || height < 1)
+    throw new Error("Invalid native receiver frame");
   const center = new THREE.Vector3(x + width / 2, 0, (y + height / 2) / sin);
   const distance =
     box.getSize(new THREE.Vector3()).length() +
@@ -68,6 +74,9 @@ export class NativePhysicalEffectPreview {
       this.bound.set(element.id, row);
     }
     if (!this.bound.size) throw new Error("No source-bound physical map effects");
+  }
+  get cameraElevation() {
+    return this.native.camera_elevation_deg;
   }
   sample(renderer: THREE.WebGLRenderer, snapshot: NativeLoopDrawSnapshot): NativeLoopDrawSnapshot {
     if (snapshot.mission !== this.native.mission)
@@ -121,6 +130,7 @@ export function renderPhysicalEffect(
   camera: THREE.Camera,
   width: number,
   height: number,
+  preserveToneMapping = false,
 ): NativePixels {
   if (renderer.xr.enabled || Math.max(width, height) > renderer.capabilities.maxTextureSize)
     throw new Error("Physical effect preview exceeds renderer limits");
@@ -143,7 +153,7 @@ export function renderPhysicalEffect(
     renderer.setViewport(0, 0, width, height);
     renderer.setScissorTest(false);
     renderer.autoClear = false;
-    renderer.toneMapping = THREE.NoToneMapping;
+    if (!preserveToneMapping) renderer.toneMapping = THREE.NoToneMapping;
     renderer.setClearColor(0, 0);
     renderer.clear(true, true, false);
     renderer.render(scene, camera);
@@ -170,5 +180,72 @@ export function renderPhysicalEffect(
     renderer.autoClear = autoClear;
     renderer.toneMapping = toneMapping;
     output.dispose();
+  }
+}
+
+/** Isolate real static receivers without moving them or flattening their depth. */
+export function withNativeReceiverVisibility<T>(
+  scene: THREE.Scene,
+  roots: readonly THREE.Object3D[],
+  excluded: readonly THREE.Object3D[],
+  action: () => T,
+): T {
+  const allowed = new Set(roots),
+    excludedRoots = new Set(excluded),
+    hidden: THREE.Object3D[] = [];
+  const within = (node: THREE.Object3D, set: Set<THREE.Object3D>) => {
+    for (let p: THREE.Object3D | null = node; p; p = p.parent) if (set.has(p)) return true;
+    return false;
+  };
+  try {
+    scene.traverse((node) => {
+      if (!node.visible) return;
+      const renderable =
+        node instanceof THREE.Mesh ||
+        node instanceof THREE.Sprite ||
+        node instanceof THREE.Line ||
+        node instanceof THREE.Points;
+      if (
+        renderable &&
+        (!(node instanceof THREE.Mesh) || !within(node, allowed) || within(node, excludedRoots))
+      ) {
+        hidden.push(node);
+        node.visible = false;
+      }
+    });
+    return action();
+  } finally {
+    for (const node of hidden) node.visible = true;
+  }
+}
+
+/** Refined geometry is the receiver; native order remains a separate dynamic pass. */
+export function renderNativeStaticReceiver(
+  renderer: THREE.WebGLRenderer,
+  scene: THREE.Scene,
+  roots: readonly THREE.Object3D[],
+  excluded: readonly THREE.Object3D[],
+  snapshot: NativeLoopDrawSnapshot,
+  elevation: number,
+): NativePixels {
+  scene.updateMatrixWorld(true);
+  const box = new THREE.Box3();
+  for (const root of roots) box.expandByObject(root);
+  const { camera, width, height } = nativeEffectCamera(box, elevation, {
+    x: snapshot.origin[0],
+    y: snapshot.origin[1],
+    width: snapshot.background.width,
+    height: snapshot.background.height,
+  });
+  // Source effects and actors must not cast a second shadow into this receiver.
+  const needsUpdate = renderer.shadowMap.needsUpdate;
+  try {
+    renderer.shadowMap.needsUpdate = true;
+    return withNativeReceiverVisibility(scene, roots, excluded, () =>
+      renderPhysicalEffect(renderer, scene, camera, width, height, true),
+    );
+  } finally {
+    // An ordinary scene render must rebuild any shadow cache changed by isolation.
+    renderer.shadowMap.needsUpdate = needsUpdate || renderer.shadowMap.enabled;
   }
 }

@@ -1,0 +1,42 @@
+"""Freeze a real editor UI proof without launching a browser or publishing assets."""
+import argparse, hashlib, json, shutil
+from pathlib import Path
+R=Path.cwd();LIB=R/'level-editor/library'
+def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def dump(p,v):p.write_text(json.dumps(v,indent=2)+'\n')
+def prepare(out):
+ old=R/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1/canonical-postinstall-smoke-v2'
+ reqpath=R/'level-editor/work/croisement02-refinement/restart217-butterfly05-private-contract-v1/request.json';req=json.loads(reqpath.read_text())
+ for row in [req['contract'],req['model'],*req['source_files']]:assert sha(Path(row['path']))==row['sha256'],row
+ out.mkdir(exist_ok=False)
+ catalog=json.loads((LIB/'mission-states/index.json').read_text());assert not any(e['id']==req['entry']['id'] for e in catalog['entries']);catalog['entries'].append(req['entry']);dump(out/'candidate-catalog.json',catalog)
+ routes={'/library/mission-states/index.json':str(out/'candidate-catalog.json')}
+ for p in Path(req['library_root']).rglob('*'):
+  if p.is_file():routes['/library/'+str(p.relative_to(req['library_root']))]=str(p)
+ authority=json.loads((old/'runtime-authority.json').read_text());snap={}
+ for directory in authority['sourceDirectories']:
+  for p in sorted((R/directory).rglob('*')):
+   if not p.is_file():continue
+   key=str(p.relative_to(R));snap[key]=sha(p)
+   if p.suffix in {'.ts','.tsx','.js','.jsx','.mjs','.cjs','.css','.json'}:
+    dst=out/'snapshot'/key;dst.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,dst)
+ authority['membership']=sorted(snap);authority['index']={'path':str(LIB/'3d-assets/index.json'),'initial_sha256':sha(LIB/'3d-assets/index.json')}
+ dump(out/'source-snapshot.json',snap);dump(out/'runtime-authority.json',authority)
+ pins={str(p):sha(p) for p in [reqpath,LIB/'3d-assets/index.json',LIB/'scenes/croisement02.rhlos-map.json',LIB/'mission-states/index.json',*[Path(p)for p in routes.values()]]}
+ dump(out/'runtime-inputs.json',{**snap,**pins})
+ for name in ['editor.tsx','observe-library.js']:shutil.copy2(old/name,out/name)
+ shutil.copy2(R/'level-editor/blender/croisement02/native_physical_effect_ui_proof.js',out/'check.js')
+ contract=json.loads(Path(req['contract']['path']).read_text());dump(out/'check-config.json',{'entry':req['entry'],'focus':contract['focus_element_id']})
+ run=(old/'run.mjs').read_text().replace(str(old.relative_to(R)),str(out.relative_to(R)))
+ run=run.replace('const privateRoutes=new Map();','const privateRoutes=new Map(Object.entries('+json.dumps(routes)+'));')
+ run=run.replace("if(p.stage.name!=='canonical-source-camera')throw Error('Unexpected capture');", "if(!/^b05-(physical-over-art|original-art)-tick[0-9]+$/.test(p.stage.name))throw Error('Unexpected capture');")
+ run=run.replace("await evaluate('window.scatterCaptures[\"canonical-source-camera\"]=true')", "await evaluate('window.scatterCaptures['+JSON.stringify(p.stage.name)+']=true')")
+ run=run.replace("await readFile(join(privateLibrary,path))", "await readFile(privateRoutes.get('/library/'+path)??join(privateLibrary,path))")
+ (out/'run.mjs').write_text(run)
+ for p in out.iterdir():
+  if p.is_file():pins[str(p)]=sha(p)
+ dump(out/'inputs.json',pins)
+ dump(out/'request.json',{'status':'PREPARED_NOT_LAUNCHED','run':str(out/'run.mjs'),'run_sha256':sha(out/'run.mjs'),'scope':'Actual editor UI physical-effects/native-art prototype, normal frame seek and loop restoration. Original camera. No geometry approval or whole-map completion.','input_request':str(reqpath),'input_sha256':sha(reqpath)})
+ print(out)
+if __name__=='__main__':
+ p=argparse.ArgumentParser();p.add_argument('--out',type=Path,required=True);prepare(p.parse_args().out.resolve())

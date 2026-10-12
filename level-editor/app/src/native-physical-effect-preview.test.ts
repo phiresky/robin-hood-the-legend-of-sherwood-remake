@@ -186,3 +186,51 @@ test("physical substitution rejects stale source identity and unsampled native p
   };
   assert.throws(() => preview.sample({} as THREE.WebGLRenderer, snapshot), /snapshot identity/);
 });
+
+test("refined receiver isolates terrain and static solids, excluding effects, actors and helpers", async () => {
+  const { withNativeReceiverVisibility } = await import("./native-physical-effect-preview.ts");
+  const scene = new THREE.Scene(),
+    terrain = new THREE.Group(),
+    staticObjects = new THREE.Group(),
+    effect = new THREE.Group();
+  const mesh = () => new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
+  const ground = mesh(),
+    wall = mesh(),
+    oldEffect = mesh(),
+    butterfly = mesh(),
+    actor = new THREE.Sprite(),
+    helper = new THREE.Line();
+  const alreadyHidden = mesh();
+  alreadyHidden.visible = false;
+  terrain.add(ground);
+  staticObjects.add(wall, oldEffect, alreadyHidden, helper);
+  effect.add(butterfly);
+  scene.add(terrain, staticObjects, effect, actor);
+  assert.throws(
+    () =>
+      withNativeReceiverVisibility(scene, [terrain, staticObjects], [oldEffect], () => {
+        assert.equal(ground.visible, true);
+        assert.equal(wall.visible, true);
+        for (const node of [oldEffect, butterfly, actor, helper, alreadyHidden])
+          assert.equal(node.visible, false);
+        throw Error("render fails");
+      }),
+    /render fails/,
+  );
+  for (const node of [ground, wall, oldEffect, butterfly, actor, helper])
+    assert.equal(node.visible, true);
+  assert.equal(alreadyHidden.visible, false);
+});
+
+test("full refined receiver camera retains source origin and image extent independently of geometry bounds", () => {
+  const v = nativeEffectCamera(
+    new THREE.Box3(new THREE.Vector3(-50, -5, -80), new THREE.Vector3(2200, 300, 2700)),
+    35,
+    { x: 64, y: 128, width: 1792, height: 1152 },
+  );
+  const origin = new THREE.Vector3(64, 0, 128 / Math.sin((35 * Math.PI) / 180)).project(v.camera);
+  assert.ok(Math.abs(origin.x + 1) < 1e-8);
+  assert.ok(Math.abs(origin.y - 1) < 1e-8);
+  assert.equal(v.width, 1792);
+  assert.equal(v.height, 1152);
+});

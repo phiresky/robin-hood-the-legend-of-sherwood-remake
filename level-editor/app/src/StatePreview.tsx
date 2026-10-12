@@ -42,6 +42,7 @@ export default function StatePreview(props: {
     [actorBusy, setActorBusy] = createSignal(false);
   const [actorReceiver, setActorReceiver] = createSignal("");
   const [physicalEffects, setPhysicalEffects] = createSignal(false);
+  const [physicalReceiver, setPhysicalReceiver] = createSignal(false);
   let receiverActor = "";
   const receiverChoices = () => {
     props.document();
@@ -156,6 +157,7 @@ export default function StatePreview(props: {
     setContract(null);
     setLoopContract(null);
     setPhysicalEffects(false);
+    setPhysicalReceiver(false);
     setPatchContract(null);
     setPatchStarted(false);
     setStatus("Loading state preview…");
@@ -217,6 +219,7 @@ export default function StatePreview(props: {
       setContract(null);
       setLoopContract(null);
       setPhysicalEffects(false);
+      setPhysicalReceiver(false);
       setPatchContract(null);
       setPatchStarted(false);
       setSelected("");
@@ -487,14 +490,36 @@ export default function StatePreview(props: {
                   try {
                     props.viewport.setNativePhysicalEffects(event.currentTarget.checked);
                     setPhysicalEffects(event.currentTarget.checked);
+                    if (!event.currentTarget.checked) setPhysicalReceiver(false);
                   } catch (error) {
                     event.currentTarget.checked = false;
                     setPhysicalEffects(false);
+                    setPhysicalReceiver(false);
                     props.onError(String(error));
                   }
                 }}
               />
               3D effects over original artwork (preview)
+            </label>
+          </Show>
+          <Show when={mode() === "art" && physicalEffects()}>
+            <label>
+              <input
+                type="checkbox"
+                aria-label="Refined map background"
+                checked={physicalReceiver()}
+                onChange={(event) => {
+                  try {
+                    props.viewport.setNativePhysicalReceiver(event.currentTarget.checked);
+                    setPhysicalReceiver(event.currentTarget.checked);
+                  } catch (error) {
+                    event.currentTarget.checked = false;
+                    setPhysicalReceiver(false);
+                    props.onError(String(error));
+                  }
+                }}
+              />
+              Use refined map as background (preview)
             </label>
           </Show>
           <label>
