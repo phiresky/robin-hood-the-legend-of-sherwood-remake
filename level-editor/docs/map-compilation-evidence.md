@@ -209,6 +209,23 @@ gap; arbitrary placements, broader inputs and in-game character rendering
 remain separate requirements. The all-normal test still fails its fifteen
 unsupported-mode requests, as expected.
 
+### Full rendered Nottingham archive
+
+`nottingham-rendered-library-ai1yht_r/nottingham-rendered.zip` is a fresh
+57,945,741-byte browser export at 2304 by 3520 pixels (SHA-256
+`5b1ab6b2aebd6ddbaade0dabe982598b7cc846289075d81911139bfe886ccda4`).
+Reopening and rebaking preserves the editor document, gameplay, warnings,
+color/depth pixels and all ten appearance states. Its complete gameplay
+descriptor matches `saved-map-exports-mog5ON`, preserving the inputs to the
+390-case traversal audit above.
+
+The native empty-base archive test passes: 695 sight obstacles, twenty masks,
+173 door projections, 157,176 grid blocks and four appearance regions controlled
+by ten patches. Color, depth, minimap and the mission-free editor scene load
+from the archive without a base datadir. This verifies packaging and native
+construction; native GPU compositing and rendered character contact remain
+separate checks.
+
 ## Supported integer jump-span search (2026-10-12)
 
 `refinement/review-jump-supported-spans.mjs` generates diagnostic replacements

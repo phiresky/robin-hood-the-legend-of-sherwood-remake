@@ -305,6 +305,12 @@ Descriptor hashes, line indices, click parameters and approach depths match
 across modes. This closes the isolated-helper-test gap, not all moved-placement
 or rendered-actor coverage. See [full-overlay evidence](map-compilation-evidence.md#nottingham-helper-routes-with-all-map-overlays-2026-10-12).
 
+**Current Nottingham ZIP verification (2026-10-12):** the fresh 57,945,741-byte
+archive reopens and rebakes identically, including ten appearance states, and
+passes native loading without base-game data. Its complete gameplay descriptor
+matches the 390-case traversal audit. Native rendered-character coverage remains
+open. See [the archive evidence](map-compilation-evidence.md#full-rendered-nottingham-archive).
+
 **Earlier Nottingham ZIP verification (2026-10-12):** the full 57,942,452-byte archive reopens
 with identical gameplay, color and depth, and loads through native mod/resource
 loading without a base data directory. Fresh gameplay data passes 184 ordinary
