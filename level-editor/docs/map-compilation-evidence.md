@@ -1146,6 +1146,14 @@ the defect is in asset metadata, compiler preparation or probe placement.
 
 ### Fresh Lincoln traversal checks (2026-10-12)
 
+Fresh export `saved-map-exports-jjSJNf` compiles in approximately 24 seconds and
+passes 182 ordinary route samples, all sixteen stair player-click routes and
+100/100 actual jump traversals. Native test times are 1.50, 2.31 and 1.76 seconds,
+respectively; these are audit durations, not gameplay tick timings.
+`native-input-evidence.json` records the descriptor and test-binary hashes. The
+scene bytes match browser fixture `lincoln-rendered-library-u5CV9u`; its full
+rendered archive round trip and descriptor comparison remain pending.
+
 Published-scene export `saved-map-exports-ZcOAqu` compiles in 43.20 seconds and
 passes native construction, 182 sampled ordinary routes and all 100 ordinary
 jump-click probes. Complete-sprite stair gate discovery passes fourteen of
