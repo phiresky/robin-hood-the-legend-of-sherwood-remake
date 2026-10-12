@@ -9,6 +9,8 @@ import restart2_bank_face_source_saved as source
 import restart2_bank_full_v1 as base
 
 def main():
+ if '--folder' in sys.argv:
+  source.OUT=Path(sys.argv[sys.argv.index('--folder')+1]).resolve()
  source.guard.resources();source.guard.acquire(slots=2)
  try:
   source.guard.resources();folder=source.OUT;out=folder/'boulder-detail-v1';assert not out.exists();out.mkdir();model=folder/'worker.blend';digest=source.sha(model);bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;allpoints=[o.matrix_world@v.co for o in scene.objects if o.type=='MESH'for v in o.data.vertices];receipts={}
