@@ -9,13 +9,14 @@ R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).parent),s
 from restart2_tree02_firsthit_v1 import rows_for
 from restart2_tree02_shared_ridge_joint_v5 import hit
 from render_slots import acquire,release
+from restart2_tree01_canopy_saved import resources
 from evidence_io import sha,write_json
 B=R/'level-editor/work/croisement03-refinement/restart2';O=Path(sys.argv[sys.argv.index('--')+1]).resolve() if '--' in sys.argv else B/'bank-full-prototype-v2'
 
 def main():
- assert not (O/'neighbor-firsthits.json').exists();acquire()
+ assert not (O/'neighbor-firsthits.json').exists();resources();acquire(slots=2)
  try:
-  model=O/'worker.blend';digest=sha(model);bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;bank=[]
+  resources();model=O/'worker.blend';digest=sha(model);bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;bank=[]
   for o in scene.objects:
    if o.type!='MESH' or not o.name.startswith('Candidate bank'):continue
    m=o.data;m.calc_loop_triangles();vs=[o.matrix_world@v.co for v in m.vertices];ts=list(m.loop_triangles);bank.append((o,BVHTree.FromPolygons(vs,[list(t.vertices) for t in ts],all_triangles=True),vs,ts,None,None,False,False))
