@@ -1,0 +1,15 @@
+(async()=>{
+ const v=window.reviewViewport,cfg=window.canonicalSmoke,checks=[];
+ const check=(name,pass,detail)=>{checks.push({name,pass:!!pass,detail});window.canonicalSmokeEvidence={checks};if(!pass)throw Error(name)};
+ const wait=async(fn,label)=>{for(let i=0;i<1200;i++){if(fn())return;await new Promise(r=>setTimeout(r,100))}throw Error('Timeout '+label)};
+ const select=(label,value)=>{const el=document.querySelector('select[aria-label="'+label+'"]');check('Offered '+label+' '+value,el&&[...el.options].some(o=>o.value===value));el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))};
+ const offered=(label,value)=>{const el=document.querySelector('select[aria-label="'+label+'"]');return el&&[...el.options].some(o=>o.value===value)};
+ const doc=v.bindings.document();check('Canonical map group count',doc.groups.length===cfg.expected_groups,doc.groups.length);
+ for(const id of cfg.asset_ids){const pin=cfg.pins[id],ref=doc.assetSources.find(s=>s.id===id);check('Installed source pins '+id,ref?.model_sha256===pin.model_sha256&&ref?.descriptor_sha256===pin.descriptor_sha256);const index=doc.groups.findIndex(g=>g.id===id),row=document.querySelectorAll('.object-list li.depth-0')[index];check('Exact group UI row '+id,index>=0&&row?.title===(doc.groups[index].name??id));row.scrollIntoView({block:'center'});row.click();await wait(()=>v.bindings.selection()?.id===id,'group selection '+id);check('Normal UI selection '+id,v.bindings.selection()?.kind==='group'&&v.bindings.selection()?.id===id)}
+ window.scatterStage={name:'canonical-source-camera',time:Date.now()};await wait(()=>window.scatterCaptures['canonical-source-camera'],'source screenshot');
+ const mode=[...document.querySelectorAll('.editor-modes button')].find(b=>b.textContent.trim()==='Mission');check('Mission mode exists',mode);mode.click();
+ for(const row of cfg.states){await wait(()=>offered('Mission',row.mission),'mission offered');select('Mission',row.mission);await wait(()=>v.bindings.document()?.mission?.importedFrom===row.mission,'mission selected');await wait(()=>offered('State preview asset',row.id),'state offered');select('State preview asset',row.id);await wait(()=>offered('State preview view','initial')&&(row.kind==='tree42'?v.loopClocks.ready&&v.missionStates.players.has('tree42-motion'):v.stateDelivery.ready),'installed state loaded');check('Installed state controls '+row.id,!!document.querySelector('[aria-label="State preview"]'));check('Reset control '+row.id,[...document.querySelectorAll('[aria-label="State preview"] button')].some(b=>b.textContent.trim()==='Reset'));if(row.kind==='tree42')check('Frame control Tree42',!!document.querySelector('[aria-label="State preview frame"]'));
+ }
+ select('Mission','');await wait(()=>!v.bindings.document()?.mission?.importedFrom,'map only');
+ return{status:'SCATTER_EXECUTED_PENDING_VISUAL_REVIEW',checks,scope:'Actual canonical map/resources, two normal UI selections, source-camera screenshot and installed climbing/Tree42 controls. No repeated clock, geometry or save/reload certification.'};
+})()
