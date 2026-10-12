@@ -19,6 +19,12 @@ compiler/export tests pass. A wider copied-roof fixture currently generates no
 jumps and fails native verification; this is an open issue, not parity evidence.
 See [partition verification](map-compilation-evidence.md#compiled-jump-receiving-face-partitions-2026-10-12).
 
+Fresh Wychford gameplay data loads natively and passes 96 sampled ordinary
+routes. Its church-side-tower entrance remains about 46 units above its support
+and is omitted with a warning. The ten-map batch is still running. Copied-roof
+flight-clearance rejection remains unresolved; bypassed diagnostic flights are
+not evidence of a safe production export.
+
 **Boundary repair under validation (2026-10-12):** static export/load corrections
 bring the upper-red-house eight-placement jump fixture from 50/80 to 70/80,
 resolving all twenty receiver-loss cases. Ten rotated click-selection failures

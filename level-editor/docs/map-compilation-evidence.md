@@ -4,6 +4,40 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Wychford native construction and rejected roof-flight investigation (2026-10-12)
+
+The ten-map batch `saved-map-exports-MqNblp` finishes Wychford in about 31 minutes.
+Its isolated completed-result snapshot `completed-scene-audit-9lvpu2on` passes
+native construction (26.58 seconds) and all 96 ordinary initial-state route
+samples (22.16 seconds). The batch started before jump partitioning was added.
+It continues processing other scenes; this is not a completed ten-map result.
+Wychford still omits the placed church-side-tower traversal: its entrance has
+height 134.10 while the supporting area at that point has height 88.33. The
+compiler retains other asset geometry and reports the omission. Full traversal,
+rendered ZIP fidelity and that entrance remain unverified.
+
+Temporary diagnostics separate the copied-roof rejection into flight clearance
+covering the full span and walking clearance trimming about 2.6% of one endpoint.
+Reported flight contacts concern the house's own roof volumes. Production
+clearance remains unchanged; temporary source logging was removed.
+
+`clearance-bypass-roof-placements-M9SMhi` is explicitly an unsafe diagnostic:
+the module-loading harness bypasses only flight clearance, leaving production
+files untouched. It passes 120 isolated upright jumps, 120 sword jumps and 120
+walk/jump/walk routes with RobinTown sprites. A separate fixture
+`robinhood-roof-flight-probe-6n3arfd8` passes 120 approach routes with RobinHood
+sprites. Recorded airborne foot points have no solid-volume penetrations deeper
+than 0.1 unit: 1,080 upright, 640 sword, 1,080 approach and 1,080 forest-sprite
+samples. This is **not** continuous flight, body-volume or all-animation coverage,
+and does not justify disabling the production clearance check. The continuous
+flight-family bounds remain the next investigation target.
+
+Increasing the authored ledge inset to 20 does not restore connections; the
+fixture's narrow surface no longer supplies a generated span. The fixture guard
+now preserves its documented 90-degree narrow-layout exception, while requiring
+nonempty connections at 0, 37 and 180 degrees. Formatting and lint pass. Its
+production export still fails at 0 degrees; the regression is not fixed.
+
 ## Compiled jump receiving-face partitions (2026-10-12)
 
 `partition-jump-receivers.ts` now derives jump partitions from placed receiving
