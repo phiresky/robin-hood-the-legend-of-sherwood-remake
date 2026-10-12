@@ -2886,7 +2886,8 @@ is performed. Source game data and generated assets remain local.
 Controlled state previews can bind independently reviewed saved models to every
 native patch transition frame with `native-patch-model-frames`. The preview uses
 the native frame delays and terminal tick, without interpolating between models.
-Initial and applied models remain separate, and all transition bindings undergo
+The last transition bindings must match the applied bindings exactly; a separate
+final animation is unsupported. Initial and applied models remain separate, and all transition bindings undergo
 the same path, hash, resource, and placement validation as endpoint models.
 This supports private review contracts; publishing models and approving their
 appearance remain separate steps.

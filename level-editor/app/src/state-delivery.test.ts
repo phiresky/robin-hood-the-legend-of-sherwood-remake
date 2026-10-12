@@ -651,3 +651,49 @@ test("discrete model frames reject missing phases and unsafe transition bindings
     p.dispose();
   }
 });
+
+test("discrete terminal model cannot drift from retained applied appearance or placement", async () => {
+  for (const fault of [
+    "model",
+    "hash",
+    "scene",
+    "role",
+    "position",
+    "resource-path",
+    "resource-hash",
+    "descriptor",
+    "descriptor-hash",
+    "final-animation",
+  ] as const) {
+    const f = await discreteFixture();
+    const family = f.contract.families[0]!;
+    const motion = family.physical.motion!;
+    if (motion.kind !== "native-patch-model-frames") throw new Error("Fixture mismatch");
+    const binding = motion.model_frames.at(-1)![0]!;
+    assert.ok(Array.isArray(family.physical.applied));
+    const applied = family.physical.applied[0]!;
+    binding.resources = [{ path: "texture.png", sha256: "a".repeat(64) }];
+    applied.resources = structuredClone(binding.resources);
+    if (fault === "model") binding.model = "different.glb";
+    if (fault === "hash") binding.model_sha256 = "d".repeat(64);
+    if (fault === "scene") binding.model_scene = "different";
+    if (fault === "role") binding.role = "ground";
+    if (fault === "position") binding.position = [21, 30, 40];
+    if (fault === "resource-path") binding.resources[0]!.path = "different.png";
+    if (fault === "resource-hash") binding.resources[0]!.sha256 = "d".repeat(64);
+    if (fault === "descriptor") binding.descriptor = "different.json";
+    if (fault === "descriptor-hash") binding.descriptor_sha256 = "d".repeat(64);
+    if (fault === "final-animation")
+      f.contract.native.patch_states![0]!.final = [f.contract.native.background];
+    const p = new StateDelivery(() => {
+      throw new Error("must not load");
+    });
+    await assert.rejects(
+      p.set(f.contract, f.source, f.library, f.read),
+      fault === "final-animation"
+        ? /do not support a final animation/
+        : /terminal model frame differs/,
+    );
+    p.dispose();
+  }
+});

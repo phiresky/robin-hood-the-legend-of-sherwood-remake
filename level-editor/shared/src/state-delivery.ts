@@ -55,7 +55,7 @@ export interface PhysicalPatchNodePoses {
   node_frames: ReviewedNodePose[][];
 }
 
-/** Independently reviewed saved models sampled without interpolation on native frame boundaries. */
+/** Reviewed discrete models retain the last transition model as their applied state. */
 export interface PhysicalPatchModelFrames {
   kind: "native-patch-model-frames";
   patch_id: string;
@@ -211,6 +211,7 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
         )
           fail("terminal node pose differs from baked applied model");
       } else if (motion.kind === "native-patch-model-frames") {
+        if (patch!.final.length) fail("discrete model frames do not support a final animation");
         if (
           !Array.isArray(motion.model_frames) ||
           motion.model_frames.length !== patch!.transition.length ||
@@ -262,6 +263,27 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
           if (!resource || !safeLibraryPath(resource.path) || !hash(resource.sha256))
             fail("invalid physical resource");
       }
+    }
+    if (motion?.kind === "native-patch-model-frames") {
+      const signature = (bindings: PhysicalStateBinding[]) =>
+        JSON.stringify(
+          bindings.map((s) => [
+            s.id,
+            s.role,
+            s.model,
+            s.model_sha256,
+            s.model_scene,
+            s.descriptor,
+            s.descriptor_sha256,
+            s.position,
+            s.resources.map((r) => [r.path, r.sha256]),
+          ]),
+        );
+      if (
+        signature(motion.model_frames.at(-1)!) !==
+        signature(physicalEndpointSources(family.physical.applied))
+      )
+        fail("terminal model frame differs from applied bindings");
     }
   }
 }
