@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
+from scipy.ndimage import binary_opening
 
 
 def sha(path):
@@ -42,6 +43,22 @@ def main():
                'broader_interiors': broad, 'selected_residual': residual}
     expected = set().union(*domains.values())
     assert sum(map(len, domains.values())) == len(expected) == 29252
+    # The original proposal contains rays that earlier geometry rejected. They
+    # are not part of the prior accepted-pixel list and must remain explicit.
+    facepath = base / 'bank-face-source-proposal-v1/proposed-native-stone.png'
+    legacy = binary_opening(np.array(Image.open(facepath)) > 0, structure=np.ones((3, 3), bool))
+    extrapath = base / 'bank-left-exposed-stone-proposal-v1/proposal.json'
+    extra = json.loads(extrapath.read_text())
+    legacy_paths = [facepath, extrapath]
+    for region in extra['regions']:
+        regionpath = extrapath.parent / (region['id'] + '.png')
+        legacy_paths.append(regionpath)
+        legacy |= np.array(Image.open(regionpath)) > 0
+    prior_unassigned = {(int(x), int(y)) for y, x in np.argwhere(legacy)} - expected
+    assert len(prior_unassigned) == 17
+    domains['prior_proposal_previously_unassigned'] = prior_unassigned
+    expected |= prior_unassigned
+    assert sum(map(len, domains.values())) == len(expected) == 29269
     accepted = {tuple(p) for p in proof['accepted_pixels']}
     oldhits = {(r[0], r[1]) for r in proof['protected_firsthits']}
     assert oldhits == protected
@@ -72,13 +89,13 @@ def main():
     Image.fromarray(overlay).save(out / 'coverage-overlay.png')
     records = [{'source_xy': list(xy), 'rejections': rejected[xy]} for xy in sorted(rejected)]
     receipt = {'status': 'EXACT_REVIEWED_DOMAIN_ACCOUNTED_NOT_FINAL_OWNERSHIP',
-        'pins': {str(p): sha(p) for p in [proofpath, oldpath, fullpath, residualpath, sourcepath]},
+        'pins': {str(p): sha(p) for p in [proofpath, oldpath, fullpath, residualpath, sourcepath] + legacy_paths},
         'model_sha256': proof['model_sha256'], 'expected': len(expected), 'assigned': len(assigned),
         'rejected': len(rejected), 'domains': {name: {'proposed': len(domain),
             'assigned': len(domain & assigned), 'rejected': len(domain - assigned)} for name, domain in domains.items()},
         'receiver_counts': [{'region': region, 'receiver': owner, 'count': count}
             for (region, owner), count in sorted(owner_counts.items())],
-        'rejected_pixels': records,
+        'rejected_pixels': records, 'newly_reachable_prior_proposal_pixels': sorted(prior_unassigned & assigned),
         'limits': ['This checks the full reviewed domain, not the entire visible stone domain.',
             'Current bank receivers remain geometric hypotheses; explicit102 disagreements remain unresolved.',
             'Twelve prior/native overlaps still require joined priority and state provenance.',
