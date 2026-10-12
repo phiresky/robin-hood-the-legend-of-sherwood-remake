@@ -126,6 +126,7 @@ await fs.writeFile(
   `${output}/diagnostics.json`,
   JSON.stringify({
     scope: "static-geometry-only-not-gameplay-parity",
+    gameplayStage: stage,
     complete: true,
     results,
     disconnected,

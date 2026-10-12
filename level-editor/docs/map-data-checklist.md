@@ -152,6 +152,9 @@ It remains unpublished; passing routes alone do not establish usable mesh contac
 Lift approach clearance also needs further export-time review: applying ordinary
 landing-plane cuts blocks existing stair handoffs, so that experiment was rejected.
 The production compiler and runtime remain unchanged by this investigation.
+The 3D mesh review confirms the turret obstruction in all eight placed copies:
+the lower approach crosses its wall face. Shortening that approach loses the
+lower floor connection, so the opening and landing require asset-level repair.
 
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and

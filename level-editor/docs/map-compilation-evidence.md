@@ -2184,6 +2184,26 @@ does not establish that distinction. No runtime solver or collision bypass was
 introduced, and the candidate remains unpublished. The earlier 32 passing routes
 are movement evidence only, not proof of clearance through the turret.
 
+`review-stair-approach-mesh.mjs` now checks the final prepared outdoor approach
+against the placed asset triangles at one unit above the landing floor. It pins
+the reviewed gameplay stage and model, checks segment/triangle intersection on
+simple analytic cases, and records the exact intersected object and coordinates.
+`step-passage-assembly-ZRjakt` has byte-identical descriptors to the earlier native
+32-route audit and retains all 32 missing/raised-landing rejections. Its mesh review
+finds eight crossing approaches, one lower entrance for every turret-present
+rotation/elevation. Every crossing is on
+`building-127--component-door-turret-wall`; the other 24 outdoor centerlines have
+no triangle crossings. This is a real mesh obstruction, not merely a conservative
+landing-plane collision result. It is still not full actor-volume or animated
+contact certification.
+
+Moving the lower outside endpoint ten units outward from the flight edge in
+unpublished stage `step-stair-K1hj4B` does not resolve the assembly: no lower
+receiving surface binds there, and the compiler omits the lift. The step cannot
+be repaired just by shortening its approach. The turret opening and its usable
+floor connection need asset-authoring work; the short-approach experiment is not
+part of the authoring helper or published library.
+
 `step-passage-assembly-9RWSMk` repeats the sixteen connected exports and checks
 32 missing/raised-landing cases: independently removing or raising either landing
 at every rotation/elevation omits the stair with an explicit connection warning.
