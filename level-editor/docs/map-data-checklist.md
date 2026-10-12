@@ -120,8 +120,13 @@ or the omitted south-wall step. A staged drawbridge definition restores the two
 deck floors and all six passage records, and constructs natively. It remains
 unpublished. Incorporating a neighbouring plateau exclusion into its own walking
 outline restores all six open-state actor round trips, with closed/reset checks
-and wider movement regressions passing. Player selection, bypass prevention,
-bank contacts, mesh edges and rotated/raised placement still need verification.
+and wider movement regressions passing. Two-copy assemblies at four rotations
+and two elevations pass 96 open round trips, 192 closed/reset denials and 576
+directed gate-search checks, with routes available only when open. Player
+selection, disconnected-neighbour rejection, bank contacts and mesh edges still
+need verification. The baseline full Lincoln browser archive also passes
+reopening/rebaking and native loading without base data; it excludes these staged
+drawbridge changes.
 
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and

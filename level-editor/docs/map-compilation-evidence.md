@@ -50,6 +50,39 @@ pixels at those coordinates; the responsible geometry/material still needs
 identification. Archive determinism and gameplay success do not clear this visual
 finding or establish animated character compositing and all gameplay interactions.
 
+## Full Lincoln rendered archive (2026-10-12)
+
+Fixture `lincoln-rendered-library-u5CV9u` loads 212 pinned asset sources. Its first
+browser export, `lincoln-first-pass.zip`, contains 164,172,641 bytes, SHA-256
+`e5aea6c335b143b755fa8a0d0df72f014a0073fa250960309f4444a64e915780`.
+The archived gameplay descriptor exactly matches `saved-map-exports-jjSJNf`,
+which passed 182 ordinary route samples, sixteen stair clicks and 100 jump
+traversals. Native loading without a base datadir passes in 22.27 seconds:
+2944×2176, 590 sight obstacles, zero masks, 79 door projections, 71,668 grid
+blocks and three appearance regions for eleven controls. Color, depth, minimap
+and the editable scene load, with no authored mission content. The complete
+baked color image was inspected. Full archive reopening and rebaking pass with
+matching gameplay, color/depth and appearance states. The final
+`lincoln-rendered.zip` has the same size and digest as the first-pass archive,
+binding the native load check to the completed round trip.
+This baseline excludes the unpublished drawbridge correction and does not clear
+the documented missing passages or animated character compositing gaps.
+
+## Moved drawbridge control checks (2026-10-12)
+
+`lincoln-drawbridge-placements-D1hVqt` tests the unpublished deck-floor and plateau
+outline definitions from `lincoln-plateau-exclusion-QgNhjG`. Independent drawbridge,
+plateau and gatehouse assets are assembled on newly authored terrain: two copies,
+four rotations (0, 37, 90 and 180 degrees) and two elevations (0 and 40).
+All eight exports retain twelve ordinary passages and independent controls.
+
+Native checks pass in 16.45 seconds: 96 open actor round trips, 96 closed denials
+and 96 reset denials. Another 576 directed gate searches find routes only when
+the corresponding bridge is open. These checks cover prepared traversal and
+lock bypass through the gate graph, not player-click selection, disconnected
+neighbour cases, bank contact or mesh accuracy. The corrections remain unpublished.
+The audit changes test code only; no production runtime routing is added.
+
 ## Native platform character captures (2026-10-12)
 
 `render-connection-library-G5JiC2/character-capture.json` mounts the previously

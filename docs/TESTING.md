@@ -929,8 +929,11 @@ Patch IDs must match the exported transition table; door indices refer to the
 native combined door table, as exported in transition door links. Each selected
 door must be an ordinary passage that is initially locked, opens when the listed
 patches are applied, and closes on reset. The audit exercises prepared actor
-round trips and writes `actor-passage-control-report.json`; it does not prove
-player click selection or absence of alternative routes around a locked door.
+round trips and writes `actor-passage-control-report.json`. Set
+`reject_alternatives: true` on a probe to additionally require native gate search
+in both directions to find a route only in the open state. Use that option for
+isolated assemblies where no legitimate alternative entrance should exist.
+Neither mode proves player click selection.
 
 To snapshot a complete saved map, run
 `node refinement/stage-saved-map-browser.mjs derby` from `level-editor/`.

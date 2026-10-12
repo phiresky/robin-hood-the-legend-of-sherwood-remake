@@ -51,6 +51,72 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                     let index = usize::try_from(door.as_u64().unwrap()).unwrap();
                     let runtime = &engine.script_domains.interactables.doors[index];
                     assert_eq!(runtime.door_type, crate::gate::DoorType::Default);
+                    let mut gate_search = Vec::new();
+                    if probe["reject_alternatives"] == true {
+                        let auth = crate::gate::ActorAuthInfo {
+                            kind: crate::element::ElementKind::ActorPc,
+                            pc_auth_bit: 1,
+                            has_lockpick: false,
+                            has_climb: false,
+                            has_jump: false,
+                            is_rider: false,
+                            posture: Posture::Upright,
+                        };
+                        for direct in [true, false] {
+                            let (
+                                source,
+                                source_sector,
+                                source_index,
+                                goal,
+                                goal_sector,
+                                goal_index,
+                            ) = if direct {
+                                (
+                                    runtime.point_out,
+                                    runtime.sector_out,
+                                    runtime.sector_out_index,
+                                    runtime.point_in,
+                                    runtime.sector_in,
+                                    runtime.sector_in_index,
+                                )
+                            } else {
+                                (
+                                    runtime.point_in,
+                                    runtime.sector_in,
+                                    runtime.sector_in_index,
+                                    runtime.point_out,
+                                    runtime.sector_out,
+                                    runtime.sector_out_index,
+                                )
+                            };
+                            let path = crate::gate::find_path_gates_with_sector_indices(
+                                &engine.script_domains.interactables.doors,
+                                (source.x, source.y),
+                                source_sector.into(),
+                                source_index,
+                                (goal.x, goal.y),
+                                goal_sector.into(),
+                                goal_index,
+                                Some(&auth),
+                                false,
+                                &|_| true,
+                                &|number| {
+                                    engine
+                                        .world
+                                        .fast_grid
+                                        .level
+                                        .sectors
+                                        .iter()
+                                        .find(|sector| sector.sector_number == number)
+                                        .and_then(|sector| sector.lift_type)
+                                },
+                            );
+                            gate_search.push(serde_json::json!({
+                                "direct": direct, "route_available": path.is_some(),
+                                "passed": path.is_some() == (state == "open"),
+                            }));
+                        }
+                    }
                     let outcome = walk_exported_lift_with_tick(
                         engine.clone(),
                         assets.clone(),
@@ -62,7 +128,9 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                     let expected = state == "open";
                     results.push(serde_json::json!({
                         "file": file, "door": index, "state": state,
-                        "expected_round_trip": expected, "passed": outcome == Ok(expected),
+                        "expected_round_trip": expected,
+                        "passed": outcome == Ok(expected) && gate_search.iter().all(|result| result["passed"] == true),
+                        "gate_search": gate_search,
                         "outcome": outcome,
                     }));
                 }
@@ -72,7 +140,7 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
     let complete = !results.is_empty() && results.iter().all(|result| result["passed"] == true);
     let report = directory.join("actor-passage-control-report.json");
     std::fs::write(&report, serde_json::to_vec_pretty(&serde_json::json!({
-        "scope": "prepared-ordinary-passage-round-trips-and-lock-reset-not-player-selection-or-bypass-proof",
+        "scope": "prepared-ordinary-passage-round-trips-with-optional-bidirectional-gate-search-not-player-selection",
         "complete": complete, "results": results,
     })).unwrap()).unwrap();
     assert!(complete, "see {}", report.display());
