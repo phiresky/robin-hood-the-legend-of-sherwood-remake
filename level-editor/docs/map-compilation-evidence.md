@@ -37,6 +37,21 @@ three-quarter probes now pass. This is not an asset publication or proof of
 rotated placement. Its remaining end probe also requires reviewing the audit's
 use of the source-edge offset on a destination edge of a different length.
 
+Follow-up confirms the movement contract uses the source edge's absolute offset
+at the destination; the audit retains that calculation. Diagnostic
+`york-edge-supported-span-q9t_t_5p` restores a two-unit destination span at roof
+height and passes all five line-65 probes, reducing the full audit to 25 failures
+out of 720. This descriptor-only experiment is not published asset data.
+
+`check-connected-jump-placements.mjs` now isolates an external connection while
+retaining the two assets' physical geometry, relocates it and adds an independent
+copy at four rotations and two elevations. Staged asset-local roof-height/span
+candidate `york-roof-level-edge-stage-t64war73` produces
+`connected-jump-placements-jfCmGF`: the 37-degree exports omit both connections
+because a landing surface is unavailable; the remaining six exports retain
+their pairs but pass only 36/120 ordinary-click probes. The correction is not
+published: receiver binding and moved-assembly traversal need further work.
+
 ## Published roof metadata and rendered ZIP round trip (2026-10-12)
 
 The slab, north stone house and upper green house definitions are published.
