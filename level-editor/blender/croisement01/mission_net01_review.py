@@ -21,6 +21,18 @@ def main():
  for state in ['initial','empty','occupied']:
   html.append(f'<section><h2>{state}</h2>')
   for suffix in ['native-comparison','solid-eight','actual-eight']:html.append(f'<img src="{state}-{suffix}.png">')
+  if (p/'tree04-contact.json').exists():
+   contact=json.loads((p/'tree04-contact.json').read_text());context_sheet=Image.new('RGBA',(768,542),(45,45,45,255));draw=ImageDraw.Draw(context_sheet)
+   for i,view in enumerate(['original','reverse']):
+    name=f'{state}-tree04-context-{view}.png';record=next(x for x in contact['renders'] if x['path']==name);assert sha(p/name)==record['sha256'];context_sheet.alpha_composite(Image.open(p/name).convert('RGBA'),(i*384,30));draw.text((i*384+5,5),view+' / brown = pending Tree04 context',fill='white')
+   name=f'{state}-tree04-diagnostic.png';context_sheet.convert('RGB').save(dest/name);records.append({'path':name,'sha256':sha(dest/name),'role':'Diagnostic exact evaluated private tree geometry; uniform brown is not approved appearance.'});html.append(f'<p>Exact evaluated Tree04 wood shown only as brown diagnostic context. Its geometry approval and canonical ownership transfer remain separate.</p><img src="{name}">')
+  if (p/'counterweight-closeups.json').exists():
+   closeups=json.loads((p/'counterweight-closeups.json').read_text())
+   for mode in ['actual','solid']:
+    wood=Image.new('RGBA',(1536,542),(45,45,45,255));draw=ImageDraw.Draw(wood)
+    for view in range(4):
+     f=next(x for x in closeups['renders'] if x['state']==state and x['mode']==mode and x['view']==view);assert sha(p/f['path'])==f['sha256'];wood.alpha_composite(Image.open(p/f['path']).convert('RGBA'),(view*384,30));draw.text((view*384+5,5),('Original direction' if view==0 else f'Quarter turn {view}')+' wood '+mode,fill='white')
+    name=f'{state}-wood-{mode}-four.png';wood.convert('RGB').save(dest/name);records.append({'path':name,'sha256':sha(dest/name),'role':'Counterweight-only diagnostic closeups'});html.append(f'<img src="{name}">')
   html.append('</section>')
  (dest/'index.html').write_text('\n'.join(html));(dest/'manifest.json').write_text(json.dumps({'model_sha256':r['model_sha256'],'report_sha256':sha(p/'report.json'),'source_sha256':sha(OUT/'source.json'),'resources':records,'status':'Self-review pending; no approval inferred'},indent=2)+'\n')
 if __name__=='__main__':main()
