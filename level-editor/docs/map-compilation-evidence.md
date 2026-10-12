@@ -36,6 +36,21 @@ The broader map-export suite reports an existing multi-plane receiver snapshot
 mismatch: that fixture has no ordinary doors, and an explicit before/after
 check confirms receiver quantization leaves its geometry unchanged.
 
+Player-click verification of the same four-angle diagnostic passes **44/48**
+routes. All twelve 180-degree routes succeed: the strict GateSearch probe had
+rejected alternative valid door choices. The four actual failures remain at
+37/90 degrees. Tracing the fresh 90-degree assembly shows ordinary door entry
+first installs stair receiver 187, then the following movement crosses its
+boundary and toggles back to landing receiver 158. The endpoint is supported;
+the exported midpoint lies before the receiving boundary.
+
+Unpublished `hall-midpoint-diagnostic-aULgzB` moves ordinary midpoints onto their
+inside endpoints and passes all **48/48 player-click traversals**. This isolates
+midpoint/receiving-edge timing, but moving every midpoint is not an approved
+general solution: both passage directions, state checks and authoring semantics
+need a bounded export-time construction. The diagnostic does not alter assets
+or engine code. The full height/rotation generator continues independently.
+
 ## Sherwood stair clearance investigation (2026-10-12)
 
 Fresh published export `saved-map-exports-pxNvRF` passes 50 ordinary route

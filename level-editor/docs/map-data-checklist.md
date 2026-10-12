@@ -53,6 +53,9 @@ endpoints on their receiving surface, fixing the 90-degree loading failure.
 The four-angle, zero-elevation audit passes 40/48 routes; receiver-transition
 and route-selection findings remain. A fresh 90-degree compile loads and passes
 native geometry validation, with two receiver-transition failures among twelve routes.
+Player clicks pass 44/48 routes; 180-degree alternate routes work. Moving ordinary
+midpoints onto inside endpoints in an unpublished diagnostic passes 48/48,
+isolating a receiving-edge timing problem that still needs a general export fix.
 See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-checks-2026-10-12).
 
 **Sherwood stair gap (2026-10-12):** fresh published data passes 50 ordinary
