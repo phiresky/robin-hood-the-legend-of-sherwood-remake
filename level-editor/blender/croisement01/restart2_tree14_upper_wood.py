@@ -16,7 +16,7 @@ acquire(slots=2)
 assert shutil.disk_usage(OUT).free>10*1024**3+512*1024**2
 available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024
 assert available>6*1024**3
-base=OUT/'restart2';dest=base/'tree14-wood-v6';dest.mkdir(exist_ok=False)
+base=OUT/'restart2';dest=base/'tree14-wood-v7';dest.mkdir(exist_ok=False)
 bank=base/'tree05-regional-banks-v18/assets/croisement01-tree-05/model.blend'
 assert sha(bank)=='7926500e407950bd66b78d13e0ce65b3829dd2263d7db4ba5c57a7ece5dbc818'
 bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.preferences.filepaths.save_version=0
@@ -53,6 +53,7 @@ for branch,profile in profiles.items():
  # Keep connected parent attachment fixed; native cross-sections constrain the
  # thinner distal branch, while the taper tip is retained from the source trace.
  new[0]=original[0];new.append(profile['tip']);trace[branch]=new
+branch_world={}
 for name,rows in trace.items():
  if name=='main_stem':continue
  if name.startswith('root_'):
@@ -64,7 +65,13 @@ for name,rows in trace.items():
   offsets={'upper_branch':-70,'right_fork':90,'right_tip':130,'left_main':-90,'left_upper':60,'left_twig':90}
   # Native camera rays leave branch depth unconstrained. Offset progressively
   # from the connected base while preserving every traced screen centerline.
-  ray=Vector((0,-COS,SIN));start_depth={'right_tip':26,'left_twig':17}.get(name,0);centers=[point(x,y)+ray*(start_depth+(offsets[name]-start_depth)*(j/(len(rows)-1))**1.5) for j,(x,y,radius) in enumerate(rows)]
+  ray=Vector((0,-COS,SIN));start_depth=0.;parent={'right_tip':'right_fork','left_twig':'left_upper'}.get(name)
+  if parent:
+   attachment=min(branch_world[parent],key=lambda p:(p.x-rows[0][0])**2+(-p.y*SIN-p.z*COS-rows[0][1])**2)
+   start_depth=(attachment-point(*rows[0][:2])).dot(ray)
+  centers=[point(x,y)+ray*(start_depth+(offsets[name]-start_depth)*(j/(len(rows)-1))**1.5) for j,(x,y,radius) in enumerate(rows)]
+  if parent:centers[0]=attachment.copy()
+  branch_world[name]=centers
  union(body,helpers.tube(name,centers,[radius for x,y,radius in rows]))
 # Existing native forks carry inferred depth; no additional crown is inferred
 # from neighboring foliage layers whose source ownership remains separate.
@@ -80,7 +87,7 @@ while remaining:
    other=edge.other_vert(vertex)
    if other in remaining:remaining.remove(other);component.add(other);stack.append(other)
  components.append(component)
-components.sort(key=len,reverse=True);assert len(components[0])>100000 and all(len(c)<=20 for c in components[1:])
+components.sort(key=len,reverse=True);print('Remesh component sizes', [len(c) for c in components], flush=True);assert len(components[0])>100000 and all(len(c)<=20 for c in components[1:])
 bmesh.ops.delete(bm,geom=[v for c in components[1:] for v in c],context='VERTS');bm.to_mesh(body.data);bm.free();body.data.update()
 mesh=body.data.copy();bpy.data.objects.remove(body,do_unlink=True);dummy=bpy.data.meshes.new('Wood slot');mat=bpy.data.materials.new('Unknown wood');mat.diffuse_color=(.34,.34,.34,1);dummy.materials.append(mat);obj=bpy.data.objects.new('Tree14 wood',dummy);working.objects.link(obj)
 for k,v in dict(source_node=node,asset_group=asset,asset_name=asset_label,part_name='Conservative native bark and inferred continuous wood').items():obj[k]=v
