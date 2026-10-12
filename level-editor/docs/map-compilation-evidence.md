@@ -82,6 +82,19 @@ certified. Seventeen approach/state/quantization tests pass, followed by an
 additional passing reversed-door regression. App typecheck and focused
 lint/format checks pass. Full cross-map and rendering regression remain open.
 
+The fresh raised case has completed: `hall-prepared-fresh-gTCT9A` passes all
+24 forced routes and all 24 player-click routes across its zero-elevation
+90-degree and elevation-forty zero-degree assemblies. This verifies one raised
+orientation, not the full raised rotation matrix.
+
+Fresh saved maps `saved-map-exports-PIqVgQ` retain 28 Derby and 16 Lincoln
+stair-click routes, with no forbidden cases, plus 144 and 182 ordinary walking
+samples respectively. Lincoln retains all 100 upright jump-click probes.
+Derby's upright-only run rejects ten helper-dependent probes as expected;
+isolated `derby-posture-regression-p01_r4zv` passes the twenty posture-aware
+probes. Running that vertical-only audit on the combined fixture encounters
+Lincoln's long-jump assertion, so the combined run is not passing evidence.
+
 ## Sherwood stair clearance investigation (2026-10-12)
 
 Fresh published export `saved-map-exports-pxNvRF` passes 50 ordinary route
@@ -117,6 +130,13 @@ remaining upper-edge collision emits a collapsed integer obstacle, which also
 prevents projection-clearance preparation. Removing it without resolving its
 physical ownership would erase collision information; this stage remains
 unpublished. The authoring recipe now reproduces this height-bounded experiment.
+
+Stage `sherwood-stair-clearance-A4GOMl` also aligns an owner-local collision
+opening with the revised footprint. Export `asset-jump-exports-R2I7Iy` removes
+the thin stair obstacle at 180 degrees but still passes only 12/16 routes.
+Its concave projected floor has no prepared actor-sized approach at that angle.
+This separates the collision-opening issue from the remaining clearance issue;
+the stage remains unpublished and does not certify the asset's visible mesh.
 
 ## Non-reversed projection clearance (2026-10-12)
 

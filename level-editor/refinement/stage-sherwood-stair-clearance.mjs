@@ -55,6 +55,19 @@ assert.equal(regions.length, 1);
 assert.equal(regions[0].length, 1);
 surface.polygon = regions[0][0].slice(0, -1);
 surface.height = surface.polygon.map(([x, y]) => a * x + b * y + c);
+// The authored stair opening must cover its revised walkable footprint too.
+// This clearance is owner-local and cannot remove another asset's collision.
+const clearanceId = "central-oak-stair-movement-clearance";
+gameplay.movementClearances = [
+  ...(gameplay.movementClearances ?? []).filter((entry) => entry.id !== clearanceId),
+  {
+    id: clearanceId,
+    node: surface.node,
+    polygon: structuredClone(surface.polygon),
+    height: [...surface.height],
+    holes: [],
+  },
+];
 validateAssetGameplay(gameplay, asset);
 const output = await fs.mkdtemp("work/map-compile/sherwood-stair-clearance-");
 await fs.writeFile(

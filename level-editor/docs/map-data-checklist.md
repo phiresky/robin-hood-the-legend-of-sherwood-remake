@@ -48,28 +48,23 @@ Fresh Lincoln passes native construction, 182 ordinary route samples and all
 100 jump-click probes. Stair gate discovery now passes all 16 routes after
 including ordinary passages touching stairs in the existing load-time receiver
 cache. All authored connections remain. No new per-tick geometry work is added.
-Rearranged hall coverage is still incomplete. Export now keeps quantized ordinary
-endpoints on their receiving surface, fixing the 90-degree loading failure.
-The four-angle, zero-elevation audit passes 40/48 routes; receiver-transition
-and route-selection findings remain. A fresh 90-degree compile loads and passes
-native geometry validation, with two receiver-transition failures among twelve routes.
-Player clicks pass 44/48 routes; 180-degree alternate routes work. Moving ordinary
-midpoints onto inside endpoints in an unpublished diagnostic passes 48/48,
-isolating a receiving-edge timing problem that still needs a general export fix.
-Including ordinary doors in the existing stair approach preparation also clears
-the forced-route stalls: the combined unpublished diagnostic passes all 48
-forced routes and 48 player clicks. This preparation is now integrated into export
-for ordinary gates with a stair on either side, retaining permissions and
-recomputing passage-state checks. A fresh 90-degree export passes all twelve
-forced routes. Raised-placement checks and broader cross-map regression remain
-pending.
+Export now keeps quantized ordinary endpoints on their receiving surfaces and
+prepares ordinary stair approaches before recomputing passage states. The
+four-angle diagnostic passes all 48 forced routes and 48 player clicks. Fresh
+zero-elevation 90-degree and raised zero-degree assemblies pass all 24 forced
+routes and 24 player clicks. The full raised rotation matrix and rendered
+verification remain pending. Fresh Derby/Lincoln regressions retain all 44
+stair-click routes, 326 ordinary route samples, 100 Lincoln upright jump probes
+and twenty Derby posture-aware jump probes.
 See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-checks-2026-10-12).
 
 **Sherwood stair gap (2026-10-12):** fresh published data passes 50 ordinary
 routes and ten jump clicks, but both oak-platform stair directions fail. The
 isolated placement sweep passes 12/16 stairs. A staged clearance change fixes
 the saved orientation but regresses 180-degree placements; retaining existing
-contacts instead exposes lower-entrance collision. Neither stage is published.
+contacts initially exposes lower-entrance collision. Height clipping and a
+matching owner-local opening clear that collision, but 180-degree approach
+clearance still fails. These stages remain unpublished.
 See [the investigation](map-compilation-evidence.md#sherwood-stair-clearance-investigation-2026-10-12).
 
 **York jump checks (2026-10-12):** the current full-map audit has 696 successful
