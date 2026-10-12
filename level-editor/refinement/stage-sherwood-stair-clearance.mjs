@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { readStoredMap, pinnedDescriptors } from "../pipeline/src/stored-map.ts";
-import { heightPlane } from "../shared/src/gameplay-plane.ts";
+import { clipHeight, heightPlane } from "../shared/src/gameplay-plane.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
 const clipping = createRequire(new URL("../shared/package.json", import.meta.url))(
@@ -41,7 +41,16 @@ const points = area.polygon.points.map(([x, y]) => {
   const z = (a * x + b * y + c) / (1 - b);
   return [x, y + z, z];
 });
-const regions = clipping.union([surface.polygon], [points.map(([x, y]) => [x, y])]);
+const low = Math.min(...surface.height);
+const high = Math.max(...surface.height);
+const clearance = clipHeight(
+  clipHeight(
+    points.map(([x, y]) => [x, y]),
+    [a, b, c - low],
+  ),
+  [-a, -b, high - c],
+);
+const regions = clipping.union([surface.polygon], [clearance]);
 assert.equal(regions.length, 1);
 assert.equal(regions[0].length, 1);
 surface.polygon = regions[0][0].slice(0, -1);

@@ -31,6 +31,15 @@ result. Neither experiment is published. The next task is reconciling local
 stair clearance, contact support and collision ownership, followed by repeated
 placement and rendered checks. No engine code changes were made.
 
+Height-bounded stage `sherwood-stair-clearance-n7GHOo` clips the recovered
+outline to the current stair's elevation range before unioning its existing
+contacts. `asset-jump-exports-fISM7n` clears the forbidden lower entrance,
+but still passes only 12/16 routes, failing both 180-degree placements. The
+remaining upper-edge collision emits a collapsed integer obstacle, which also
+prevents projection-clearance preparation. Removing it without resolving its
+physical ownership would erase collision information; this stage remains
+unpublished. The authoring recipe now reproduces this height-bounded experiment.
+
 ## Non-reversed projection clearance (2026-10-12)
 
 Pre-normalization clearance was restricted to folded projections. A simple
