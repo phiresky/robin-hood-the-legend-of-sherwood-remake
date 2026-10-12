@@ -1,5 +1,17 @@
 # Runtime changes introduced or extended for map compilation
 
+**2026-10-12 — retain hidden jump selection at command dispatch:** the host
+previously discarded the selected jump overlay, and group movement repeated a
+topmost-floor query. This made an otherwise authorized jump under an overlapping
+roof fail to launch. Sector clicks now retain jump identity in the existing goal
+and exact-sector fields. Group movement uses an explicitly identified jump
+overlay when its public identity and layer agree; ordinary route goals retain
+independent overlay resolution. This adds a constant-time lookup during click
+planning/dispatch, no per-tick work, geometry preparation, solver or format field.
+The full-animation audit reproduces five north-roof failures before the change
+and passes all five afterward. Broader hidden-click, queued-action and rendered
+input coverage remain separate from this command-path verification.
+
 **2026-10-12 — precise floor boundary preparation under validation:** compiled
 elevation-line derivation now uses an area's supplied precise contour when
 available. This is static JSON-load preparation; it changes no movement tick,

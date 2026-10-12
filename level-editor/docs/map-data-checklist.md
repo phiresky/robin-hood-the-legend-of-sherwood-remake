@@ -44,9 +44,10 @@ The full-map upright audit now passes 369/390, with ten helper-required
 rejections and eleven remaining failures. ZIP/render verification remains open. See the
 [ground landing audit](map-compilation-evidence.md#ground-landing-click-band-candidate-2026-10-12).
 Five of those ordinary-click failures hit an overlapping higher roof. Hidden
-selection finds the intended jump in all five cases, and separate full-animation
-checks pass all ten routes across that pair. End-to-end Shift-click validation
-remains open; these failures have not been reclassified. The broader deeper
+selection finds the intended jump in all five cases. Retaining that selection
+through command dispatch fixes all five complete walk-jump-walk routes; ordinary
+clicks still select the covering roof. Rendered and queued Shift-action checks
+remain open. Separate approach checks pass all ten routes across the pair. The broader deeper
 approach/endpoint audit passes 336/390, with 54 failures requiring review; see the
 [roof overlap evidence](map-compilation-evidence.md#north-stone-house-jump-receiving-overlap-2026-10-12).
 See [partition verification](map-compilation-evidence.md#compiled-jump-receiving-face-partitions-2026-10-12).

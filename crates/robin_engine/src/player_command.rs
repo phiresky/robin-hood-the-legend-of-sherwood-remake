@@ -688,11 +688,12 @@ pub enum PlayerCommand {
         /// registered geometry). Jump-sector hover also rewrites the
         /// selected sector to the underlying motion sector when no jump
         /// line is executable, matching original-game movement behavior.
+        /// A selected jump overlay retains its own identity here and in
+        /// `goal_sector_index_override`, including hidden-screen selection.
         #[serde(deserialize_with = "Option::deserialize")]
         goal_override: Option<(crate::sector::SectorNumber, u16)>,
-        /// Replay-only exact arena identity for `goal_override`. Schema-16
-        /// Original traces retain the sparse FastFindGrid slot; live input
-        /// leaves this unset and uses the spatial hit's arena identity.
+        /// Exact arena identity for `goal_override`. Replay traces retain the
+        /// sparse FastFindGrid slot; live input retains the cursor-selected slot.
         #[serde(deserialize_with = "Option::deserialize")]
         goal_sector_index_override: Option<crate::fast_find_grid::SectorIndex>,
         /// Replay-only reconstruction of which original-game route form was

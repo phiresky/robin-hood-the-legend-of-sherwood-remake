@@ -56,13 +56,31 @@ samples of lines 62/63 in both directions (depth 8, t=0/0.25/0.5/0.75/1).
 This supports occlusion as the selection issue; there is no evidence requiring
 a larger click polygon or receiver reassignment. These are separate selection
 and traversal checks, not an end-to-end Shift-click or rendered roof test.
-The ordinary-click failures remain in the report until that check is added.
+The ordinary-click failures remain in the report; they must be distinguished
+from hidden selection rather than changing the meaning of an ordinary click.
+
+The subsequent hidden-command regression exposes a real dispatch defect:
+selection finds the lower jump, but the host discards its identity and group
+movement selects the topmost floor again. Retaining the jump in the existing
+goal/exact-sector fields changes all five line-62 cases from no flight to a
+completed walk-jump-walk route. Reports are
+`actor-jump-hidden-click-before.json` and `actor-jump-hidden-click-report.json`
+in the same export directory. The broader probe emits thirteen cases: the five
+north-roof cases pass after the fix; five other probes select an unusable hidden
+jump and three reject the actor posture. It remains an incomplete audit, not
+13/13 traversal evidence. Host rendering and queued Shift-actions are unverified.
 
 The complete approach audit passes 336/390 and retains 54 failures for further
 review; this stricter endpoint/deeper-approach audit must not be confused with
 the 369/390 ordinary-click report. Both reports are in the same export directory.
-The diagnostic change, game build and Rust formatting check pass. No asset or
-runtime change has been made for this finding.
+The dispatch fix passes 36 group-movement checks and eight formation checks,
+including a two-floor regression that requires hidden selection to retain the
+jump and ordinary selection to retain the covering floor. The game build and
+Rust formatting check pass. Repeating all 390 ordinary-click cases with the
+host's retained-sector command fields leaves both pass/fail outcomes and arrival
+records unchanged (369/390 pass); the hidden audit still passes all five line-62
+cases. `actor-jump-click-before-selection.json` preserves the comparison report.
+No asset change or runtime solver is required for this selection issue.
 
 ## Wychford tower entrance requires an authored landing (2026-10-12)
 

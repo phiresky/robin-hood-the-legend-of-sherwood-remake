@@ -9,6 +9,13 @@ enum JumpDispatch {
     Isolated,
     Approach,
     Click,
+    HiddenClick,
+}
+
+impl JumpDispatch {
+    fn is_click(self) -> bool {
+        matches!(self, Self::Click | Self::HiddenClick)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -358,7 +365,26 @@ fn resolve_jump_click(
     required_line: Option<usize>,
     destination_sector: crate::position_interface::SectorHandle,
 ) -> Result<usize, String> {
-    let hit = engine.world.fast_grid.get_sector_screen(goal, start);
+    resolve_selected_jump_click(
+        engine, owner, start, goal, authorized_goal, required_line, destination_sector, false,
+    )
+}
+
+fn resolve_selected_jump_click(
+    engine: &EngineInner,
+    owner: EntityId,
+    start: MapPoint,
+    goal: MapPoint,
+    authorized_goal: MapPoint,
+    required_line: Option<usize>,
+    destination_sector: crate::position_interface::SectorHandle,
+    hidden: bool,
+) -> Result<usize, String> {
+    let hit = if hidden {
+        engine.world.fast_grid.get_sector_screen_hidden(goal, start)
+    } else {
+        engine.world.fast_grid.get_sector_screen(goal, start)
+    };
     let hit_index = hit
         .sector_idx
         .ok_or_else(|| format!("click misses all sectors: {goal:?}"))?;
@@ -421,6 +447,12 @@ fn exported_jumps_walk_to_launch_and_continue_after_landing() {
 }
 
 #[test]
+#[ignore = "requires exported overlapping jump receivers and ROBIN_CLIMB_RHS"]
+fn exported_hidden_jumps_resolve_clicks_and_complete_the_route() {
+    audit_jump_dispatch(JumpDispatch::HiddenClick, JumpStance::Upright);
+}
+
+#[test]
 #[ignore = "requires exported long-jump pairs and ROBIN_CLIMB_RHS"]
 fn exported_jumps_complete_sword_dispatch_and_preserve_combat() {
     audit_jump_dispatch(JumpDispatch::Isolated, JumpStance::Sword);
@@ -479,7 +511,7 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
         assert!(approach_depth.is_finite() && approach_depth > 0.);
         // Click inside the exported landing band. Its outer edge rounds to the
         // native integer grid; the full-depth movement goal can lie outside it.
-        let approach_depth = if mode == JumpDispatch::Click {
+        let approach_depth = if mode.is_click() {
             approach_depth / 2.
         } else {
             approach_depth
@@ -511,11 +543,31 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
             } else {
                 stance
             };
-            for t in if mode == JumpDispatch::Click {
+            for t in if mode.is_click() {
                 [0.05, 0.25, 0.5, 0.75, 0.95]
             } else {
                 [0., 0.25, 0.5, 0.75, 1.]
             } {
+                if mode == JumpDispatch::HiddenClick {
+                    let vector = line.vector();
+                    let inset = crate::coordinates::MapVec::new(
+                        -vector.y * approach_depth / vector.length(),
+                        vector.x * approach_depth / vector.length(),
+                    );
+                    let offset = crate::coordinates::MapVec::new(vector.x * t, vector.y * t);
+                    let start = line.point_a + offset - inset;
+                    let goal = destination.point_b + offset + inset;
+                    let grid = &engine.world.fast_grid;
+                    let visible = grid.get_sector_screen(goal, start);
+                    let hidden = grid.get_sector_screen_hidden(goal, start);
+                    if hidden.sector_idx == visible.sector_idx
+                        || !hidden.sector_idx.is_some_and(|index| {
+                            grid.level.sectors[usize::from(index)].sector_type.is_jump()
+                        })
+                    {
+                        continue;
+                    }
+                }
                 if mode == JumpDispatch::Click && !climbing && line.layer > destination.layer {
                     let vector = line.vector();
                     let inset = crate::coordinates::MapVec::new(
@@ -602,6 +654,7 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
     let report = serde_json::json!({
         "stance": match stance { JumpStance::Sword => "sword", JumpStance::Shoulders => "shoulders", JumpStance::Upright => "upright", JumpStance::Vertical => "assisted-ascent-upright-descent" },
         "scope": match mode {
+            JumpDispatch::HiddenClick => "hidden-player-click-resolution-and-walk-jump-walk-not-rendering",
             JumpDispatch::Click => "player-click-resolution-and-walk-jump-walk-not-rendering",
             JumpDispatch::Approach => "walk-jump-walk-sequence-not-click-authorization-or-rendering",
             JumpDispatch::Isolated => "sprite-dispatch-and-landing-not-click-approach-or-rendering",
@@ -610,7 +663,9 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
         "traversal_cases": traversals, "occlusion_cases": occlusions, "results": results,
     });
     let path = directory.join(
-        if stance == JumpStance::Vertical && mode == JumpDispatch::Click {
+        if mode == JumpDispatch::HiddenClick {
+            "actor-jump-hidden-click-report.json"
+        } else if stance == JumpStance::Vertical && mode == JumpDispatch::Click {
             "actor-jump-vertical-click-report.json"
         } else if stance == JumpStance::Vertical {
             "actor-jump-vertical-report.json"
@@ -688,7 +743,7 @@ fn dispatch_jump(
         source_sector,
     );
     let mut start = requested_start;
-    if mode == JumpDispatch::Click {
+    if mode.is_click() {
         // Synthetic click probes must begin at a position that can support the
         // actor's actual move box, including beside rounded ledge corners.
         let mut bounds = *engine.ent(owner).position_iface().get_move_box_map();
@@ -710,7 +765,7 @@ fn dispatch_jump(
             .set_map_position(start);
     }
     let goal = destination.point_b + offset + inset;
-    if approach && mode != JumpDispatch::Click {
+    if approach && !mode.is_click() {
         let footprint = engine
             .world
             .fast_grid
@@ -804,8 +859,17 @@ fn dispatch_jump(
     let sim = crate::sim_rng::test_context();
     let mut arrival_goal = goal;
     let mut selected_jump_line = index;
-    let sequence = if mode == JumpDispatch::Click {
-        let planned = engine.plan_recorded_group_move(&assets, &[owner], goal, None, None, None);
+    let sequence = if mode.is_click() {
+        let hit = if mode == JumpDispatch::HiddenClick {
+            engine.world.fast_grid.get_sector_screen_hidden(goal, start)
+        } else {
+            engine.world.fast_grid.get_sector_screen(goal, start)
+        };
+        let selected_index = hit.sector_idx;
+        let selected_goal = hit.sector.map(|sector| (sector, hit.layer));
+        let planned = engine.plan_recorded_group_move(
+            &assets, &[owner], goal, selected_goal, selected_index, None,
+        );
         match planned.as_slice() {
             [
                 crate::engine::movement::formation::PlannedRecordedGroupMoveOutcome::Resolved(plan),
@@ -816,7 +880,7 @@ fn dispatch_jump(
         }
         // Several ledges can serve the same platform. A click chooses among
         // them using its authorized destination; exercise that chosen route.
-        selected_jump_line = resolve_jump_click(
+        selected_jump_line = resolve_selected_jump_click(
             &engine,
             owner,
             start,
@@ -824,6 +888,7 @@ fn dispatch_jump(
             arrival_goal,
             None,
             destination_sector,
+            mode == JumpDispatch::HiddenClick,
         )?;
         engine.perform_group_move(
             TickCtx::new(&sim, &assets),
@@ -831,8 +896,8 @@ fn dispatch_jump(
             goal,
             false,
             false,
-            None,
-            None,
+            selected_goal,
+            selected_index,
             None,
             &[],
             &[],

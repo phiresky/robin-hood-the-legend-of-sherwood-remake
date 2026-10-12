@@ -546,16 +546,30 @@ impl EngineInner {
         // ── Unified sector hit-test ──
         //
         // Top-down layer search reconstructs the selected sector, whose sector
-        // kind drives the door/lift/jump semantics below.  It is deliberately
-        // independent of `goal_override`: original-game group movement can use
+        // kind drives the door/lift/jump semantics below. Ordinary route goals
+        // remain independent of mouse selection: group movement can use
         // a patch's sector as the goal sector while the selected sector remains
         // the coincident mouse-selection overlay.
         // RecordGroupMove stores that patch-aware route goal, not necessarily
         // the selected sector, so replay must preserve both identities.
-        let hit = self
-            .world
-            .fast_grid
-            .get_sector_screen(click_point, reference);
+        let selected_jump = goal_sector_index_override.and_then(|index| {
+            let sector = self.world.fast_grid.level.sectors.get(usize::from(index))?;
+            (sector.sector_type.is_jump()
+                && goal_override == Some((sector.sector_number, sector.layer)))
+            .then_some(crate::fast_find_grid::SectorScreenResult {
+                sector_idx: Some(index),
+                sector: Some(sector.sector_number),
+                layer: sector.layer,
+            })
+        });
+        // An explicitly selected jump overlay retains its identity across the
+        // command boundary, including when another floor covers it on screen.
+        // Ordinary route goals still use independent mouse-overlay resolution.
+        let hit = selected_jump.unwrap_or_else(|| {
+            self.world
+                .fast_grid
+                .get_sector_screen(click_point, reference)
+        });
         let selected_grid_sector = hit
             .sector_idx
             .and_then(|i| self.world.fast_grid.level.sectors.get(usize::from(i)));
@@ -2038,7 +2052,7 @@ mod shared_resolution_tests {
 
         let mut engine = EngineInner::new();
         engine.world.fast_grid_mut().size_map(16, 16);
-        engine.world.fast_grid_mut().allocate_layers(1);
+        engine.world.fast_grid_mut().allocate_layers(2);
         let mut sector = crate::fast_find_grid::GridSector {
             points: vec![
                 MapPoint::new(0.0, 0.0),
@@ -2187,6 +2201,38 @@ mod shared_resolution_tests {
                 .sequences_iter()
                 .next()
                 .is_none()
+        );
+        let jump_hit = engine.world.fast_grid.get_sector_screen(click, click);
+        let mut upper_floor = engine.world.fast_grid.level.sectors[usize::from(underlying)].clone();
+        upper_floor.layer = 1;
+        upper_floor.sector_number = SectorNumber::new(3);
+        engine.world.fast_grid_mut().add_sector(upper_floor, 1);
+        let hidden = engine
+            .world
+            .fast_grid
+            .get_sector_screen_hidden(click, click);
+        assert_eq!(hidden.sector_idx, jump_hit.sector_idx);
+        let visible_plan = engine
+            .group_move_click_plan(&assets, &actors, click, None, None, None, &[], &[])
+            .unwrap();
+        assert!(!visible_plan.is_jump_click);
+        let hidden_plan = engine
+            .group_move_click_plan(
+                &assets,
+                &actors,
+                click,
+                hidden.sector.map(|sector| (sector, hidden.layer)),
+                hidden.sector_idx,
+                None,
+                &[],
+                &[],
+            )
+            .unwrap();
+        assert!(hidden_plan.is_jump_click);
+        assert_eq!(hidden_plan.clicked_jump_sector_idx, jump_hit.sector_idx);
+        assert_eq!(
+            hidden_plan.jump_underlying_sector,
+            Some((SectorNumber::new(1), underlying, 0))
         );
     }
 

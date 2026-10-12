@@ -678,9 +678,11 @@ fn click_sector_move(host: &Host, engine: &Engine, ctx: &ClickCtx) -> Vec<Player
             .get(usize::from(idx))
             .and_then(|sector| {
                 let st = sector.sector_type;
-                if st.is_door() || st.is_jump() {
+                if st.is_door() {
                     None
                 } else {
+                    // Retain jump overlays too: hidden-screen selection may
+                    // target a jump beneath another receiving floor.
                     Some((
                         sector.sector_number,
                         host.frontend.input.spatial_hit().selected_layer,
