@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published stump takeoff repair and full-scene York check (2026-10-12)
+
+The stump socket inset is now published. `stage-reviewed-jump-anchors.mjs`
+records the reviewed descriptor/model hashes and changes only asset-local
+gameplay. Stage `reviewed-jump-anchors-CbVJ1L/publication/report.json` confirms
+the installed definition and refreshed Croisement01 scene pin; the live
+descriptor exactly matches the staged gameplay.
+
+Fresh full-scene export `saved-map-exports-0vdr61` loads natively and passes
+**130/130** complete click/approach/jump/landing routes. This resolves the
+previous line-21 approach failure without engine changes. The moved/rotated
+two-asset sweep still has four click-overlay misses out of 100 attempts, and
+the asset retains draft warnings. Full rendering and editable-ZIP round trips
+remain separate checks.
+
+The York anchor-only candidate (`saved-map-exports-YtVf7G`) also loads natively.
+It improves the full-scene click sweep from 655 to **665 successful traversals**,
+with 11 occluded clicks and **44 failures**. All ten repaired cases use the
+scaffolded corner house's directed pair; no previously passing case regresses.
+This York change is not published yet while receiver-zone and joined-roof
+alternatives are evaluated.
+
+An asset-local audit identifies ten mismatched York ledge/anchor receiving
+planes and eleven in Nottingham. It is a diagnostic, not a proof for edges
+without a matching local surface: those can legitimately land on neighbouring
+terrain. Reports are `local-jump-receiver-audit-NUlYCv` (York) and `MlB6mx`
+(Nottingham). Derby (`V1WYXl`), Leicester (`9bP6rO`) and Sherwood (`pH8sGV`) have
+no detected mismatched planes in this audit; that does not certify traversal.
+
 ## Authorized jump starts, hidden clicks and York traversal (2026-10-12)
 
 Follow-up placement experiments remain **unpublished**:

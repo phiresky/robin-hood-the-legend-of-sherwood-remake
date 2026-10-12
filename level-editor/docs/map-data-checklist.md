@@ -18,9 +18,10 @@ round trips. Separate support layouts test door-height terrain and low-ground
 masks; the combined scene and rendering remain unverified. Croisement01's
 degenerate cap-plane crash is fixed: its fresh export loads natively and passes
 16 sampled ordinary walking routes and 130 directly dispatched jump/landing
-traversals. The corrected player-click walk/jump/walk check passes 129 of 130
-cases; one launch still stalls. It retains 45 non-draft warnings and takes about
-five minutes.
+traversals. A published asset-local stump socket inset now brings the corrected
+player-click walk/jump/walk check to 130 of 130 cases. The fresh full-scene export
+loads natively and takes about four and a half minutes; this still does not
+certify rendering or every possible route.
 Croisement02's collapsing caps are traced to mesh-derived wood assets. Published fence repairs
 pass 20 moved/rotated native exports and 33,160 mesh-derived sight/projectile
 checks, with measured loss below 0.003% of footprint and 0.002% of volume.
@@ -36,9 +37,11 @@ route samples, but its click sweep still has 54 failures, including missing
 receivers and stalled approaches (655 traversals pass; 11 clicks are occluded).
 These results do not establish
 full parity; see [the current evidence](map-compilation-evidence.md).
-An asset-local York anchor correction and a Croisement01 socket inset are staged
-for review. Both improve sampled traversal, but rotated click/receiver failures
-remain; neither candidate is published.
+The Croisement01 socket inset is published; four rotated click-overlay misses
+remain in its isolated two-asset sweep. A staged York anchor correction improves
+the full-scene result to 665 successful traversals and 44 failures, with no
+previously passing case regressing. York receiver/rotation repairs remain under
+review and are not published.
 
 **Mask binding update:** coverage-based layer binding restores Croisement02 shrub
 77's missing mask. The fresh 53-mask export loads natively and changes only masks
