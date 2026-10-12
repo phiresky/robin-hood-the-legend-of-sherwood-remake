@@ -2119,6 +2119,18 @@ the step endpoint alone cannot restore this assembly. A usable through-opening
 needs an asset-level geometry/clearance review; collision must not be disabled
 in the compiler or runtime to force the saved layout to pass.
 
+The fixed-state native passage audit passes the original isolated assembly in
+`step-passage-assembly-mk1wIw` (0.79 seconds): the unoccluded step supports prepared
+round trips and two directed player clicks; placing the turret blocks both route
+search and both clicks. The diagnostic now tests four rotations and two elevations
+and includes the upper curtain-wall landing. `step-passage-assembly-V4p8dv` passes
+12/16 cases; all prepared traversal/denial and gate-search checks pass, but the four
+37-degree cases fail to find any actor-sized visible landing on the step's sector.
+The failure persists with the upper wall present. This is not proof of a general
+runtime routing failure: the click audit targets the ramp's own sector. Review
+explicit stair metadata and its connected landings before publishing this endpoint
+candidate. Existing full-Lincoln drawbridge control checks remain a separate audit.
+
 The native failure is standalone passage 12 (runtime door 47), owned by
 `lincoln-south-wall-walk-step`. Its inside endpoint projects to `[1935,1559]`,
 outside the exported receiving floor, while its separately authored binding

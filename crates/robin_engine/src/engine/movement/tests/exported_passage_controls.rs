@@ -36,10 +36,18 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                     crate::patch::PatchIndex::new(u32::try_from(index).unwrap()).unwrap()
                 })
                 .collect();
-            assert!(!patches.is_empty());
+            let fixed_state = probe["fixed_state"].as_str();
+            assert!(fixed_state.is_none_or(|state| matches!(state, "open" | "closed")));
+            assert!(if fixed_state.is_some() {
+                patches.is_empty()
+            } else {
+                !patches.is_empty()
+            });
             let doors = probe["doors"].as_array().unwrap();
             assert!(!doors.is_empty());
-            for state in ["closed", "open", "reset"] {
+            let states =
+                fixed_state.map_or_else(|| vec!["closed", "open", "reset"], |state| vec![state]);
+            for state in states {
                 for &patch in &patches {
                     if state == "open" {
                         engine.apply_patch(TickCtx::new(&sim, &assets), patch);

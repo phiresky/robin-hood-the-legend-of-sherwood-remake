@@ -940,6 +940,12 @@ neither a route nor a destination sector to player dispatch. With
 and settle without crossing; this is checked in both directions alongside the
 prepared authorization and gate-search checks.
 
+For an ordinary passage without controls, use an empty `patches` array and
+`fixed_state: "open"` or `fixed_state: "closed"`. The native audit checks only
+that state without adding a patch or changing door rights. This also supports
+paired assemblies where a separately placed solid should obstruct the same
+otherwise usable passage.
+
 To snapshot a complete saved map, run
 `node refinement/stage-saved-map-browser.mjs derby` from `level-editor/`.
 For unpublished gameplay definitions, supply the library and stage directory:
