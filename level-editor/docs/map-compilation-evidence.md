@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Courtyard wall jump inset (2026-10-12)
+
+Published `nottingham-castle-west-courtyard-wall` segment `jump-pair-7-side-0`
+with both endpoints inset three asset-local world-Y units. The character-sized
+approach previously crossed the receiving boundary at one endpoint. The socket,
+height and edge direction are retained; the compiler uses only asset metadata.
+No engine behavior changed.
+
+`courtyard-jump-inset-MLYRX9/publication/report.json` confirms application with
+descriptor/model hash guards and the Nottingham scene pin updated.
+`saved-map-exports-6oAuJj` passes native static geometry construction. Its full
+upright click report passes 368/390: line 52 at t=0.05 now traverses, and line 53
+at t=0.95 now reports the expected helper requirement instead of a missing
+receiver. All other pass/error outcomes match `saved-map-exports-9oPIj0`.
+Ten posture rejections and twelve unrelated geometry/click failures remain.
+
+`required-jump-postures-AfuhKO` passes all 20 helper-aware click cases against
+the full physical geometry. `check-courtyard-jump-placements.mjs` constructs two
+independent wall assemblies at rotations 0, 37, 90 and 180 degrees and elevations
+0 and 40. All eight `courtyard-jump-placements-ONFeHl` descriptors construct
+natively and retain one helper-required vertical pair per copy. The fixture
+also contains long jumps, which are excluded from the vertical-pair count.
+`required-jump-postures-zz01HL` passes 160/160 native helper-aware click cases.
+The posture harness isolates selected jump overlays, so these results do not
+certify interactions with every full-map overlay. No new ZIP/render check was
+performed for this metadata-only publication.
+
 ## Nottingham required postures and roof ownership (2026-10-12)
 
 The unchanged upright click report has 367 passes and 23 failures, but nine

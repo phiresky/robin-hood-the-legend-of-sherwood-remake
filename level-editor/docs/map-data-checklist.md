@@ -22,10 +22,14 @@ layout remains too narrow and correctly emits no jumps. See
 **Jump partitioning (2026-10-12):** export now splits roof-crossing jump spans
 and their clickable landing zones by receiving face. Fresh Nottingham passes
 367/390 click cases: all 20 cases for the split connection pass, while the
-other 370 outcomes are unchanged. The upright report retains 23 failures:
-nine are expected helper-required posture rejections; fourteen need geometric
-or click-routing investigation. A separate required-posture check passes 18/20,
-with the same two courtyard-wall endpoint failures. All 239
+other 370 outcomes were unchanged at that stage. The subsequently published
+courtyard-wall ledge inset fixes its two endpoint defects: the upright report
+now passes 368/390, with ten expected helper-required posture rejections and
+twelve remaining geometric or click-routing failures. Required-posture checks
+pass 20/20 in full physical geometry and 160/160 across copied, rotated and
+raised wall assemblies. These posture fixtures isolate jump overlays; they do
+not certify full-map overlay interactions. See the
+[courtyard repair evidence](map-compilation-evidence.md#courtyard-wall-jump-inset-2026-10-12). All 239
 compiler/export tests passed at that stage. The subsequent copied-roof failure
 is repaired and verified above; full-map jump failures remain under review.
 See [partition verification](map-compilation-evidence.md#compiled-jump-receiving-face-partitions-2026-10-12).
