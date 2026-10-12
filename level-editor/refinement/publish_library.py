@@ -275,7 +275,7 @@ def stage_library(library, output, *, worker_name='robinhood-editor-library'):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--library', type=Path, default=EDITOR/'library')
-    parser.add_argument('--output', type=Path, help='Fresh output directory; defaults to a new work/library-publish snapshot')
+    parser.add_argument('--output', type=Path, help='Fresh output directory; defaults to a new work/disposable/library-publish snapshot')
     parser.add_argument('--worker-name', default='robinhood-editor-library')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--stage-only', action='store_true', help='Create and validate payloads without running Wrangler')

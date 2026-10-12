@@ -29,7 +29,7 @@ def stage_editor(output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', type=Path, help='Fresh output directory')
+    parser.add_argument('--output', type=Path, help='Fresh output directory; defaults to a new work/disposable/editor-publish snapshot')
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--stage-only', action='store_true', help='Build without running Wrangler')
     mode.add_argument('--dry-run', action='store_true', help='Build and validate without uploading')

@@ -28,8 +28,10 @@ needs Workers deployment and zone route editing permissions.
 
 Both commands accept `--stage-only` to build an offline snapshot, `--dry-run` to
 also validate through Wrangler without uploading, and `--output <fresh-dir>`.
-Each run otherwise creates a fresh snapshot in `work/library-publish/` or
-`work/editor-publish/`. The generated `wrangler.json` and `site/` are reviewable
+Each run otherwise creates a fresh snapshot in `work/disposable/library-publish/`
+or `work/disposable/editor-publish/`. These are generated deployment outputs;
+the source app and published library remain outside disposable storage.
+The generated `wrangler.json` and `site/` are reviewable
 before deployment. To deploy an existing reviewed snapshot:
 
 ```sh

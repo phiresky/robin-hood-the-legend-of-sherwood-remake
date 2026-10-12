@@ -18,7 +18,9 @@ def worker_config(name, prefix, html_handling='none'):
 
 
 def new_output(kind):
-    runs = EDITOR / 'work' / (kind + '-publish')
+    # Deployment payloads are reproducible from the source app/library. Keep
+    # them separate from final editable assets and raw synthesis outputs.
+    runs = EDITOR / 'work' / 'disposable' / (kind + '-publish')
     runs.mkdir(parents=True, exist_ok=True)
     return Path(tempfile.mkdtemp(prefix='release-', dir=runs)) / 'deploy'
 

@@ -386,7 +386,9 @@ did this with a scratch scan (`work/lincoln-refinement/scratch/reproject/scan_ga
 evidence in `gap-scan/`); it is not a reusable tool yet.
 
 Hide approved items from the pending gallery, but retain their archived review
-evidence. Do not infer approval from a positive comment such as “pretty good”;
+evidence while refinement is active. At completion, retain the final approval
+record and apply the storage policy in section 15 to superseded evidence.
+Do not infer approval from a positive comment such as “pretty good”;
 record explicit approval before starting an AI texture fill.
 
 ### Review-gallery approval process
@@ -415,9 +417,10 @@ refinement and texture work while collecting candidates and awaiting review.
 6. Only explicitly approved geometry may proceed to texture synthesis or
    publication.
 
-Geometry approval and texture approval are separate decisions. Raw generated
-   textures remain archived even when a protected/source-preserved alternative
-   is selected.
+Geometry approval and texture approval are separate decisions. Keep the final
+raw synthesis output even when its protected/source-preserved composite is
+selected. Keep failed and superseded outputs during active refinement; section
+15 governs their removal after completion.
 
 For paired texture endpoints, keep one primary `texture-review.json` marked
 `ready-for-user`. Its `texture_states` list names each additional endpoint with
@@ -446,7 +449,8 @@ prompt, settings, input hashes, and API response. Never replace known source
 pixels with a generated result without explicit approval.
 
 If a generated material is wrong, retain the failed raw output and run a
-separate retry directory with a more specific material prompt.
+separate retry directory with a more specific material prompt. This is working
+history, not permanent final-asset storage; apply section 15 at completion.
 
 ### Concrete two-image Sunburst workflow
 
@@ -947,6 +951,10 @@ Every worker must return:
 - explicit limitations and unresolved assumptions;
 - approval state and texture-generation state.
 
+At map completion, also hand off the final retention manifest described in
+section 15. A directory named `final`, `approved`, or `experiments` alone does
+not establish which files are final or disposable.
+
 The coordinator merges only after the packet is reproducible, the review state
 is clear, and the editor export validates against the named asset catalog.
 
@@ -1121,3 +1129,79 @@ python3 level-editor/refinement/scene_manifest.py \
 Keep the frozen workers and approval evidence. Run the current staging and browser
 verification tools against the imported JSON/assets before preparing promotion;
 previously prepared promotion manifests must not be reused across a format change.
+
+## 15. Work storage and completion cleanup
+
+`work/` is not a disposable cache. It currently contains editable assets and
+paid texture-generation results as well as reproducible output. Use these
+directories for new work and when migrating existing work:
+
+| Directory | Contents | Removal policy |
+| --- | --- | --- |
+| `work/active/<map>/` | Current models, candidates, source inputs, retries and review packets | Keep until that map's final handoff is verified. |
+| `work/final/<map>/` | Final editable assets, final synthesis outputs and their dependencies | Keep. Never include in scratch cleanup. |
+| `work/disposable/<job>/` | Verified superseded work or reproducible build, render and deployment output | Cleanup candidate; show the exact deletion list and size to the user before deleting. |
+| `work/needs-review/<job>/` | Mixed or unclassified material whose final dependencies have not been established | Keep until classified. Completion of a map alone does not make the whole directory disposable. |
+| `work/storage-maintenance/` | Retention manifests, relocation maps and cleanup receipts | Keep; these explain where the surviving assets are. |
+
+During the October 2026 migration, York and Croisement01, Croisement02 and
+Croisement03 remain active at their existing `work/<map>-refinement/` paths.
+Derby, Leicester, Lincoln, Nottingham and Sherwood are complete, but their
+existing refinement directories remain protected mixed storage until their
+final manifests and dependencies are verified. Unclassified legacy directories
+and loose files are also protected. Do not infer that an unprefixed directory
+is disposable. The published `library/` remains the canonical editor/runtime
+asset store and is outside work-directory cleanup.
+
+### Final retention manifest
+
+For every completed asset and every required covered, revealed, animated or
+material state, record the following in `work/final/<map>/retention.json`:
+
+- Stable asset/state IDs and the corresponding published library entries.
+- Final editable Blender model(s), catalogs, ownership data, recipes and all
+  external images, linked libraries and other inputs needed to reopen/export
+  them. A verified complete map master may replace per-asset copies; an export
+  alone does not replace an editable source.
+- The exact **final raw texture synthesis output**, even when the published
+  texture uses a source-preserved composite. Also retain that selected composite,
+  generation prompt/settings, input hashes and the approval/publication record
+  binding them to the final model. Record every selected retry or additional
+  state; do not pick the newest file by modification time.
+- Each retained file's path, SHA-256 and role. Use paths relative to the manifest
+  for files inside the final bundle. Record external dependencies explicitly.
+
+Retain only the final asset set after completion. Earlier geometry revisions,
+failed synthesis retries, copied API caches, baselines, repeated review renders,
+old galleries and publishing snapshots may move to `disposable/` once the
+manifest proves they are not final dependencies or inputs to another active map.
+Keep the small final decision/provenance records; do not preserve every old
+review directory merely because it contains an approval snapshot.
+
+### Renaming and script migration
+
+Move files without deleting them first. Update the producing and consuming
+scripts, configuration, command examples and tests to the new paths. Do not
+leave compatibility symlinks, add a fallback that silently searches the old
+directory, or allow a producer to recreate the old layout. New default
+deployment output goes to `work/disposable/{library,editor}-publish/`.
+
+Directory renames must also account for paths inside Blender files, generation
+metadata and publication manifests. Reopen retained models and check external
+images and linked libraries after relocation. Fix path construction and
+repository-root discovery in scripts moved to a different depth. Preserve
+hash-bound historical approvals as evidence; record their old-to-new path
+mapping separately instead of silently editing them and pretending the old
+hashes still match. Produce and verify a new operational manifest where needed.
+
+### Before deletion
+
+Prepare an exact file list with reasons and the retained replacement or
+reproduction command. Verify final files and all active-map dependencies first.
+Count allocated space by unique inode, excluding hard links that survive
+elsewhere. Show the scope and expected reclaimed space to the user before any
+deletion. A `disposable/` name is a classification, not authorization to delete
+it while a job is using it. Record actual deletions and verify the retained
+manifest afterward. Never classify entire `experiments`, `variants`, `review`
+or `approved-evidence` directories from their names: final production inputs
+have historically lived in all of them.
