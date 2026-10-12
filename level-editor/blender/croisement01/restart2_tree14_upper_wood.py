@@ -16,7 +16,7 @@ acquire(slots=2)
 assert shutil.disk_usage(OUT).free>10*1024**3+512*1024**2
 available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024
 assert available>6*1024**3
-base=OUT/'restart2';dest=base/'tree14-wood-v15';dest.mkdir(exist_ok=False)
+base=OUT/'restart2';dest=base/'tree14-wood-v16';dest.mkdir(exist_ok=False)
 bank=base/'tree05-regional-banks-v18/assets/croisement01-tree-05/model.blend'
 assert sha(bank)=='7926500e407950bd66b78d13e0ce65b3829dd2263d7db4ba5c57a7ece5dbc818'
 bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.preferences.filepaths.save_version=0
@@ -62,6 +62,10 @@ for branch,profile in profiles.items():
  # Keep connected parent attachment fixed; native cross-sections constrain the
  # thinner distal branch, while the taper tip is retained from the source trace.
  new[0]=original[0];new.append(profile['tip']);trace[branch]=new
+ if branch=='upper_branch':
+  # The complete observed domain exposes a single inner silhouette gap here.
+  # Taper the subpixel contour correction across neighboring cross-sections.
+  for row in new:row[2]+=.65*max(0.,1-abs(row[1]-185)/10)
 branch_world={}
 for name,rows in trace.items():
  if name=='main_stem':continue
