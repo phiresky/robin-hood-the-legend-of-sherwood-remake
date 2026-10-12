@@ -35,6 +35,15 @@ routes with those overlays intact; all pass, using hidden selection on return.
 This is browser-rendered export plus native movement validation, not an in-game
 rendered-scene or all-map parity certificate.
 
+The same `folded-roof-rendered.zip` also passes
+`full_editor_archive_constructs_native_map_without_base_datadir` in the native
+`editor_mod_export` test binary (5.39 seconds). This copies the ZIP into a mod
+directory, discovers and mounts it over an empty asset filesystem, decodes the
+background, depth and minimap, and constructs the engine. It checks the embedded
+editor document and absence of mission actors, bonuses, script objects and
+hiking paths. This verifies the archive loading path, not just its extracted
+descriptor; it does not verify an in-game rendered screenshot.
+
 ## Export-time folded floor preparation (2026-10-12)
 
 The diagnostic correction is now implemented in the compiler. Join orientation
