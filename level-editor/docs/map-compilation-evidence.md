@@ -178,6 +178,32 @@ descriptor pin. Existing draft warnings remain.
 Fresh published complete-asset matrix `connected-jump-placements-8j4VaY`
 reproduces all eight native-validated `Q1Hj80` descriptors byte-for-byte.
 
+### Published lane correction: rendered ZIP and Nottingham regression
+
+Fresh browser fixture `render-connection-library-C8vsuL` retains both published
+assets' complete gameplay at 180 degrees and elevation 40, in two copies. Its
+actual editor bake produces `york-lane-rendered.zip` (13,205,507 bytes). The
+browser verifies unchanged editor data, gameplay, warnings, appearances and
+rendered color/depth after reopening and rebaking. Color/depth PNG bytes also
+match the previously inspected pre-correction fixture exactly. The extracted
+complete gameplay equals validated `8j4VaY/connection-180-40.level.json`.
+
+Native empty-base archive loading passes in 3.40 seconds, including map/depth/
+minimap decoding, engine construction and mission-content absence.
+`interior-jump-clicks-7KsxXf` tests this archive's descriptor and passes all eight
+directions, including both internal returns that failed before the correction.
+This closes the browser/archive round-trip gap for this fixture; simultaneous
+traffic and in-game rendered actor/depth compositing remain unverified.
+
+Fresh full Nottingham `saved-map-exports-ae9DMv` compiles in 43.8 seconds and
+loads natively. All 390 normal-click outcomes equal `saved-map-exports-t6ftGw`
+case-by-case: 375 pass, with five failures each on lines 31/53/62. The helper
+subset `required-jump-postures-DNGfVT` passes all twenty assisted-ascent/upright-
+descent cases, retaining physical geometry but isolating the helper overlays.
+The full hidden-click audit passes all five line-62 covered-roof cases; it also
+records eight failures on lines 7 (five) and 53 (three). These checks do not
+certify every overlay, placement or input mode. Full Derby re-export is next.
+
 `check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,
 ordered by distance to the takeoff edge. Each point must pass static corridor
 clearance against both native and precise floor contours with an additional

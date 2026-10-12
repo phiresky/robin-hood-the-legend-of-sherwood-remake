@@ -40,8 +40,10 @@ elevations. It derives matching level spans from the lane's existing receiving
 surfaces; no runtime change or replacement terrain is involved. Full York
 retains exactly the same thirteen previously recorded failures, with no regressions.
 An expanded internal-jump sweep passes 1,740 normal clicks and sixty explicit
-hidden-surface clicks across 1,800 start/destination combinations. Multi-character
-traffic and a rendered round trip of this lane correction remain unverified.
+hidden-surface clicks across 1,800 start/destination combinations. Its fresh
+rendered ZIP now reopens identically, loads without base-game data, and passes
+all eight complete-asset jump directions. Multi-character traffic and in-game
+rendered actor/depth compositing remain unverified.
 
 **Subpixel rotated floors (2026-10-12):** simple folded floors now receive
 walking clearance before integer normalization can erase them. York's copied
