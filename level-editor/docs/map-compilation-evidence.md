@@ -26,7 +26,29 @@ including physical materials, using their existing geometry and alpha rules.
 The browser bake contract confirms identical depth pixels for unlit, standard
 and physical materials across opaque geometry, physical cutouts and synthesized
 ownership alpha. Typechecking, targeted lint and formatting checks pass.
-The complete Derby browser export/reopen/rebake is still pending.
+The complete Derby browser export/reopen/rebake now passes: the 1,920 by 2,752
+map has 371 sight obstacles and a 25,263,630-byte ZIP. Reopened gameplay,
+warnings, base color/depth and appearance-state pixels match exactly. Archive
+`saved-map-exports-4xvy7y/editor-derby-roundtrip.zip` passes
+`full_editor_archive_constructs_native_map_without_base_datadir`, including
+native mod discovery, image/animation decoding and engine construction with
+empty mission content. This proves archive/reopening fidelity, not visual
+accuracy or arbitrary gameplay completeness.
+
+The reviewed York recipe is now `stage-reviewed-jump-receivers.mjs`, with
+explicit descriptor/model hashes and asset-local ledge/face rules. Stage
+`reviewed-jump-receivers-54uDao` matches `york-zone-bindings-L4ay3w` gameplay
+exactly except for draft warning text. All 64 exports in
+`asset-jump-exports-SJlTzH` construct natively. Internal-pair click tests improve
+from zero successful traversals in 140 baseline cases (`62RRdc`) to 112 in 160
+candidate cases, with 48 remaining failures; pairs are absent in two baseline
+placements. Six of the assets use cross-asset segments that these isolated
+fixtures cannot connect, so these counts do not certify their rotated routes.
+The publication report under `reviewed-jump-receivers-54uDao/publication`
+confirms all eight definitions installed and York scene pins updated. Live
+gameplay and descriptor hashes match the staged definitions and scene pins.
+The definitions retain draft warnings. A fresh published full-scene export is
+being checked separately.
 
 ## Published stump takeoff repair and full-scene York check (2026-10-12)
 
