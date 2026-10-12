@@ -852,6 +852,7 @@ fn dispatch_jump(
     };
     let source_sector = handle(&source);
     let destination_sector = handle(&destination);
+    let requested_destination_layer = destination.layer;
     let landing_posture = if engine.world.fast_grid.level.sectors
         [usize::from(destination.sector_index.unwrap())]
     .force_crouched
@@ -1176,9 +1177,11 @@ fn dispatch_jump(
             if element.sector() != Some(destination_sector) || element.layer() != destination.layer
             {
                 return Err(format!(
-                    "wrong landing sector/layer: {:?}/{}",
+                    "wrong landing sector/layer: {:?}/{}; requested={destination_sector:?}/{requested_destination_layer}; requested_line={index}, selected_line={selected_jump_line}, selected_destination={:?}/{}; start={start:?}, goal={goal:?}, authorized_goal={arrival_goal:?}",
                     element.sector(),
-                    element.layer()
+                    element.layer(),
+                    destination.sector_index,
+                    destination.layer,
                 ));
             }
             actor_receiver_result(

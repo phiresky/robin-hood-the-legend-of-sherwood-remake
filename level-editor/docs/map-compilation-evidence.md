@@ -265,6 +265,32 @@ Leicester/Wychford descriptor pins. Published gameplay exactly matches the
 tested stage, and both saved-scene hashes verify. Draft warnings remain; full
 Wychford traversal and fresh rendered archive checks are not established here.
 
+Follow-up diagnostics distinguish the requested target from the selected jump.
+All four full-scene ordinary-click failures request line 8 toward the lower
+platform, but actually select line 15 toward the neighbouring raised strip and
+finish on that selected strip. The matched hidden-selection audit successfully
+executes line 8 for all four coordinates. Thus the full-scene sweep has 226
+ordinary passes plus four covered-target cases verified with hidden selection;
+it does not have four broken flights. The broader hidden audit also records
+38 other failures out of 42 attempted hidden clicks, so hidden selection is not
+universally valid for every sampled coordinate.
+
+For the eight-placement fixture, hidden selection resolves 74 of the 120
+ordinary failures. The other 46 remain unverified: thirty have no distinct
+hidden jump candidate in the audit and sixteen select another target. The
+entire hidden sweep passes 120/432, including probes whose ordinary input already
+worked. These counts are kept separate rather than treating every different
+selection as a successful traversal of the requested connection.
+
+Expanded interior sweep `interior-jump-clicks-G4jmKQ` samples three starts and
+three destinations per direction across all eight placements: 2,310/2,448
+ordinary clicks pass. Hidden retries `keep-hidden-interior-bw979r9_` pass 132/138
+remaining coordinates. Six coordinates remain unresolved, all line 8 at 37
+degrees in the two elevations: both input modes select another overlapping
+strip with no usable outgoing connection from the source. All 272 directed
+connections nevertheless have at least one successfully traversed sampled
+interior route. This proves sampled reachability, not universal click selection.
+
 `check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,
 ordered by distance to the takeoff edge. Each point must pass static corridor
 clearance against both native and precise floor contours with an additional

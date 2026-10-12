@@ -25,8 +25,17 @@ to **226/230** offset jump clicks with no regressions. All 46 interior direction
 now have probes: 45 pass ordinary selection and one passes hidden selection.
 Eight rotated/elevated placements improve from 722/1,360 to 1,240/1,360 passing
 offset probes, also without regressions. Four full-scene and 120 placement
-failures remain; rendered ZIP validation is still outstanding. See
+findings initially remained. Follow-up selection diagnostics show that all four
+full-scene cases select a neighbouring roof normally and pass the intended lower
+jump with hidden selection. Hidden selection also resolves 74/120 placement
+findings; 46 remain open. Rendered ZIP validation is still outstanding. See
 [the clearance recovery](map-compilation-evidence.md#keep-movement-clearance-recovery-2026-10-12).
+
+A wider placement sweep now verifies at least one complete interior-click route
+for all 272 directed connections. Of 2,448 start/destination combinations, 2,310
+pass ordinary selection and another 132 pass hidden selection. Six overlapping
+target coordinates at 37 degrees remain unresolved; this establishes sampled
+reachability without claiming every click works.
 
 **York jump checks (2026-10-12):** the current full-map audit has 696 successful
 traversals, eleven occluded lower-click cases and thirteen failures out of 720.
