@@ -161,9 +161,12 @@ the lower approach crosses its wall face. Shortening that approach loses the
 lower floor connection, so the opening and landing require asset-level repair.
 A revised private mesh repair clears all 32 approach centerlines and passes
 closed-shell checks on the serialized GLB. The previous candidate passed Blender
-checks but produced a non-manifold GLB and is rejected. Its mesh-derived collision
-fragments still need stable native cap planes. It remains unpublished: collision/sight/floor metadata,
-texturing, full actor clearance and native moved-assembly checks remain open.
+checks but produced a non-manifold GLB and is rejected. A subsequent asset-local
+wall-cut candidate avoids unstable mesh fragments, preserves the existing lower
+wall recess, and matches both repaired walls at 420,810 sampled occupancy points.
+All 32 native player-click stair routes and 32 missing/raised-landing rejections
+pass. It remains unpublished: texturing, full actor clearance, the step's plane
+discrepancy and a rendered roundtrip of the combined asset bundle remain open.
 
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and

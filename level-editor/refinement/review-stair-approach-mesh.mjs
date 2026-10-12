@@ -49,8 +49,9 @@ const manifest = JSON.parse(await fs.readFile(`${directory}/diagnostics.json`));
 assert.equal(manifest.complete, true);
 assert.equal(manifest.gameplayStage, stage, "Review the same asset stage used by the exporter");
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`));
-assert.equal(edits.length, 1);
-const edit = edits[0];
+const stairEdits = edits.filter((entry) => entry.asset === "lincoln-south-wall-walk-step");
+assert.equal(stairEdits.length, 1);
+const edit = stairEdits[0];
 assert.equal(edit.gameplay.lifts.length, 1);
 const modelCandidate = modelStage
   ? {

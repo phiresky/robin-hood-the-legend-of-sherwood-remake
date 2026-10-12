@@ -2240,6 +2240,29 @@ intersecting cap faces. Neither conversion is accepted or published. The next
 authoring step must produce stable solids without removing the opening, filling
 cavities, or adding runtime geometry work.
 
+The subsequent `stage-turret-gameplay.mjs` avoids that unstable conversion. It
+cuts the same local doorway polygon into the authored wall solids, retaining
+their lintels and a four-unit supporting floor slab. The lower wall footprint
+comes from its asset mesh's flat bottom cap: using only the broad part outline
+incorrectly filled an existing recess (432 sampled discrepancies in the first
+candidate `turret-gameplay-Lhz2Sm`). No level-data lookup is used.
+
+Revised candidate `turret-gameplay-yFZnue` has eleven static volumes, including
+the unchanged non-wall part definitions. `review-turret-solids.mjs` compares both
+repaired wall parts with their serialized mesh using 420,810 occupancy probes,
+including heights immediately above/below the floor, shell interface and lintel.
+All agree; 46,116 probes specifically sample the doorway interior. This is sampled
+solid agreement, not complete actor-body clearance or texture verification.
+
+Its `step-passage-assembly-LG2KKb` fixture passes all sixteen connected exports
+and 32 missing/raised-landing rejections. All 32 directed native player-click
+stair traversals pass in 1.44 seconds, and the final prepared approach centerlines
+remain free of mesh crossings. The candidate is still unpublished: floor
+texturing, full actor clearance, the step's plane discrepancy and a rendered
+roundtrip using the combined model/metadata bundle remain open. The unsuccessful
+generic volume-compaction experiment was removed; production compiler and runtime
+code are unchanged.
+
 Neutral front/rear geometry renders show the new through-opening and floor. They
 are geometry inspections, not textured scene or animated-character verification.
 The new floor uses a provisional texel from the owning wall's cap because the
