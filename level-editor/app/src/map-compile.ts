@@ -10,6 +10,7 @@ import { packageAppearanceRegions, type BakedAppearanceRegion } from "./map-appe
 import { compileMission } from "./compile-mission.ts";
 import { compileLiftApproaches } from "../../shared/src/compile-lift-approaches.ts";
 import { quantizePassageReceivers } from "../../shared/src/quantize-passage-receivers.ts";
+import { prepareOrdinaryStairPassages } from "../../shared/src/prepare-ordinary-stair-passages.ts";
 import {
   compileBuildingPassageStates,
   compileLiftPassageStates,
@@ -128,6 +129,7 @@ export function compileMap(
   if (assetGeometry) {
     compileLiftApproaches(assetGeometry);
     quantizePassageReceivers(assetGeometry);
+    prepareOrdinaryStairPassages(assetGeometry);
     prepareStairPassages(assetGeometry);
     const ordinaryStates = compileOrdinaryPassageStates(assetGeometry);
     assetGeometry.doors.forEach((door, index) => {

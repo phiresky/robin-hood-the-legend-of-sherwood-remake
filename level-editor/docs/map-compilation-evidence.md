@@ -65,6 +65,23 @@ descriptors exactly in `hall-ordinary-approach-diagnostic-hw0QI4`.
 This is not production integration: generic midpoint constraints, state
 recomputation and raised-placement verification remain required.
 
+Export now applies `prepareOrdinaryStairPassages` after receiver quantization and
+before static passage-state checks. Ordinary gates with a stair on either side
+participate in existing lift approach preparation; moved world endpoints are
+reconstructed from receiving planes. The sector-switch midpoint is placed at
+the supported stair endpoint. Gate permissions and pre-existing state
+requirements are retained. Unsupported proposed endpoints keep their authored
+approach with an explicit warning. No engine code or file-format change is needed.
+
+Integrated preparation plus recomputed passage states passes all 48 forced
+routes in `hall-prepared-ordinary-EwH8w6`. Fresh compilation
+`hall-prepared-fresh-gTCT9A` produces the 90-degree export independently; isolated
+completed subset `hall-prepared-fresh-subset-vhodwyws` passes all twelve forced
+routes. Its raised zero-degree export is still being compiled and is not yet
+certified. Seventeen approach/state/quantization tests pass, followed by an
+additional passing reversed-door regression. App typecheck and focused
+lint/format checks pass. Full cross-map and rendering regression remain open.
+
 ## Sherwood stair clearance investigation (2026-10-12)
 
 Fresh published export `saved-map-exports-pxNvRF` passes 50 ordinary route
