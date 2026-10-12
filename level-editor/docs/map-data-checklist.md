@@ -145,6 +145,9 @@ routes across four rotations and two elevations without navigation-preparation
 warnings. Its receiving plane still disagrees with the asset mesh (up to 0.514132
 units at the nearest top-triangle vertices), and turret clearance is unverified.
 It remains unpublished; passing routes alone do not establish usable mesh contact.
+Lift approach clearance also needs further export-time review: applying ordinary
+landing-plane cuts blocks existing stair handoffs, so that experiment was rejected.
+The production compiler and runtime remain unchanged by this investigation.
 
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and

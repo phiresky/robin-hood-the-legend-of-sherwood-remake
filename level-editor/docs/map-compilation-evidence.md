@@ -2153,6 +2153,23 @@ the separately placed turret's clearance still need review. Successful traversal
 alone must not certify either of these. The assembly helper now also rejects
 navigation-preparation warnings instead of accepting a projected-only result.
 
+Further review identified a limitation in the current stair-clearance evidence:
+the outdoor approach can cross geometry removed from a landing's movement
+boundary. Applying the ordinary-door plane-cut check directly to lift entrances
+does catch the turret, but also makes fourteen previously traversable Derby and
+Lincoln stair routes unavailable. Excluding floor holes does not resolve that;
+even restricting the experiment to authored movement exclusions blocks Lincoln's
+south-wall stair. These experiments were rejected, and the production compiler
+was restored unchanged. Their diagnostics are `saved-map-exports-Ulq7r6`,
+`saved-map-exports-ltACDo` and `saved-map-exports-jtjodu`; the rejected patch is
+retained with the unpublished stair stage for investigation.
+
+A correct export-time check needs to distinguish the 3D approach and its connected
+flight support from unrelated solid obstructions. A landing-plane slice alone
+does not establish that distinction. No runtime solver or collision bypass was
+introduced, and the candidate remains unpublished. The earlier 32 passing routes
+are movement evidence only, not proof of clearance through the turret.
+
 `step-passage-assembly-9RWSMk` repeats the sixteen connected exports and checks
 32 missing/raised-landing cases: independently removing or raising either landing
 at every rotation/elevation omits the stair with an explicit connection warning.
