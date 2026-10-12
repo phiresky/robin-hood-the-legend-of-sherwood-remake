@@ -16,7 +16,7 @@ acquire(slots=2)
 assert shutil.disk_usage(OUT).free>10*1024**3+512*1024**2
 available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024
 assert available>6*1024**3
-base=OUT/'restart2';dest=base/'tree07-wood-v2';dest.mkdir(exist_ok=False)
+base=OUT/'restart2';dest=base/'tree07-wood-v3';dest.mkdir(exist_ok=False)
 bank=base/'tree05-regional-banks-v18/assets/croisement01-tree-05/model.blend'
 assert sha(bank)=='7926500e407950bd66b78d13e0ce65b3829dd2263d7db4ba5c57a7ece5dbc818'
 bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.preferences.filepaths.save_version=0
@@ -24,7 +24,7 @@ working=bpy.data.collections['Croisement01 Working'];terrain={'ground',*[f'build
 for o in list(bpy.data.objects):
  if o.type=='MESH' and o.get('source_node') not in terrain:bpy.data.objects.remove(o,do_unlink=True)
 asset='croisement01-tree-07';node='scenery-tree07-wood';name='Northern Partly Hidden Tree'
-core=base/'tree07-source-partition-v2/conservative-bark-core.png';wood=Image.open(core).convert('L');wood.save(dest/'wood-domain.png')
+core=base/'tree07-source-partition-v3/conservative-bark-core.png';wood=Image.open(core).convert('L');wood.save(dest/'wood-domain.png')
 # Conservative bark-core edges are color ownership, not a complete silhouette.
 # Keep a continuous inferred round stem and validate all known source rays.
 centers=[Vector(v) for v in [(458,-307,39),(458,-307,55),(458,-307,120),(456,-307,190),(456,-307,218),(458,-307,270),(452,-308,335),(451,-308,365)]]
@@ -48,8 +48,8 @@ groups.append(dict(id=asset,name=name,parts=[dict(node=node,name='Partly observe
 catalog.update(version=2,groups=groups,canonical_owners={f"building-{p['obstacle']:03d}" if 'obstacle' in p else p['node']:g['id'] for g in groups for p in g['parts']})
 cat=dest/'catalog.json';cat.write_text(json.dumps(catalog,indent=2)+'\n');inventory(dest/'inventory',collection_name=working.name,map_name='Croisement01',source_path=OUT/'baseline/covered.png',patch_manifest=OUT/'source-states/layers.json')
 masks=dest/'masks.json';masks.write_text(json.dumps(native,indent=2)+'\n');source=dest/'source-masks.json';source.write_text(json.dumps(dict(version=1,mask_inventory=str(masks),projections=dict(exterior=dict(state='Conservative native07 bark',source_sha256=sha(OUT/'baseline/covered.png'),assignments=[dict(reviewed=True,asset_group=asset,mask_indices=[207])]))),indent=2)+'\n')
-review=dest/'grouping-review.json';review.write_text(json.dumps(dict(status='reviewed',reviewer='Codex',catalog_sha256=sha(cat),inventory_sha256=sha(dest/'inventory/inventory.json'),evidence='308 conservative native bark pixels only; mixed crossing foliage deferred. Native040 proxy correspondence measured separately; no gameplay changes. Hidden lower stem and complete upper branches inferred; crown excluded.'),indent=2)+'\n')
+review=dest/'grouping-review.json';review.write_text(json.dumps(dict(status='reviewed',reviewer='Codex',catalog_sha256=sha(cat),inventory_sha256=sha(dest/'inventory/inventory.json'),evidence='272 conservative native bark pixels only; mixed crossing foliage deferred. Native040 proxy correspondence measured separately; no gameplay changes. Hidden lower stem and complete upper branches inferred; crown excluded.'),indent=2)+'\n')
 worker=dest/'assets'/asset;prepare(worker,asset_id=asset,scene_name='Croisement01 Refinement',collection_name=working.name,source_path=OUT/'baseline/covered.png',grouping_manifest=cat,inventory_path=dest/'inventory/inventory.json',review_path=review,source_mask_manifest=source,width=384,height=384,framing_padding=1.2,lighting=dict(toward_sun=[-.6,-.4,.7],ambient=.22,diffuse=.78,shadow_epsilon=.05));validate(worker);modified(worker)
-(dest/'construction.json').write_text(json.dumps(dict(status='PRIVATE_GEOMETRY_PENDING_SAVED_VIEW_SOURCE_AND_CONTACT_REVIEW',model_sha256=sha(worker/'model.blend'),known_bark_pixels=308,deferred_mixed_pixels=2352,bank_sha256=sha(bank),source_partition_sha256=sha(base/'tree07-source-partition-v2/partition.json'),crown_excluded=True,no_gameplay_mutation=True),indent=2)+'\n')
+(dest/'construction.json').write_text(json.dumps(dict(status='PRIVATE_GEOMETRY_PENDING_SAVED_VIEW_SOURCE_AND_CONTACT_REVIEW',model_sha256=sha(worker/'model.blend'),known_bark_pixels=272,deferred_mixed_pixels=2388,bank_sha256=sha(bank),source_partition_sha256=sha(base/'tree07-source-partition-v3/partition.json'),crown_excluded=True,no_gameplay_mutation=True),indent=2)+'\n')
 (worker/'inspection').mkdir(exist_ok=True)
 import render_candidate;sys.argv=['render','--',str(worker)];render_candidate.main()
