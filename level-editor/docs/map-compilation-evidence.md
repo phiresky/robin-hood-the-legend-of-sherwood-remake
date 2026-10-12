@@ -4,6 +4,25 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Fresh York export after folded-floor preparation (2026-10-12)
+
+`saved-map-exports-YQaMEL` compiles the published York scene in 389.66 seconds
+and passes native geometry construction. Its gameplay sections match
+`saved-map-exports-Gnpyri` exactly except for warnings. The current native
+ordinary-click audit reports 681 successful traversals, eleven occlusion cases
+and 28 failures across 720 probes. Re-running the preceding descriptor with the
+same audit gives the same 28 failures; this is not a compiler improvement.
+The remaining failing lines are 5, 50, 51, 57, 65 and 142.
+
+Line 65 lands on `york-east-bridge-street-central-timber-house`, external segment
+`jump-pair-62-side-0`. Its two asset-local endpoints have identical physical XY
+and heights one unit apart. The authored surface planes at that XY are also
+above both endpoints. This identifies an asset geometry review candidate, not
+authorization to move the edge without checking its actual mesh and receiver.
+The independent hidden-click sweep on the preceding descriptor passes 11 of
+67 selected probes; its 56 failures remain unresolved. Hidden selection alone
+does not establish the missing York traversal coverage.
+
 ## Published roof metadata and rendered ZIP round trip (2026-10-12)
 
 The slab, north stone house and upper green house definitions are published.
