@@ -31,10 +31,15 @@ def candidate(current):
 def guard_scope(reviewed,current,new):
  a,b,c=rows(reviewed),rows(current),rows(new)
  require(set(a)==set(b)==set(c),'Catalog membership drift')
- require([i for i in a if i.startswith('croisement02-')]==[i for i in c if i.startswith('croisement02-')],'C02 row ordering drift')
+ protected=set()
+ for catalog in (a,b,c):
+  for aid,(_,_,raw) in catalog.items():
+   parsed=json.loads(raw);source_map=parsed.get('source_map','')
+   require(isinstance(source_map,str),'Invalid source_map: '+aid)
+   if source_map.casefold()=='croisement02' or aid.casefold().startswith('croisement02-'):protected.add(aid)
+ require([i for i in a if i in protected]==[i for i in c if i in protected],'C02 row ordering drift')
  for aid in a:
-  if re.search(rb'"source_map":"Croisement02"',a[aid][2][:512])is not None or aid.startswith('croisement02-'):
-   require(a[aid][2]==c[aid][2],'Reviewed C02 row changed: '+aid)
+  if aid in protected:require(a[aid][2]==c[aid][2],'Reviewed C02 row changed: '+aid)
   if aid not in IDS:require(b[aid][2]==c[aid][2],'Unrelated current row not preserved: '+aid)
  require(candidate(current)==new,'Unexpected catalog byte change')
  return [aid for aid in a if a[aid][2]!=b[aid][2]and aid not in IDS]
@@ -42,8 +47,25 @@ def guard_scope(reviewed,current,new):
 def guard_records(records,field='old_sha256'):
  for r in records:require(sha(Path(r['target']))==r[field],'Target drift: '+r['target'])
 
+def authoritative_plan():
+ require(sha(V3/'plan.json')==V3_SHA,'Original plan drift');p=read(V3/'plan.json')
+ for key in ('executor','delta','approval','isolated_browser'):
+  pin=p[key];path=Path(pin['path']);path=path if path.is_absolute()else R/path
+  require(sha(path)==pin['sha256'],'Original authority drift: '+key)
+ return p
+
+def guard_required_checks(plan,authority):
+ require(plan['editor_checks_required']==authority['editor_checks_required'],'Required editor checks differ from immutable v3')
+
+def guard_audit_bindings(plan,audit):
+ expected={'path':str(V3/'plan.json'),'sha256':V3_SHA}
+ require(plan['original_plan']==expected and audit['original_plan']==expected,'Audit original plan binding differs')
+ require(audit['current_index_sha256']==plan['records'][-1]['old_sha256'],'Audit old index binding differs')
+ require(audit['new_index_sha256']==plan['records'][-1]['new_sha256'],'Audit new index binding differs')
+ require(audit['unchanged_map_and_delivery_records']==11,'Audit delivery scope differs')
+
 def prepare(out):
- require(sha(V3/'plan.json')==V3_SHA,'Original plan drift');require(not out.exists(),'New output required');p=read(V3/'plan.json');require(len(p['records'])==12,'Expected12records')
+ require(not out.exists(),'New output required');p=authoritative_plan();require(len(p['records'])==12,'Expected12records')
  guard_records(p['records'][:-1]);original.validate_inputs()
  for r in p['records']:require(sha(Path(r['source']))==r['new_sha256'],'Original candidate drift')
  for pin in p['protected_descriptors']:original.io.core.verify_pin(pin)
@@ -54,14 +76,15 @@ def prepare(out):
  return plan
 
 def bind(out,proof):
- plan=read(out/'plan.json');e=read(proof);require(e.get('status','').startswith('PASS'),'Original browser proof must pass');require(e.get('plan_sha256')==V3_SHA,'Browser proof must retain original v3 binding');require(all(e.get('editor_checks',{}).get(k)is True for k in plan['editor_checks_required']),'Six editor behaviors required')
+ plan=read(out/'plan.json');authority=authoritative_plan();guard_required_checks(plan,authority);original.io.core.verify_pin(plan['audit']);guard_audit_bindings(plan,read(Path(plan['audit']['path'])));e=read(proof);require(e.get('status','').startswith('PASS'),'Original browser proof must pass');require(e.get('plan_sha256')==V3_SHA,'Browser proof must retain original v3 binding');require(all(e.get('editor_checks',{}).get(k)is True for k in plan['editor_checks_required']),'Six editor behaviors required')
  result={'status':'PASS_COMPOSITE_UNCHANGED_C02_SCOPE_ONLY','plan_sha256':sha(out/'plan.json'),'original_browser_proof':{'path':str(proof),'sha256':sha(proof)},'original_plan_sha256':V3_SHA,'rebase_audit':plan['audit'],'editor_checks':e['editor_checks'],'scope':'Original v3 browser behavior applies only to byte-identical C02 rows/map/deliveries. Non-C02 metadata preserved but not newly browser-tested. Short actual canonical smoke remains required.'};dump(out/'composite.json',result)
 
 def verify(out):
- plan=read(out/'plan.json');composite=read(out/'composite.json');require(composite['plan_sha256']==sha(out/'plan.json'),'Composite plan drift');require(sha(V3/'plan.json')==V3_SHA,'Original plan drift');original.io.core.verify_pin(plan['executor']);original.io.core.verify_pin(plan['audit']);original.io.core.verify_pin(composite['original_browser_proof'])
+ plan=read(out/'plan.json');authority=authoritative_plan();guard_required_checks(plan,authority);composite=read(out/'composite.json');require(composite['plan_sha256']==sha(out/'plan.json'),'Composite plan drift');require(sha(V3/'plan.json')==V3_SHA,'Original plan drift');original.io.core.verify_pin(plan['executor']);original.io.core.verify_pin(plan['audit']);original.io.core.verify_pin(composite['original_browser_proof'])
+ guard_audit_bindings(plan,read(Path(plan['audit']['path'])));require(composite['rebase_audit']==plan['audit'] and composite['original_plan_sha256']==V3_SHA,'Composite audit/original binding differs')
  proof=read(Path(composite['original_browser_proof']['path']));require(proof.get('status','').startswith('PASS')and proof.get('plan_sha256')==V3_SHA,'Original proof scope changed');require(all(proof.get('editor_checks',{}).get(k)is True for k in plan['editor_checks_required']),'Missing editor behavior')
  for path,digest in proof.get('evidence',{}).items():require(sha(R/path)==digest,'Original proof evidence drift: '+path)
- original.validate_inputs();guard_records(plan['records']);require(plan['records'][:-1]==read(V3/'plan.json')['records'][:-1],'Map/delivery records altered')
+ original.validate_inputs();guard_records(plan['records']);require(plan['records'][:-1]==authority['records'][:-1],'Map/delivery records altered')
  require(plan['records'][-1]['target']==str(L/'3d-assets/index.json'),'Index target altered')
  for r in plan['records']:require(sha(Path(r['source']))==r['new_sha256'],'Candidate drift')
  for pin in plan['protected_descriptors']:original.io.core.verify_pin(pin)
