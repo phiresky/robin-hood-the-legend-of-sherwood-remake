@@ -388,3 +388,73 @@ fn multiple_activations_in_one_tick_all_fire() {
     assert_eq!(host_global(&engine, GLOBAL_ID_SEARCH), SENTINEL_SEARCH);
     assert_eq!(host_global(&engine, GLOBAL_ID_APPLE), SENTINEL_APPLE);
 }
+
+#[test]
+fn scripted_lever_animation_done_dispatches_authored_callback() {
+    use crate::order::OrderType;
+    let (mut engine, target) = build_engine_with_target();
+    let mut assets = LevelAssets::new();
+    let mut profile = crate::profiles::CharacterProfile::default();
+    profile.contextual_actions[0] = crate::profiles::Action::Lever;
+    let mut profiles = crate::profiles::ProfileManager::new();
+    profiles.characters.push(profile);
+    assets.profile_manager = std::sync::Arc::new(profiles);
+    let actor = engine.add_test_entity(Entity::Pc(crate::element::ActorPc {
+        element: {
+            let mut e = ElementData::from_initial_posture(Posture::Upright);
+            e.kind = ElementKind::ActorPc;
+            e
+        },
+        actor: crate::element::ActorData {
+            action_state: crate::element::ActionState::Waiting,
+            ..Default::default()
+        },
+        human: Default::default(),
+        pc: crate::element::PcData {
+            life_points: 100,
+            ..Default::default()
+        },
+    }));
+    let mut scripts = Vec::new();
+    let mut conversion = crate::engine::test_support::unmapped_conversion();
+    for (index, order) in [OrderType::UsingLever, OrderType::WaitingUpright]
+        .into_iter()
+        .enumerate()
+    {
+        conversion[order as usize] = index as u16;
+        scripts.extend(vec![
+            crate::sprite_script::SpriteScript {
+                action_id: order as u16,
+                action_done: 1,
+                average_speed: 0.0,
+                hotspot: crate::coordinates::SpriteLocalPoint::ZERO,
+                sum_distance: 0,
+                frame_ids: vec![1, 2, 3],
+                delays: vec![0, 0, 0],
+                distances: vec![0, 0, 0],
+                offsets: vec![crate::coordinates::SpriteFrameOffset::ZERO; 3],
+                sound_ids: vec![0; 3],
+            };
+            16
+        ]);
+    }
+    engine.elem_mut(actor).sprite = crate::sprite::Sprite::new(
+        std::sync::Arc::new(scripts),
+        std::sync::Arc::new(conversion),
+    );
+    crate::engine::complete_test_runtime_fixture(&mut engine, &mut assets);
+    engine.t_launch_element(
+        &assets,
+        SequenceElement::new_interaction(1, Command::UseLever, Some(actor), Some(target)),
+    );
+    let mut display = HostDisplayState::default();
+    let mut dev = DevState::default();
+    assert_eq!(host_global(&engine, GLOBAL_ID_LEVER), 0);
+    for _ in 0..12 {
+        engine.perform_hourglass(&mut display, &mut InputState::default(), &assets, &mut dev);
+        if host_global(&engine, GLOBAL_ID_LEVER) == SENTINEL_LEVER {
+            break;
+        }
+    }
+    assert_eq!(host_global(&engine, GLOBAL_ID_LEVER), SENTINEL_LEVER);
+}

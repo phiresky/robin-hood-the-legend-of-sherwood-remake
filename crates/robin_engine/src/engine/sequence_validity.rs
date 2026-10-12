@@ -228,13 +228,12 @@ impl EngineInner {
             }
 
             // ── UseLever ───────────────────────────────────────
-            // Original-game player sequence-validity checking
-            // treats the interaction antagonist as the owning
+            // Scripted targets require their authored lever capability/filter.
             // For mobile elements, the cart must still be stopped and, on the
             // Execute-time check, within 40 map units.  Rust represents that
             // master through its masked FX child and `mobile_index`.
             Command::UseLever => {
-                self.sequence_validity_use_lever(actor_id, actor, element, check_position)
+                self.sequence_validity_use_lever(assets, actor_id, actor, element, check_position)
             }
 
             // ── DropAmmo ────────────────────────────────────────
@@ -955,6 +954,7 @@ impl EngineInner {
 
     fn sequence_validity_use_lever(
         &self,
+        assets: &LevelAssets,
         actor_id: EntityId,
         actor: &Entity,
         element: &SequenceElement<impl robin_util::state_hash::StateHash>,
@@ -969,6 +969,28 @@ impl EngineInner {
         let Some(antagonist_id) = interaction_victim_id(element) else {
             return false;
         };
+        // Scripted lever targets have no mobile state. Validate their authored
+        // interaction contract explicitly instead of depending on an unrelated
+        // object layout. Reuse remains controlled by the target script.
+        if let Some(Entity::Target(target)) = self.get_entity(antagonist_id) {
+            let capable = actor
+                .pc_data()
+                .and_then(|pc| assets.profile_manager.get_character(pc.profile_index))
+                .is_some_and(|profile| {
+                    profile.has_contextual_action(crate::profiles::Action::Lever)
+                });
+            if !target.element.active
+                || !target
+                    .target
+                    .action_filter
+                    .contains(crate::element::TargetFilter::LEVER)
+                || !capable
+            {
+                return false;
+            }
+            let delta = actor.element_data().position_map() - target.element.position_map();
+            return !check_position || delta.x * delta.x + delta.y * delta.y <= 1600.0;
+        }
         let Some(mobile_index) = self
             .get_entity(antagonist_id)
             .and_then(Entity::as_fx)
@@ -2618,6 +2640,52 @@ mod tests {
         }
 
         assert!(human_init_validity_arm(OT::ShootingWithBowLeaningOut, false).is_none());
+    }
+
+    #[test]
+    fn scripted_lever_requires_live_filter_capability_and_action_point_range() {
+        let mut engine = EngineInner::new();
+        let mut assets = LevelAssets::new();
+        let mut profiles = crate::profiles::ProfileManager::new();
+        let mut profile = crate::profiles::CharacterProfile::default();
+        profile.contextual_actions[0] = crate::profiles::Action::Lever;
+        profiles.characters.push(profile);
+        assets.profile_manager = std::sync::Arc::new(profiles);
+        let actor = add_pc(&mut engine);
+        let target = engine.add_test_entity(Entity::Target(crate::element::ElementTarget {
+            element: actor_element(ElementKind::Target),
+            fx: Default::default(),
+            target: crate::element::TargetData {
+                action_filter: crate::element::TargetFilter::LEVER,
+                ..Default::default()
+            },
+        }));
+        engine
+            .elem_mut(target)
+            .set_position_map(crate::coordinates::MapPoint::new(40.0, 0.0));
+        let element =
+            SequenceElement::new_interaction(1, Command::UseLever, Some(actor), Some(target));
+        assert!(engine.check_sequence_element_validity(&assets, actor, &element, true));
+        engine
+            .elem_mut(target)
+            .set_position_map(crate::coordinates::MapPoint::new(40.01, 0.0));
+        assert!(!engine.check_sequence_element_validity(&assets, actor, &element, true));
+        assert!(engine.check_sequence_element_validity(&assets, actor, &element, false));
+        engine.elem_mut(target).active = false;
+        assert!(!engine.check_sequence_element_validity(&assets, actor, &element, false));
+        engine.elem_mut(target).active = true;
+        let Entity::Target(data) = engine.ent_mut(target) else {
+            unreachable!()
+        };
+        data.target.action_filter = crate::element::TargetFilter::ARROW;
+        assert!(!engine.check_sequence_element_validity(&assets, actor, &element, false));
+        let Entity::Target(data) = engine.ent_mut(target) else {
+            unreachable!()
+        };
+        data.target.action_filter = crate::element::TargetFilter::LEVER;
+        std::sync::Arc::make_mut(&mut assets.profile_manager).characters[0].contextual_actions[0] =
+            crate::profiles::Action::NoAction;
+        assert!(!engine.check_sequence_element_validity(&assets, actor, &element, false));
     }
 
     #[test]
