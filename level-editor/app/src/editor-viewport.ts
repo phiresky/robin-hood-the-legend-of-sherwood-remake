@@ -1,3 +1,4 @@
+import { NativePhysicalEffectPreview } from "./native-physical-effect-preview.ts";
 import {
   verifySourceCoverPlacements,
   type SourceCoverVisibility,
@@ -681,13 +682,35 @@ export class EditorViewport {
       error: this.actorPreviewError,
     };
   }
+  private physicalNativeEffects: NativePhysicalEffectPreview | undefined;
+  private physicalNativeEffectsEnabled = false;
+  setNativePhysicalEffects(enabled: boolean) {
+    if (enabled && (!this.physicalNativeEffects || !this.loopClocks.ready))
+      throw new Error("No source-bound physical effects are loaded");
+    this.physicalNativeEffectsEnabled = enabled;
+    try {
+      this.nativeSurface?.update(this.nativePreviewPixels());
+    } catch (error) {
+      this.physicalNativeEffectsEnabled = false;
+      throw error;
+    }
+  }
   nativePreviewPixels() {
+    let snapshot = this.currentNativeArt.loopDrawSnapshot.bind(this.currentNativeArt);
+    if (this.physicalNativeEffectsEnabled) {
+      if (!this.renderer || !this.physicalNativeEffects)
+        throw new Error("Physical effect preview is not ready");
+      const sampled = this.physicalNativeEffects.sample(this.renderer, snapshot());
+      // A separate image revision prevents cached artwork surviving the preview toggle.
+      snapshot = () => ({ ...sampled, revision: -sampled.revision - 1 });
+      if (!this.actorPreview) return this.currentNativeArt.composeLoopSnapshot(sampled);
+    }
     if (!this.actorPreview) return this.currentNativeArt.pixels();
     if (!this.renderer) throw new Error("Actor compositor renderer is not ready");
     try {
       const result = this.actorPreview.compose(
         this.renderer,
-        this.currentNativeArt.loopDrawSnapshot(),
+        snapshot(),
         this.currentNativeArt.tick,
         this.currentActorFrames(),
       );
@@ -1171,6 +1194,15 @@ export class EditorViewport {
       if (!current()) return false;
       if (!ready || this.missionStates.players.size !== frozen.physical!.targets.length)
         throw new Error("Physical loop resources did not all become ready");
+      if (frozen.physical!.targets.some((t) => t.source_kind === "map-animation"))
+        this.physicalNativeEffects = new NativePhysicalEffectPreview(
+          frozen.native,
+          [...this.missionStates.players.values()].map(({ player, binding }) => ({
+            object: player.object,
+            tick: () => player.tick,
+            binding,
+          })),
+        );
       this.loopStaticReplacements = frozen.static_replacements;
       this.refreshTextureDisplay();
       this.syncDeliveredStaticPlacements();
@@ -1267,6 +1299,8 @@ export class EditorViewport {
     this.nativeSurface.update(this.nativePreviewPixels());
   }
   clearNativeArtPresentation() {
+    this.physicalNativeEffectsEnabled = false;
+    this.physicalNativeEffects = undefined;
     this.clearNativeActorPreview();
     this.loopEpoch++;
     this.loopStaticReplacements = undefined;

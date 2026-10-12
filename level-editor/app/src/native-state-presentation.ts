@@ -654,6 +654,32 @@ export class NativeStatePresentation {
       draws,
     };
   }
+  /** Compose explicitly substituted physical effect pixels with the same source order. */
+  composeLoopSnapshot(snapshot: NativeLoopDrawSnapshot): NativePixels {
+    if (
+      !this.contract ||
+      snapshot.mission !== this.contract.mission ||
+      snapshot.revision !== this.revision
+    )
+      throw new Error("Retired physical loop snapshot");
+    if (this.contract.patch_states?.length || this.contract.background_states?.length)
+      throw new Error("Physical loop substitution cannot own patch composition");
+    const pixels = { ...snapshot.background, data: new Uint8Array(snapshot.background.data) };
+    const byId = new Map(snapshot.draws.map((d) => [d.element.id, d]));
+    const elements = [...snapshot.draws.map((d) => d.element), ...(snapshot.orderOnly ?? [])];
+    const backgrounds = elements
+      .filter((e) => e.active && this.backgroundEffectIds.has(e.id))
+      .sort((a, b) => this.backgroundEffectIds.get(a.id)! - this.backgroundEffectIds.get(b.id)!);
+    const ordered = nativePresentationOrder(
+      elements.filter((e) => !this.backgroundEffectIds.has(e.id)),
+      this.verifiedDisjointPair,
+    );
+    for (const element of [...backgrounds, ...ordered]) {
+      const draw = byId.get(element.id);
+      if (draw) compositeNativePixels(pixels, draw.pixels, draw.x, draw.y, draw.shadow);
+    }
+    return pixels;
+  }
   pixels(): NativePixels {
     if (!this.contract) throw new Error("Native artwork preview is not loaded");
     if (this.cached?.revision === this.revision) return this.cached.pixels;

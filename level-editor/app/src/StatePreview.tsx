@@ -41,6 +41,7 @@ export default function StatePreview(props: {
     [actorHidden, setActorHidden] = createSignal(false),
     [actorBusy, setActorBusy] = createSignal(false);
   const [actorReceiver, setActorReceiver] = createSignal("");
+  const [physicalEffects, setPhysicalEffects] = createSignal(false);
   let receiverActor = "";
   const receiverChoices = () => {
     props.document();
@@ -154,6 +155,7 @@ export default function StatePreview(props: {
     setSelected(entry.id);
     setContract(null);
     setLoopContract(null);
+    setPhysicalEffects(false);
     setPatchContract(null);
     setPatchStarted(false);
     setStatus("Loading state preview…");
@@ -214,6 +216,7 @@ export default function StatePreview(props: {
       setEntries([]);
       setContract(null);
       setLoopContract(null);
+      setPhysicalEffects(false);
       setPatchContract(null);
       setPatchStarted(false);
       setSelected("");
@@ -467,6 +470,31 @@ export default function StatePreview(props: {
                   {(f) => <option value={f.id}>{f.id}</option>}
                 </For>
               </select>
+            </label>
+          </Show>
+          <Show
+            when={
+              mode() === "art" &&
+              loopContract()?.physical?.targets.some((t) => t.source_kind === "map-animation")
+            }
+          >
+            <label>
+              <input
+                type="checkbox"
+                aria-label="3D effects over original artwork"
+                checked={physicalEffects()}
+                onChange={(event) => {
+                  try {
+                    props.viewport.setNativePhysicalEffects(event.currentTarget.checked);
+                    setPhysicalEffects(event.currentTarget.checked);
+                  } catch (error) {
+                    event.currentTarget.checked = false;
+                    setPhysicalEffects(false);
+                    props.onError(String(error));
+                  }
+                }}
+              />
+              3D effects over original artwork (preview)
             </label>
           </Show>
           <label>

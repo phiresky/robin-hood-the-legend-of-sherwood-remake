@@ -666,3 +666,19 @@ test("background effects use registration order, while positive elevation retain
   assert.deepEqual(Array.from(presentation.pixels().data.slice(0, 3)), [200, 0, 0]);
   presentation.dispose();
 });
+
+test("physical loop pixel substitution uses native composition without changing cached artwork", async () => {
+  const f = await fixture();
+  const p = new NativeStatePresentation();
+  await p.set(f.contract, f.source, f.read);
+  const original = p.pixels();
+  const snapshot = p.loopDrawSnapshot();
+  snapshot.draws[0]!.pixels = { width: 1, height: 1, data: new Uint8Array([3, 4, 5, 255]) };
+  const composed = p.composeLoopSnapshot(snapshot);
+  assert.deepEqual(Array.from(composed.data.slice(0, 4)), [3, 4, 5, 255]);
+  assert.deepEqual(Array.from(composed.data.slice(4, 8)), [20, 30, 40, 255]);
+  assert.equal(p.pixels(), original);
+  assert.deepEqual(Array.from(original.data.slice(0, 4)), [200, 0, 0, 255]);
+  p.setElementState("sign", false);
+  assert.throws(() => p.composeLoopSnapshot(snapshot), /Retired/);
+});
