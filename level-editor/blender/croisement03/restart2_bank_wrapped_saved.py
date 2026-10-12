@@ -1,0 +1,7 @@
+"""Save a bounded inferred whole-mass shoulder variant after frozen source guards."""
+import sys
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+import restart2_bank_lofts_saved as recipe
+if __name__=='__main__':
+ recipe.CPU=recipe.B/'bank-wrapped-masses-cpu-v1';recipe.E=recipe.B/'bank-wrapped-east-cpu-v1/geometry.json';recipe.OUT=recipe.B/'bank-wrapped-masses-saved-v1';recipe.main()
