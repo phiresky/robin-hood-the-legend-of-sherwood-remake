@@ -11,6 +11,7 @@ import restart2_bank_face_source_saved as source
 import restart2_bank_full_v1 as base
 
 def main():
+ if '--folder' in sys.argv:source.OUT=Path(sys.argv[sys.argv.index('--folder')+1]).resolve()
  source.guard.resources();source.guard.acquire(slots=2)
  try:
   source.guard.resources();folder=source.OUT;receipt=json.loads((folder/'projection.json').read_text());model=folder/'worker.blend';assert source.sha(model)==receipt['model_sha256'];bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;rows=[];images={}

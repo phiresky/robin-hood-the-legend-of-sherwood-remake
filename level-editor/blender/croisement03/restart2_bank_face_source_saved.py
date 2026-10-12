@@ -12,6 +12,9 @@ import restart2_bank_full_v1 as base
 B=guard.B;INPUT=B/'bank-boulder-fronts-saved-v3';OUT=B/'bank-boulder-source-saved-v2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
+ global INPUT,OUT
+ if '--input' in sys.argv:INPUT=Path(sys.argv[sys.argv.index('--input')+1]).resolve()
+ if '--out' in sys.argv:OUT=Path(sys.argv[sys.argv.index('--out')+1]).resolve()
  assert not OUT.exists();guard.resources();guard.acquire(slots=2)
  try:
   guard.resources();OUT.mkdir();model=INPUT/'worker.blend';digest=sha(model);bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene
