@@ -41,7 +41,7 @@ assert.equal(intersection([-1, 0, 0], [1, 0, 0], triangle.toReversed()), 0.5);
 assert.equal(intersection([-1, 5, 0], [1, 5, 0], triangle), undefined);
 assert.equal(intersection([1, -1, 0], [1, 1, 0], triangle), undefined);
 
-const [directory, stage] = process.argv.slice(2);
+const [directory, stage, modelStage] = process.argv.slice(2);
 assert.ok(directory && stage, "Supply isolated stair exports and their authoring stage");
 const manifest = JSON.parse(await fs.readFile(`${directory}/diagnostics.json`));
 assert.equal(manifest.complete, true);
@@ -50,6 +50,12 @@ const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`));
 assert.equal(edits.length, 1);
 const edit = edits[0];
 assert.equal(edit.gameplay.lifts.length, 1);
+const modelCandidate = modelStage
+  ? {
+      config: JSON.parse(await fs.readFile(`${modelStage}/opening.json`)),
+      report: JSON.parse(await fs.readFile(`${modelStage}/mesh-build.json`)),
+    }
+  : undefined;
 const models = new Map();
 const results = [];
 for (const { file } of manifest.results) {
@@ -61,7 +67,22 @@ for (const { file } of manifest.results) {
   assert.equal(geometry.lifts.length, 1);
   const meshes = [];
   for (const source of document.assetSources) {
-    if (!models.has(source.id)) models.set(source.id, await loadSceneModel("library", source));
+    if (!models.has(source.id)) {
+      if (modelCandidate?.config.asset === source.id) {
+        assert.equal(modelCandidate.config.source.model_sha256, source.model_sha256);
+        assert.equal(modelCandidate.config.source.descriptor_sha256, source.descriptor_sha256);
+        models.set(
+          source.id,
+          await loadSceneModel(modelStage, {
+            id: source.id,
+            role: "objects",
+            model: "model.glb",
+            model_sha256: modelCandidate.report.modelSha256,
+            resources: [],
+          }),
+        );
+      } else models.set(source.id, await loadSceneModel("library", source));
+    }
     for (const object of document.objects.filter((object) =>
       object.node.startsWith(`asset:${source.id}:`),
     )) {
@@ -123,11 +144,15 @@ const report = {
   scope:
     "prepared-outdoor-stair-centerline-one-unit-above-floor-vs-mesh-not-full-actor-or-animation",
   audit_finished: true,
+  ...(modelStage ? { unpublishedModelStage: modelStage } : {}),
   clear: results.every((result) => result.hits.length === 0),
   approaches: results.length,
   crossingApproaches: results.filter((result) => result.hits.length > 0).length,
   results,
 };
-await fs.writeFile(`${directory}/stair-approach-mesh-report.json`, JSON.stringify(report));
+await fs.writeFile(
+  `${directory}/stair-approach-mesh${modelStage ? "-candidate" : ""}-report.json`,
+  JSON.stringify(report),
+);
 console.log(JSON.stringify({ ...report, results: undefined }));
 if (!report.clear) process.exitCode = 1;

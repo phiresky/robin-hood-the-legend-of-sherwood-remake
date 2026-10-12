@@ -155,6 +155,9 @@ The production compiler and runtime remain unchanged by this investigation.
 The 3D mesh review confirms the turret obstruction in all eight placed copies:
 the lower approach crosses its wall face. Shortening that approach loses the
 lower floor connection, so the opening and landing require asset-level repair.
+A private mesh repair now clears all 32 approach centerlines and has closed wall
+topology. It is still unpublished: matching collision/sight/floor metadata,
+texturing, full actor clearance and native moved-assembly checks remain open.
 
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and

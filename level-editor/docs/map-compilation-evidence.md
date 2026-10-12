@@ -2204,6 +2204,29 @@ be repaired just by shortening its approach. The turret opening and its usable
 floor connection need asset-authoring work; the short-approach experiment is not
 part of the authoring helper or published library.
 
+An unpublished mesh repair is staged in `turret-opening-y4HYjo`. Its local opening
+and supporting floor are derived from the editor assembly's step approach, then
+written into a separate GLB. The wall's stacked shells are joined before cutting
+the passage. Both resulting wall halves have zero non-manifold edges and no
+zero-area faces; one tiny positive-area triangle remains at the internal shell
+interface (about 5.83e-9 square scene units). The 32-approach mesh audit now finds
+zero crossings, replacing the eight crossings against the published model.
+
+Neutral front/rear geometry renders show the new through-opening and floor. They
+are geometry inspections, not textured scene or animated-character verification.
+The new floor uses a provisional texel from the owning wall's cap because the
+existing texture uses separate atlas charts. Proper texturing, matching local
+collision/sight volumes and a receiving surface, complete actor clearance, and
+moved-assembly native export checks remain required. No library asset, scene pin
+or runtime code is changed by this mesh experiment.
+
+The reproducible authoring commands are `stage-turret-opening.mjs STEP_STAGE`,
+then Blender `--background --python-exit-code 1 --python
+refinement/build-turret-opening.py -- OUTPUT/opening.json`. Geometry renders use
+`render-turret-opening.py` with the same configuration. The mesh audit accepts
+this output directory as its optional third argument and records the override
+explicitly, separately from the published-mesh report.
+
 `step-passage-assembly-9RWSMk` repeats the sixteen connected exports and checks
 32 missing/raised-landing cases: independently removing or raising either landing
 at every rotation/elevation omits the stair with an explicit connection warning.
