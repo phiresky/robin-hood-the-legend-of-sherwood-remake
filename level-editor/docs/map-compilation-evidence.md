@@ -110,6 +110,19 @@ hall/ramp/annex assemblies at 90 degrees, elevation forty, on editor terrain.
 Its browser ZIP/reopen/rebake audit is running; preparation and browser startup
 are not archive or rendering validation.
 
+The final raised 180-degree descriptor, prepared in
+`hall-final-placement-prepared-Yg8jxQ`, passes all twelve forced and twelve
+player-click routes with explicit expected-count coverage and no skips.
+Combined with the preceding seven placements this establishes **96/96 forced
+routes and 96/96 player clicks** across both copies, four angles and two
+elevations. The neighbour generator's final negative cases are still running.
+
+The rotated/raised browser fixture now reports a successful round trip:
+2500×2500 pixels, 185 sight obstacles and 122,629,206 ZIP bytes. Reopened
+gameplay, editor serialization, color/depth images and all fifteen appearance
+states match. The browser runner is still saving the archive through CDP;
+native empty-base loading and traversal of the saved ZIP remain pending.
+
 ## Sherwood stair clearance investigation (2026-10-12)
 
 Fresh published export `saved-map-exports-pxNvRF` passes 50 ordinary route
