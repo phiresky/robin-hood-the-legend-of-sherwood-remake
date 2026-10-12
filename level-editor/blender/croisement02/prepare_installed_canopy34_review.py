@@ -3,7 +3,7 @@ import argparse,json,hashlib,struct,subprocess,math
 from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();pin=lambda p:dict(path=str(p),sha256=sha(p))
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();pin=lambda p:dict(path=str(p.resolve()),sha256=sha(p))
 def main():
  p=argparse.ArgumentParser();p.add_argument('--groups',type=int,nargs='+',required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args();a.output.mkdir(exist_ok=False);rows=[]
  assert set(a.groups)<= {3,4}
