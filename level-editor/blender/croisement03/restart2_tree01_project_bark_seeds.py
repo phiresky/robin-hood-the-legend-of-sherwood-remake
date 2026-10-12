@@ -5,14 +5,25 @@ import bpy,numpy as np
 from PIL import Image
 sys.path.insert(0,str(Path(__file__).parent))
 import restart2_tree01_canopy_saved as common
-B=common.B;sha=common.sha;OUT=B/'tree01-bark-seed-projection-v1'
+B=common.B;sha=common.sha;OUT=B/'tree01-bark-seed-projection-v2'
 def main():
  assert not OUT.exists();common.resources();common.acquire(slots=2)
  try:
   common.resources();OUT.mkdir();base=B/'tree01-native-transition-saved-v2/worker.blend';proofpath=base.parent/'bark-receiver-294-v1/receipt.json';proof=json.loads(proofpath.read_text());assert proof['status']=='PASS_SAVED_BARK_RECEIVERS' and sha(base)==proof['model_sha256'];source=B.parent/'baseline/covered.png';assert sha(source)==proof['source_sha256'];src=np.array(Image.open(source).convert('RGBA'));bpy.ops.wm.open_mainfile(filepath=str(base));scene=bpy.context.scene;geometry={};groups={}
+  phasepath=B/'tree01-bark-completeness-v2/receipt.json';phaseproof=json.loads(phasepath.read_text())
+  for path,digest in phaseproof['pins'].items():assert sha(Path(path))==digest,path
+  withheld={tuple(r['source_xy'])for r in phaseproof['old294_full_native_overlap_details']};assert len(withheld)==9
+  measured=set()
+  for frame in phaseproof['full_animation_source']['frames']:
+   fp=Path(frame['path']);assert sha(fp)==frame['sha256'];rgba=np.array(Image.open(fp).convert('RGBA'));x0,y0=frame['bbox'][:2]
+   for sample in proof['samples']:
+    x,y=sample['source'];xx,yy=x-x0,y-y0
+    if 0<=xx<rgba.shape[1]and 0<=yy<rgba.shape[0]and rgba[yy,xx,3]:measured.add((x,y))
+  assert measured==withheld
   for o in scene.objects:
    if o.type=='MESH':geometry[o.name]=([list(v.co)for v in o.data.vertices],[list(p.vertices)for p in o.data.polygons]);o.data.calc_loop_triangles()
   for sample in proof['samples']:
+   if tuple(sample['source'])in withheld:continue
    name=sample['receiver'];obj=scene.objects[name];face=obj.data.loop_triangles[sample['triangle']].polygon_index;groups.setdefault((name,face),[]).append(sample['source'])
   pins={};assignments=[]
   for (name,face),pixels in groups.items():
@@ -27,6 +38,6 @@ def main():
    obj=scene.objects[name];assert [list(p.co)for p in obj.data.vertices]==v and [list(p.vertices)for p in obj.data.polygons]==f
   for row in assignments:
    obj=scene.objects[row['object']];mat=obj.data.materials[obj.data.polygons[row['polygon']].material_index];im=next(n.image for n in mat.node_tree.nodes if n.type=='TEX_IMAGE');assert __import__('hashlib').sha256(bytes(im.packed_file.data)).hexdigest()==pins[row['image']]
-  assert sha(base)==proof['model_sha256'];report={'status':'PRIVATE_PROJECTION_PENDING_INDEPENDENT_RGBA_AND_VISUAL_REVIEW','input_model_sha256':sha(base),'model_sha256':sha(model),'receiver_proof_sha256':sha(proofpath),'source_sha256':sha(source),'pins':pins,'projected_samples':sum(len(r['pixels'])for r in assignments),'assignments':assignments,'geometry_exact':True,'limits':['Only294 reviewed all-phase-clear samples; no hidden bark sampled and no synthesis performed.','Fifteen leaf-covered spines and seven upper misses remain unassigned.','Static leaf ownership remains on hold. This is not complete bark coverage or appearance approval.']};assert report['projected_samples']==294;(OUT/'receipt.json').write_text(json.dumps(report,indent=2)+'\n');print({'samples':294,'faces':len(assignments),'model_sha256':report['model_sha256']})
+  assert sha(base)==proof['model_sha256'];report={'status':'PRIVATE_PROJECTION_PENDING_INDEPENDENT_RGBA_AND_VISUAL_REVIEW','input_model_sha256':sha(base),'model_sha256':sha(model),'receiver_proof_sha256':sha(proofpath),'source_sha256':sha(source),'full_native_phase_proof':{'path':str(phasepath),'sha256':sha(phasepath)},'withheld_full_native_foreground_samples':sorted(withheld),'pins':pins,'projected_samples':sum(len(r['pixels'])for r in assignments),'assignments':assignments,'geometry_exact':True,'limits':['Only285 reviewed samples independently clear of all14 full shared native frames; nine formerly fragment-clear samples withheld. No hidden bark sampled or synthesized.','Fifteen leaf-covered spines and seven upper misses remain unassigned.','Static leaf ownership remains on hold. This is not complete bark coverage or appearance approval.']};assert report['projected_samples']==285;(OUT/'receipt.json').write_text(json.dumps(report,indent=2)+'\n');print({'samples':285,'faces':len(assignments),'model_sha256':report['model_sha256']})
  finally:common.release()
 if __name__=='__main__':main()

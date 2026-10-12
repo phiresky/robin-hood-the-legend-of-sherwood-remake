@@ -56,10 +56,11 @@ def main():
         probes = [(x + .5, y + .5) for y in range(lo[1] - 1, hi[1] + 2) for x in range(lo[0] - 1, hi[0] + 2)]
         probes += [tuple(g['source_xy']) for p in data['parts'] for g in p['source_endpoint_guards']]
         baseline = [hit(before, p) for p in probes]
-        target = next(o for o in objects if o.get('tree18_track') == 'main_lower')
+        by_track = {o.get('tree18_track'): o for o in objects}
+        target = by_track['main_lower']
         order = ['main_upper', 'left_fork', 'right_fork']
         for track in order:
-            operand = next(o for o in objects if o.get('tree18_track') == track)
+            operand = by_track[track]
             bpy.context.view_layer.objects.active = target
             mod = target.modifiers.new('Join verified branch junction', 'BOOLEAN')
             mod.operation = 'UNION'; mod.solver = 'EXACT'; mod.object = operand
