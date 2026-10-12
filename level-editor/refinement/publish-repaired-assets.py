@@ -36,7 +36,7 @@ def install(library, before, replacements):
         raise
 
 
-def publish(library, stage, gameplay_stage, fixture, output, apply=False):
+def publish(library, stage, gameplay_stage, fixture, output, apply=False, archive_name=None):
     library, stage, gameplay_stage, fixture, output = map(
         lambda value: Path(value).resolve(), (library, stage, gameplay_stage, fixture, output))
     assert not output.is_relative_to(library)
@@ -50,7 +50,9 @@ def publish(library, stage, gameplay_stage, fixture, output, apply=False):
     validate_asset_index(staged_root, index)
     evidence = json.loads((fixture / 'browser-roundtrip-evidence.json').read_bytes())
     assert evidence['browserRoundtrip'].startswith('PASS ')
-    archives = list(fixture.glob('*.zip'))
+    if archive_name is not None:
+        assert Path(archive_name).name == archive_name, 'Archive must be a fixture filename'
+    archives = [fixture / archive_name] if archive_name is not None else list(fixture.glob('*.zip'))
     assert len(archives) == 1
     archive = archives[0].read_bytes()
     assert digest(archive) == evidence['zipSha256'] and len(archive) == evidence['bytes']
@@ -149,6 +151,7 @@ if __name__ == '__main__':
     for name in ('stage', 'gameplay-stage', 'fixture', 'output'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--apply', action='store_true')
+    parser.add_argument('--archive', help='Select a verified ZIP when the fixture retains several archives')
     args = parser.parse_args()
     print(json.dumps(publish(args.library, args.stage, args.gameplay_stage,
-                             args.fixture, args.output, args.apply), indent=2))
+                             args.fixture, args.output, args.apply, args.archive), indent=2))

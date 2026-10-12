@@ -115,38 +115,22 @@ loads without base-game data. Its archived geometry passes all twelve stair
 player-click routes. In-game actor/depth compositing remains unverified.
 See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-checks-2026-10-12).
 
-Lincoln's passing movement samples do not cover six omitted drawbridge passages
-or the omitted south-wall step. A staged drawbridge definition restores the two
-deck floors and all six passage records, and constructs natively. It remains
-unpublished. Incorporating a neighbouring plateau exclusion into its own walking
-outline restores all six open-state actor round trips, with closed/reset checks
-and wider movement regressions passing. Two-copy assemblies at four rotations
-and two elevations pass 96 open round trips, 192 closed/reset denials and 576
-directed gate-search checks, with routes available only when open. All 192
-directed open-state player clicks pass across these placements, plus twelve in
-the staged full scene. A subsequent mesh-clipped deck candidate has support at
-all 2,145 sampled deck points and passes 576 open/closed/reset player clicks
-across the same placements. The neighbouring plateau still has mesh gaps;
-bank contacts and the revised candidate's rendered archive check remain open.
-Its full-scene route, stair, jump and bridge-control checks pass. Plateau review
-identifies carved cliff faces under part of its flat walking definition. These
-must not become walkable ramps automatically. A three-region supported-top
-candidate passes the moved-bridge control audit and full-scene route/stair/jump
-checks; detailed contacts and archive rendering still need review. Sixteen
-missing/raised-neighbour exports reject the three unsupported plateau entrances
-while native traversal and lock checks pass for the untouched copy. Invalid
-lighting receivers now produce explicit warnings in best-effort mode instead
-of aborting these exports. The baseline full Lincoln browser archive also passes
-reopening/rebaking and native loading without base data; it excludes these staged
-drawbridge changes.
-The staged browser fixture required a correction to its catalog's embedded
-gameplay definitions; the earlier run baked baseline gameplay and is not staged
-parity evidence. Corrected fixture `lincoln-rendered-library-9FBLqH` has matching
-embedded definitions, descriptor bytes and pins. Its browser export/reopen/rebake
-now passes with matching gameplay and rendered color/depth across 45 appearances.
-The 169,676,380-byte first-pass ZIP loads natively without a base datadir and its
-gameplay descriptor exactly matches the staged native traversal fixture.
-The final transferred archive has the same size and SHA-256 as that first-pass ZIP.
+**Installed Lincoln drawbridge connections (2026-10-13):** the main library now
+restores both deck floors and all six passages, with the plateau's receiving
+coverage limited to three supported top regions. The metadata retains the earlier
+two-copy checks at four rotations and two elevations: 96 open round trips, 192
+closed/reset denials, 576 directed gate searches and 576 state-aware player clicks.
+Sixteen missing/raised-neighbour cases reject unsupported plateau entrances.
+
+The verified full-map browser bundle `lincoln-rendered-library-9FBLqH` reopens and
+rebakes identically through 45 appearances and loads without base data. It contains
+these drawbridge definitions but predates the separate step/turret repair below.
+Fresh installed-library export `saved-map-exports-h7ZuCA` combines both repairs
+and is byte-identical to the native-tested candidate: 192 ordinary routes, eighteen
+stairs, 100 jump clicks and all six drawbridge passages across open/closed/reset
+states pass. A new full-map rendered archive of both repairs together is still
+outstanding. Sampled bank seams retain gaps below one game unit, and animated
+contact remains unverified; these are draft limitations, not full-parity claims.
 
 **Installed Lincoln step/turret repair (2026-10-13):** both reusable assets are now
 in the main library with fresh derivatives and updated saved-scene pins. The step

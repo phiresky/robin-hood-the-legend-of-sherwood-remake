@@ -2397,6 +2397,35 @@ stair directions (two more than the prior library), eight climb directions and
 all 100 upright jump-click traversals. This verifies the repaired assembly in
 the complete saved scene; it does not substitute for a fresh full-map rendered ZIP.
 
+### Installed drawbridge and plateau definitions (2026-10-13)
+
+The verified `drawbridge-mesh-footprints-IXa2n5` definitions are now installed as
+drafts in the main library. Their source descriptors/models still matched their
+authoring pins. Staged publication `drawbridge-publication-r_9jg4b6` retains the
+unchanged model and derivative bytes; installation `drawbridge-installed-20261013`
+updates the two gameplay descriptors, embedded catalog definitions and the saved
+Lincoln descriptor pins. Backups are retained. The publisher now accepts an
+explicit archive filename when a verified fixture contains multiple ZIPs; its
+digest must still match the recorded browser result.
+
+Before installation, fresh full Lincoln with both this candidate and the already
+installed step/turret repair was exported to `saved-map-exports-F1jMhT`. It passes
+192 ordinary routes, eighteen stair-click directions and all 100 upright jump
+clicks. Both drawbridge controls retain their identities and link the six intended
+passages. Across closed/open/reset states, all eighteen passage-state cases pass,
+including 36 ordinary player-click probes and 36 directed gate searches. Routes
+are available only in the open state. These checks run against the native engine;
+no runtime code changed.
+
+The installation binds the two assets to the completed full-map archive in
+`lincoln-rendered-library-9FBLqH`, SHA-256
+`77c807ac09373f79488cb47a6c20609b481a6544c7bf629db7ec5aaeae93cdba`.
+That archive predates the step/turret repair and does not certify the combined
+rendered map. Fresh post-installation export `saved-map-exports-h7ZuCA` completes
+in about 9.5 seconds and is byte-identical to the combined native-tested candidate.
+All installed bytes and derivative chains were rechecked. The earlier sub-unit
+bank-seam gaps and incomplete animated contact remain draft limitations.
+
 Neutral front/rear geometry renders show the new through-opening and floor. They
 are geometry inspections, not textured scene or animated-character verification.
 The new floor uses a provisional texel from the owning wall's cap because the
