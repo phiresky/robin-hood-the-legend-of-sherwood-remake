@@ -25,6 +25,13 @@ def main():
    im=Image.new('L',(source.shape[1],source.shape[0]));ImageDraw.Draw(im).polygon([tuple(p)for p in f['native_outline']],fill=255);domain=(np.array(im)>0)&proposal
    perface.append(dict(id=f['id'],owner=f['owner'],proposed=int(domain.sum()),thin_or_boundary_rejected=int((domain&~broad).sum()),accepted=0,ray_rejected=[]))
    for y,x in zip(*np.nonzero(domain&broad)):expected[(int(x),int(y))]=(int(f['owner']),len(perface)-1)
+  extra_proof=None
+  if '--extra-proposal' in sys.argv:
+   extra_path=Path(sys.argv[sys.argv.index('--extra-proposal')+1]).resolve();extra=json.loads(extra_path.read_text());assert extra['source_sha256']==sha(sourcepath);extra_proof={'path':str(extra_path),'sha256':sha(extra_path),'regions':[]}
+   for region in extra['regions']:
+    path=extra_path.parent/(region['id']+'.png');domain=np.array(Image.open(path))>0;assert int(domain.sum())==region['pixels'];perface.append(dict(id=region['id'],owner=region['owner'],proposed=int(domain.sum()),thin_or_boundary_rejected=0,accepted=0,ray_rejected=[]));extra_proof['regions'].append({'path':str(path),'sha256':sha(path)})
+    for y,x in zip(*np.nonzero(domain&~old&~broad)):expected[(int(x),int(y))]=(int(region['owner']),len(perface)-1)
+    broad|=domain
   rows=[];geometry={}
   for obj in scene.objects:
    if obj.type!='MESH':continue
@@ -49,12 +56,14 @@ def main():
    path=OUT/f'{name.replace(" ","-")}-face-{face}.png';Image.fromarray(rgba).save(path);im=bpy.data.images.load(str(path));im.pack();mat=bpy.data.materials.new(f'Private reviewed stone {name}/{face}');mat.use_nodes=True;nodes=mat.node_tree.nodes;nodes.clear();tex=nodes.new('ShaderNodeTexImage');tex.image=im;tex.interpolation='Closest';tex.extension='CLIP';em=nodes.new('ShaderNodeEmission');gray=nodes.new('ShaderNodeBsdfPrincipled');gray.inputs['Base Color'].default_value=(.25,.25,.25,1);mix=nodes.new('ShaderNodeMixShader');out=nodes.new('ShaderNodeOutputMaterial');links=mat.node_tree.links;links.new(tex.outputs['Color'],em.inputs['Color']);links.new(tex.outputs['Alpha'],mix.inputs[0]);links.new(gray.outputs[0],mix.inputs[1]);links.new(em.outputs[0],mix.inputs[2]);links.new(mix.outputs[0],out.inputs['Surface']);obj.data.materials.append(mat);obj.data.polygons[face].material_index=len(obj.data.materials)-1;uv=obj.data.uv_layers.active or obj.data.uv_layers.new(name="Native stone coordinates")
    for li in obj.data.polygons[face].loop_indices:
     v=obj.matrix_world@obj.data.vertices[obj.data.loops[li].vertex_index].co;uv.data[li].uv=((v.x-l)/(r-l),1-(-v.y*base.S-v.z*base.C-t)/(b-t))
+  if extra_proof:
+   previous=json.loads((B/'bank-convex-source-saved-v1/projection.json').read_text());assert {tuple(p)for p in previous['accepted_pixels']}<={tuple(p)for p in accepted},'Previously retained stone sample lost'
   bpy.context.preferences.filepaths.save_version=0;bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'worker.blend'));assert (OUT/'worker.blend').stat().st_size<8*1024**2
   bpy.ops.wm.open_mainfile(filepath=str(OUT/'worker.blend'))
   for name,(verts,faces0)in geometry.items():
    obj=bpy.context.scene.objects[name];assert [list(obj.matrix_world@v.co)for v in obj.data.vertices]==verts;assert [list(p.vertices)for p in obj.data.polygons]==faces0
   assert sha(model)==digest;assert len(oldhits)==3446
   provenance_path=INPUT/'interface-construction.json';provenance=json.loads(provenance_path.read_text());provenance['inherited_geometry_provenance']={'path':str(provenance_path),'sha256':sha(provenance_path),'reason':'Material-only derivative; saved vertex/face arrays independently asserted identical.'};(OUT/'interface-construction.json').write_text(json.dumps(provenance,indent=2)+'\n')
-  report=dict(status='PRIVATE_SOURCE_PROJECTION_REQUIRES_SAVED_VISUAL_REVIEW',input_model_sha256=digest,model_sha256=sha(OUT/'worker.blend'),source_sha256=sha(sourcepath),protected3446_unchanged_geometry=True,protected_firsthits=oldhits,proposed=2516,accepted=len(accepted),accepted_pixels=accepted,thin_or_boundary_rejected=int((proposal&~broad).sum()),faces=perface,limits=['Only directly reviewed broad stone interiors assigned experimentally; thin matches and wrong receivers remain unknown.','Opening is a conservative rejection filter, not independent ownership evidence.','No canonical writes or final appearance approval.']);(OUT/'projection.json').write_text(json.dumps(report,indent=2)+'\n');print({k:report[k]for k in ['status','accepted','thin_or_boundary_rejected']})
+  report=dict(status='PRIVATE_SOURCE_PROJECTION_REQUIRES_SAVED_VISUAL_REVIEW',input_model_sha256=digest,model_sha256=sha(OUT/'worker.blend'),source_sha256=sha(sourcepath),protected3446_unchanged_geometry=True,protected_firsthits=oldhits,proposed=2516+(extra['total']if extra_proof else 0),accepted=len(accepted),accepted_pixels=accepted,extra_proposal=extra_proof,thin_or_boundary_rejected=int((proposal&~broad).sum()),faces=perface,limits=['Only directly reviewed broad stone interiors assigned experimentally; thin matches and wrong receivers remain unknown.','Opening is a conservative rejection filter, not independent ownership evidence.','Manual extra interiors remain subject to exact first-hit owner rejection; original5015 samples must survive.','No canonical writes or final appearance approval.']);(OUT/'projection.json').write_text(json.dumps(report,indent=2)+'\n');print({k:report[k]for k in ['status','accepted','thin_or_boundary_rejected']})
  finally:guard.release()
 if __name__=='__main__':main()
