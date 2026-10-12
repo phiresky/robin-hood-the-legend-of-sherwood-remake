@@ -10,6 +10,7 @@ import restart14_butterfly_canopy22_audit as reader
 from restart14_butterfly07_prism_contacts import alpha_maximum
 from restart14_butterfly07_anatomy_contacts import clip_planes
 from render_slots import acquire,release
+from resource_guard import guard_reader
 S,C=reader.SIN,reader.COS
 DEST=q.OUT/'geometry-v3-contacts'
 FIELD=json.loads((q.OUT/'conformation-v1/depth-field.json').read_text())['rows']
@@ -18,6 +19,7 @@ def advance(n,x,y):
  if not f:return 0.
  a,b,c,d=f['box'];return f['camera_ray_advance'][int(y)-b][int(x)-a]if a<=x<=c and b<=y<=d else 0.
 def main():
+ guard_reader(reader,q.ROOT,DEST)
  assert not DEST.exists();assert shutil.disk_usage(q.ROOT).free>=10*1024**3+16*1024**2
  report=json.loads((q.OUT/'qualification.json').read_text());anchors=json.loads((q.OUT/'depth-proposal-v1.json').read_text());units=[]
  for n,row in enumerate(report['rows'],1):
@@ -60,7 +62,7 @@ def main():
         if len(unit['hits'])<100:unit['hits'].append(dict(asset=placed['id'],node=node.get('name'),triangle=int(ti),source_cell=[x,y],alpha_maximum=maximum,camera_space_witness=witness[:3].tolist(),front_depth=d00,back_depth=d00-thick))
 
  def finish(rays,records,mp):
-  DEST.mkdir();rows=[dict(profile=u['profile'],phase=u['phase'],triangle_cell_contacts=dict(u['counts']),witnesses=u['hits'])for u in units];(DEST/'report.json').write_text(json.dumps(dict(status='HOLD_CONTACTS_FOUND'if any(u['counts']for u in units)else 'PASS_ENDPOINT_VOLUMES_STATIC_RECEIVER_ALPHA',map=q.pin(mp),depth_proposal=q.pin(q.OUT/'depth-proposal-v1.json'),clearance=q.pin(q.OUT/'conformation-v1/depth-field.json'),conformed_models=q.pin(q.OUT/'geometry-v3-conformed/report.json'),rounded02_models=q.pin(q.OUT/'geometry-v2-rounded02/report.json'),records=records,rows=rows,limits=['Endpoint volumes only; three native transition poses and continuous motion not tested.','Physical bilinear level0 alpha at clipped contact polygons; runtime mips can differ.','Contacts require ownership/support review; none are silently excused as foliage overlap.']),indent=2)+'\n')
+  DEST.mkdir();rows=[dict(profile=u['profile'],phase=u['phase'],triangle_cell_contacts=dict(u['counts']),witnesses=u['hits'])for u in units];(DEST/'report.json').write_text(json.dumps(dict(status='HOLD_CONTACTS_FOUND'if any(u['counts']for u in units)else 'PASS_ENDPOINT_VOLUMES_STATIC_RECEIVER_ALPHA',map=q.pin(mp),depth_proposal=q.pin(q.OUT/'depth-proposal-v1.json'),clearance=q.pin(q.OUT/'conformation-v1/depth-field.json'),conformed_models=q.pin(q.OUT/'geometry-v3-conformed/report.json'),rounded02_models=q.pin(q.OUT/'rounded02-selected.json'),records=records,rows=rows,limits=['Endpoint volumes only; three native transition poses and continuous motion not tested.','Physical bilinear level0 alpha at clipped contact polygons; runtime mips can differ.','Contacts require ownership/support review; none are silently excused as foliage overlap.']),indent=2)+'\n')
  rays=[dict(screen=[(r['source_union_box'][0]+r['source_union_box'][2])/2,(r['source_union_box'][1]+r['source_union_box'][3])/2],hits=[])for r in report['rows']]
  reader.main(ray_records=rays,triangle_callback=inspect,postprocess=finish,output=DEST,query_margin=200,minimum_free_bytes=10*1024**3,output_limit_bytes=16*1024**2,expected_map_sha256=report['map']['sha256'])
 if __name__=='__main__':

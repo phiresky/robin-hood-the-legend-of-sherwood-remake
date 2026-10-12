@@ -8,10 +8,13 @@ from PIL import Image,ImageDraw
 HERE=Path(__file__).resolve().parent;sys.path[:0]=[str(HERE),str(HERE.parents[2]/'refinement')]
 import qualify as q
 from render_slots import acquire,release
+from resource_guard import check
 S,C=math.sin(math.radians(35)),math.cos(math.radians(35));RAY=Vector((0,-C,S));DEST=q.OUT/'joined02-v1'
 def main():
- assert not DEST.exists();assert shutil.disk_usage(q.ROOT).free>10*1024**3+32*1024**2;DEST.mkdir();qualification=json.loads((q.OUT/'qualification.json').read_text());row=qualification['rows'][1];model=q.OUT/'geometry-v2-rounded02/profile-02/model.blend';bpy.ops.wm.open_mainfile(filepath=str(model));screen=[o for o in bpy.context.scene.objects if o.type=='MESH'];receivers=[]
+ check(q.ROOT,DEST)
+ assert not DEST.exists();assert shutil.disk_usage(q.ROOT).free>10*1024**3+32*1024**2;DEST.mkdir();qualification=json.loads((q.OUT/'qualification.json').read_text());row=qualification['rows'][1];selected=json.loads((q.OUT/'rounded02-selected.json').read_text());model=q.ROOT/selected['model']['path'];assert q.pin(model)==selected['model'];bpy.ops.wm.open_mainfile(filepath=str(model));screen=[o for o in bpy.context.scene.objects if o.type=='MESH'];receivers=[]
  for candidate in row['bounds_candidates']:
+  check(q.ROOT,DEST)
   path=q.LIB/candidate['model'];assert q.pin(path)['sha256']==candidate['model_sha256'];before=set(bpy.data.objects);bpy.ops.import_scene.gltf(filepath=str(path));added=set(bpy.data.objects)-before;roots=[o for o in added if o.parent not in added];t=candidate['placement']['transform'];assert t['rot_deg']==0
   for root in roots:root.location+=Vector((t['dx'],-t['dy']/S,t['dz']))
   for obj in added:
@@ -25,6 +28,7 @@ def main():
   uv=world_to_camera_view(scene,cam,Vector((sx,-sy/S,0)));assert abs(uv.x-ex)<.0001 and abs(uv.y-ey)<.0001,(uv,ex,ey)
  bg=Image.open(q.ROOT/qualification['background']['path']).convert('RGBA').crop(crop);sheet=Image.new('RGB',(w*3,(h+25)*2),(25,25,25));draw=ImageDraw.Draw(sheet);pins=[]
  for j,phase in enumerate(['initial','applied']):
+  check(q.ROOT,DEST)
   for obj in screen:obj.hide_render=obj['source_phase']!=phase;obj.hide_viewport=obj.hide_render
   p=DEST/f'{phase}-joined.png';scene.render.filepath=str(p);bpy.ops.render.render(write_still=True);actual=Image.alpha_composite(bg,Image.open(p).convert('RGBA'));f=row['art']['states']['initial']['frames'][0]if phase=='initial'else row['art']['states']['transition']['frames'][-1];native=bg.copy();native.alpha_composite(q.rgba(f),(int(f['top_left'][0])-crop[0],int(f['top_left'][1])-crop[1]))
   for i,(label,im)in enumerate([('Base artwork',bg),('Native overlay',native),('Static geometry + screen',actual)]):sheet.paste(im.convert('RGB'),(i*w,j*(h+25)+25));draw.text((i*w+3,j*(h+25)+4),phase+' / '+label,fill='white')

@@ -9,9 +9,11 @@ HERE=Path(__file__).resolve().parent;sys.path[:0]=[str(HERE.parent),str(HERE.par
 import qualify as q
 import restart14_butterfly_canopy22_audit as reader
 from render_slots import acquire,release
+from resource_guard import guard_reader
 DEST=q.OUT/'conformation-v1'
 SCOPES={1:([153,110,210,177],{'croisement02-tree-00'}),3:([1558,148,1572,166],{'croisement02-tree-16'}),4:([2,866,143,953],{'croisement02-tree-24','croisement02-tree-25','croisement02-shrub-80'})}
 def main():
+ guard_reader(reader,q.ROOT,DEST)
  assert not DEST.exists();report=json.loads((q.OUT/'qualification.json').read_text());anchors=json.loads((q.OUT/'depth-proposal-v1.json').read_text());rays=[]
  for n,(box,assets)in SCOPES.items():
   for y in range(box[1],box[3]+1):
