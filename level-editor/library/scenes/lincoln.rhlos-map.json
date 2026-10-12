@@ -782,9 +782,9 @@
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-wall-cone-turret/model.glb",
-      "model_sha256": "c92d9f7d5c5b42d6040f9144592ca49bf3b6dae6b3659f0d86e1db8d61b2780e",
+      "model_sha256": "da98201bce4f90e02f8175c20567e67dbd7874411eb3817038435773bae6e9e4",
       "descriptor": "3d-assets/lincoln/lincoln-south-wall-cone-turret/asset.json",
-      "descriptor_sha256": "45c3d7e7d9e6f7d05c003b21bd4b280dec1bbd61e3d074405142bad0f368667c",
+      "descriptor_sha256": "10ae77f74a0dbf8d2a5b24d2471adabd3611396ba317811015d02c06f75e3dae",
       "id": "lincoln-south-wall-cone-turret"
     },
     {
@@ -1209,9 +1209,9 @@
     },
     {
       "model": "3d-assets/lincoln/lincoln-south-wall-walk-step/model.glb",
-      "model_sha256": "fc2c3bbd4a94ccbe44e2274cb37f347649bda16e4c0baa933954ef3ab5f0293c",
+      "model_sha256": "290fb67daa2adec3b289e3dbddf95591808105134a527ab78ea3c87dbf18f56f",
       "descriptor": "3d-assets/lincoln/lincoln-south-wall-walk-step/asset.json",
-      "descriptor_sha256": "0abf2a590b1c8270514fa25798fdae11bc8099e033e4365d2c210018609c1834",
+      "descriptor_sha256": "cfdd5cb34eed02f11b445a43b4792fc3c3722b7335e8c38fcda5987e8aa0d094",
       "id": "lincoln-south-wall-walk-step"
     },
     {

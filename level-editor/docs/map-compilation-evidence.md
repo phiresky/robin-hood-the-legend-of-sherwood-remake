@@ -2364,6 +2364,39 @@ both assets: step lossy GLB 41,696 bytes (544×544 atlas), turret 43,872 bytes
 and guarded installation/scene repinning remain outstanding; visual limitations
 will stay explicit draft warnings.
 
+### Installed step and turret drafts (2026-10-13)
+
+The final models and their generated derivatives are assembled in
+`connection-review-rendered-library-NoABzz`. Its two-copy, 37-degree, 40-unit-raised
+browser export/reopen/rebake passes with matching gameplay and color/depth.
+`repaired-stair.zip` contains 14,722,930 bytes, SHA-256
+`4e403cbf59f7b2a9789babd16ff620d80ef0bb98ff765ea6d6668da984539270`.
+Native loading without base data passes in 2.33 seconds, and all four archived
+stair directions pass ordinary player-click traversal in 0.90 seconds.
+
+`publish-repaired-assets.py` binds installation to the checked archive's model
+and descriptor pins, verifies derivative receipts, preserves non-gameplay
+descriptor fields, and replaces only selected catalog entries. It repins every
+saved scene referencing those assets without reformatting unrelated scene data.
+Every target is checked before writing; backups and rollback cover partial
+failures. Two transaction tests cover concurrent edits and a failed index write;
+all 34 combined publication/derivative tests pass.
+
+Installation `step-repair-installed-20261013` applied fourteen files: the two
+assets' descriptors, models, lossy/preview files and receipts, the library index,
+and four hash replacements in the saved Lincoln scene. All installed bytes and
+both derivative chains were checked afterward. The local library assets are
+generated/untracked; the saved-scene pins and authoring/publication tools are
+committed. No runtime behavior or mission content was changed. Draft warnings
+remain, including the provisional floor material and incomplete animated-contact
+review; installation is not a claim of full parity.
+
+Fresh installed-library export `saved-map-exports-vyUKvg` completes full Lincoln
+in about 8.6 seconds. Native checks pass 182 ordinary route samples, all eighteen
+stair directions (two more than the prior library), eight climb directions and
+all 100 upright jump-click traversals. This verifies the repaired assembly in
+the complete saved scene; it does not substitute for a fresh full-map rendered ZIP.
+
 Neutral front/rear geometry renders show the new through-opening and floor. They
 are geometry inspections, not textured scene or animated-character verification.
 The new floor uses a provisional texel from the owning wall's cap because the

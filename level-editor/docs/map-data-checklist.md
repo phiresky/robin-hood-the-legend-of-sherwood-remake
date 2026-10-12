@@ -148,39 +148,23 @@ The 169,676,380-byte first-pass ZIP loads natively without a base datadir and it
 gameplay descriptor exactly matches the staged native traversal fixture.
 The final transferred archive has the same size and SHA-256 as that first-pass ZIP.
 
-The unpublished south-wall step stair candidate passes 32 directed player-click
-routes across four rotations and two elevations without navigation-preparation
-warnings. Its receiving plane still disagrees with the asset mesh (up to 0.514132
-units at the nearest top-triangle vertices), and turret clearance is unverified.
-It remains unpublished; passing routes alone do not establish usable mesh contact.
-Lift approach clearance also needs further export-time review: applying ordinary
-landing-plane cuts blocks existing stair handoffs, so that experiment was rejected.
-The production compiler and runtime remain unchanged by this investigation.
-The 3D mesh review confirms the turret obstruction in all eight placed copies:
-the lower approach crosses its wall face. Shortening that approach loses the
-lower floor connection, so the opening and landing require asset-level repair.
-A revised private mesh repair clears all 32 approach centerlines and passes
-closed-shell checks on the serialized GLB. The previous candidate passed Blender
-checks but produced a non-manifold GLB and is rejected. A subsequent asset-local
-wall-cut candidate avoids unstable mesh fragments, preserves the existing lower
-wall recess, and matches both repaired walls at 420,810 sampled occupancy points.
-All 32 native player-click stair routes and 32 missing/raised-landing rejections
-pass. A private step-mesh repair now aligns its top with the authored plane:
-serialized height error is below 0.000073 units, and the combined metadata retains
-all 32 native stair traversals. The combined two-copy bundle at 37 degrees and
-40 units elevation now passes rendered export/reopen/rebake, native archive loading
-without base data and all four archived stair directions. The browser test also
-caught and resolved an incorrect GLB scene name in the authoring tools. The assets
-remain unpublished. A subsequent swept-footprint check found that the opening's
-lintel intersected a 40-unit standing-height envelope at all eight lower
-approaches. Raising the opening to 42 units resolves those crossings and retains
-all 32 native routes. The taller bundle passes its updated rendered roundtrip
-and native ZIP load. Derivative preparation exposed a transformed floor node and
-a thin-triangle density failure; both offline issues are repaired, all 32
-derivative tests pass, and both assets have valid lossy models and previews.
-Final derivative-enabled browser verification and guarded installation remain.
-Floor texturing and animated contact stay explicit draft limitations, not proof
-of full parity.
+**Installed Lincoln step/turret repair (2026-10-13):** both reusable assets are now
+in the main library with fresh derivatives and updated saved-scene pins. The step
+mesh agrees with its walking plane within 0.000073 units. The turret retains its
+wall recess and supplies an actual through-opening, supporting floor and static
+collision volumes; 420,810 sampled occupancy checks match its mesh. A 42-unit
+opening clears the native movement footprint swept through a 40-unit standing
+visibility envelope across all tested placements. This is not a complete sprite
+animation clearance proof.
+
+The final two-copy bundle, rotated 37 degrees and raised 40 units, passes rendered
+export/reopen/rebake, native loading without base data and all four archived stair
+directions. The sixteen placement fixtures pass 32 directed stair clicks and 32
+missing/raised-landing rejections. Fresh full Lincoln passes 182 ordinary routes,
+18 stair directions (including the repaired step), eight climbs and its jump-click
+audit. The full-map check is static/native, not a new full-map rendered archive.
+Floor texturing and animated contact remain draft warnings. General lift-approach
+clearance still needs broader export-time review; no runtime solver was added.
 
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and
