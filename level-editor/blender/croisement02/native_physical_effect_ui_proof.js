@@ -67,6 +67,7 @@
    const input=document.querySelector('[aria-label="Refined map background"]');if(input.checked)input.click();
  }
 
+ if(cfg.actorCrossing)await(await import(cfg.actorCrossing.proofModule)).runActorCrossing({v,cfg,check,wait,capture,digest});
  v.seekNativeArt(0,focus);checkbox.click();check('Checkbox disables substitution',!v.physicalNativeEffectsEnabled&&await digest(v.nativePreviewPixels())===art);
  await capture('b05-original-art-tick0');
  select('State preview view','initial');await wait(()=>v.statePresentationMode==='physical','ordinary physical mode');
@@ -83,5 +84,5 @@
  select('Mission','');await wait(()=>!v.bindings.document()?.mission?.importedFrom,'second mission retirement');
  await new Promise(r=>setTimeout(r,100));
 
- return {status:'SCATTER_EXECUTED_PENDING_VISUAL_REVIEW',checks,states,scope:'Real UI and source-bound saved B05 geometry on native artwork; no geometry approval, actor crossing, or whole-map closure. Refined receiver is exercised only when requested.'};
+ return {status:'SCATTER_EXECUTED_PENDING_VISUAL_REVIEW',checks,states,actorCrossing:window.actorCrossingResults,scope:'Real UI and source-bound saved B05 geometry on native artwork; no geometry approval, actor crossing, or whole-map closure. Refined receiver is exercised only when requested.'};
 })()
