@@ -229,6 +229,19 @@ failure. This isolates the next investigation to the keep's narrow receiving
 and movement surfaces and their jump zones. It does not yet establish whether
 the defect is in asset metadata, compiler preparation or probe placement.
 
+### Fresh Lincoln traversal checks (2026-10-12)
+
+Published-scene export `saved-map-exports-ZcOAqu` compiles in 43.20 seconds and
+passes native construction, 182 sampled ordinary routes and all 100 ordinary
+jump-click probes. Complete-sprite stair gate discovery passes fourteen of
+sixteen directed routes. The two failures connect runtime entrances 38/56 at
+the great hall stair: actor receiver 542 differs from queried receiver 583
+at the lower inside point, and vice versa on the return. Generated ordinary
+passages coexist with the authored lift entrances at this stair. Whether the
+extra passages are needed, or whether their endpoints/bindings need correction,
+remains under investigation. No runtime change or rendered-archive proof is
+implied by these checks.
+
 ### Keep movement-clearance recovery (2026-10-12)
 
 The four narrow roof strips on `leicester-great-keep` had lost their authored
@@ -290,6 +303,30 @@ degrees in the two elevations: both input modes select another overlapping
 strip with no usable outgoing connection from the source. All 272 directed
 connections nevertheless have at least one successfully traversed sampled
 interior route. This proves sampled reachability, not universal click selection.
+
+### Published keep rendered archive (2026-10-12)
+
+Private browser fixture `render-connection-library-bpXgBo` places two copies of
+the complete published keep on editor-authored terrain at zero rotation and
+elevation. Its 2,500-square bake includes fifteen appearance variants. The
+79,293,349-byte `leicester-keep-rendered.zip` reopens and rebakes with identical
+editor data, gameplay, color and depth, including appearance states. The initial
+five-minute attempt timed out during packaging; the completed retry used a
+twenty-minute limit and exited successfully after the archive download.
+
+Archive SHA-256 is
+`fb166eac42ec01f9a71fefe414a2b7cccf133f7387a02f7c5acf64aa6277e178`.
+Native mod loading over an empty base datadir passes in 20.64 seconds, including
+image decoding, map construction, editor-document inclusion and mission-content
+absence. The baked color image was visually inspected. This remains distinct
+from in-game actor/depth compositing or every rendered appearance being reviewed.
+
+The descriptor extracted from that actual ZIP supplies all 68 directed interior
+probes in `interior-jump-clicks-K0d6Ni`. Sixty-six ordinary clicks pass; lines
+8/42 are covered-target selections and both pass with hidden selection in
+`interior-jump-clicks-NTwX7a`. These routes cover both complete keep copies,
+without removing unrelated jump overlays. This closes the rendered archive
+round-trip gap for this fixture, not full-map or all-placement visual parity.
 
 `check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,
 ordered by distance to the takeoff edge. Each point must pass static corridor

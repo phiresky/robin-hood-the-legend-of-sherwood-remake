@@ -28,7 +28,7 @@ offset probes, also without regressions. Four full-scene and 120 placement
 findings initially remained. Follow-up selection diagnostics show that all four
 full-scene cases select a neighbouring roof normally and pass the intended lower
 jump with hidden selection. Hidden selection also resolves 74/120 placement
-findings; 46 remain open. Rendered ZIP validation is still outstanding. See
+findings; 46 remain open. Rendered ZIP coverage at every rotation is still outstanding. See
 [the clearance recovery](map-compilation-evidence.md#keep-movement-clearance-recovery-2026-10-12).
 
 A wider placement sweep now verifies at least one complete interior-click route
@@ -36,6 +36,18 @@ for all 272 directed connections. Of 2,448 start/destination combinations, 2,310
 pass ordinary selection and another 132 pass hidden selection. Six overlapping
 target coordinates at 37 degrees remain unresolved; this establishes sampled
 reachability without claiming every click works.
+
+The published keep's two-copy rendered fixture now passes ZIP reopening and
+rebaking, including fifteen appearance states. Its 79 MB archive loads without
+base-game data and retains the editor document with no mission content. All
+68 sampled jump directions from the archive traverse: 66 ordinary clicks and
+two hidden selections. In-game actor/depth compositing remains unverified.
+See [the archive evidence](map-compilation-evidence.md#published-keep-rendered-archive-2026-10-12).
+
+Fresh Lincoln passes native construction, 182 ordinary route samples and all
+100 jump-click probes. Stair gate discovery passes 14/16 routes; the two
+receiver mismatches involve the great hall stair's authored and generated
+connections. See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-checks-2026-10-12).
 
 **York jump checks (2026-10-12):** the current full-map audit has 696 successful
 traversals, eleven occluded lower-click cases and thirteen failures out of 720.
