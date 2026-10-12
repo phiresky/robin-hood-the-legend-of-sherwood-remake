@@ -9,6 +9,8 @@ export interface NavigationAnchorArea {
   /** Ordinary movement contours use projected coordinates. Physical floors use world XY. */
   coordinateSpace?: "projected" | "world";
   floorPatches?: { plane: HeightPlane; boundary: Point[] }[];
+  /** Physical receiving contours in projected coordinates, separate from movement clearance. */
+  receivingFloors?: { plane: HeightPlane; polygon: Point[] }[];
 }
 
 /** Receiving contours pass through the fixed clipping grid before binding. */

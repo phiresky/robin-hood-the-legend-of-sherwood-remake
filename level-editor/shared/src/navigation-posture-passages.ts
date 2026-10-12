@@ -4,6 +4,7 @@ import type { NavigationAnchorArea } from "./navigation-anchor.ts";
 import { prepareCorridorStates } from "./compile-navigation-graph.ts";
 import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
 import type { Point } from "./level.ts";
+import { prepareFoldedNavigationPassage } from "./folded-navigation-passage.ts";
 
 /** Find collision-checked crossings on an explicitly matched projected seam. */
 export function navigationPosturePassages(
@@ -19,12 +20,17 @@ export function navigationPosturePassages(
   const length = Math.hypot(dx, dy);
   if (length < 1e-6) return [];
   const tangent: Point = [dx / length, dy / length];
-  const normal: Point = [-tangent[1], tangent[0]];
+  const orientation = Math.sign(1 + from.plane[1]);
+  const normal: Point = [-tangent[1] * orientation, tangent[0] * orientation];
   const depth = half[0] * Math.abs(normal[0]) + half[1] * Math.abs(normal[1]) + 1;
   const margin = half[0] * Math.abs(tangent[0]) + half[1] * Math.abs(tangent[1]) + 1;
   const start = connection.overlap[0] * length + margin;
   const end = connection.overlap[1] * length - margin;
   if (end <= start) return [];
+  const folded =
+    (1 + from.plane[1]) * (1 + to.plane[1]) < 0
+      ? prepareFoldedNavigationPassage(from, to)
+      : undefined;
   const obstacles = (area: NavigationAnchorArea) =>
     area.blockers.map((points) => ({
       polygon: { points },
@@ -70,6 +76,17 @@ export function navigationPosturePassages(
       Math.round(a[0] + tangent[0] * offset),
       Math.round(a[1] - a[2] + tangent[1] * offset),
     ];
+    if (folded) {
+      const crossing = folded(middle, normal, tangent, depth);
+      if (crossing) {
+        const key = `${crossing.outside}/${crossing.inside}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          result.push(crossing);
+        }
+      }
+      continue;
+    }
     const outside: Point = [
       Math.round(middle[0] + normal[0] * depth),
       Math.round(middle[1] + normal[1] * depth),

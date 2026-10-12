@@ -1469,6 +1469,7 @@ function compileAssetGameplayAttempt(
       surfaces: [surface],
     });
   const areas: (NavigationAnchorArea & {
+    receivingPolygon?: Point[];
     physical?: NavigationAnchorArea;
     lift?: string;
     navigationRegion?: string;
@@ -1892,8 +1893,22 @@ function compileAssetGameplayAttempt(
       ({ from, to, connection }) =>
         navigationPosturePassages(
           connection,
-          { ...from, plane: from.pieces[0]!.plane },
-          { ...to, plane: to.pieces[0]!.plane },
+          {
+            ...from,
+            plane: from.pieces[0]!.plane,
+            receivingFloors: from.pieces.map((piece) => ({
+              plane: piece.plane,
+              polygon: piece.receivingPolygon ?? piece.polygon,
+            })),
+          },
+          {
+            ...to,
+            plane: to.pieces[0]!.plane,
+            receivingFloors: to.pieces.map((piece) => ({
+              plane: piece.plane,
+              polygon: piece.receivingPolygon ?? piece.polygon,
+            })),
+          },
         ).length > 0,
     );
     const reached = new Set([planned.regions[0]!]);
@@ -2874,6 +2889,12 @@ function compileAssetGameplayAttempt(
           return {
             plane: area.plane,
             polygon: motion.polygon.points,
+            receivingFloors: areas
+              .filter((other) => other.sector === area.sector)
+              .map((other) => ({
+                plane: other.plane,
+                polygon: other.receivingPolygon ?? other.polygon,
+              })),
             blockers: motion.obstacles.filter((o) => o.state_id === 0).map((o) => o.polygon.points),
           };
         };

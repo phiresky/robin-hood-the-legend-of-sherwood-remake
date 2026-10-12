@@ -11,16 +11,18 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
-**Folded-roof export prototype (2026-10-12):** static projection correction and
-full-footprint passage endpoint checks permit eight bidirectional native walks
-across copied 90-degree roof/slab connections at two elevations. This remains a
-private prototype: the same assembly still fails all forty jump-click probes,
-which use perpendicular edge offsets outside the narrow folded projection.
-Separate supported-floor probes pass all eight complete click routes (normal
-selection outward, hidden selection on return); isolated flight/landing checks
-pass 40/40. Rendered selection and production compiler integration are unverified.
-No production engine changes are involved.
-See the [folded passage diagnostic](map-compilation-evidence.md#folded-roof-passage-diagnostic-2026-10-12).
+**Folded-roof export preparation (2026-10-12):** the compiler now prepares
+world-oriented joins, projection clearance and physically supported ordinary
+passages without runtime solving. Fresh copied assemblies load at 0/37/90/180
+degrees and two elevations. Native checks pass 120/120 ordinary jump clicks at
+0/37/180, plus eight walks and eight supported-floor jump clicks at 90 degrees
+(hidden selection on the covered return side). The perpendicular-offset probes
+still fall outside the narrow folded projection; they are not reclassified as
+passing. Full Nottingham retains its prior 375/390 ordinary-click outcomes.
+All 267 selected compiler/export tests pass. Roof metadata remains staged;
+rendered input and fresh ZIP round trips are still unverified. No production
+engine changes are involved. See the
+[compiler evidence](map-compilation-evidence.md#export-time-folded-floor-preparation-2026-10-12).
 
 **Moved-roof takeoffs repaired (2026-10-12):** clearance now uses the precise
 exported motion contour used for elevation-boundary preparation. This removes
@@ -45,9 +47,10 @@ compiler/export tests passed at that stage. The subsequent copied-roof failure
 is repaired and verified above; full-map jump failures remain under review.
 The revised roof-slab candidate fixes its ten full-map samples. The receiving
 seam export fix plus asset-local sloped click zones pass all 120 moved/copy
-checks at 0/37/180 degrees. The 90-degree join remains unresolved: best-effort
-export now warns and preserves the map, but all forty traversals still fail. It remains
-unpublished; see the [candidate evidence](map-compilation-evidence.md#unpublished-roof-slab-connection-candidate-2026-10-12).
+checks at 0/37/180 degrees. The earlier 90-degree export omitted its connection;
+the folded-floor preparation above now connects it and passes supported-floor
+click routes. The roof metadata remains unpublished pending visual and ZIP
+review; see the [candidate evidence](map-compilation-evidence.md#unpublished-roof-slab-connection-candidate-2026-10-12).
 The published southeast-house ground click-band repair removes its click-zone
 misses and passes 160/160 moved cases. Four apparent stalls were audit errors
 around the native zero-distance stop reservation; runtime behavior is unchanged.
@@ -58,8 +61,8 @@ The combined ground/roof candidate now loads natively and passes 375/390 ordinar
 clicks. Its remaining five covered-roof samples pass hidden-selection traversal;
 the ten helper-required samples have a passing posture-aware fixture that isolates
 their jump overlays. The deeper endpoint-click audit passes 356/390 and retains
-34 failures for investigation. The roof assets remain unpublished while the
-90-degree connection is unresolved. See the
+34 failures for investigation. The roof assets remain unpublished pending
+visual and ZIP review of the folded-floor compiler output. See the
 [combined candidate evidence](map-compilation-evidence.md#combined-nottingham-candidate-and-endpoint-clicks-2026-10-12).
 Five of those ordinary-click failures hit an overlapping higher roof. Hidden
 selection finds the intended jump in all five cases. Retaining that selection

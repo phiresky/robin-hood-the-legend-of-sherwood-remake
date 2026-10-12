@@ -38,6 +38,46 @@ function loop() {
   ];
 }
 
+test("folded receivers retain a physical seam in either partition order", () => {
+  for (const reverse of [false, true]) {
+    const pieces = [
+      rectangle([0, 0, 100], 0, -120, 100, -100),
+      rectangle([0, -2, -100], 0, -120, 100, -100),
+    ];
+    if (reverse) pieces.reverse();
+    const [region] = assembleNavigationRegions(pieces, []);
+    assert.ok(region);
+    const before = structuredClone(region);
+    const result = partitionSelfOverlappingNavigation(region, []);
+    assert.equal(result.regions.length, 2);
+    assert.equal(result.passages.length, 1);
+    const { from, to, connection } = result.passages[0]!;
+    const floor = (r: typeof region) => ({
+      ...r,
+      plane: r.pieces[0]!.plane,
+      receivingFloors: r.pieces.map((p) => ({ plane: p.plane, polygon: p.polygon })),
+    });
+    assert.ok(navigationPosturePassages(connection, floor(from), floor(to)).length);
+    assert.deepEqual(region, before);
+  }
+});
+
+test("a collapsed singleton exports integer movement while retaining its physical receiver", () => {
+  const piece = rectangle([0, -6, -500], 0, -104, 100, -100);
+  piece.worldPlane = [0, 1.2, 100];
+  piece.receivingPolygon = structuredClone(piece.polygon);
+  const [region] = assembleNavigationRegions([piece], []);
+  assert.ok(region);
+  const before = structuredClone(region);
+  const result = partitionSelfOverlappingNavigation(region, []);
+  assert.equal(result.regions.length, 1);
+  const prepared = result.regions[0]!;
+  assert.ok(prepared.polygon.flat().every(Number.isInteger));
+  assert.notDeepEqual(prepared.polygon, before.polygon);
+  assert.deepEqual(prepared.pieces[0]!.receivingPolygon, piece.receivingPolygon);
+  assert.deepEqual(region, before);
+});
+
 test("partitioned loop retains receiving geometry and connects only matching-height boundaries", () => {
   for (const reverse of [false, true]) {
     const pieces = loop();

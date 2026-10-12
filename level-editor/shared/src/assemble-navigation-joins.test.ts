@@ -7,7 +7,7 @@ import {
 } from "./assemble-navigation-joins.ts";
 import type { Vec3 } from "./scene.ts";
 
-test("navigation sockets follow actual 3D boundary segments and projected winding", () => {
+test("navigation sockets follow actual 3D boundary segments and world winding", () => {
   const polygon: Vec3[] = [
     [0, 0, 0],
     [10, 0, 10],
@@ -45,6 +45,39 @@ test("navigation sockets follow actual 3D boundary segments and projected windin
     /outer surface edge/,
   );
   assert.throws(() => orientNavigationJoin(polygon, [edge[0], edge[0]]), /nondegenerate/);
+});
+
+test("folded roof sockets match physical neighbors instead of projected interiors", () => {
+  const a: Vec3[] = [
+    [0, -20, 100],
+    [100, -20, 100],
+    [100, 0, 100],
+    [0, 0, 100],
+  ];
+  const b: Vec3[] = [
+    [0, 0, 100],
+    [100, 0, 100],
+    [100, 20, 140],
+    [0, 20, 140],
+  ];
+  const edge: [Vec3, Vec3] = [
+    [100, 0, 100],
+    [0, 0, 100],
+  ];
+  const result = assembleNavigationJoins([
+    { owner: "a", region: "a/roof", edge: orientNavigationJoin(a, edge) },
+    { owner: "b", region: "b/roof", edge: orientNavigationJoin(b, edge) },
+  ]);
+  assert.equal(result.connections.length, 1);
+  assert.deepEqual(result.unmatched, []);
+  assert.throws(
+    () =>
+      assembleNavigationJoins([
+        { owner: "a", region: "a/roof", edge: orientNavigationJoin(b, edge) },
+        { owner: "b", region: "b/roof", edge: orientNavigationJoin(b, edge) },
+      ]),
+    /overlapping/,
+  );
 });
 
 test("navigation sockets reject ambiguous, overlapping and same-owner connections", () => {

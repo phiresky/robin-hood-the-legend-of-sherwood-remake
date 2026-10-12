@@ -126,3 +126,93 @@ test("narrow, disconnected and completely blocked seams have no posture crossing
   ]);
   assert.deepEqual(navigationPosturePassages(connection, from, to), []);
 });
+
+function foldedFixture() {
+  const polygon: Point[] = [
+    [0, -120],
+    [100, -120],
+    [100, -100],
+    [0, -100],
+  ];
+  const from: NavigationAnchorArea = {
+    plane: [0, 0, 100],
+    polygon,
+    blockers: [],
+    receivingFloors: [{ plane: [0, 0, 100], polygon }],
+  };
+  const to: NavigationAnchorArea = {
+    plane: [0, -2, -100],
+    polygon,
+    blockers: [],
+    receivingFloors: [{ plane: [0, -2, -100], polygon }],
+  };
+  const connection: NavigationConnection = {
+    from: {
+      owner: "left",
+      region: "left/floor",
+      edge: [
+        [100, 0, 100],
+        [0, 0, 100],
+      ],
+    },
+    to: {
+      owner: "right",
+      region: "right/floor",
+      edge: [
+        [0, 0, 100],
+        [100, 0, 100],
+      ],
+    },
+    overlap: [0, 1],
+  };
+  return { from, to, connection };
+}
+
+test("folded physical neighbors connect in either order despite overlapping projections", () => {
+  for (const reverse of [false, true]) {
+    const fixture = foldedFixture();
+    const { from, to, connection } = fixture;
+    const before = structuredClone(fixture);
+    const crossings = navigationPosturePassages(
+      reverse ? { ...connection, from: connection.to, to: connection.from } : connection,
+      reverse ? to : from,
+      reverse ? from : to,
+    );
+    assert.ok(crossings.length > 0);
+    for (const crossing of crossings) {
+      assert.equal(crossing.middle[1], -100);
+      assert.ok(crossing.outside[1] < -103 && crossing.inside[1] < -103);
+      assert.notDeepEqual(crossing.outside, crossing.inside);
+    }
+    assert.deepEqual(fixture, before);
+  }
+});
+
+test("expanded movement contours cannot bridge a missing physical floor", () => {
+  const { from, to, connection } = foldedFixture();
+  from.receivingFloors![0]!.polygon = [
+    [0, -120],
+    [100, -120],
+    [100, -108],
+    [0, -108],
+  ];
+  assert.deepEqual(navigationPosturePassages(connection, from, to), []);
+});
+
+test("folded crossings retain solid blockers and require physical receiving metadata", () => {
+  const { from, to, connection } = foldedFixture();
+  from.blockers = [
+    [
+      [0, -120],
+      [100, -120],
+      [100, -100],
+      [0, -100],
+    ],
+  ];
+  assert.deepEqual(navigationPosturePassages(connection, from, to), []);
+  delete from.receivingFloors;
+  assert.throws(
+    () => navigationPosturePassages(connection, from, to),
+    /physical receiving contours/,
+  );
+});

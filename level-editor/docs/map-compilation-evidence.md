@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Export-time folded floor preparation (2026-10-12)
+
+The diagnostic correction is now implemented in the compiler. Join orientation
+uses physical world-space interiors; partitioning recognizes matching-height
+seams even when the neighboring projected interiors overlap. Projection clearance
+is restricted to regions containing folded faces, retaining ordinary multi-plane
+output. Corrected standalone floors also pass through integer-grid quantization.
+Receiving contours remain separate from movement contours. Folded passage
+preparation checks solid blockers, full endpoint boxes and physical floor support,
+then emits ordinary static passages. No engine code or runtime solver is added.
+
+Fresh `roof-slab-placements-xdMB4q`, using the staged roof asset definitions,
+loads all eight exports natively: rotations 0/37/90/180 at elevations zero/forty,
+with two independent copies per export. The 0/37/180 subset
+`compiled-roof-rotations-1wnthz_f` passes 120/120 ordinary jump-click routes.
+The 90-degree fixtures `folded-floor-passages-Lk6hw6` and
+`folded-supported-clicks-RHqvnL` pass eight ordinary walks and eight complete
+jump-click routes respectively, with hidden-floor selection on the covered
+return side. These use the actual compiler, without diagnostic loader hooks.
+
+Full Nottingham `saved-map-exports-t6ftGw` compiles in approximately 34 seconds
+and loads natively. Its 375/390 ordinary-click outcomes match the prior combined
+candidate case for case: ten helper-required samples and five covered-roof
+clicks remain. All 267 selected compiler/export/navigation tests pass, along with
+editor type-checking, lint, formatting and the production editor build. Tests
+cover reverse partition order, blocked crossings, physical gaps, receiver
+preservation and integer standalone contours. Broader all-map traversal,
+rendered input and fresh ZIP/render round trips remain open. Roof metadata is
+still staged rather than published; this is not a full-parity certificate.
+
 ## Folded roof passage diagnostic (2026-10-12)
 
 Follow-up jump isolation on `roof-slab-placements-i3dcQ5` passes **40/40**

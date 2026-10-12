@@ -19,9 +19,10 @@ const projectedNear = (a: Vec3, b: Vec3) =>
   Math.hypot(a[0] - b[0], a[1] - a[2] - (b[1] - b[2])) < 1e-4;
 
 /** A socket is a real outer boundary segment, oriented with its surface on the left
- * in projected space. Matching opposite edges therefore cannot join overlapping copies. */
+ * in world XY. Matching opposite edges therefore cannot join overlapping copies,
+ * including slopes whose screen projections fold over the shared edge. */
 export function orientNavigationJoin(polygon: Vec3[], edge: NavigationJoin): NavigationJoin {
-  const projected = polygon.map(([x, y, z]) => [x, y - z]);
+  const projected = polygon.map(([x, y]) => [x, y]);
   const area = projected.reduce((sum, p, i) => {
     const q = projected[(i + 1) % projected.length]!;
     return sum + p[0]! * q[1]! - q[0]! * p[1]!;

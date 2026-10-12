@@ -9,6 +9,8 @@ import { planeHeight } from "./gameplay-plane.ts";
 import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
 import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
+import { projectStairClearance } from "./project-stair-clearance.ts";
+import { NAVIGATION_HALF_DIAGONAL } from "./navigation-footprint.ts";
 
 export interface PartitionPassage {
   from: NavigationRegion;
@@ -21,7 +23,33 @@ export function partitionSelfOverlappingNavigation(
   region: NavigationRegion,
   warnings: string[],
 ): { regions: NavigationRegion[]; passages: PartitionPassage[] } {
-  if (region.lift || region.pieces.length < 2) return { regions: [region], passages: [] };
+  if (region.lift) return { regions: [region], passages: [] };
+  const folded = region.pieces.some((piece) => 1 + piece.plane[1] < 0);
+  const pieces = region.pieces.map((piece) => {
+    if (!folded || !piece.worldPlane || !piece.receivingPolygon) return piece;
+    const boundary = piece.receivingPolygon.map((p): Point => [
+      p[0],
+      p[1] + planeHeight(piece.plane, p),
+    ]);
+    const corrected = projectStairClearance(boundary, piece.worldPlane, true, {
+      movementHalf: NAVIGATION_HALF_DIAGONAL,
+    });
+    if (!corrected) return piece;
+    const rounded = quantizeGeneratedMotionPolygon(
+      [corrected, ...piece.blockers],
+      Math.round,
+      "Folded navigation clearance",
+      warnings,
+    );
+    return rounded ? { ...piece, polygon: rounded[0]!, blockers: rounded.slice(1) } : piece;
+  });
+  const corrected = pieces.some((piece, i) => piece !== region.pieces[i]);
+  if (corrected) {
+    region = { ...region, pieces };
+    if (pieces.length === 1)
+      return { regions: assembleNavigationRegions(pieces, warnings), passages: [] };
+  }
+  if (region.pieces.length < 2) return { regions: [region], passages: [] };
   const bounds = region.pieces.map((piece) => {
     const polygon = piece.receivingPolygon ?? piece.polygon;
     return [
@@ -72,7 +100,10 @@ export function partitionSelfOverlappingNavigation(
     active.push(i);
   }
   if (conflicts.every((neighbors) => neighbors.size === 0))
-    return { regions: [region], passages: [] };
+    return {
+      regions: corrected ? assembleNavigationRegions(pieces, warnings) : [region],
+      passages: [],
+    };
   const groups: number[][] = [];
   for (let i = 0; i < region.pieces.length; i++) {
     let group = groups.find((members) => members.every((j) => !conflicts[i]!.has(j)));
@@ -162,28 +193,29 @@ function alignRoundedSeam(polygon: Point[], precise: Point): void {
 
 function matchingSeams(a: NavigationPiece, b: NavigationPiece): [Vec3, Vec3][] {
   const result: [Vec3, Vec3][] = [];
-  const edges = (polygon: Point[]) => {
+  const edges = (piece: NavigationPiece) => {
+    const polygon = piece.receivingPolygon ?? piece.polygon;
     const area = polygon.reduce((sum, p, i) => {
       const q = polygon[(i + 1) % polygon.length]!;
       return sum + p[0] * q[1] - p[1] * q[0];
     }, 0);
     return polygon.map((p, i): [Point, Point] => {
       const q = polygon[(i + 1) % polygon.length]!;
-      return area >= 0 ? [p, q] : [q, p];
+      return area * (1 + piece.plane[1]) >= 0 ? [p, q] : [q, p];
     });
   };
-  for (const [p, q] of edges(a.receivingPolygon ?? a.polygon)) {
+  for (const [p, q] of edges(a)) {
     const dx = q[0] - p[0],
       dy = q[1] - p[1];
     const length = Math.hypot(dx, dy);
     if (length < 1e-4) continue;
-    for (const [r, s] of edges(b.receivingPolygon ?? b.polygon)) {
+    for (const [r, s] of edges(b)) {
       if ([r, s].some((v) => Math.abs(dx * (v[1] - p[1]) - dy * (v[0] - p[0])) / length > 1e-4))
         continue;
       const offset = (v: Point) => ((v[0] - p[0]) * dx + (v[1] - p[1]) * dy) / length;
       const r0 = offset(r),
         s0 = offset(s);
-      // Both contours must put their free interior on opposite sides of the seam.
+      // Both contours put their world-space interior on opposite sides of the seam.
       if (r0 <= s0) continue;
       const start = Math.max(0, s0),
         end = Math.min(length, r0);
