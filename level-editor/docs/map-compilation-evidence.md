@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Roof-ridge landing span diagnostic (2026-10-12)
+
+The two remaining Nottingham receiver mismatches on line 70 are genuine:
+the actor's installed receiving face does not contain the final projected
+position. Tracing `saved-map-exports-Ia6xrD` shows the landing installs the plane
+at the destination line midpoint, although part of the landing span lies across
+the ridge on a different face. The following walking transition either misses
+a needed transfer or crosses back while already bound to the wrong face.
+The assets are `nottingham-upper-green-house` (`jump-pair-29-side-0`) and
+`nottingham-upper-red-house` (`jump-pair-29-side-1`).
+
+An isolated compiled-data experiment splits pair 35 into two native pairs.
+Splitting only the lines, either halfway (`jump-receiver-split-probe-6Lha45`)
+or at the receiving-seam fraction (`jump-receiver-split-probe-oZE49G`), still
+fails one new probe: click selection can choose the other span through the
+shared destination zone. Splitting the destination click zone by receiving
+face as well (`jump-receiver-split-probe-BR10tl`) passes all **20/20** cases for
+the two resulting pairs and native geometry construction. All 370 cases on
+unmodified pairs retain exactly the same pass/fail outcomes. Overall it passes
+367/390 cases, with 23 failures elsewhere; the larger denominator comes from
+the additional pair, not additional original routes.
+
+This is a diagnostic mutation, not a published asset or compiler fix. The
+reproduction is `work/map-compile/probe-jump-receiver-split.mjs`, using ratio
+`0.5655976673` and `--zones`. A production fix must derive the partitions from
+placed receiving geometry, keep paired endpoints and clickable regions aligned
+after integer rounding, and handle copied/rotated assets, coplanar triangles,
+gaps and unrepresentable narrow spans. No new runtime solver is needed.
+
 ## Fresh Nottingham boundary-fix regression checks (2026-10-12)
 
 `saved-map-exports-Ia6xrD` compiles the published Nottingham scene with the
