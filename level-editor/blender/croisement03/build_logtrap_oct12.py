@@ -45,7 +45,7 @@ def main():
   views=[]
   for i in range(8):
    angle=-math.pi/2+i*math.pi/4;direction=Vector((math.cos(angle)*COS,math.sin(angle)*COS,SIN));location=center+direction*3000;rotation=(center-location).to_track_quat('-Z','Y').to_euler();views.append({'location':list(location),'rotation':list(rotation),'ortho_scale':cd.ortho_scale,'source_camera':i==0})
-  camera.location=views[0]['location'];camera.rotation_euler=views[0]['rotation'];bpy.ops.wm.save_as_mainfile(filepath=str(dest/'worker.blend'));saved=sha(dest/'worker.blend');bpy.ops.wm.open_mainfile(filepath=str(dest/'worker.blend'));scene=bpy.context.scene;camera=scene.camera;states={k:[ob for ob in scene.objects if ob.get('state_endpoint')==k] for k in states};gray=bpy.data.materials.get(gray.name)
+  camera.location=views[0]['location'];camera.rotation_euler=views[0]['rotation'];bpy.ops.wm.save_as_mainfile(filepath=str(dest/'worker.blend'));saved=sha(dest/'worker.blend');bpy.ops.wm.open_mainfile(filepath=str(dest/'worker.blend'));scene=bpy.context.scene;camera=scene.camera;states={k:[ob for ob in scene.objects if ob.get('state_endpoint')==k] for k in states};gray=bpy.data.materials['Unknown hidden wood — geometry only']
   for state,objects in states.items():
    for key,other in states.items():
     for ob in other:ob.hide_render=key!=state
