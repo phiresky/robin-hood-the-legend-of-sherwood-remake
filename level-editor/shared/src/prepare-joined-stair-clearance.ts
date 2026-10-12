@@ -7,6 +7,7 @@ import { pointInGameplayPolygon, onClippedReceivingBoundary } from "./navigation
 import { supportedFootprintCenters, footprintBoundaryHull } from "./supported-footprint-centers.ts";
 import { stairCenterRegion } from "./stair-center-region.ts";
 import { compileNavigationGraph } from "./compile-navigation-graph.ts";
+import { convexSupportRegions } from "./convex-support-regions.ts";
 
 const area = (regions: MultiPolygon) =>
   regions.reduce(
@@ -138,30 +139,37 @@ export function prepareJoinedStairClearance(geometry: CompiledAssetGeometry): nu
     const centers = supportedFootprintCenters([floor], supports, [5, 2]);
     if (centers.length !== 1 || centers[0]!.length !== 1) continue;
     const projected = centers[0]![0]!.map(([x, y]): Point => [x, y - (a * x + b * y + c)]);
-    const kernel = stairCenterRegion(projected, [0, 0]);
-    if (kernel.length < 3) continue;
+    function* candidates() {
+      const kernel = stairCenterRegion(projected, [0, 0]);
+      if (kernel.length >= 3) yield kernel;
+      yield* convexSupportRegions(projected);
+    }
     // A convex kernel can be represented exactly by the existing box-based
     // movement boundary. Preserve every center already admitted by that boundary.
-    const expanded = footprintBoundaryHull(
-      kernel.flatMap(([x, y]) =>
-        [
-          [-4.99, -1.99],
-          [4.99, -1.99],
-          [4.99, 1.99],
-          [-4.99, 1.99],
-        ].map(([dx, dy]): Point => [x + dx!, y + dy!]),
-      ),
-    );
-    const newCenters = supportedFootprintCenters([[expanded]], [[expanded]], [5, 2]);
-    if (!newCenters.length || area(clipping.difference(oldCenters, newCenters)) > 1e-7) continue;
-    const worldCenters = newCenters.map((polygon) =>
-      polygon.map((ring) => ring.map(([x, y]): Point => [x, (y + a * x + c) / (1 - b)])),
-    );
-    if (area(clipping.difference(worldCenters, centers)) > 1e-7) continue;
-    if (expanded.some((point) => point.some((value) => value < -32768 || value > 32767))) continue;
-    motion.precise_polygon = expanded;
-    motion.polygon.points = expanded.map(([x, y]): Point => [Math.round(x), Math.round(y)]);
-    prepared++;
+    for (const kernel of candidates()) {
+      const expanded = footprintBoundaryHull(
+        kernel.flatMap(([x, y]) =>
+          [
+            [-4.99, -1.99],
+            [4.99, -1.99],
+            [4.99, 1.99],
+            [-4.99, 1.99],
+          ].map(([dx, dy]): Point => [x + dx!, y + dy!]),
+        ),
+      );
+      const newCenters = supportedFootprintCenters([[expanded]], [[expanded]], [5, 2]);
+      if (!newCenters.length || area(clipping.difference(oldCenters, newCenters)) > 1e-7) continue;
+      const worldCenters = newCenters.map((polygon) =>
+        polygon.map((ring) => ring.map(([x, y]): Point => [x, (y + a * x + c) / (1 - b)])),
+      );
+      if (area(clipping.difference(worldCenters, centers)) > 1e-7) continue;
+      if (expanded.some((point) => point.some((value) => value < -32768 || value > 32767)))
+        continue;
+      motion.precise_polygon = expanded;
+      motion.polygon.points = expanded.map(([x, y]): Point => [Math.round(x), Math.round(y)]);
+      prepared++;
+      break;
+    }
   }
   if (prepared)
     geometry.motion_data.graph_bytes = compileNavigationGraph(geometry.motion_data.layers);

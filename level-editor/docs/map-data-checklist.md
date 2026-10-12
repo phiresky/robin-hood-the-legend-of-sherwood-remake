@@ -65,12 +65,14 @@ See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-c
 
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and
-state guards. The published oak-platform footprint passes all sixteen scripted
-routes and sixteen player clicks across four rotations and two elevations.
+state guards. The published oak-platform footprint passes all 36 scripted
+routes and 36 player clicks across nine rotations and two elevations.
 Fresh saved-map export also passes both stairs, fifty ordinary routes and ten
-jump clicks. No wider asset geometry or runtime solver is needed. Mesh contact
-and rendered actor/depth checks remain open; earlier authoring experiments stay
-unpublished.
+jump clicks. A rotated/raised two-copy browser ZIP reopens and rebakes identically,
+loads without base-game data, and passes all four archived stair routes with
+both scripted and player-click dispatch. No wider asset geometry or runtime
+solver is needed. Mesh contact and in-game actor/depth compositing remain open;
+earlier authoring experiments stay unpublished.
 See [the investigation](map-compilation-evidence.md#sherwood-stair-clearance-investigation-2026-10-12).
 
 **York jump checks (2026-10-12):** the current full-map audit has 696 successful

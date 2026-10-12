@@ -257,6 +257,39 @@ Rendered ZIP round-trip and mesh-contact validation for this change are still
 outstanding; this closes the measured stair traversal failure, not all Sherwood
 or all-map parity.
 
+### Concave support and rendered Sherwood archive (2026-10-12)
+
+The initial rendered fixture loaded and rebaked successfully but failed all four
+stair routes. An expanded angle sweep also exposed both directions at 315
+degrees, at both tested elevations. In these cases the complete supported
+center region is usable, but its common convex kernel is empty or too small.
+The compiler now also considers convex regions assembled from a triangulation,
+checks each candidate against the full support region, and preserves all
+previously admitted walking centers. A regression test checks convexity,
+notch exclusion and complete candidate-union coverage at two coordinate offsets.
+
+`check-asset-jump-exports.mjs` accepts an explicit `--rotations` list. Fresh
+published-asset export `asset-jump-exports-fgyoHs` uses
+0/37/45/90/135/180/225/270/315 degrees at elevations zero and forty. It passes
+**36/36 forced routes and 36/36 player clicks**, with no permission skips and
+complete audit coverage. Fresh full scenes `saved-map-exports-53IU4C` reproduce
+the previously tested Derby, Lincoln and Sherwood descriptors byte for byte,
+retaining their 46 stair clicks, 384 ordinary route samples and 130 jump probes.
+
+Private fixture `render-connection-library-v4avmA` contains two published
+oak-platform assemblies at 180 degrees, raised forty units over editor terrain.
+Its corrected `sherwood-platform-rotated-raised-v2.zip` is **12,855,891 bytes**,
+SHA-256 `d2d052c92bafbf47709edb7daec951c8065fbf5bc212fbac973b90d4467712a9`.
+All ZIP CRC checks pass. The browser compares reopened editor serialization,
+gameplay data and rendered color/depth pixels, with identical results.
+Native empty-base loading passes: 2500×2500 pixels, fifteen sight obstacles,
+eight door projections and 15,840 grid blocks. This fixture has no appearance
+controls, and the native contract confirms no mission spawns or soldiers.
+The exact archived descriptor, audited under the fixture's `v2` directory,
+passes **4/4 forced stair routes and 4/4 player-click routes**, with no skips.
+The baked color image was inspected; this still does not verify in-game actor
+compositing or resolve the asset's previously recorded stair/ladder mesh gaps.
+
 ## Non-reversed projection clearance (2026-10-12)
 
 Pre-normalization clearance was restricted to folded projections. A simple

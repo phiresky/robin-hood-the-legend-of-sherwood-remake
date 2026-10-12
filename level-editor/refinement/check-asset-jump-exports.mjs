@@ -10,8 +10,18 @@ const args = process.argv.slice(2);
 const stages = args.filter((arg) => arg.startsWith("--stage="));
 assert.ok(stages.length <= 1, "Supply at most one staged gameplay directory");
 const stage = stages[0]?.slice("--stage=".length);
+const rotationArgs = args.filter((arg) => arg.startsWith("--rotations="));
+assert.ok(rotationArgs.length <= 1, "Supply at most one rotation list");
+const rotations = rotationArgs.length
+  ? rotationArgs[0].slice("--rotations=".length).split(",").map(Number)
+  : [0, 37, 90, 180];
+assert.ok(
+  rotations.length &&
+    rotations.every((value) => Number.isFinite(value) && value >= 0 && value < 360),
+);
+assert.equal(new Set(rotations).size, rotations.length, "Rotation samples must be unique");
 const edits = stage ? JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8")) : [];
-const ids = args.filter((arg) => !arg.startsWith("--stage="));
+const ids = args.filter((arg) => !arg.startsWith("--stage=") && !arg.startsWith("--rotations="));
 assert.ok(ids.length && ids.every((id) => !id.startsWith("-")));
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8"));
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -52,7 +62,7 @@ for (const id of ids) {
     descriptor.gameplay = edit.gameplay;
   }
   for (const elevation of [0, 40])
-    for (const rotation of [0, 37, 90, 180]) {
+    for (const rotation of rotations) {
       const empty = {
         version: 1,
         map: id,
@@ -83,6 +93,6 @@ for (const id of ids) {
       });
       await save(false);
     }
-  console.log(`${id}: eight placements compiled`);
+  console.log(`${id}: ${2 * rotations.length} placements compiled`);
 }
 await save(true);
