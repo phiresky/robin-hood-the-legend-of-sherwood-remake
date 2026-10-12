@@ -34,6 +34,10 @@ hash guards in `reviewed-nottingham-jump-receivers.json`. Stage
 for draft warning text. Its publication report confirms all ten definitions
 installed and Nottingham's scene pins refreshed. Rotated traversal and flight
 contact warnings remain; this is an improved draft publication, not full parity.
+Fresh published export `saved-map-exports-HsTUwy` finishes in about 56 seconds,
+matches the candidate except for warning text, constructs natively and retains
+355 successful traversals with 25 failures. Its full browser ZIP round trip is
+running separately; native geometry checks do not prove rendered export fidelity.
 
 The upper red house's required-posture fixture
 `nottingham-helper-receiver-mly9s8mq` passes 50/80 cases: assisted ascents and
