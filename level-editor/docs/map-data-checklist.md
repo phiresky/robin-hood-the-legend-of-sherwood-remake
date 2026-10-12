@@ -45,6 +45,14 @@ pass; fourteen other directions have no conservative supported probe and remain
 unverified. These are traversal findings, not a new rendered ZIP certification.
 See [the fresh checks](map-compilation-evidence.md#fresh-derby-and-leicester-traversal-checks-2026-10-12).
 
+**Full Derby archive (2026-10-12):** the current 25 MB ZIP reopens/rebakes
+identically and loads without base-game data or mission content. Fresh tests of
+its archived descriptor pass 152 ordinary routes, 28 stairs through prepared and
+player-click dispatch, and twenty posture-aware jump traversals. GPU appearance
+checks pass all 32 control combinations. Opaque black patches in the lower
+courtyard need geometry/material diagnosis; animated character compositing and
+broader interactions remain open. See [the archive evidence](map-compilation-evidence.md#full-derby-rendered-archive-2026-10-12).
+
 **Current Croisement checks (2026-10-12):** all three current scene exports load
 natively and pass 16/6/24 ordinary route samples. Croisement01 passes all 130
 jump probes; Croisement02 covers all 40 with the appropriate helper posture.

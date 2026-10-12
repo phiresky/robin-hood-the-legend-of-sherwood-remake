@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Full Derby rendered archive (2026-10-12)
+
+`derby-rendered-library-KJuvDL` snapshots the saved scene without authored mission
+content and loads all 69 sources. Its 1920×2752 browser export reopens and rebakes
+with matching editor document, gameplay, color/depth and four appearance states.
+`derby-rendered.zip` contains 25,264,896 bytes, SHA-256
+`93091cc1ba93fb6d66c44f8bd8b3224de78b27842c23c44f6ae4044cc604dfad`.
+The extracted descriptor digest is
+`76d812600b83ed19c9fcc00b7c9ce45b2908cfd668f8affbf55e9530befc97f3`.
+
+Native loading over an empty base filesystem passes in 14.69 seconds: 371 sight
+obstacles, eleven masks, seventy door projections, 64,860 grid blocks and four
+appearance regions for five controls. It retains the editor document and excludes
+mission content. Fresh archived-descriptor checks pass 152 ordinary routes,
+28 prepared stair routes with complete character animations, the same 28 routes
+through player-click dispatch, and twenty posture-aware jump traversals. The GPU
+test passes all 32 global control combinations plus reset, including transition
+behavior, at four color/depth probes (158.24 seconds).
+
+The descriptor differs from `saved-map-exports-ciuuxP` at one stair's entrance
+points and movement polygon, so the earlier movement results were not substituted
+for these fresh checks. There are 220 descriptor warnings. Visual inspection of
+`baked-color.png` identifies opaque black patches in the lower courtyard, including
+pixels (440,2080) and (455,2085). The terrain asset's embedded image has colored
+pixels at those coordinates; the responsible geometry/material still needs
+identification. Archive determinism and gameplay success do not clear this visual
+finding or establish animated character compositing and all gameplay interactions.
+
 ## Native platform character captures (2026-10-12)
 
 `render-connection-library-G5JiC2/character-capture.json` mounts the previously
