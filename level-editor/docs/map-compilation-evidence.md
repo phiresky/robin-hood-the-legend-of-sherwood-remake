@@ -210,6 +210,19 @@ validate landing height continuity and collision/state ownership, retain all
 usable floor coverage, and reject missing or displaced landings. Asset mesh
 contact and rendered actor/depth verification remain separate open checks.
 
+The shared `supportedFootprintCenters` calculation now derives the complete
+footprint-supported center regions instead of sampling an approach corridor.
+It unions supporting footprints and subtracts each outer/hole boundary swept
+by the actor box. Four tests cover short stairs joined to both landings,
+missing/displaced landings, interior holes and disconnected/concave floors;
+over 6,000 sample positions agree with independent whole-box clipping.
+The published-footprint diagnostic cross-checks all sampled centers against
+these exact regions in all eight placements. Inset supported world areas are
+58.8788, 54.4433, 60.8306 and 58.8788 square units at 0/37/90/180 degrees,
+unchanged by raising the assembly forty units. This helper is currently used
+by the diagnostic; native export integration and the height/collision guards
+above are still required.
+
 ## Non-reversed projection clearance (2026-10-12)
 
 Pre-normalization clearance was restricted to folded projections. A simple

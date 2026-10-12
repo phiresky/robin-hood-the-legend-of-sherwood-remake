@@ -11,6 +11,7 @@ import { compileNavigationGraph } from "../shared/src/compile-navigation-graph.t
 import { compileLiftApproaches } from "../shared/src/compile-lift-approaches.ts";
 import { compileLiftPassageStates } from "../shared/src/compile-passage-states.ts";
 import { prepareStairPassages } from "../shared/src/prepare-stair-passages.ts";
+import { supportedFootprintCenters } from "../shared/src/supported-footprint-centers.ts";
 
 const clipping = createRequire(new URL("../shared/package.json", import.meta.url))(
   "polygon-clipping",
@@ -112,6 +113,17 @@ for (const { file } of manifest.results) {
     [6, 3],
     [5, 2],
   ]) {
+    const exactCenters = supportedFootprintCenters(
+      [floor],
+      [floor, ...receivers.map((receiver) => [receiver.points.map(({ x, y }) => [x, y])])],
+      half,
+    );
+    const containsCenter = (point) =>
+      exactCenters.some(
+        (polygon) =>
+          pointInGameplayPolygon(point, polygon[0], true) &&
+          polygon.slice(1).every((hole) => !pointInGameplayPolygon(point, hole, true)),
+      );
     let stairOnly = 0;
     const candidates = [];
     for (let x = Math.ceil(Math.min(...xs)); x <= Math.max(...xs); x++)
@@ -125,7 +137,9 @@ for (const { file } of manifest.results) {
           [-1, 1],
         ].map(([dx, dy]) => [center[0] + dx * half[0], center[1] + dy * half[1]]);
         if (area(clipping.difference([box], floor)) < 1e-8) stairOnly++;
-        if (area(clipping.difference([box], joined)) < 1e-8) candidates.push([x, y]);
+        const supported = area(clipping.difference([box], joined)) < 1e-8;
+        assert.equal(containsCenter(center), supported, `${file}: whole-box support at ${center}`);
+        if (supported) candidates.push([x, y]);
       }
     const nearPassage = (point) => {
       const [first, second] = lift.doors.map((door) => door.point_in);
@@ -162,6 +176,8 @@ for (const { file } of manifest.results) {
       half,
       stairOnly,
       joined: candidates.length,
+      exactCenterArea: area(exactCenters),
+      exactCenterRegions: exactCenters,
       hullSupported,
       missingLandingUnsupportedArea: receivers.map((removed) => {
         const remaining = clipping.union(
