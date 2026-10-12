@@ -24,3 +24,23 @@ clipping kept separate. Approval of climbing variant05 does not cover these four
 The source timing remains three transition images held for two eligible updates
 each, followed by terminal background integration. Callback actors and latches
 are independently owned. No Tac19 occupied-net/capture state is introduced.
+
+## Private geometry derivatives
+
+`probe_contacts.py` queues alpha-aware native receiver rays in the shared two-slot
+FIFO pool. `build_models.py` builds a new immutable rounded variant02 derivative;
+the initial all-four construction recipe is preserved beside `geometry-v1`.
+Every profile file contains all four authored poses. Source faces retain exact
+nearest-sampled pixels; unknown closed backs and edges are gray. The upper border
+of variant02 is completed with inferred, separately marked geometry.
+
+Saved files are reopened for textured and solid eight-view sheets for both
+endpoints. Original camera is always first. Closed-edge counts, native silhouette
+center checks and actual stored-UV samples are recorded for every pose. These
+checks do not establish coherent attachments or whole-scene source visibility.
+
+`contact_models.py` clips installed receiver triangles against each opaque pixel's
+physical prism and evaluates bilinear texture alpha over the clipped polygon.
+It is an endpoint construction-volume audit, not continuous motion approval.
+Its first version binds the original depth proposal and original top continuation.
+Any revised geometry requires a separately bound contact result.
