@@ -41,6 +41,22 @@ in `supported-jump-spans-C1xOyD` nor 64 with the added faces in
 search does not prove that no valid connection exists. Best-effort export warnings
 remain available; no new runtime solver is involved.
 
+### East bridge-street landing alternatives
+
+The same search on full York pair 32 (failing line 65) produces a nearby
+flight-clear candidate in `supported-jump-spans-OW4ZDM`, but native movement
+passes only 5/10 offset clicks. The reverse direction completes the flight and
+then stops short during the post-landing walk; the startup audit records an
+invalid step while the actor changes receiving roof faces.
+
+Bounded review `supported-jump-spans-aAxkcA` finds 24 flight-clear candidates
+among 46 examined supported spans. Native offset clicks pass 120/240, with all
+120 failures in the reverse direction. Independent interior probes in
+`interior-jump-clicks-A0Ffx5` pass all 432 routes. Thus flight-clear endpoints and
+successful interior clicks do not establish the short post-landing movement
+contract. These alternatives remain unpublished; receiving-face continuity and
+the observed startup steps need investigation before changing asset edges.
+
 ## Supported integer jump-span search (2026-10-12)
 
 `refinement/review-jump-supported-spans.mjs` generates diagnostic replacements
