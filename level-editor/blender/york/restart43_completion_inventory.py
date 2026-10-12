@@ -1,9 +1,9 @@
 """Reconcile current York evidence without treating historical ledger totals as fresh audit."""
 import hashlib,json
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/york-refinement/restart2';OUT=B/'restart43-completion-inventory-v1';assert not OUT.exists();OUT.mkdir()
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/york/restart2';OUT=B/'restart43-completion-inventory-v1';assert not OUT.exists();OUT.mkdir()
 def pin(p):return dict(path=str(p),sha256=hashlib.sha256(p.read_bytes()).hexdigest())
-source_files=[B/'full-scope-ledger.json',B/'live-work.json',B/'progress.json',ROOT/'level-editor/work/croisement02-refinement/continuation-20261009-root.json']
+source_files=[B/'full-scope-ledger.json',B/'live-work.json',B/'progress.json',ROOT/'level-editor/work/active/croisement02/continuation-20261009-root.json']
 pair=B/'pair-textures-v1/assembled-v3-bounded/export-v2/publication-v1/publication.json';hall=B/'hall-textures-v2/exports-v3/independent-wiring-v2/publication-v1/publication.json';source_files.extend([pair,hall]);p=json.loads(pair.read_text());h=json.loads(hall.read_text());installed=[]
 for path,digest in p['published_files'].items():
  if Path(path).name in ['model.glb','asset.json']:installed.append(dict(**pin(Path(path)),receipt_sha256=digest,matches=pin(Path(path))['sha256']==digest))
@@ -16,7 +16,7 @@ for directory in ['restart42-approved-well-export-v2','restart42-approved-storeh
  for path,digest in v['files'].items():assert pin(Path(path))['sha256']==digest,path
  exports.append(dict(asset_id=v['asset_id'],handoff=pin(handoff),browser_request=pin(handoff.with_name('browser-request.json')),status='Approved exact private export and surface guard complete; browser/transaction/canonical installation pending'))
 source_files.extend([B/'approved-gate-staging-plan-v1/plan.json',B/'approved-shed-jamb-motion-integration-v1/integration.json',B/'restart40-approved-integration-v1/integration-plan.json',B/'winch-supported-motion-v1/state-plan/integration-plan-v1.json'])
-receipts=list((ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches').glob('*/user-approval*.json'))
+receipts=list((ROOT/'level-editor/work/active/croisement02/restart3-review-batches').glob('*/user-approval*.json'))
 receipts+=list(B.glob('*/user*approval*.json'))
 chain_hash='ebe41b23e0b4f3695eace56ed8fdaf57b4f03eb193932a737b66cee18e2f2422'
 matching=[pin(p)for p in receipts if chain_hash in p.read_text()]

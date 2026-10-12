@@ -1,7 +1,7 @@
 """Propagate the reviewed hall end-wall correction to exact archived cover states."""
 import argparse,hashlib,json,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement';WORK=BASE/'restart2'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york';WORK=BASE/'restart2'
 p=argparse.ArgumentParser();p.add_argument('state',choices=['initial-initial','initial-applied','applied-initial','applied-applied']);args=p.parse_args(sys.argv[sys.argv.index('--')+1:]);OUT=WORK/'hall-return-four-states-v1'/args.state
 if OUT.exists():raise FileExistsError(OUT)
 if shutil.disk_usage(ROOT).free<25*1024**3:raise RuntimeError('Disk below25GiB')

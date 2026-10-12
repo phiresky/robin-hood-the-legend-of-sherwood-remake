@@ -2,7 +2,7 @@
 import hashlib, json, math, shutil, sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-WORK=ROOT/'level-editor/work/york-refinement'
+WORK=ROOT/'level-editor/work/active/york'
 OUT=WORK/'restart2/loose-planks-candidate-v1'
 SOURCE=WORK/'grounding/york-grounded.blend'
 PLAN=WORK/'restart2/timber-contact-plan-v1/plan.json'

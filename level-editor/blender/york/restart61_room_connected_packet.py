@@ -3,7 +3,7 @@ import json,hashlib,html
 from pathlib import Path
 from collections import deque
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';OUT=W/'restart61-room-geometry-review-v2';assert not OUT.exists();sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();model=W/'restart61-room-interior-v19/model.blend';digest=sha(model)
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';OUT=W/'restart61-room-geometry-review-v2';assert not OUT.exists();sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();model=W/'restart61-room-interior-v19/model.blend';digest=sha(model)
 reports={k:json.loads((W/p/'report.json').read_text())for k,p in {'native':'restart61-room-interior-audit-v19','area':'restart61-room-final-audit-v19','mechanisms':'restart61-room-connected-contact-v19','enclosure':'restart61-room-enclosure-v19','views':'restart61-room-interior-contact-v19','isolated':'restart61-room-isolated-shell-v19','tight':'restart61-room-tight-v19'}.items()}
 for k,r in reports.items():assert r.get('model_sha256',r.get('candidate_sha256'))==digest
 assert reports['native']['initial_changed_pixels']==reports['native']['applied_changed_outside_source_alpha']==0

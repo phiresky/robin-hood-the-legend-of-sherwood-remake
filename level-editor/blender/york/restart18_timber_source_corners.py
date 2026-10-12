@@ -5,8 +5,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[3]
-SOURCE = ROOT / 'level-editor/work/york-refinement/restart2/pair-v14/assets/york-southwest-square-west-house/reference/source.png'
-OUT = ROOT / 'level-editor/work/york-refinement/restart2/timber-props-source-corners-v2'
+SOURCE = ROOT / 'level-editor/work/active/york/restart2/pair-v14/assets/york-southwest-square-west-house/reference/source.png'
+OUT = ROOT / 'level-editor/work/active/york/restart2/timber-props-source-corners-v2'
 if OUT.exists():
     raise FileExistsError(OUT)
 digest = hashlib.sha256(SOURCE.read_bytes()).hexdigest()

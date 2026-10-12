@@ -3,7 +3,7 @@ import argparse,hashlib,io,json,struct,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('state');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
-OUT=ROOT/'level-editor/work/york-refinement/restart2/hall-textures-v2/exports-v3'/args.state
+OUT=ROOT/'level-editor/work/active/york/restart2/hall-textures-v2/exports-v3'/args.state
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 acquire()

@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/york-refinement/restart2'
+WORK = ROOT / 'level-editor/work/active/york/restart2'
 OUT = WORK / 'jamb-orientation-v2'
 SOURCE = WORK / 'gate-geometry-v10/covered/model.blend'
 NAME = 'building-778-portcullis-jamb-return'

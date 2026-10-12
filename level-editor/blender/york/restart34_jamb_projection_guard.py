@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 from shapely.geometry import Polygon
 from shapely.ops import triangulate
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';D=W/'gate-saved-contact-audit-v1';OUT=W/'jamb-hidden-clearance-plan-v1';assert not OUT.exists();audit=json.loads((D/'report.json').read_text());proposal=json.loads((D/'hidden-clearance-proposal.json').read_text());old=np.array(audit['geometry_world']['jamb_vertices']);new=np.array(proposal['proposal']['proposed_jamb_vertices_world']);faces=audit['geometry_world']['jamb_faces'];normal=np.array(proposal['proposal']['normal_world']);axis=np.array([-normal[1],normal[0],0]);base=old[0]
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';D=W/'gate-saved-contact-audit-v1';OUT=W/'jamb-hidden-clearance-plan-v1';assert not OUT.exists();audit=json.loads((D/'report.json').read_text());proposal=json.loads((D/'hidden-clearance-proposal.json').read_text());old=np.array(audit['geometry_world']['jamb_vertices']);new=np.array(proposal['proposal']['proposed_jamb_vertices_world']);faces=audit['geometry_world']['jamb_faces'];normal=np.array(proposal['proposal']['normal_world']);axis=np.array([-normal[1],normal[0],0]);base=old[0]
 def triangles(vs):
  out=[]
  for face in faces:

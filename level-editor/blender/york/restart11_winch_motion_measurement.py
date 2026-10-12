@@ -3,7 +3,7 @@ import hashlib,json
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';SRC=WORK/'geometry-pass-01/native-state-source-v1';OUT=WORK/'restart2/winch-motion-measurement-v2'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';SRC=WORK/'geometry-pass-01/native-state-source-v1';OUT=WORK/'restart2/winch-motion-measurement-v2'
 if OUT.exists():raise FileExistsError(OUT)
 record=next(r for r in json.loads((SRC/'manifest.json').read_text())['records'] if r['id']=='patch-004');frames=next(r['frames'] for r in record['rows'] if r['action']=='PatchTransition');assert len(frames)==45
 OUT.mkdir();rows=[];sheets=[Image.new('RGB',(650,960),'#303840') for _ in range(3)]

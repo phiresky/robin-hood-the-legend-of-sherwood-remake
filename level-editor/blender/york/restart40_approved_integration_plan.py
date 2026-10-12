@@ -1,7 +1,7 @@
 """Pin scoped York appearance and channel approvals for private integration work."""
 import hashlib,json
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';O=W/'restart40-approved-integration-v1';assert not O.exists();sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest();R=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/next-six-textures-channels-v1/user-approval.json';assert sha(R)=='7f6abc55fa21eee6ebd3b10c4f079e91e7f8159127a30a23fb9a6955d52e3f9d';a=json.loads(R.read_text());assert a['user_text']=='all approved';members=[m for m in a['decisions']if m['asset_id'].startswith('york-')];assert len(members)==3;pins={str(R):sha(R)}
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';O=W/'restart40-approved-integration-v1';assert not O.exists();sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest();R=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/next-six-textures-channels-v1/user-approval.json';assert sha(R)=='7f6abc55fa21eee6ebd3b10c4f079e91e7f8159127a30a23fb9a6955d52e3f9d';a=json.loads(R.read_text());assert a['user_text']=='all approved';members=[m for m in a['decisions']if m['asset_id'].startswith('york-')];assert len(members)==3;pins={str(R):sha(R)}
 for m in members:
  assert sha(m['model'])==m['model_sha256'];pins[m['model']]=m['model_sha256']
  if m['scope']=='texture':

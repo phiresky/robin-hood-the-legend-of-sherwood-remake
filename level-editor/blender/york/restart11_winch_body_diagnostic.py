@@ -5,7 +5,7 @@ import math
 import sys
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/york-refinement'
+WORK = ROOT / 'level-editor/work/active/york'
 OUT = WORK / 'restart2/winch-body-source-audit-v1'
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from render_slots import acquire

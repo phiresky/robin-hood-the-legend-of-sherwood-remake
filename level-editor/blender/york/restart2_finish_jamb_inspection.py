@@ -6,7 +6,7 @@ import runpy
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/york-refinement/restart2'
+WORK = ROOT / 'level-editor/work/active/york/restart2'
 BAKE = WORK / 'jamb-textures-v1'
 EXPERIMENT = WORK / 'jamb-texture-inputs-v3/experiment'
 sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()

@@ -1,7 +1,7 @@
 """Freeze worker-reviewed York texture-only cards, preserving explicit exclusions."""
 import hashlib,json,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/york-refinement/restart2';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/york/restart2';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 config={
  'storehouse':('york-riverside-stone-storehouse','York riverside stone storehouse texture','Saved texture appearance of the exact approved six storehouse meshes only. Surrounding shed, ground, doors, ownership and runtime remain excluded.',[
  'All eight saved-model views, native before/after and four context views inspected; original artwork camera first.',

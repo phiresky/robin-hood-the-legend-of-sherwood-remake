@@ -7,10 +7,10 @@ import restart44_static_transaction as io
 ROOT, LIB, BASE = io.ROOT, io.LIB, io.WORK
 STAGE = BASE / 'restart72-hall-normal-catalog-stage-v1'
 RUNS = BASE / 'restart73-hall-catalog-transaction-v1'
-STAGE_SHA = '03d576a5981da7d209ffa9510577fdfb4e979dac6d16a8a162ce754c2a5c0da6'
-APPROVAL = ROOT / 'level-editor/work/croisement02-refinement/restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json'
+STAGE_SHA = '4c7a7148d5704b66dd964e0d25df5c01ab8741f900b05b1563c5d038ec54be8e'
+APPROVAL = ROOT / 'level-editor/work/active/croisement02/restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json'
 APPROVAL_SHA = 'd435a76b08eb3ac616f1ae2ffcdf19a7875969e515dd01f65de1871ca886ef1d'
-HELPER_SHA = 'a71796d93dbfbc8fd07ebd6deebf8bc0177e7e599a85b9233c43147fd38a30e4'
+HELPER_SHA = '9cb6c1e3f87c4a8c2f3f3e28a02aa28448914188b378b761508e0f14f3186ce9'
 UI_SCRIPT = ROOT / 'level-editor/blender/york/restart72_hall_catalog_ui_check.js'
 UI_SHA = 'a961607a6a61325ba7865271d32ca5f73ef98c9b5808a7ba45eb5bf0836a4d13'
 MODEL_SHA = '3edab8b9da5fd995205224e956c5a76d716eaaa49d7d3b3380df04e0dbf99eba'
@@ -20,12 +20,12 @@ read = lambda p: json.loads(p.read_text())
 
 
 def stage_plan():
-    require(sha(STAGE / 'plan.json') == STAGE_SHA, 'Stage drift')
+    require(sha(STAGE / 'plan.operational.json') == STAGE_SHA, 'Stage drift')
     require(sha(Path(io.__file__)) == HELPER_SHA, 'Transaction helper drift')
     require(sha(APPROVAL) == APPROVAL_SHA, 'Exact six-scope approval required')
     decisions = [d for d in read(APPROVAL)['decisions'] if d['asset_id'] == 'york-castle-great-hall--animation000-flames-reflections']
     require(len(decisions) == 1 and decisions[0]['decision'] == 'approved' and decisions[0]['scope'] == 'geometry + source appearance' and decisions[0]['model_sha256'] == '97190d43ae97e3abc3afeecce30b239ce44e291e9d1773ebdabe249ca2a5b81d', 'Hall approval scope differs')
-    stage = read(STAGE / 'plan.json')
+    stage = read(STAGE / 'plan.operational.json')
     seen = set()
     for row in stage['records']:
         rel, source = Path(row['relative']), Path(row['source'])
@@ -110,7 +110,7 @@ def prepare(folder, browser, browser_sha):
     (folder / 'index.json').write_text(json.dumps(after, separators=(',', ':'), ensure_ascii=False) + '\n')
     rows.append({'source': str(folder / 'index.json'), 'target': str(index), 'old_sha256': old_index, 'new_sha256': sha(folder / 'index.json')})
     require(sha(index) == old_index, 'Catalog drift during prepare')
-    result = {'status': 'PREPARED_NOT_APPLIED', 'records': rows, 'catalog_before': before, 'entry': stage['entry'], 'stage': io.pin(STAGE / 'plan.json'), 'approval': io.pin(APPROVAL), 'browser': browser_pin, 'executor': io.pin(Path(__file__).resolve()), 'helper': io.pin(Path(io.__file__).resolve())}
+    result = {'status': 'PREPARED_NOT_APPLIED', 'records': rows, 'catalog_before': before, 'entry': stage['entry'], 'stage': io.pin(STAGE / 'plan.operational.json'), 'approval': io.pin(APPROVAL), 'browser': browser_pin, 'executor': io.pin(Path(__file__).resolve()), 'helper': io.pin(Path(io.__file__).resolve())}
     dump(folder / 'plan.json', result)
     dump(folder / 'dry-run.json', {'status': 'PASS_NOT_APPLIED', 'plan': io.pin(folder / 'plan.json')})
     return result

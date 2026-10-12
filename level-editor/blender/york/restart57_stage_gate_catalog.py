@@ -2,7 +2,7 @@
 import hashlib,json,os
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/york-refinement/restart2'
+BASE=ROOT/'level-editor/work/active/york/restart2'
 SOURCE=BASE/'restart48-production-gate-delivery-v2/library'
 OUT=BASE/'restart57-gate-catalog-stage-v1'
 LIB=ROOT/'level-editor/library'

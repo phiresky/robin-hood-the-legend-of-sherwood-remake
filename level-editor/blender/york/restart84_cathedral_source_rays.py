@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/york-refinement'
+BASE = ROOT / 'level-editor/work/active/york'
 OUT = BASE / 'restart2/restart84-cathedral-source-rays-v1'
 
 def sha(p):

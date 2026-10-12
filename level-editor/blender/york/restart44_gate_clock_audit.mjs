@@ -7,11 +7,11 @@ import { nativeTransientPatchFrame, nativePatchBackgroundFrame } from '../../sha
 import { createGateStateBinding } from './restart35_gate_state_binding.mjs';
 
 const root = path.resolve(import.meta.dirname, '../../..');
-const base = path.join(root, 'level-editor/work/york-refinement/restart2');
+const base = path.join(root, 'level-editor/work/active/york/restart2');
 const sha = p => createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const motionPath = path.join(base, 'jamb-clearance-candidate-v1/motion-proposal.json');
 assert.equal(sha(motionPath), '07fd102ae0a508bf77ff10f6d52dda6c746723d3da7011b312b9164b7758a446');
-const source = path.join(root, 'level-editor/work/york-refinement/geometry-pass-01/native-state-source-v1/manifest.json');
+const source = path.join(root, 'level-editor/work/active/york/geometry-pass-01/native-state-source-v1/manifest.json');
 assert.equal(sha(source), '996e048c12c2326d059c6665ff70bda548937e2d06aa87c8d3f898eee0525cfe');
 const sourceState = JSON.parse(fs.readFileSync(source)).records.find(r => r.id === 'patch-000');
 assert.equal(sourceState.record.definitive, true);

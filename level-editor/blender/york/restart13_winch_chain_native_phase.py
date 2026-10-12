@@ -2,7 +2,7 @@
 import hashlib,json,math,statistics
 from pathlib import Path
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';SOURCE=WORK/'geometry-pass-01/native-state-source-v1';OUT=WORK/'restart2/winch-chain-native-phase-v1.json'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';SOURCE=WORK/'geometry-pass-01/native-state-source-v1';OUT=WORK/'restart2/winch-chain-native-phase-v1.json'
 if OUT.exists():raise FileExistsError(OUT)
 record=next(r for r in json.loads((SOURCE/'manifest.json').read_text())['records'] if r['id']=='patch-004');frames=next(r['frames'] for r in record['rows'] if r['action']=='PatchTransition');motion=json.loads((WORK/'restart2/winch-motion-physical-v2/motion.json').read_text());all_profiles=[]
 for i,(frame,pose) in enumerate(zip(frames,motion['rows'])):

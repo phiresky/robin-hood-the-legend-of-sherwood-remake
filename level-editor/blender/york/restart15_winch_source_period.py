@@ -3,7 +3,7 @@ import hashlib,json,math
 from pathlib import Path
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';SOURCE=WORK/'geometry-pass-01/native-state-source-v1';OUT=WORK/'restart2/winch-native-link-period-v1.json'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';SOURCE=WORK/'geometry-pass-01/native-state-source-v1';OUT=WORK/'restart2/winch-native-link-period-v1.json'
 if OUT.exists():raise FileExistsError(OUT)
 record=next(r for r in json.loads((SOURCE/'manifest.json').read_text())['records'] if r['id']=='patch-004');frames=next(r['frames'] for r in record['rows'] if r['action']=='PatchTransition');poses=json.loads((WORK/'restart2/winch-motion-physical-v2/motion.json').read_text())['rows'];periods=np.linspace(6.5,8,121);rows=[]
 for index,(frame,pose) in enumerate(zip(frames,poses)):

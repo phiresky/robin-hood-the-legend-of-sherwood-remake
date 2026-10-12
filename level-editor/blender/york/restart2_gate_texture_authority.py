@@ -2,7 +2,7 @@
 import hashlib,json
 from pathlib import Path
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/gate-geometry-v10';SRC=WORK/'geometry-pass-01/native-state-source-v1';OUT=WORK/'restart2/gate-texture-authority-v1'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';BASE=WORK/'restart2/gate-geometry-v10';SRC=WORK/'geometry-pass-01/native-state-source-v1';OUT=WORK/'restart2/gate-texture-authority-v1'
 if OUT.exists():raise FileExistsError(OUT)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 approved=json.loads((BASE/'user-geometry-approval.json').read_text());audit=json.loads((BASE/'native-first-hit-audit.json').read_text());record=next(r for r in json.loads((SRC/'manifest.json').read_text())['records'] if r['id']=='patch-000');OUT.mkdir(parents=True)

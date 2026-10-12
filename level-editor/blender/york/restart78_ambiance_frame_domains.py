@@ -6,7 +6,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[3]
 SOURCE = ROOT / 'datadirs/fullgame_gog_hackable/Data/Animations'
-OUT = ROOT / 'level-editor/work/york-refinement/restart2/restart78-ambiance-frame-domains-v2'
+OUT = ROOT / 'level-editor/work/active/york/restart2/restart78-ambiance-frame-domains-v2'
 
 def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()

@@ -3,7 +3,7 @@ import argparse, copy, gzip, hashlib, importlib.util, json, os, shutil
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/york-refinement/restart2/hall-textures-v2/exports-v3/independent-wiring-v2'
+BASE = ROOT / 'level-editor/work/active/york/restart2/hall-textures-v2/exports-v3/independent-wiring-v2'
 LIB = ROOT / 'level-editor/library'
 ASSETS = LIB / '3d-assets'
 ID = 'york-castle-great-hall'

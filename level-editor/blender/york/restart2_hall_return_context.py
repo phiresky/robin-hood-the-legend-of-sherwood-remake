@@ -1,7 +1,7 @@
 """Refresh newly exposed neighboring source receivers for a hall-only diagnostic."""
 import hashlib,json,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement';OUT=BASE/'restart2/hall-return-control-v3-context'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york';OUT=BASE/'restart2/hall-return-control-v3-context'
 if OUT.exists():raise FileExistsError(OUT)
 if shutil.disk_usage(ROOT).free<25*1024**3:raise RuntimeError('Disk below25GiB')
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))

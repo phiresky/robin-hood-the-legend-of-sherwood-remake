@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 EDITOR = Path(__file__).resolve().parents[2]
-WORK = EDITOR / 'work/york-refinement'
+WORK = EDITOR / 'work/active/york'
 LIBRARY = EDITOR / 'library'
 sys.path[:0] = [str(EDITOR/'refinement'), str(EDITOR/'refinement/blender')]
 from asset_index import discover_asset_index, write_asset_index

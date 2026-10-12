@@ -6,7 +6,7 @@ import shutil
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/york-refinement'
+WORK = ROOT / 'level-editor/work/active/york'
 BASE = WORK / 'restart2'
 OUT = BASE / 'restart44-approved-portcullis-export-v1'
 sys.path[:0] = [str(ROOT / 'level-editor/refinement'), str(ROOT / 'level-editor/refinement/blender')]

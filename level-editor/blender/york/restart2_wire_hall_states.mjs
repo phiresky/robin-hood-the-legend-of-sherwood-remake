@@ -9,7 +9,7 @@ import * as THREE from '../../app/node_modules/three/build/three.module.js';
 import { PatchDisplay, isEffectivelyVisible } from '../../app/src/patch-display.ts';
 import { modelContentSignatures, canonical, sha256 } from '../../pipeline/src/bundle-asset-states.ts';
 
-const base = path.resolve('level-editor/work/york-refinement/restart2/hall-textures-v2/exports-v3');
+const base = path.resolve('level-editor/work/active/york/restart2/hall-textures-v2/exports-v3');
 const out = path.join(base, 'independent-wiring-v2');
 const states = ['initial-initial', 'initial-applied', 'applied-initial', 'applied-applied'];
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);

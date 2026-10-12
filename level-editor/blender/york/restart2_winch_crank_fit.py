@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 ROOT=Path(__file__).resolve().parents[3]
-WORK=ROOT/'level-editor/work/york-refinement'
+WORK=ROOT/'level-editor/work/active/york'
 version='winch-room-physical-v7'
 DEST=WORK/'restart2/winch-crank-fit-v1'
 if DEST.exists():raise FileExistsError(DEST)

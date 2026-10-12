@@ -1,7 +1,7 @@
 """Render one bounded native-first inspection of the private guided entry."""
 import hashlib,json,math,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-guided-entry-candidate-v1';OUT=BASE/'review'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';BASE=WORK/'restart2/winch-guided-entry-candidate-v1';OUT=BASE/'review'
 if OUT.exists():raise FileExistsError(OUT)
 def budget():
     used=sum(p.stat().st_size for p in BASE.rglob('*') if p.is_file())

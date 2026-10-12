@@ -1,7 +1,7 @@
 """Check sampled link clearances and actual chain vertices inside the inferred idler."""
 import hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2/winch-chain-loop-prototype-v6';OUT=BASE/'link-contact-audit.json'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york/restart2/winch-chain-loop-prototype-v6';OUT=BASE/'link-contact-audit.json'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

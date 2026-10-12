@@ -1,7 +1,7 @@
 """Inspect actual saved faces and all independently observed source targets."""
 import hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';BASE=WORK/'loose-planks-candidate-v4';OUT=BASE/'saved-source-audit.json'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york/restart2';BASE=WORK/'loose-planks-candidate-v4';OUT=BASE/'saved-source-audit.json'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

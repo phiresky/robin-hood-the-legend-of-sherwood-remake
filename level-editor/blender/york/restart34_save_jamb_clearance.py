@@ -2,7 +2,7 @@
 import hashlib,json,math,shutil,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-W=ROOT/'level-editor/work/york-refinement/restart2'
+W=ROOT/'level-editor/work/active/york/restart2'
 OUT=W/'jamb-clearance-candidate-v1'
 assert not OUT.exists()
 assert shutil.disk_usage(ROOT).free>10*1024**3

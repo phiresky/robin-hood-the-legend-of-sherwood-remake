@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { bindWinchState } from './restart18_winch_state_binding.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
-const base = resolve(root, 'level-editor/work/york-refinement');
+const base = resolve(root, 'level-editor/work/active/york');
 const motionDir = resolve(base, 'restart2/winch-supported-motion-v1');
 const sourceDir = resolve(base, 'geometry-pass-01/native-state-source-v1');
 const output = resolve(base, 'restart2/winch-integration-contract-v1/contract.json');

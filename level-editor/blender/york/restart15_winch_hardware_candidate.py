@@ -1,7 +1,7 @@
 """Package the checked inferred hardware while preserving all frozen winch parts."""
 import ast,hashlib,json,math,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-guided-entry-candidate-v1';OUT=WORK/'restart2/winch-supported-hardware-v1'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';BASE=WORK/'restart2/winch-guided-entry-candidate-v1';OUT=WORK/'restart2/winch-supported-hardware-v1'
 if OUT.exists():raise FileExistsError(OUT)
 def budget():
     used=sum(p.stat().st_size for b in (BASE,OUT) for p in b.rglob('*') if p.is_file())

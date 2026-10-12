@@ -1,7 +1,7 @@
 """Carry unchanged native gameplay metadata into the approved pair's private export."""
 import copy,hashlib,json,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2/pair-textures-v1/assembled-v3-bounded';SRC=BASE/'export-v1';OUT=BASE/'export-v2';LIVE=ROOT/'level-editor/library/3d-assets/york'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york/restart2/pair-textures-v1/assembled-v3-bounded';SRC=BASE/'export-v1';OUT=BASE/'export-v2';LIVE=ROOT/'level-editor/library/3d-assets/york'
 if OUT.exists():raise FileExistsError(OUT)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 shutil.copytree(SRC/'3d-assets',OUT/'3d-assets');rows=[]

@@ -2,7 +2,7 @@
 import hashlib,json,math,sys
 from pathlib import Path
 from collections import deque
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-complete-chain-motion-v1';OUT=BASE/'review'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';BASE=WORK/'restart2/winch-complete-chain-motion-v1';OUT=BASE/'review'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

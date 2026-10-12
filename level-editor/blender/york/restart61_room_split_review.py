@@ -1,7 +1,7 @@
 """Read-only protected gatehouse contact review for the private room cover."""
 import json,hashlib,math,sys,shutil
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';OUT=W/'restart61-room-interior-contact-v13';REPAIR='--report-only' in sys.argv;assert REPAIR or not OUT.exists();assert shutil.disk_usage(ROOT).free>10*1024**3
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';OUT=W/'restart61-room-interior-contact-v13';REPAIR='--report-only' in sys.argv;assert REPAIR or not OUT.exists();assert shutil.disk_usage(ROOT).free>10*1024**3
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 import shutil

@@ -1,7 +1,7 @@
 """Coverage-aware source-only bake on frozen finite sawn timber geometry."""
 import hashlib,json,math,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';BASE=WORK/'loose-planks-candidate-v5';OUT=WORK/'loose-planks-source-v6'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york/restart2';BASE=WORK/'loose-planks-candidate-v5';OUT=WORK/'loose-planks-source-v6'
 if OUT.exists():raise FileExistsError(OUT)
 assert shutil.disk_usage(ROOT).free>10*1024**3
 assert int(next(x.split()[1]for x in Path('/proc/meminfo').read_text().splitlines()if x.startswith('MemAvailable:')))*1024>6*1024**3

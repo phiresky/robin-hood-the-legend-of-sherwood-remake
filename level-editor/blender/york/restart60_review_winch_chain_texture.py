@@ -1,7 +1,7 @@
 """Reopen candidate chain fill for source-first, complete-mechanism pose review."""
 import sys,json,hashlib,shutil
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2';WORK=BASE/(sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'restart60-winch-chain-texture-bake-v1');OUT=WORK/'review'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york/restart2';WORK=BASE/(sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'restart60-winch-chain-texture-bake-v1');OUT=WORK/'review'
 sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()

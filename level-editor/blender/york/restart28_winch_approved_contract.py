@@ -1,10 +1,10 @@
 """Reconcile explicit geometry/motion approvals into the private state handoff."""
 import copy,hashlib,json
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';OUT=WORK/'winch-integration-contract-v2/contract.json'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york/restart2';OUT=WORK/'winch-integration-contract-v2/contract.json'
 if OUT.exists():raise FileExistsError(OUT)
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
-receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/pending-v17-v23-plus-two-hub-v1/user-approval.json';assert sha(receipt)=='ca25ba9362b26dfb8ac1239f7acd7b56929463498b125bed0f42dcd98ec628f4';user=json.loads(receipt.read_text());ids={'york-castle-winch-stable-components','york-castle-winch--chain-and-hardware','york-castle-winch--shown-motion45'};members=[m for c in user['decisions_by_card']for m in c['members']if m['asset_id']in ids];assert{m['asset_id']for m in members}==ids
+receipt=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/pending-v17-v23-plus-two-hub-v1/user-approval.json';assert sha(receipt)=='ca25ba9362b26dfb8ac1239f7acd7b56929463498b125bed0f42dcd98ec628f4';user=json.loads(receipt.read_text());ids={'york-castle-winch-stable-components','york-castle-winch--chain-and-hardware','york-castle-winch--shown-motion45'};members=[m for c in user['decisions_by_card']for m in c['members']if m['asset_id']in ids];assert{m['asset_id']for m in members}==ids
 for m in members:
  assert sha(m['model'])==m['model_sha256']
  if 'source_evidence'in m:assert sha(m['source_evidence'])==m['source_evidence_sha256']

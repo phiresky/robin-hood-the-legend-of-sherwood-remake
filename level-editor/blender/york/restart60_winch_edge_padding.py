@@ -1,7 +1,7 @@
 """Repair ten subpixel UV-edge sampling gaps from adjacent generated same-face texels."""
 import hashlib,json,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';I=W/'restart60-winch-chain-combined-v2';O=W/'restart60-winch-chain-combined-v3';assert not O.exists();sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';I=W/'restart60-winch-chain-combined-v2';O=W/'restart60-winch-chain-combined-v3';assert not O.exists();sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 assert shutil.disk_usage(ROOT).free>10*1024**3;assert int(next(l.split()[1] for l in Path('/proc/meminfo').read_text().splitlines() if l.startswith('MemAvailable:')))*1024>6*1024**3
 sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire

@@ -9,7 +9,7 @@ from PIL import Image,ImageDraw
 from shapely.geometry import Polygon,Point
 from shapely.ops import unary_union
 ROOT=Path(__file__).resolve().parents[3]
-WORK=ROOT/'level-editor/work/york-refinement/restart2'
+WORK=ROOT/'level-editor/work/active/york/restart2'
 OUT=WORK/'loose-planks-ownership-v3'
 MODEL=WORK/'loose-planks-candidate-v1'
 SOURCE=WORK/'pair-v14/assets/york-southwest-square-west-house/reference/source.png'

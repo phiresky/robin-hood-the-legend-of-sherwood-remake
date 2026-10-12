@@ -1,7 +1,7 @@
 """Render bounded complete and contact inspections of the inferred hardware."""
 import hashlib,json,math,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-supported-hardware-v1';OUT=BASE/'review'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';BASE=WORK/'restart2/winch-supported-hardware-v1';OUT=BASE/'review'
 if OUT.exists():raise FileExistsError(OUT)
 def budget():
     used=sum(p.stat().st_size for b in (BASE,WORK/'restart2/winch-guided-entry-candidate-v1') for p in b.rglob('*') if p.is_file())

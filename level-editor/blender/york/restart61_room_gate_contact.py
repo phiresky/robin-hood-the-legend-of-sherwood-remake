@@ -2,7 +2,7 @@
 import json,hashlib
 from pathlib import Path
 import numpy as np
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';OUT=W/'restart61-room-gate-contact-v13';assert not OUT.exists()
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';OUT=W/'restart61-room-gate-contact-v13';assert not OUT.exists()
 source=W/'gate-saved-contact-audit-v1/report.json';audit=json.loads(source.read_text());assert audit['model_sha256']=='6ed0064f493f79cb38f249fdbc41177eac3cee5659fb86c73f59ae746ad19b70';motion=W/'jamb-clearance-candidate-v1/motion-proposal.json';assert hashlib.sha256(motion.read_bytes()).hexdigest()=='07fd102ae0a508bf77ff10f6d52dda6c746723d3da7011b312b9164b7758a446';room=json.loads((W/'restart61-room-winch-contact-v13/report.json').read_text());gv=np.array(audit['geometry_world']['gate_vertices']);gf=audit['geometry_world']['gate_faces'];gids=[(f[0],f[i],f[i+1])for f in gf for i in range(1,len(f)-1)]
 def segment_triangle(p,q,tri):
  e1=tri[:,1]-tri[:,0];e2=tri[:,2]-tri[:,0];direction=q-p;h=np.cross(direction,e2);det=np.einsum('ij,ij->i',e1,h);valid=np.abs(det)>1e-9;inv=np.zeros_like(det);inv[valid]=1/det[valid];ss=p-tri[:,0];u=np.einsum('ij,ij->i',ss,h)*inv;r=np.cross(ss,e1);v=r@direction*inv;t=np.einsum('ij,ij->i',e2,r)*inv;return np.where(valid&(u>=-1e-7)&(v>=-1e-7)&(u+v<=1+1e-7)&(t>1e-6)&(t<1-1e-6))[0]

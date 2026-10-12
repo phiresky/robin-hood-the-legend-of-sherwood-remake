@@ -7,7 +7,7 @@ import shutil
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/york-refinement'
+BASE = ROOT / 'level-editor/work/active/york'
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('state', choices=['initial-initial', 'initial-applied', 'applied-initial'])
 args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])

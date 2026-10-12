@@ -9,7 +9,7 @@ def replace(old,new):
  text=text.replace(old,new)
 replace("OUT=WORK/'restart2/loose-planks-candidate-v1'","OUT=WORK/'restart2/loose-planks-candidate-v5'")
 replace("PLAN=WORK/'restart2/timber-contact-plan-v1/plan.json'","PLAN=WORK/'restart2/timber-sawn-end-plan-v1/plan.json'")
-PLAN=BASE.resolve().parents[2]/'work/york-refinement/restart2/timber-sawn-end-plan-v1/plan.json'
+PLAN=BASE.resolve().parents[2]/'work/active/york/restart2/timber-sawn-end-plan-v1/plan.json'
 replace('ec34bcd8e3b98fa5a7e5a957e0b55b86684f7f4ae8096ebfe5c720eddad9bf12','13da0b5e2ce4112c901a92129ceae73f2ab876b5382be8866bf1165f5d29869f')
 start=text.index('# Rectangular rightmost variant,');end=text.index('bpy.ops.wm.read_factory_settings',start)
 text=text[:start]+"best={'variant':'Finite sawn ends; all observed source targets retained','maximum_error':None}\n"+text[end:]

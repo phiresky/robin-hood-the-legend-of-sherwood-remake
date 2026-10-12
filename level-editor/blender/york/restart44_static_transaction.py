@@ -15,10 +15,10 @@ import sys
 ROOT = Path(__file__).resolve().parents[3]
 LIB = ROOT / 'level-editor/library'
 ASSETS = LIB / '3d-assets'
-WORK = ROOT / 'level-editor/work/york-refinement/restart2'
+WORK = ROOT / 'level-editor/work/active/york/restart2'
 STAGE = WORK / 'restart43-approved-static-stage-v3'
 RUNS = WORK / 'restart44-static-transaction-v1'
-CORE = ROOT / 'level-editor/work/croisement02-refinement/restart25-approved-appearance-delta-v1/derivatives-v3/transaction.py'
+CORE = ROOT / 'level-editor/work/active/croisement02/restart25-approved-appearance-delta-v1/derivatives-v3/transaction.py'
 spec = importlib.util.spec_from_file_location('york_publication_core', CORE)
 core = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(core)

@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image,ImageChops,ImageDraw,ImageFilter
 
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/york-refinement'
+BASE=ROOT/'level-editor/work/active/york'
 DEST=BASE/'restart2/hall-source-authority-v1'
 STUDY=BASE/'restart2/hall-source-authority-study-v1'
 if DEST.exists():raise FileExistsError(DEST)

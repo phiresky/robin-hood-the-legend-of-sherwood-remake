@@ -3,7 +3,7 @@ import hashlib,json,math,sys
 from pathlib import Path
 from PIL import Image,ImageDraw
 from shapely.geometry import Polygon
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';BASE=WORK/sys.argv[1]
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york/restart2';BASE=WORK/sys.argv[1]
 if(BASE/'packet-review.json').exists():raise FileExistsError(BASE/'packet-review.json')
 r=json.loads((BASE/'candidate.json').read_text());pieces=r['pieces'];vv=[[x,y,p['bottom_z']]for p in pieces for x,y in p.get('bottom_footprint_world',p['footprint_world'])]+[[x,y,p['top_z']]for p in pieces for x,y in p['footprint_world']];s=math.sin(math.radians(35));c=math.cos(math.radians(35));center=[(min(v[k]for v in vv)+max(v[k]for v in vv))/2 for k in range(3)];cx=center[0];cy=-s*center[1]-c*center[2]
 art=Image.open(WORK/'pair-v14/assets/york-southwest-square-west-house/reference/source.png').convert('RGB');native=art.transform((256,256),Image.Transform.EXTENT,(cx-50,cy-50,cx+50,cy+50),resample=Image.Resampling.NEAREST);actual=Image.open(BASE/'review/0-textured.png').convert('RGBA');im=Image.new('RGB',(512,280),(35,40,45));im.paste(native,(0,24));im.paste(actual,(256,24),actual);d=ImageDraw.Draw(im);d.text((5,5),'Native source / exact camera extent',fill='white');d.text((261,5),'Saved model / observed source faces',fill='white');im.save(BASE/'native-comparison.png')

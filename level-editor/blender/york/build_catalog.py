@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/york-refinement'
+OUT = ROOT / 'level-editor/work/active/york'
 CATALOG = ROOT / 'level-editor/refinement/catalogs/york.json'
 
 

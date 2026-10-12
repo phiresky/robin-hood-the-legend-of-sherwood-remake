@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import * as THREE from '../../app/node_modules/three/build/three.module.js';
 import {PatchDisplay,applyPlacementPatches,isEffectivelyVisible} from '../../app/src/patch-display.ts';
-const base='level-editor/work/york-refinement/restart2/hall-textures-v2/exports-v3/independent-wiring-v2';
+const base='level-editor/work/active/york/restart2/hall-textures-v2/exports-v3/independent-wiring-v2';
 const bytes=await fs.readFile(base+'/3d-assets/york-castle-great-hall/model.glb');
 const json=JSON.parse(bytes.subarray(20,20+bytes.readUInt32LE(12)).toString());
 const descriptor=JSON.parse(await fs.readFile(base+'/3d-assets/york-castle-great-hall/asset.json','utf8'));

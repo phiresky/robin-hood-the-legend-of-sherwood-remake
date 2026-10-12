@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 ROOT=Path(__file__).resolve().parents[3]
-WORK=ROOT/'level-editor/work/york-refinement'
+WORK=ROOT/'level-editor/work/active/york'
 BASE=WORK/'restart2'/(sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'winch-room-probe-v1')
 DEST=BASE/'native-first-hit-audit.json'
 if DEST.exists():raise FileExistsError(DEST)

@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';SOURCE=WORK/'geometry-pass-01/native-state-source-v1';OUT=WORK/'restart2/gate-crossbar-tracking-v1/tail-features.json'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';SOURCE=WORK/'geometry-pass-01/native-state-source-v1';OUT=WORK/'restart2/gate-crossbar-tracking-v1/tail-features.json'
 j=json.loads((SOURCE/'manifest.json').read_text());frames=next(r['frames']for r in next(x for x in j['records']if x['id']=='patch-000')['rows']if r['action']=='PatchTransition');images=[]
 for f in frames:
  c=Image.new('RGBA',(11,71));c.alpha_composite(Image.open(SOURCE/f['image']).convert('RGBA'));images.append(np.asarray(c,dtype=float))

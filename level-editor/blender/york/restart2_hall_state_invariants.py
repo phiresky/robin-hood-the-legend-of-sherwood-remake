@@ -2,7 +2,7 @@
 import hashlib,json,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/york-refinement/restart2'
+OUT=ROOT/'level-editor/work/active/york/restart2'
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 acquire()

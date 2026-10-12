@@ -1,7 +1,7 @@
 """Select source-supported link phases while penalizing abrupt physical travel."""
 import hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';version=sys.argv[1] if len(sys.argv)>1 else 'v5';BASE=WORK/f'winch-closed-loop-fit-{version}';OUT=BASE/'motion-plan.json'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york/restart2';version=sys.argv[1] if len(sys.argv)>1 else 'v5';BASE=WORK/f'winch-closed-loop-fit-{version}';OUT=BASE/'motion-plan.json'
 if OUT.exists():raise FileExistsError(OUT)
 fit=json.loads((BASE/'fit.json').read_text());motion=json.loads((WORK/'winch-motion-physical-v2/motion.json').read_text());contacts=json.loads((WORK/f'winch-chain-loop-prototype-{version}/phase-contacts.json').read_text());assert all(r['conservative_link_surface_clearance']>0 and r['idler_penetrating_vertices']==0 for r in contacts['rows'])
 phases=[i*.5 for i in range(14)];costs=[];data=[]

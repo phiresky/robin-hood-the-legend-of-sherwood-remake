@@ -7,7 +7,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/york-refinement'
+WORK = ROOT / 'level-editor/work/active/york'
 SOURCE = WORK / 'geometry-pass-01/native-state-source-v1'
 DEST = WORK / 'restart2' / (sys.argv[1] if len(sys.argv) > 1 else 'gate-source-study-v1')
 if DEST.exists():

@@ -1,7 +1,7 @@
 """Prepare repository texture inputs from exact approved gate geometry and source domains."""
 import hashlib,json,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';AUTH=WORK/'restart2/gate-texture-authority-v1';GEO=WORK/'restart2/gate-geometry-v10';OUT=WORK/'restart2/gate-texture-inputs-v1'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';AUTH=WORK/'restart2/gate-texture-authority-v1';GEO=WORK/'restart2/gate-geometry-v10';OUT=WORK/'restart2/gate-texture-inputs-v1'
 if OUT.exists():raise FileExistsError(OUT)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 auth=json.loads((AUTH/'manifest.json').read_text());approved=json.loads((GEO/'user-geometry-approval.json').read_text());assert sha(Path(approved['receipt']))==approved['receipt_sha256']

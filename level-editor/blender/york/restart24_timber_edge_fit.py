@@ -3,7 +3,7 @@ import ast,copy,json,math
 from pathlib import Path
 import numpy as np
 from shapely.geometry import Polygon
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';OUT=WORK/'timber-edge-fit-v2'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york/restart2';OUT=WORK/'timber-edge-fit-v2'
 if OUT.exists():raise FileExistsError(OUT)
 code=Path(__file__).with_name('restart22_timber_corrected_plan.py').read_text();code=code.replace("vertices=np.array([[x,y,z]for z in(p['bottom_z'],p['top_z'])for x,y in p['footprint_world']])","vertices=np.array([[x,y,p['bottom_z']]for x,y in p.get('bottom_footprint_world',p['footprint_world'])]+[[x,y,p['top_z']]for x,y in p['footprint_world']])")
 exec(compile(ast.Module(body=[n for n in ast.parse(code).body if isinstance(n,ast.FunctionDef)],type_ignores=[]),'<beveled ray audit>','exec'))

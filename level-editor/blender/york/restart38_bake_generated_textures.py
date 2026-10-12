@@ -9,7 +9,7 @@ assert shutil.disk_usage(Path.cwd()).free>10*1024**3
 assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024>6*1024**3
 
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/york-refinement'
+OUT=ROOT/'level-editor/work/active/york'
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('experiment',type=Path)
 parser.add_argument('generation',type=Path)

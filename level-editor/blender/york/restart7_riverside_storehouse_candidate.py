@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-edito
 from render_slots import acquire,release
 sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
 from refinement_review import _tree
-B=ROOT/'level-editor/work/york-refinement';D=B/'restart7-riverside-storehouse-v2';SOURCE=B/'restart7-riverside-shed-v2/model.blend';ASSET='york-riverside-stone-storehouse';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S))
+B=ROOT/'level-editor/work/active/york';D=B/'restart7-riverside-storehouse-v2';SOURCE=B/'restart7-riverside-shed-v2/model.blend';ASSET='york-riverside-stone-storehouse';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S))
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def signature(o):return sha_bytes(json.dumps(dict(vertices=[list(v.co)for v in o.data.vertices],faces=[list(p.vertices)for p in o.data.polygons],uvs=[[list(d.uv)for d in u.data]for u in o.data.uv_layers],matrix=[list(r)for r in o.matrix_world]),sort_keys=True).encode())
 def sha_bytes(b):return hashlib.sha256(b).hexdigest()

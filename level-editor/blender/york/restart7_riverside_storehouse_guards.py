@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3]
-B=ROOT/'level-editor/work/york-refinement'
+B=ROOT/'level-editor/work/active/york'
 D=B/'restart7-riverside-storehouse-v2'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def write(p,v):p.write_text(json.dumps(v,indent=2)+'\n')

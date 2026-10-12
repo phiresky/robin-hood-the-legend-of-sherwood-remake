@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from shapely.geometry import MultiPoint, Polygon
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/york-refinement/restart2'
+WORK = ROOT / 'level-editor/work/active/york/restart2'
 OUT = WORK / 'timber-contact-plan-v1'
 if OUT.exists():
     raise FileExistsError(OUT)

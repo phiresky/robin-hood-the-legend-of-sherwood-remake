@@ -4,7 +4,7 @@ from pathlib import Path
 import bpy
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-B=ROOT/'level-editor/work/york-refinement';D=B/'restart7-market-well-study-v1';MODEL=B/'grounding/york-grounded.blend'
+B=ROOT/'level-editor/work/active/york';D=B/'restart7-market-well-study-v1';MODEL=B/'grounding/york-grounded.blend'
 def main():
  bpy.ops.wm.open_mainfile(filepath=str(MODEL));bpy.context.view_layer.update();rows=[]
  for o in bpy.data.collections['york Working'].all_objects:

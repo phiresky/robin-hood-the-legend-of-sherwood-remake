@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/york-refinement/restart2'
+WORK = ROOT / 'level-editor/work/active/york/restart2'
 OUT = WORK / 'jamb-texture-inputs-v3'
 PROBE = WORK / 'jamb-source-probe-v1'
 GEO = WORK / 'gate-geometry-v10'

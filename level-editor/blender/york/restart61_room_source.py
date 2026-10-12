@@ -3,7 +3,7 @@ import hashlib,json
 from pathlib import Path
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
-W=ROOT/'level-editor/work/york-refinement';OUT=W/'restart2/restart61-room-source-v1'
+W=ROOT/'level-editor/work/active/york';OUT=W/'restart2/restart61-room-source-v1'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 manifest=W/'geometry-pass-01/native-state-source-v1/manifest.json'
 assert sha(manifest)=='996e048c12c2326d059c6665ff70bda548937e2d06aa87c8d3f898eee0525cfe'

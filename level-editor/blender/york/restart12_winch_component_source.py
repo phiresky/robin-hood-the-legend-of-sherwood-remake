@@ -1,7 +1,7 @@
 """Freeze stable winch components with conservative native source ownership."""
 import hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement';WORK=BASE/'restart2';OUT=WORK/'winch-components-source-v2'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york';WORK=BASE/'restart2';OUT=WORK/'winch-components-source-v2'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

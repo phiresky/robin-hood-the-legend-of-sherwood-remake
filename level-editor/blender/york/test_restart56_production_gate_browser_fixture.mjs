@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {loadProductionGateInputs} from './restart56_production_gate_browser_fixture.mjs';
 const root=path.resolve(import.meta.dirname,'../../..');
-const request=JSON.parse(fs.readFileSync(path.join(root,'level-editor/work/york-refinement/restart2/restart56-production-gate-fixture-v1/request.json')));
+const request=JSON.parse(fs.readFileSync(path.join(root,'level-editor/work/active/york/restart2/restart56-production-gate-fixture-v1/request.json')));
 test('pinned HTTP inputs supply exact production sources, real model bytes and strict read-only paths',async()=>{
  const original=globalThis.fetch;
  globalThis.fetch=async url=>new Response(fs.readFileSync(url));

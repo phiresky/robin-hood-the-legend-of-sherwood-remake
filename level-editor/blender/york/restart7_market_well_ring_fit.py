@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 from scipy.spatial import ConvexHull
 from scipy.optimize import differential_evolution
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/york-refinement';D=B/'restart7-market-well-study-v1'
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/york';D=B/'restart7-market-well-study-v1'
 def main():
  source=B/'baseline/masks/000049.png';mask=np.array(Image.open(source).convert('L'))>0;yy,xx=np.mgrid[1167:1210,209:253];points=np.column_stack((xx.ravel()+.5,yy.ravel()+.5));target=np.zeros(yy.shape,bool);target[2:41,2:41]=mask;s=math.sin(math.radians(35));c=math.cos(math.radians(35));floor=109.751;angles=np.arange(32)*2*np.pi/32
  def counts(p):

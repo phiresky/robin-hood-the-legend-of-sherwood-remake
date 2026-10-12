@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/york-refinement'
+OUT=ROOT/'level-editor/work/active/york'
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--version',required=True)
 parser.add_argument('--asset-id',default='private-york-hall-furniture')

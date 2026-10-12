@@ -1,7 +1,7 @@
 """Save one bounded private guided-entry hypothesis with unchanged reviewed wood."""
 import ast, hashlib, json, math, shutil, sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-components-source-v2';OUT=WORK/'restart2/winch-guided-entry-candidate-v1'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';BASE=WORK/'restart2/winch-components-source-v2';OUT=WORK/'restart2/winch-guided-entry-candidate-v1'
 if OUT.exists():raise FileExistsError(OUT)
 def budget():
     used=sum(p.stat().st_size for p in OUT.rglob('*') if p.is_file()) if OUT.exists() else 0

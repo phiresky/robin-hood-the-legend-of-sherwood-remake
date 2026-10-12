@@ -1,12 +1,12 @@
 """Privately export approved gatehouse channels and jamb while retaining original parts."""
 import copy,hashlib,json,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement';B=W/'restart2';OUT=B/'restart43-approved-gatehouse-export-v1';assert not OUT.exists();sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york';B=W/'restart2';OUT=B/'restart43-approved-gatehouse-export-v1';assert not OUT.exists();sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 RECEIPTS={
 'next-tree02-channels-mounds-v1/user-approval.json':'fbe71bc79abb873cc1c6937b11229fe265040824cdb6fa8f6521f89ac6900dd4',
 'next-six-textures-channels-v1/user-approval.json':'7f6abc55fa21eee6ebd3b10c4f079e91e7f8159127a30a23fb9a6955d52e3f9d',
 'next-climbing-shed-v2/user-approval.json':'830263fe013c8a0157c158290e529e91188bf8bad6f984de090c53569795d088'}
-for p,digest in RECEIPTS.items():assert sha(ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches'/p)==digest
+for p,digest in RECEIPTS.items():assert sha(ROOT/'level-editor/work/active/croisement02/restart3-review-batches'/p)==digest
 source=B/'restart42-channel-assembly-v1/model.blend';assert sha(source)=='9e3d3c48c7ce207b2e6c3dcfd9066d4c54fa5d76de729d310a02f19d9451c6aa'
 aid='york-castle-west-gatehouse';live=ROOT/'level-editor/library/3d-assets/york'/aid;descriptor=json.loads((live/'asset.json').read_text());live_pins={str(p):sha(p)for p in [live/'asset.json',live/'model.glb']}
 prior=json.loads((B/'approved-shed-jamb-motion-integration-v1/integration.json').read_text());assert all(live_pins[p]==digest for p,digest in prior['protected_live_inputs'].items()if p in live_pins)

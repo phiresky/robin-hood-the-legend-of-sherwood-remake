@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';S=WORK/'geometry-pass-01/native-state-source-v1';OUT=WORK/'restart2/gate-crossbar-tracking-v1/tracking.json'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';S=WORK/'geometry-pass-01/native-state-source-v1';OUT=WORK/'restart2/gate-crossbar-tracking-v1/tracking.json'
 if OUT.exists():raise FileExistsError(OUT)
 manifest=json.loads((S/'manifest.json').read_text());frames=next(row['frames']for row in next(r for r in manifest['records']if r['id']=='patch-000')['rows']if row['action']=='PatchTransition')
 images=[]

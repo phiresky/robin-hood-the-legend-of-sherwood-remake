@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 ROOT=Path(__file__).resolve().parents[3]
-WORK=ROOT/'level-editor/work/york-refinement'
+WORK=ROOT/'level-editor/work/active/york'
 DEST=WORK/'restart2/gate-geometry-v10'
 if DEST.exists(): raise FileExistsError(DEST)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))

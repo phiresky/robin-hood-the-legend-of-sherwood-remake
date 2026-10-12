@@ -2,7 +2,7 @@
 import ast, hashlib, json, math, sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-WORK=ROOT/'level-editor/work/york-refinement/restart2'
+WORK=ROOT/'level-editor/work/active/york/restart2'
 BASE=WORK/'winch-components-source-v2'
 OUT=WORK/'winch-guided-entry-study-v3'
 if OUT.exists(): raise FileExistsError(OUT)

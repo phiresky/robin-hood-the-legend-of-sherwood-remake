@@ -2,11 +2,11 @@
 import hashlib,json,struct
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-W=ROOT/'level-editor/work/york-refinement/restart2'
+W=ROOT/'level-editor/work/active/york/restart2'
 OUT=W/'approved-shed-jamb-motion-integration-v1'
 assert not OUT.exists()
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
-receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/next-climbing-shed-v2/user-approval.json'
+receipt=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/next-climbing-shed-v2/user-approval.json'
 assert sha(receipt)=='830263fe013c8a0157c158290e529e91188bf8bad6f984de090c53569795d088'
 a=json.loads(receipt.read_text());assert a['status']=='approved' and a['exact_user_text']=='All four approved'
 verified={}
@@ -33,7 +33,7 @@ for asset in ['york-castle-west-gatehouse','york-riverside-storehouse-timber-she
 for p in old['protected_live_inputs']:live[p]=sha(p)
 shed=json.loads((ROOT/'level-editor/library/3d-assets/york/york-riverside-storehouse-timber-shed/asset.json').read_text())
 gatehouse=json.loads((ROOT/'level-editor/library/3d-assets/york/york-castle-west-gatehouse/asset.json').read_text())
-source=ROOT/'level-editor/work/york-refinement/geometry-pass-01/native-state-source-v1/manifest.json'
+source=ROOT/'level-editor/work/active/york/geometry-pass-01/native-state-source-v1/manifest.json'
 manifest=json.loads(source.read_text());native=next(x for x in manifest['records']if x['id']=='patch-000');r=native['record']
 assert r['definitive'] and r['integrate_in_background'] and not r['end_animation_valid'] and r['door_indices']==[13,14]
 motion_path=packet/'motion-proposal.json';pin(motion_path,'07fd102ae0a508bf77ff10f6d52dda6c746723d3da7011b312b9164b7758a446')

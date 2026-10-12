@@ -3,7 +3,7 @@ import hashlib, json, math, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/york-refinement/restart2/winch-shaft-return-candidate-v1'
+BASE = ROOT / 'level-editor/work/active/york/restart2/winch-shaft-return-candidate-v1'
 OUT = BASE / 'interface-sections-v1'
 if OUT.exists():
     raise FileExistsError(OUT)

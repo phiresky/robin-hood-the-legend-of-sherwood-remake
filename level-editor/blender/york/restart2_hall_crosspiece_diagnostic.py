@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 import sys
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/york-refinement/restart2'
+BASE=ROOT/'level-editor/work/active/york/restart2'
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--model',type=Path);parser.add_argument('--output',type=Path);parser.add_argument('--pixels',help='JSON list of native pixel [x,y] pairs');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else [])
 OUT=args.output or BASE/'hall-crosspiece-study-v1'
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))

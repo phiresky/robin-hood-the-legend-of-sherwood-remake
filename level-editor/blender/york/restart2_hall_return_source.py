@@ -1,7 +1,7 @@
 """Project the revised hall-wall source authority onto the bounded return control."""
 import argparse,hashlib,json,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement';parser=argparse.ArgumentParser();parser.add_argument('--version',default='hall-return-control-v4-source');parser.add_argument('--source',type=Path,default=BASE/'restart2/hall-return-control-v3-context/model.blend');parser.add_argument('--receiver',default='building-791');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);OUT=BASE/'restart2'/args.version
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york';parser=argparse.ArgumentParser();parser.add_argument('--version',default='hall-return-control-v4-source');parser.add_argument('--source',type=Path,default=BASE/'restart2/hall-return-control-v3-context/model.blend');parser.add_argument('--receiver',default='building-791');args=parser.parse_args(sys.argv[sys.argv.index('--')+1:] if '--' in sys.argv else []);OUT=BASE/'restart2'/args.version
 if OUT.exists():raise FileExistsError(OUT)
 if shutil.disk_usage(ROOT).free<25*1024**3:raise RuntimeError('Disk below25GiB')
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))

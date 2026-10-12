@@ -3,7 +3,7 @@ import copy,hashlib,json,subprocess,sys
 from pathlib import Path
 STATE=sys.argv[1]
 assert STATE in ('initial-initial','initial-applied','applied-initial','applied-applied','independent-wiring-v2')
-ROOT=Path(__file__).resolve().parents[3];LIB=ROOT/'level-editor/library';BASE=ROOT/'level-editor/work/york-refinement/restart2/hall-textures-v2/exports-v3'/STATE;OUT=BASE/'editor-stage-v1'
+ROOT=Path(__file__).resolve().parents[3];LIB=ROOT/'level-editor/library';BASE=ROOT/'level-editor/work/active/york/restart2/hall-textures-v2/exports-v3'/STATE;OUT=BASE/'editor-stage-v1'
 if OUT.exists():raise FileExistsError(OUT)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 original=json.loads((LIB/'scenes/york.rhlos-map.json').read_text());index=json.loads((BASE/'3d-assets/index.json').read_text());ids={r['id'] for r in index['assets']};document=copy.deepcopy(original);pins={str(LIB/'scenes/york.rhlos-map.json'):sha(LIB/'scenes/york.rhlos-map.json')};mapping={}

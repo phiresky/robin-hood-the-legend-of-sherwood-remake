@@ -1,7 +1,7 @@
 """Translate exact Batch16 gate approval into the repository texture packet."""
 import hashlib,json,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';GEO=WORK/'restart2/gate-geometry-v10';BASE=WORK/'restart2/gate-texture-inputs-v1';state=sys.argv[1] if len(sys.argv)>1 else 'covered';worker=BASE/state;asset='york-castle-portcullis'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';GEO=WORK/'restart2/gate-geometry-v10';BASE=WORK/'restart2/gate-texture-inputs-v1';state=sys.argv[1] if len(sys.argv)>1 else 'covered';worker=BASE/state;asset='york-castle-portcullis'
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from prepare_texture_packet import prepare
 from review_evidence import sha

@@ -3,7 +3,7 @@ import copy,hashlib,json,math
 from pathlib import Path
 import numpy as np
 from shapely.geometry import Polygon,Point
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';OUT=WORK/'timber-corrected-plan-v2'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york/restart2';OUT=WORK/'timber-corrected-plan-v2'
 if OUT.exists():raise FileExistsError(OUT)
 source=json.loads((WORK/'loose-planks-ownership-v3/report.json').read_text());old=json.loads((WORK/'loose-planks-candidate-v1/candidate.json').read_text());pieces=copy.deepcopy(old['pieces']);s=math.sin(math.radians(35));c=math.cos(math.radians(35));back=np.array([0,-c,s])
 for p in pieces:

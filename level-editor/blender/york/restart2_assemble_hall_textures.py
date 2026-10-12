@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/york-refinement'
+BASE = ROOT / 'level-editor/work/active/york'
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('cover_bake', type=Path)
 parser.add_argument('common_bake', type=Path)

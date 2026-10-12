@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/york-refinement/restart2'
+BASE = ROOT / 'level-editor/work/active/york/restart2'
 SOURCE = BASE / 'restart63-winch-delivery-v2'
 OUT = BASE / 'restart71-winch-catalog-stage-v1'
 LIB = ROOT / 'level-editor/library'
@@ -18,7 +18,7 @@ def sha(p):
 def main():
     handoff = SOURCE / 'handoff.json'
     assert sha(handoff) == '7295f58c052c120451ae4125860cb83282bed8f1b6fe7c35160a14b394894894'
-    receipt = ROOT / 'level-editor/work/croisement02-refinement/restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json'
+    receipt = ROOT / 'level-editor/work/active/croisement02/restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json'
     assert sha(receipt) == 'd435a76b08eb3ac616f1ae2ffcdf19a7875969e515dd01f65de1871ca886ef1d'
     data = json.loads(handoff.read_text())
     source = SOURCE / 'library'

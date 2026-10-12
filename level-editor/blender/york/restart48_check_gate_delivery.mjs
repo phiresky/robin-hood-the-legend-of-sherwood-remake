@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import * as THREE from '../../app/node_modules/three/build/three.module.js';
 import {StateDelivery} from '../../app/src/state-delivery.ts';
-const root=path.resolve(import.meta.dirname,'../../..'),base=path.join(root,'level-editor/work/york-refinement/restart2/restart48-production-gate-delivery-v2');
+const root=path.resolve(import.meta.dirname,'../../..'),base=path.join(root,'level-editor/work/active/york/restart2/restart48-production-gate-delivery-v2');
 const read=p=>JSON.parse(fs.readFileSync(p));
 const request=read(path.join(base,'production-browser-request.json')),contract=read(request.contract.path),source={name:request.source.name,data:read(request.source.mission.path),level:read(request.source.level.path),camera:{kind:'oblique-orthographic',elevation_deg:35}};
 const sha=p=>createHash('sha256').update(fs.readFileSync(p)).digest('hex');

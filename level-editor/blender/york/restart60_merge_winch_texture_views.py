@@ -1,7 +1,7 @@
 """Union separately projected underside samples without replacing first-pass/source pixels."""
 import hashlib,json,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';targeted='--targeted' in sys.argv;A=W/('restart60-winch-chain-combined-v1' if targeted else 'restart60-winch-chain-texture-bake-v1');B=W/('restart60-winch-chain-targeted2-bake-v1' if targeted else 'restart60-winch-chain-underside-bake-v1');O=W/('restart60-winch-chain-combined-v2' if targeted else 'restart60-winch-chain-combined-v1');assert not O.exists()
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';targeted='--targeted' in sys.argv;A=W/('restart60-winch-chain-combined-v1' if targeted else 'restart60-winch-chain-texture-bake-v1');B=W/('restart60-winch-chain-targeted2-bake-v1' if targeted else 'restart60-winch-chain-underside-bake-v1');O=W/('restart60-winch-chain-combined-v2' if targeted else 'restart60-winch-chain-combined-v1');assert not O.exists()
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest();assert shutil.disk_usage(ROOT).free>10*1024**3;assert int(next(l.split()[1] for l in Path('/proc/meminfo').read_text().splitlines() if l.startswith('MemAvailable:')))*1024>6*1024**3
 sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire

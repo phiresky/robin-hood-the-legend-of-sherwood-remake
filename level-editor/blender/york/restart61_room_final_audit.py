@@ -1,7 +1,7 @@
 """Inspect the saved room candidate, ownership partition and review resource pins."""
 import sys,json,hashlib,math
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';OUT=W/'restart61-room-final-audit-v13';assert not OUT.exists();sys.path.insert(0,str(ROOT/'level-editor/refinement'))
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';OUT=W/'restart61-room-final-audit-v13';assert not OUT.exists();sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 import shutil
 assert shutil.disk_usage(ROOT).free>10*1024**3

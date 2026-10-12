@@ -1,7 +1,7 @@
 """Measure room contact and attachment space before inventing hidden winch hardware."""
 import ast,hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';BASE=WORK/'winch-guided-entry-candidate-v1';OUT=WORK/'winch-guided-hardware-constraints-v1.json'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york/restart2';BASE=WORK/'winch-guided-entry-candidate-v1';OUT=WORK/'winch-guided-hardware-constraints-v1.json'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

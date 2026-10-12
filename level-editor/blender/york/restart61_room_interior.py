@@ -1,7 +1,7 @@
 """Add privately inferred room floor/returns and source-scoped revealed appearance."""
 import json,math,hashlib,sys,shutil
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';OUT=W/'restart61-room-interior-v12';assert not OUT.exists();assert shutil.disk_usage(ROOT).free>10*1024**3;sys.path.insert(0,str(ROOT/'level-editor/refinement'))
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';OUT=W/'restart61-room-interior-v12';assert not OUT.exists();assert shutil.disk_usage(ROOT).free>10*1024**3;sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 import shutil
 assert shutil.disk_usage(ROOT).free>10*1024**3

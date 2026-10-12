@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { createGateStateBinding } from './restart35_gate_state_binding.mjs';
-const path = new URL('../../work/york-refinement/restart2/jamb-clearance-candidate-v1/motion-proposal.json', import.meta.url);
+const path = new URL('../../work/active/york/restart2/jamb-clearance-candidate-v1/motion-proposal.json', import.meta.url);
 const bytes = readFileSync(path);
 assert.equal(createHash('sha256').update(bytes).digest('hex'), '07fd102ae0a508bf77ff10f6d52dda6c746723d3da7011b312b9164b7758a446');
 const motion = JSON.parse(bytes), sample = createGateStateBinding(motion);

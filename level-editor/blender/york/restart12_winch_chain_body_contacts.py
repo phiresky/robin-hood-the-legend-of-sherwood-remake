@@ -1,7 +1,7 @@
 """Locate chain contact candidates against the retained solid body and room."""
 import hashlib,json,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2/winch-complete-chain-motion-v1';OUT=BASE/'body-contact-candidates.json'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york/restart2/winch-complete-chain-motion-v1';OUT=BASE/'body-contact-candidates.json'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

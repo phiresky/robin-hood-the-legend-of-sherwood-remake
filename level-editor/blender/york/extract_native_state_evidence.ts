@@ -8,7 +8,7 @@ const root = process.cwd();
 const output = process.argv[2];
 if (!output) throw new Error('Usage: node extract_native_state_evidence.ts <fresh-output-directory>');
 await fs.mkdir(output);
-const levelPath = path.join(root, 'level-editor/work/york-refinement/baseline/york.rhp.json');
+const levelPath = path.join(root, 'level-editor/work/active/york/baseline/york.rhp.json');
 const levelBytes = await fs.readFile(levelPath);
 const level = JSON.parse(levelBytes.toString());
 const data = path.join(root, 'datadirs/fullgame_gog_hackable/Data/Animations/Day');

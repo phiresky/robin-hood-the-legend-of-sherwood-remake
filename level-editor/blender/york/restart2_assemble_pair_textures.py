@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 import sys
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/york-refinement'
+BASE=ROOT/'level-editor/work/active/york'
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--version',default='assembled-v1')
 parser.add_argument('--bay-bake',default='bake-v2-shadow')

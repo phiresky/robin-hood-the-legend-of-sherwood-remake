@@ -3,7 +3,7 @@ import hashlib,json,html
 from pathlib import Path
 from collections import deque
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';OUT=W/'restart61-room-geometry-review-v1'
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';OUT=W/'restart61-room-geometry-review-v1'
 assert not OUT.exists()
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 model=W/'restart61-room-interior-v13/model.blend';digest=sha(model)

@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-W = ROOT / 'level-editor/work/york-refinement/restart2'
+W = ROOT / 'level-editor/work/active/york/restart2'
 OUT = W / 'restart70-hall-visibility-private-v1'
 sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
 old = OUT / 'baseline'

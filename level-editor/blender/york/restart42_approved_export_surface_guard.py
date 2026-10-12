@@ -17,7 +17,7 @@ sys.path[:0] = [str(ROOT / 'level-editor/refinement'), str(ROOT / 'level-editor/
 import lossy_assets as la
 from render_slots import acquire, release
 
-BASE = ROOT / 'level-editor/work/york-refinement/restart2'
+BASE = ROOT / 'level-editor/work/active/york/restart2'
 CONFIG = {
     'well': ('restart42-approved-well-export-v2', 'restart38-well-texture-baked-v1'),
     'shed': ('restart43-approved-shed-export-v1', 'shed-texture-baked-v1'),

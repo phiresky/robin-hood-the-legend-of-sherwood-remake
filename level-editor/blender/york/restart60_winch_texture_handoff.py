@@ -1,7 +1,7 @@
 """Freeze only a reviewed winch texture candidate whose visible residual audit passed."""
 import hashlib,json
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';O=W/'restart60-winch-chain-combined-v3';sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';O=W/'restart60-winch-chain-combined-v3';sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 coverage=json.loads((O/'surface-coverage.json').read_text());visibility=json.loads((O/'remaining-visibility.json').read_text());guard=json.loads((O/'approved-assembly-pose-guard.json').read_text());visual=json.loads((O/'visual-review.json').read_text());assert visibility['seen_points']==0 and guard['status']=='PASS' and visual['status']=='PASS';model=O/'worker.blend';assert sha(model)==coverage['model_sha256']==visibility['model_sha256']==guard['candidate']['sha256']==visual['model_sha256']
 paths=[model,O/'validation.json',O/'all-pose-preservation.json',O/'surface-coverage.json',O/'remaining-visibility.json',O/'approved-assembly-pose-guard.json',O/'review/report.json',O/'visual-review.json']+[O/f'review/pose{f:02d}/textured-eight.png' for f in [0,36,44]]
 requests=[]

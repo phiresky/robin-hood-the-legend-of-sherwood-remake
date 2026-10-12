@@ -10,7 +10,7 @@ import bpy
 from mathutils import Matrix
 from PIL import Image
 from refinement_workspace import _geometry
-B=ROOT/'level-editor/work/york-refinement/restart2/approved-texture-inputs-v1/storehouse';E=B/'experiment';O=B/'material-guide-v4';O.mkdir(exist_ok=False);sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();a=json.loads((E/'approval.json').read_text());m=json.loads((E/'views.json').read_text());model=E/'approved-model.blend';assert sha(model)==a['saved_model_sha256'];bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;before={o.name:_geometry(o)for o in scene.objects};own=set(m['render_object_names']);roles={}
+B=ROOT/'level-editor/work/active/york/restart2/approved-texture-inputs-v1/storehouse';E=B/'experiment';O=B/'material-guide-v4';O.mkdir(exist_ok=False);sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();a=json.loads((E/'approval.json').read_text());m=json.loads((E/'views.json').read_text());model=E/'approved-model.blend';assert sha(model)==a['saved_model_sha256'];bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;before={o.name:_geometry(o)for o in scene.objects};own=set(m['render_object_names']);roles={}
 for o in scene.objects:
  if o.type!='MESH':continue
  o.hide_render=o.name not in own

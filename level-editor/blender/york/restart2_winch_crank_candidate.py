@@ -6,7 +6,7 @@ from pathlib import Path
 import runpy
 import sys
 ROOT=Path(__file__).resolve().parents[3]
-WORK=ROOT/'level-editor/work/york-refinement/restart2'
+WORK=ROOT/'level-editor/work/active/york/restart2'
 OUT=WORK/'winch-room-physical-v8'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))

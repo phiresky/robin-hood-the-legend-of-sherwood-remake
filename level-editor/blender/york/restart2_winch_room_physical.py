@@ -1,7 +1,7 @@
 """Private physical arch opening proposal through separately scoped room receivers."""
 import json,math,sys,hashlib
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/winch-room-physical-v7'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';OUT=WORK/'restart2/winch-room-physical-v7'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

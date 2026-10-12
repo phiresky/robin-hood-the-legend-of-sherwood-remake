@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/york-refinement'
+BASE=ROOT/'level-editor/work/active/york'
 SRC=BASE/'geometry-pass-01/native-state-source-v1'
 OUT=BASE/'restart2/gate-mechanism-motion-v1'
 if OUT.exists(): raise FileExistsError(OUT)

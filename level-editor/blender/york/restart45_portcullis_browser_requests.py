@@ -5,7 +5,7 @@ import json
 import struct
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/york-refinement/restart2'
+BASE = ROOT / 'level-editor/work/active/york/restart2'
 OUT = BASE / 'restart44-approved-portcullis-export-v1'
 
 

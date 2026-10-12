@@ -1,10 +1,10 @@
 """Prepare fresh source-owned views for exact approved York geometry scopes."""
 import hashlib,json,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';key=sys.argv[sys.argv.index('--')+1];OUT=WORK/'restart2/approved-texture-inputs-v1'/key
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';key=sys.argv[sys.argv.index('--')+1];OUT=WORK/'restart2/approved-texture-inputs-v1'/key
 if OUT.exists():raise FileExistsError(OUT)
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
-receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/pending-v17-v23-plus-two-hub-v1/user-approval.json';assert sha(receipt)=='ca25ba9362b26dfb8ac1239f7acd7b56929463498b125bed0f42dcd98ec628f4'
+receipt=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/pending-v17-v23-plus-two-hub-v1/user-approval.json';assert sha(receipt)=='ca25ba9362b26dfb8ac1239f7acd7b56929463498b125bed0f42dcd98ec628f4'
 config={
  'shed':('york-riverside-storehouse-timber-shed','baseline/masks/000001.png',[1432,1019]),
  'storehouse':('york-riverside-stone-storehouse','baseline/masks/000000.png',[1449,840]),

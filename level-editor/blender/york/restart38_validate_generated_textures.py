@@ -3,7 +3,7 @@ import hashlib,json,sys
 from pathlib import Path
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];key=sys.argv[1];assert key in ('storehouse','well','stable24');E=ROOT/'level-editor/work/york-refinement/restart2/approved-texture-inputs-v1'/key/(sys.argv[2]if len(sys.argv)>2 else 'experiment');G=E/'generation-short-no-mask-with-lighting-openrouter-with-auxiliary';C=Path(json.loads((G/'generation.json').read_text())['cache']);sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+ROOT=Path(__file__).resolve().parents[3];key=sys.argv[1];assert key in ('storehouse','well','stable24');E=ROOT/'level-editor/work/active/york/restart2/approved-texture-inputs-v1'/key/(sys.argv[2]if len(sys.argv)>2 else 'experiment');G=E/'generation-short-no-mask-with-lighting-openrouter-with-auxiliary';C=Path(json.loads((G/'generation.json').read_text())['cache']);sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 approval=json.loads((E/'approval.json').read_text());request=json.loads((C/'request.json').read_text());generation=json.loads((G/'generation.json').read_text());aux=json.loads((E/'auxiliary-references.json').read_text())
 assert request['input_sha256']==approval['input_sha256']==sha(E/'input.png')==sha(C/'input.png');assert request['lighting_sha256']==approval['solid_sha256']==sha(E/'solid.png')==sha(C/'lighting.png');assert sha(E/'mask.png')==sha(C/'mask.png');assert request['parameters']['prompt']==generation['prompt'];assert request['parameters']['size']=='1280x768';assert request['parameters']['model']==generation['model']=='openai/gpt-image-2.5-sunburst';assert generation['status']==200;assert generation['cache']==str(C);assert generation['auxiliary_references']==request['auxiliary_references'];assert sha(E/'auxiliary-references.json')==request['auxiliary_references']['manifest_sha256'];assert aux['references']==request['auxiliary_references']['references']
 for i,r in enumerate(aux['references']):assert sha(Path(r['file']))==r['sha256']==sha(C/f'auxiliary-{i}.png')
@@ -11,7 +11,7 @@ arrays={}
 for k,p in [('input',E/'input.png'),('mask',E/'mask.png'),('raw',G/'generated-raw.png'),('preserved',G/'generated-preserved.png')]:
  im=Image.open(p);assert im.format=='PNG'and im.size==(1280,768);arrays[k]=np.asarray(im.convert('RGBA'))
 protected=arrays['mask'][:,:,3]>0;editable=~protected;changed=np.any(arrays['input']!=arrays['preserved'],axis=2);assert not np.any(changed&protected);assert int(editable.sum())==generation['filled'];assert np.array_equal(arrays['preserved'][editable,:3],arrays['raw'][editable,:3]);assert sha(E/'approved-model.blend')==approval['saved_model_sha256']
-receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/pending-v17-v23-plus-two-hub-v1/user-approval.json';assert sha(receipt)=='ca25ba9362b26dfb8ac1239f7acd7b56929463498b125bed0f42dcd98ec628f4'
+receipt=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/pending-v17-v23-plus-two-hub-v1/user-approval.json';assert sha(receipt)=='ca25ba9362b26dfb8ac1239f7acd7b56929463498b125bed0f42dcd98ec628f4'
 clean_storehouse=key=='storehouse' and E.name=='retry-material-regions-v3'
 if clean_storehouse:
  assert 'four-sided HIP roof' in request['parameters']['prompt'] and len(aux['references'])==2 and aux['references'][1]['source']=='region-guide'

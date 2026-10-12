@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/york-refinement'
+OUT=ROOT/'level-editor/work/active/york'
 sys.path.insert(0,str(Path(__file__).parent))
 from terrain_clip import area, cross, dot
 from floor_contacts import height_at

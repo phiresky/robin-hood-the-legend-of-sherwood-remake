@@ -5,7 +5,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'croisement02'))
 from prepare_native_physical_effect_ui import prepare,sha,dump,R,LIB
 
 def main(out):
- stage=R/'level-editor/work/york-refinement/restart2/restart119-night-gate-qualification-v1'
+ stage=R/'level-editor/work/active/york/restart2/restart119-night-gate-qualification-v1'
  handoff=json.loads((stage/'handoff.json').read_text());entry=handoff['entry'];private=Path(handoff['library'])
  prepare(out,receiver_assets=['croisement02-tree-42'])
  routes={'/library/'+str(p.relative_to(private)):str(p) for p in private.rglob('*') if p.is_file()}
@@ -15,7 +15,7 @@ def main(out):
  dump(out/'bounded-receiver-map.json',bounded);routes['/library/scenes/york.rhlos-map.json']=str(out/'bounded-receiver-map.json')
  # Use the qualified private catalog as the sole state choice for this proof.
  shutil.copy2(private/'mission-states/index.json',out/'candidate-catalog.json')
- oldconfig=R/'level-editor/work/york-refinement/restart2/restart60-gate-ui-request-v1/config.json'
+ oldconfig=R/'level-editor/work/active/york/restart2/restart60-gate-ui-request-v1/config.json'
  views=json.loads(oldconfig.read_text())['views'];dump(out/'check-config.json',{'entry':entry,'views':views})
  shutil.copy2(R/'level-editor/blender/york/night_gate_ui_proof.js',out/'check.js')
  editor=(out/'editor.tsx').read_text().replace('croisement02','york');(out/'editor.tsx').write_text(editor)

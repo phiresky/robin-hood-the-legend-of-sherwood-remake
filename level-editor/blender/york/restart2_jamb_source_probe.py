@@ -1,7 +1,7 @@
 """Inspect visible approved jamb pixels before assigning any native material domain."""
 import json,math,hashlib,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/jamb-source-probe-v1'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';OUT=WORK/'restart2/jamb-source-probe-v1'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

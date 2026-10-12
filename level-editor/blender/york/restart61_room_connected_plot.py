@@ -7,7 +7,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection,PolyCollection
 from matplotlib.patches import Rectangle
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2/restart61-room-architecture-audit-v2';r=json.loads((W/'geometry.json').read_text());objects=r['objects'];colors={'neighbor-baseline':'#8fa9ba','static':'#47515d','cover':'#d49120','receiver':'#d54343'}
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2/restart61-room-architecture-audit-v2';r=json.loads((W/'geometry.json').read_text());objects=r['objects'];colors={'neighbor-baseline':'#8fa9ba','static':'#47515d','cover':'#d49120','receiver':'#d54343'}
 def style(o):return 'neighbor-baseline'if o['kind']=='neighbor-baseline'else'receiver'if o['receiver']else'cover'if o['cover']else'static'
 def section(o,axis,value,axes):
  v=np.array(o['vertices']);lines=[]

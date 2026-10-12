@@ -1,7 +1,7 @@
 """Check inferred travelling-disc thickness against observed silhouette and apertures."""
 import hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-motion-physical-v2';OUT=WORK/'restart2/winch-travelling-disc-fit-v1'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';BASE=WORK/'restart2/winch-motion-physical-v2';OUT=WORK/'restart2/winch-travelling-disc-fit-v1'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

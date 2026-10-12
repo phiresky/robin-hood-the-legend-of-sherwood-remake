@@ -1,7 +1,7 @@
 """Read-only saved gate/jamb mesh contact audit for the private motion proposal."""
 import hashlib,json,math,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';OUT=W/'gate-saved-contact-audit-v1';assert not OUT.exists();assert shutil.disk_usage(ROOT).free>10*1024**3;assert int(next(x.split()[1]for x in Path('/proc/meminfo').read_text().splitlines()if x.startswith('MemAvailable:')))*1024>6*1024**3
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';OUT=W/'gate-saved-contact-audit-v1';assert not OUT.exists();assert shutil.disk_usage(ROOT).free>10*1024**3;assert int(next(x.split()[1]for x in Path('/proc/meminfo').read_text().splitlines()if x.startswith('MemAvailable:')))*1024>6*1024**3
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 acquire()

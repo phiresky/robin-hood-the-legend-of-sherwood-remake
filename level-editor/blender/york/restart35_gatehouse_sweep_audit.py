@@ -2,7 +2,7 @@
 import hashlib,json,struct
 from pathlib import Path
 import numpy as np
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';OUT=W/'approved-shed-jamb-motion-integration-v1/gatehouse-sweep-audit.json';assert not OUT.exists()
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';OUT=W/'approved-shed-jamb-motion-integration-v1/gatehouse-sweep-audit.json';assert not OUT.exists()
 packet=json.loads((OUT.parent/'integration.json').read_text());asset=ROOT/'level-editor/library/3d-assets/york/york-castle-west-gatehouse';path=asset/'model.glb';blob=path.read_bytes();sha=hashlib.sha256(blob).hexdigest();assert sha==packet['protected_live_inputs'][str(path)]
 magic,version,length=struct.unpack_from('<III',blob);assert magic==0x46546c67 and version==2 and length==len(blob);offset=12;binary=None
 while offset<len(blob):

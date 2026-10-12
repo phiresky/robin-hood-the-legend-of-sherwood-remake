@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 LIB = ROOT / 'level-editor/library'
-OUT = ROOT / 'level-editor/work/york-refinement/restart2/restart67-nonrendering-audit-v1'
+OUT = ROOT / 'level-editor/work/active/york/restart2/restart67-nonrendering-audit-v1'
 
 
 def read(path):
@@ -19,7 +19,7 @@ def sha(path):
 def main():
     paths = [LIB / 'scenes/york.rhlos-map.json',
              ROOT / 'level-editor/refinement/catalogs/york.json',
-             ROOT / 'level-editor/work/york-refinement/baseline/york.rhp.json']
+             ROOT / 'level-editor/work/active/york/baseline/york.rhp.json']
     pins = {str(p.relative_to(ROOT)): sha(p) for p in paths}
     scene, catalog, level = map(read, paths)
     rows = []

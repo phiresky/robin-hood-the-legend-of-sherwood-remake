@@ -1,7 +1,7 @@
 """Build a bounded private gate-motion hypothesis with explicit uncertain poses."""
 import json,math
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];D=ROOT/'level-editor/work/york-refinement/restart2/gate-crossbar-tracking-v1';tracking=json.loads((D/'tracking.json').read_text());tail=json.loads((D/'tail-features.json').read_text());rows=[]
+ROOT=Path(__file__).resolve().parents[3];D=ROOT/'level-editor/work/active/york/restart2/gate-crossbar-tracking-v1';tracking=json.loads((D/'tracking.json').read_text());tail=json.loads((D/'tail-features.json').read_text());rows=[]
 for r in tracking['rows']:
  i=r['frame']
  if i<=33:shift=r['full_fit']['shift_up_pixels'];confidence='Multiple visible timber features; whole-sprite matching corroborates extent within one pixel';bounds=[max(0,shift-1),shift+1]

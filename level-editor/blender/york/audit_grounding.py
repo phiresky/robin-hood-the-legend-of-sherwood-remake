@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/york-refinement'
+OUT=ROOT/'level-editor/work/active/york'
 sys.path.insert(0,str(Path(__file__).parent))
 from verify_grounding import terrain_height
 from floor_contacts import load_contacts, height_at

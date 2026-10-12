@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/york-refinement'
+WORK = ROOT / 'level-editor/work/active/york'
 OUT = WORK / 'restart2/winch-shaft-return-candidate-v1/interface-sections-v1'
 data = json.loads((OUT / 'geometry.json').read_text())
 s, c = data['projection']['sine'], data['projection']['cosine']

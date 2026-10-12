@@ -1,7 +1,7 @@
 """Diagnostic source-aperture cut only; ray-aligned depth is not a final physical wall."""
 import json,math,sys,hashlib
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/winch-room-probe-v1'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';OUT=WORK/'restart2/winch-room-probe-v1'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

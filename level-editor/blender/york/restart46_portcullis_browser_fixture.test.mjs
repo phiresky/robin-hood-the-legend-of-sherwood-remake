@@ -5,7 +5,7 @@ import {createRequire} from 'node:module';
 import {runPortcullisBrowserFixture} from './restart46_portcullis_browser_fixture.mjs';
 const require=createRequire(new URL('../../app/package.json',import.meta.url));
 const THREE=require('three');
-const base=new URL('../../work/york-refinement/restart2/',import.meta.url);
+const base=new URL('../../work/active/york/restart2/',import.meta.url);
 const read=path=>JSON.parse(fs.readFileSync(new URL(path,base)));
 const approvedMotion=read('jamb-clearance-candidate-v1/motion-proposal.json');
 const sourceRecord=read('../geometry-pass-01/native-state-source-v1/manifest.json').records.find(r=>r.id==='patch-000');

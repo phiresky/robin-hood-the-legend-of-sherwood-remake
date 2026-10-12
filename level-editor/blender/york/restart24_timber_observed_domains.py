@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import Image,ImageDraw
 from shapely.geometry import Polygon,Point
 from shapely.ops import unary_union
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';OUT=WORK/'timber-observed-domains-v1'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york/restart2';OUT=WORK/'timber-observed-domains-v1'
 if OUT.exists():raise FileExistsError(OUT)
 prior=json.loads((WORK/'loose-planks-ownership-v3/report.json').read_text());rows=[]
 tops={r['piece']:Polygon(r['polygon'])for r in prior['domains']if r['role']=='top'}

@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/york-refinement/restart2'
+BASE = ROOT / 'level-editor/work/active/york/restart2'
 SOURCE = BASE / 'winch-strand-motion-v2.json'
 OUT = BASE / 'winch-supported-motion-plan-v1.json'
 if OUT.exists():

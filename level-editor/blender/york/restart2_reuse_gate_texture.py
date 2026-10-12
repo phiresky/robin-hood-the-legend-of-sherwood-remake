@@ -3,7 +3,7 @@ import json,math,hashlib,shutil
 from pathlib import Path
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2/gate-texture-inputs-v1';a=BASE/'covered/experiment';b=BASE/'raised/experiment';source=a/'generation-short-no-mask-with-lighting-openrouter-with-auxiliary';out=b/'reused-covered-generation-v1'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york/restart2/gate-texture-inputs-v1';a=BASE/'covered/experiment';b=BASE/'raised/experiment';source=a/'generation-short-no-mask-with-lighting-openrouter-with-auxiliary';out=b/'reused-covered-generation-v1'
 if out.exists():raise FileExistsError(out)
 fa=json.loads((a/'views.json').read_text());fb=json.loads((b/'views.json').read_text());assert fa['layout']==fb['layout'];delta=np.zeros((4,4));delta[2,3]=57/math.cos(math.radians(35));max_error=0
 for x,y in zip(fa['views'],fb['views']):

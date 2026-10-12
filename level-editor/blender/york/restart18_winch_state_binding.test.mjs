@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { bindWinchState } from './restart18_winch_state_binding.mjs';
 
-const planBytes = readFileSync(new URL('../../work/york-refinement/restart2/winch-supported-motion-v1/state-plan/integration-plan-v1.json', import.meta.url));
+const planBytes = readFileSync(new URL('../../work/active/york/restart2/winch-supported-motion-v1/state-plan/integration-plan-v1.json', import.meta.url));
 assert.equal(createHash('sha256').update(planBytes).digest('hex'),
   '7a09120350eb253a94b9c6bfc32962009cb3d0db8414b7a01294c3933c6de955');
 const plan = JSON.parse(planBytes);

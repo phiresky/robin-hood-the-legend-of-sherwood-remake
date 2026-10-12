@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT=Path(__file__).resolve().parents[3]
-WORK=ROOT/'level-editor/work/york-refinement'
+WORK=ROOT/'level-editor/work/active/york'
 base=WORK/'restart2'/sys.argv[1]
 source=WORK/'geometry-pass-01/native-state-source-v1'
 record=next(r for r in json.loads((source/'manifest.json').read_text())['records'] if r['id']=='patch-000')

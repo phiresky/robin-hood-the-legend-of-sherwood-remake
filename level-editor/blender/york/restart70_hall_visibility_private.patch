@@ -10,11 +10,11 @@
 +  const { resolve } = await import("node:path");
 +  const { missionStateDataHash } = await import("./mission-state-layer.ts");
 +  const base = resolve(
-+    "level-editor/work/york-refinement/restart2/restart69-hall-approved-delivery-v1",
++    "level-editor/work/active/york/restart2/restart69-hall-approved-delivery-v1",
 +  );
 +  const read = async (p: string) => JSON.parse(await readFile(p, "utf8"));
 +  const privateStage = resolve(
-+    "level-editor/work/york-refinement/restart2/restart70-hall-visibility-private-v1",
++    "level-editor/work/active/york/restart2/restart70-hall-visibility-private-v1",
 +  );
 +  const c = await read(privateStage + "/contract.proposed.json"),
 +    data = await read(base + "/library/mission-states/york/source/S05_Yrk_EC.rhm.json"),
@@ -666,7 +666,7 @@
 +const root = resolve(process.env.REVIEW_REPO_ROOT ?? process.cwd());
 +const stage = resolve(
 +  root,
-+  "level-editor/work/york-refinement/restart2/restart69-hall-approved-delivery-v1",
++  "level-editor/work/active/york/restart2/restart69-hall-approved-delivery-v1",
 +);
 +const read = async (p: string) => JSON.parse(await readFile(p, "utf8"));
 +async function fixture() {
@@ -805,7 +805,7 @@
 +  const { source, document } = await fixture();
 +  const privateStage = resolve(
 +    root,
-+    "level-editor/work/york-refinement/restart2/restart70-hall-visibility-private-v1",
++    "level-editor/work/active/york/restart2/restart70-hall-visibility-private-v1",
 +  );
 +  const c = await read(privateStage + "/contract.proposed.json");
 +  const reader = async (r: any) => {

@@ -1,7 +1,7 @@
 """Transfer inferred texture only to eight approved channel faces, preserving old appearance."""
 import hashlib,json,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';P=W/'restart41-channel-texture-inputs-v1';B=W/'restart42-channel-bake-v1';O=W/'restart42-channel-assembly-v1';assert not O.exists();sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest();authority=json.loads((P/'authority.json').read_text());source=W/'gatehouse-channel-candidate-v3/model.blend';assert sha(source)==authority['approved_model_sha256'];assert sha(B/'model.blend')==json.loads((B/'validation.json').read_text())['baked_model_sha256']
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';P=W/'restart41-channel-texture-inputs-v1';B=W/'restart42-channel-bake-v1';O=W/'restart42-channel-assembly-v1';assert not O.exists();sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest();authority=json.loads((P/'authority.json').read_text());source=W/'gatehouse-channel-candidate-v3/model.blend';assert sha(source)==authority['approved_model_sha256'];assert sha(B/'model.blend')==json.loads((B/'validation.json').read_text())['baked_model_sha256']
 assert shutil.disk_usage(ROOT).free>10*1024**3
 assert int(next(x.split()[1]for x in Path('/proc/meminfo').read_text().splitlines()if x.startswith('MemAvailable:')))*1024>6*1024**3
 sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]

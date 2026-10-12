@@ -1,7 +1,7 @@
 """Distinguish genuine unfilled surface texels from unused atlas padding."""
 import sys,json,hashlib,shutil
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];O=ROOT/'level-editor/work/york-refinement/restart2'/(sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'restart60-winch-chain-texture-bake-v1')
+ROOT=Path(__file__).resolve().parents[3];O=ROOT/'level-editor/work/active/york/restart2'/(sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'restart60-winch-chain-texture-bake-v1')
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 acquire(slots=2)

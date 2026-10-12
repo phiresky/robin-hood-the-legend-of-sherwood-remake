@@ -1,7 +1,7 @@
 """Render complete motion poses at the frozen camera aspect, retaining failed crops."""
 import json,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2/winch-motion-physical-v2';OUT=BASE/'complete-orbits-v2'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york/restart2/winch-motion-physical-v2';OUT=BASE/'complete-orbits-v2'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

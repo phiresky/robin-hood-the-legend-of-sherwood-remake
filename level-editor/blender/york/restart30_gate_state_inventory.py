@@ -1,7 +1,7 @@
 """Freeze gate endpoint approvals and native transition evidence for private staging."""
 import hashlib,json
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';OUT=WORK/'restart2/gate-state-inventory-v1/report.json'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';OUT=WORK/'restart2/gate-state-inventory-v1/report.json'
 if OUT.exists():raise FileExistsError(OUT)
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest();source=WORK/'geometry-pass-01/native-state-source-v1';manifest=json.loads((source/'manifest.json').read_text());record=next(r for r in manifest['records']if r['id']=='patch-000');initial=next(r['frames']for r in record['rows']if r['action']=='PatchInitial');frames=next(r['frames']for r in record['rows']if r['action']=='PatchTransition');assert len(initial)==1 and len(frames)==45 and not any(r['action']=='PatchFinal'for r in record['rows'])
 for f in initial+frames:assert sha(source/f['image'])==f['sha256'];assert f['delay']==1

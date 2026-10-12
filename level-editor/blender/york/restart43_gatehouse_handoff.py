@@ -1,7 +1,7 @@
 """Bind approved static gatehouse export and focused browser request, excluding moving gate."""
 import hashlib,json,struct
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/york-refinement/restart2';O=B/'restart43-approved-gatehouse-export-v1';S=B/'restart42-channel-assembly-v1'
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/york/restart2';O=B/'restart43-approved-gatehouse-export-v1';S=B/'restart42-channel-assembly-v1'
 def pin(p):return dict(path=str(p),sha256=hashlib.sha256(p.read_bytes()).hexdigest())
 r=json.loads((O/'export-report.json').read_text());g=json.loads((O/'source-surface-guard.json').read_text());assert g['status'].startswith('PASS');model=O/'3d-assets'/r['asset_id']/'model.glb';assert pin(model)['sha256']==r['model_sha256']==g['exported_glb_sha256'];assert pin(S/'model.blend')['sha256']==r['approved_model_sha256']==g['approved_model_sha256']
 prior=B/'approved-gate-staging-plan-v1/plan.json';old=json.loads(prior.read_text())
@@ -9,7 +9,7 @@ for m in old['approved_members']:
  assert pin(Path(m['model']))['sha256']==m['model_sha256'];assert pin(Path(m['source_evidence']))['sha256']==m['source_evidence_sha256']
 files=[model,model.with_name('asset.json'),O/'export-report.json',O/'source-surface-guard.json',O/'private-catalog.json',S/'model.blend',S/'grouped-review-handoff.json',S/'validation.json',S/'saved-native-guard.json',prior,B/'approved-shed-jamb-motion-integration-v1/integration.json']
 for p,digest in r['receipts'].items():
- path=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches'/p;assert pin(path)['sha256']==digest;files.append(path)
+ path=ROOT/'level-editor/work/active/croisement02/restart3-review-batches'/p;assert pin(path)['sha256']==digest;files.append(path)
 h=dict(status='PRIVATE_APPROVED_EXPORT_SURFACE_GUARDED',asset_id=r['asset_id'],files={str(p):pin(p)['sha256']for p in files},source_origin_scene=r['source_origin_scene'],triangles=sum(x['triangles']for x in g['objects']),source_geometry_uv_materials_exact=True,gameplay_exact=True,scope=r['scope'],live_pins=r['live_pins'],remaining=['Direct static-model browser review','Root private staged transaction and source-node/component reconciliation','Gate motion/runtime and other gatehouse refinements remain separate'],canonical_writes=False)
 p=O/'integration-handoff.json';assert not p.exists();p.write_text(json.dumps(h,indent=2)+'\n')
 raw=model.read_bytes();doc=json.loads(raw[20:20+struct.unpack_from('<I',raw,12)[0]]);cameras=S/'complete-review-v1/initial/renders.json';c=json.loads(cameras.read_text());assert len(c['renders'])==8

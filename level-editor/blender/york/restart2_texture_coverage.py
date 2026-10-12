@@ -13,7 +13,7 @@ from render_slots import acquire
 acquire()
 sys.path.insert(0,str(ROOT/'level-editor/blender/nottingham'))
 from freeze_tooling import select_tooling
-select_tooling(json.loads((ROOT/'level-editor/work/york-refinement/tooling/current.json').read_text())['directory'])
+select_tooling(json.loads((ROOT/'level-editor/work/active/york/tooling/current.json').read_text())['directory'])
 from render_texture_coverage import inspect
 worker=args.bake/'worker.blend'
 if not worker.exists():worker.symlink_to((args.bake/'model.blend').resolve())

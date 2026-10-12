@@ -1,7 +1,7 @@
 """Native-first views of a separately scoped winch-room physical proposal."""
 import json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2'/ (sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'winch-room-physical-v1');state=sys.argv[sys.argv.index('--')+2] if '--' in sys.argv and len(sys.argv)>sys.argv.index('--')+2 else 'transition-44';OUT=BASE/('review' if state=='transition-44' else 'review-'+state)
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';BASE=WORK/'restart2'/ (sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'winch-room-physical-v1');state=sys.argv[sys.argv.index('--')+2] if '--' in sys.argv and len(sys.argv)>sys.argv.index('--')+2 else 'transition-44';OUT=BASE/('review' if state=='transition-44' else 'review-'+state)
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

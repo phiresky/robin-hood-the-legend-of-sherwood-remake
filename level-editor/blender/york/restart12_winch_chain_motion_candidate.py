@@ -1,7 +1,7 @@
 """Insert a complete moving chain while guarding every frozen timber component."""
 import ast,hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';BASE=WORK/'winch-components-source-v2';CHAIN=WORK/'winch-chain-loop-prototype-v5';PLAN=WORK/'winch-closed-loop-fit-v5/motion-plan.json';OUT=WORK/'winch-complete-chain-motion-v1'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york/restart2';BASE=WORK/'winch-components-source-v2';CHAIN=WORK/'winch-chain-loop-prototype-v5';PLAN=WORK/'winch-closed-loop-fit-v5/motion-plan.json';OUT=WORK/'winch-complete-chain-motion-v1'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

@@ -1,7 +1,7 @@
 """Bounded hall end-wall control excluding the unsupported obstacle return."""
 import argparse, hashlib, json, math, shutil, sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york'
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('--version',required=True);p.add_argument('--height',type=float,default=273);p.add_argument('--preserve-coplanar',action='store_true');p.add_argument('--source-model',type=Path);p.add_argument('--start-x',type=float);args=p.parse_args(sys.argv[sys.argv.index('--')+1:])
 out=BASE/'restart2'/args.version
 if out.exists():raise FileExistsError(out)

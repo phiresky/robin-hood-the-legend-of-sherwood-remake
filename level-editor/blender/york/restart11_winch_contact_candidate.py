@@ -1,7 +1,7 @@
 """Create modest source-led support/wire corrections with flat closed support feet."""
 import hashlib,json,math,sys,runpy
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';OUT=WORK/'winch-room-physical-v10'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york/restart2';OUT=WORK/'winch-room-physical-v10'
 if OUT.exists():raise FileExistsError(OUT)
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire

@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {createPortcullisPoseAdapter} from './restart45_portcullis_pose_adapter.mjs';
 const require = createRequire(new URL('../../app/package.json', import.meta.url));
 const THREE = require('three');
-const bytes = fs.readFileSync(new URL('../../work/york-refinement/restart2/jamb-clearance-candidate-v1/motion-proposal.json', import.meta.url));
+const bytes = fs.readFileSync(new URL('../../work/active/york/restart2/jamb-clearance-candidate-v1/motion-proposal.json', import.meta.url));
 assert.equal(createHash('sha256').update(bytes).digest('hex'), '07fd102ae0a508bf77ff10f6d52dda6c746723d3da7011b312b9164b7758a446');
 const motion = JSON.parse(bytes);
 const origin = [2357.217041015625, 109.8709487915039, 1801.3960571289062];

@@ -1,7 +1,7 @@
 """Transfer only approved stable-component appearance into the approved moving assembly."""
 import sys,json,hashlib,shutil
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2';OUT=BASE/'restart59-approved-winch-assembly-v1'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york/restart2';OUT=BASE/'restart59-approved-winch-assembly-v1'
 sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()

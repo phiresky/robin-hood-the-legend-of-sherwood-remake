@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/york-refinement'
+OUT = ROOT / 'level-editor/work/active/york'
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from render_slots import acquire
 acquire()

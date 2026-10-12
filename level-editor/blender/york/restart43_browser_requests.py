@@ -1,7 +1,7 @@
 """Bind York private approved GLBs to the exact saved review cameras and pictures."""
 import hashlib,json,struct,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york/restart2'
 CONFIG={'shed':('restart43-approved-shed-export-v1','shed-texture-baked-v1'),'well':('restart42-approved-well-export-v2','restart38-well-texture-baked-v1'),'storehouse':('restart42-approved-storehouse-export-v1','restart38-storehouse-texture-baked-v3')}
 def pin(p):return dict(path=str(p),sha256=hashlib.sha256(p.read_bytes()).hexdigest())
 for key,(export,worker) in CONFIG.items():

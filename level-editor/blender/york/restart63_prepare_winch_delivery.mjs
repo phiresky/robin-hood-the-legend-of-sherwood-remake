@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {validateStateDelivery} from '../../shared/src/state-delivery.ts';
 import {verifyNativePresentationSource} from '../../app/src/native-state-presentation.ts';
 
-const root=path.resolve(import.meta.dirname,'../../..'),base=path.join(root,'level-editor/work/york-refinement'),work=path.join(base,'restart2');
+const root=path.resolve(import.meta.dirname,'../../..'),base=path.join(root,'level-editor/work/active/york'),work=path.join(base,'restart2');
 const [exportDir,exportSha,outputDir]=process.argv.slice(2);
 assert.ok(exportDir&&exportSha&&outputDir,'Usage: <export dir> <export report sha256> <fresh output dir>');
 const out=path.resolve(outputDir),exp=path.resolve(exportDir);

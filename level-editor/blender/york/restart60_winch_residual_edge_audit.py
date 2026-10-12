@@ -1,7 +1,7 @@
 """Inspect exact UV barycentrics for remaining visible residual atlas samples."""
 import hashlib,json,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];O=ROOT/'level-editor/work/york-refinement/restart2/restart60-winch-chain-combined-v2'
+ROOT=Path(__file__).resolve().parents[3];O=ROOT/'level-editor/work/active/york/restart2/restart60-winch-chain-combined-v2'
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 acquire(slots=2)

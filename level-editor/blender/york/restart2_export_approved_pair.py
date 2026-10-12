@@ -1,7 +1,7 @@
 """Export the exact approved market pair into a private, pivot-preserving library."""
 import hashlib,json,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement';PAIR=BASE/'restart2/pair-textures-v1/assembled-v3-bounded';OUT=PAIR/'export-v1';ARC=PAIR/'approval-batch-v5'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york';PAIR=BASE/'restart2/pair-textures-v1/assembled-v3-bounded';OUT=PAIR/'export-v1';ARC=PAIR/'approval-batch-v5'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 if OUT.exists():raise FileExistsError(OUT)
 if shutil.disk_usage(ROOT).free<25*1024**3:raise RuntimeError('Disk below25GiB')

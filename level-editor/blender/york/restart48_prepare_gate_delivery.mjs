@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {decode,encode} from '../../app/node_modules/fast-png/lib/index.js';
 import {validateStateDelivery} from '../../shared/src/state-delivery.ts';
 import {verifyNativePresentationSource} from '../../app/src/native-state-presentation.ts';
-const root=path.resolve(import.meta.dirname,'../../..'),base=path.join(root,'level-editor/work/york-refinement'),work=path.join(base,'restart2');
+const root=path.resolve(import.meta.dirname,'../../..'),base=path.join(root,'level-editor/work/active/york'),work=path.join(base,'restart2');
 const output=path.join(work,process.argv[2]??'restart48-production-gate-delivery-v2');
 assert.ok(!fs.existsSync(output),'Use a fresh output directory');fs.mkdirSync(output);
 const read=p=>JSON.parse(fs.readFileSync(p)),hash=b=>createHash('sha256').update(b).digest('hex'),pin=p=>({path:p,sha256:hash(fs.readFileSync(p))});

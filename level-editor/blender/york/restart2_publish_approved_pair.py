@@ -1,7 +1,7 @@
 """Publish only the reviewed York pair after exact current-baseline guards."""
 import copy,hashlib,json,os,shutil
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2/pair-textures-v1/assembled-v3-bounded/export-v2'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york/restart2/pair-textures-v1/assembled-v3-bounded/export-v2'
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 plan_path=BASE/'publication-plan-v1.json';assert sha(plan_path)=='fe8aa348bdc09669aff7b2dc47fac6447f048d495fd6bfbd12a136eee8dea7cd';plan=json.loads(plan_path.read_text())
 proof=json.loads(Path(plan['proof']).read_text());assert sha(plan['proof'])==plan['proof_sha256']

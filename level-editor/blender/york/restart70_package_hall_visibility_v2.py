@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/york-refinement/restart2/restart70-hall-visibility-private-v1'
+OUT=ROOT/'level-editor/work/active/york/restart2/restart70-hall-visibility-private-v1'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 old,new=OUT/'baseline',OUT/'mirror'
 paths=sorted(str(p.relative_to(old)) for p in old.rglob('*.ts'))+[

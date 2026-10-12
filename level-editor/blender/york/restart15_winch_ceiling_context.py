@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/york-refinement'
+WORK = ROOT / 'level-editor/work/active/york'
 BASE = WORK / 'restart2/winch-supported-hardware-v1'
 OUT = BASE / 'ceiling-context-v1'
 CHECK = '--check-only' in sys.argv

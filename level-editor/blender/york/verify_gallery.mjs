@@ -4,7 +4,7 @@ import {resolve, join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {chromeEndpoint, socketOpen, evaluate} from '../../app/tests/cdp.mjs';
 
-const out=resolve('level-editor/work/york-refinement/review');
+const out=resolve('level-editor/work/active/york/review');
 const evidence=JSON.parse(await readFile(join(out,'evidence.json'),'utf8'));
 const target=evidence.items.find(item=>item.id==='york-cathedral-nave-and-aisles')??evidence.items[0];
 if(!target)throw Error('No pending asset to exercise review controls');

@@ -1,7 +1,7 @@
 """Diagnose saved jamb overlap and propose a hidden-depth-only clearance correction."""
 import hashlib,json,math
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];D=ROOT/'level-editor/work/york-refinement/restart2/gate-saved-contact-audit-v1';p=D/'report.json';j=json.loads(p.read_text());v=j['geometry_world']['jamb_vertices'];g=j['geometry_world']['gate_vertices'];assert len(v)==26
+ROOT=Path(__file__).resolve().parents[3];D=ROOT/'level-editor/work/active/york/restart2/gate-saved-contact-audit-v1';p=D/'report.json';j=json.loads(p.read_text());v=j['geometry_world']['jamb_vertices'];g=j['geometry_world']['gate_vertices'];assert len(v)==26
 base=v[0];raw=[v[13][k]-base[k]for k in range(3)];norm=math.sqrt(sum(x*x for x in raw));n=[x/norm for x in raw];assert abs(n[2])<1e-10
 def depth(q):return sum((q[k]-base[k])*n[k]for k in range(3))
 gmin=min(map(depth,g));gmax=max(map(depth,g));front=min(depth(q)for q in v[13:]);new_back=gmax+.05;assert 0<new_back<front

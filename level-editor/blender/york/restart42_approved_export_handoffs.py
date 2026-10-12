@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/york-refinement/restart2'
+BASE = ROOT / 'level-editor/work/active/york/restart2'
 CONFIG = {
     'well': ('restart42-approved-well-export-v2', 'restart38-well-texture-baked-v1'),
     'shed': ('restart43-approved-shed-export-v1', 'shed-texture-baked-v1'),

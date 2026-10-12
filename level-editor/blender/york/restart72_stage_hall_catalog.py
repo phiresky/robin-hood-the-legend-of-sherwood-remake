@@ -1,7 +1,7 @@
 """Stage approved hall source-loop resources and one rebased normal catalog entry."""
 import hashlib,json,os
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';O=W/'restart72-hall-normal-catalog-stage-v1';LIB=ROOT/'level-editor/library';S=W/'restart70-hall-visibility-private-v1';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';O=W/'restart72-hall-normal-catalog-stage-v1';LIB=ROOT/'level-editor/library';S=W/'restart70-hall-visibility-private-v1';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  assert not O.exists(),'Fresh stage required'
  c=json.loads((S/'contract.proposed.json').read_text());assert len(c['cover_visibility'])==1 and len(c['native']['cover_artwork']['variants'])==4

@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 ROOT=Path(__file__).resolve().parents[3]
-WORK=ROOT/'level-editor/work/york-refinement'
+WORK=ROOT/'level-editor/work/active/york'
 verify='--verify' in sys.argv
 version=sys.argv[sys.argv.index('--verify')+1] if verify else 'gate-geometry-v9'
 DEST=WORK/'restart2'/version/'balanced-first-hits.json' if verify else WORK/'restart2/gate-balanced-fit-v1'

@@ -1,7 +1,7 @@
 """Review the saved support candidate in native-first isolated and room views."""
 import json,runpy,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];VERSION=sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'winch-room-physical-v9';BASE=ROOT/'level-editor/work/york-refinement/restart2'/VERSION
+ROOT=Path(__file__).resolve().parents[3];VERSION=sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'winch-room-physical-v9';BASE=ROOT/'level-editor/work/active/york/restart2'/VERSION
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 acquire()

@@ -1,7 +1,7 @@
 """Score all source frames for the guided chain without changing its saved model."""
 import ast,hashlib,json,math,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-guided-entry-candidate-v1';OUT=WORK/'restart2/winch-guided-entry-source-fit-v1'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';BASE=WORK/'restart2/winch-guided-entry-candidate-v1';OUT=WORK/'restart2/winch-guided-entry-source-fit-v1'
 fine='--fine' in sys.argv
 supported='--supported' in sys.argv
 phase_step=.125 if fine else .5

@@ -1,6 +1,6 @@
 import sys,json,shutil
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';OUT=W/'restart61-room-mechanism-bounds-v1';assert not OUT.exists();sys.path.insert(0,str(ROOT/'level-editor/refinement'))
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';OUT=W/'restart61-room-mechanism-bounds-v1';assert not OUT.exists();sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 assert shutil.disk_usage(ROOT).free>10*1024**3
 assert int(next(x.split()[1]for x in Path('/proc/meminfo').read_text().splitlines()if x.startswith('MemAvailable:')))*1024>6*1024**3

@@ -10,7 +10,7 @@ from shapely.geometry import Polygon
 from shapely.ops import triangulate
 
 ROOT = Path(__file__).resolve().parents[3]
-W = ROOT / 'level-editor/work/york-refinement/restart2'
+W = ROOT / 'level-editor/work/active/york/restart2'
 D = W / 'gate-saved-contact-audit-v1'
 OUT = W / 'jamb-hidden-clearance-plan-v2'
 assert not OUT.exists(), 'Keep prior planning evidence immutable'

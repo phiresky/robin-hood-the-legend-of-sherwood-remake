@@ -1,7 +1,7 @@
 """Inspect saved chain motion against every native frame within a small budget."""
 import hashlib, json, math, shutil, sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement';BASE=WORK/'restart2/winch-supported-motion-v1';OUT=BASE/'review'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york';BASE=WORK/'restart2/winch-supported-motion-v1';OUT=BASE/'review'
 RESUME='--orbits-only' in sys.argv
 if OUT.exists() and not RESUME:raise FileExistsError(OUT)
 if RESUME:assert (OUT/'native45-comparison.png').is_file()

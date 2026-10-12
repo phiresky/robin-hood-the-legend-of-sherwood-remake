@@ -1,7 +1,7 @@
 """Build a private solid removable room cover with observed front and inferred back."""
 import json,hashlib,math,sys,shutil
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/york-refinement/restart2';OUT=W/'restart61-room-geometry-v2';assert not OUT.exists()
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/york/restart2';OUT=W/'restart61-room-geometry-v2';assert not OUT.exists()
 assert shutil.disk_usage(ROOT).free>10*1024**3
 assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024>6*1024**3
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))

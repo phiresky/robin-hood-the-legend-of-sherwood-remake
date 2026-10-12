@@ -1,7 +1,7 @@
 """Render the saved appearance transfer with the already reviewed source-first cameras."""
 import sys,json,hashlib,shutil
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2';WORK=BASE/'restart59-approved-winch-assembly-v1';OUT=WORK/'review'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york/restart2';WORK=BASE/'restart59-approved-winch-assembly-v1';OUT=WORK/'review'
 sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()

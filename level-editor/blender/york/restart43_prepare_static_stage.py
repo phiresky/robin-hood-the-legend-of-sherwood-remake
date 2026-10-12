@@ -1,7 +1,7 @@
 """Prepare compact scoped York asset/map/catalog deltas; never mutate canonical files."""
 import copy,hashlib,json,shutil,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2';LIB=ROOT/'level-editor/library';ASSETS=LIB/'3d-assets';OUT=BASE/'restart43-approved-static-stage-v3';assert not OUT.exists()
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york/restart2';LIB=ROOT/'level-editor/library';ASSETS=LIB/'3d-assets';OUT=BASE/'restart43-approved-static-stage-v3';assert not OUT.exists()
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from asset_index import write_asset_index
 CONFIG={'shed':'restart43-approved-shed-export-v1','well':'restart42-approved-well-export-v2','storehouse':'restart42-approved-storehouse-export-v1','gatehouse':'restart43-approved-gatehouse-export-v1'}

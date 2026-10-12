@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/york-refinement'
+OUT=ROOT/'level-editor/work/active/york'
 PAIR=OUT/'restart2/pair-v16'
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('asset',choices=['york-market-southeast-tall-narrow-house','york-southwest-square-west-house'])
@@ -14,7 +14,7 @@ parser.add_argument('output',type=Path)
 args=parser.parse_args(sys.argv[sys.argv.index('--')+1:])
 if args.output.exists():raise FileExistsError(args.output)
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
-receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/batch-v2/user-approval.json'
+receipt=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/batch-v2/user-approval.json'
 if sha(receipt)!='393634eb3e7fd57f946b7aecc029abc255da94c0d8c72ba7c97cab5855ddca63':raise ValueError('User approval receipt changed')
 model=PAIR/'approval-batch-v2/pair-materials.blend'
 decisions=json.loads(receipt.read_text())['decisions']

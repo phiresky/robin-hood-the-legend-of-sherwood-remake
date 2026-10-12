@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[3]
 sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from refinement_review import _tree
-B=ROOT/'level-editor/work/york-refinement';D=B/'restart7-market-well-v4';SOURCE=B/'grounding/york-grounded.blend'
+B=ROOT/'level-editor/work/active/york';D=B/'restart7-market-well-v4';SOURCE=B/'grounding/york-grounded.blend'
 ASSET='york-market-roofed-stone-well';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S));BOX=(202,1138,260,1212)
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def sig(o):return hashlib.sha256(json.dumps(dict(vertices=[list(v.co)for v in o.data.vertices],faces=[list(p.vertices)for p in o.data.polygons],uvs=[[list(d.uv)for d in u.data]for u in o.data.uv_layers],matrix=[list(r)for r in o.matrix_world]),sort_keys=True).encode()).hexdigest()

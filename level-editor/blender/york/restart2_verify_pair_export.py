@@ -1,7 +1,7 @@
 """Verify private pair exports against approved surface positions, UVs and textures."""
 import hashlib,io,json,struct,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2/pair-textures-v1/assembled-v3-bounded';OUT=BASE/'export-v1'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york/restart2/pair-textures-v1/assembled-v3-bounded';OUT=BASE/'export-v1'
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire
 acquire()

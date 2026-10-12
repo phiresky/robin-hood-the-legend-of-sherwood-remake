@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/york-refinement'
+OUT = ROOT / 'level-editor/work/active/york'
 DEST = OUT / 'restart2/pair-v16/source-authority-v1'
 if DEST.exists():
     raise FileExistsError(DEST)

@@ -2,7 +2,7 @@
 import json,hashlib
 from pathlib import Path
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/york-refinement/restart2';OUT=WORK/'timber-sawn-source-review-v1/source-classification.json'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/york/restart2';OUT=WORK/'timber-sawn-source-review-v1/source-classification.json'
 if OUT.exists():raise FileExistsError(OUT)
 plan=json.loads((WORK/'timber-sawn-end-plan-v1/plan.json').read_text());source=WORK/'pair-v14/assets/york-southwest-square-west-house/reference/source.png';art=Image.open(source).convert('RGB')
 # Native grid review: this brown row belongs to the crossing beam above the pale board.

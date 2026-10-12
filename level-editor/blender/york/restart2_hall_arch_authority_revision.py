@@ -2,7 +2,7 @@
 import hashlib,json,shutil
 from pathlib import Path
 from PIL import Image,ImageChops,ImageFilter
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/york-refinement/restart2';SRC=BASE/'hall-source-authority-v1';OUT=BASE/'hall-source-authority-v2';PROPOSAL=BASE/'hall-crosspiece-study-v1/arch-authority-proposal-v2'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/york/restart2';SRC=BASE/'hall-source-authority-v1';OUT=BASE/'hall-source-authority-v2';PROPOSAL=BASE/'hall-crosspiece-study-v1/arch-authority-proposal-v2'
 if not OUT.exists():shutil.copytree(SRC,OUT)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 for state in ['initial-applied','applied-applied']:

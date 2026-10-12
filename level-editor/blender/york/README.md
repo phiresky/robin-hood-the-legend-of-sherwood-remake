@@ -10,7 +10,7 @@ and gatehouses. Cathedral towers and the north precinct hall are separate from
 the nave. The courtyard rear curtain wall owns 760, 761 and battlements 772;
 the east lodge owns 759, west lodge 771, and stairs 812. `building-review.json` records the subdivisions of the first pass.
 
-Outputs are local under `../../work/york-refinement/`:
+Outputs are local under `../../work/active/york/`:
 
 - `baseline/`: immutable scene, native obstacle data, artwork, masks and hashes.
 - `inventory/inventory.json`: complete imported mesh and patch inventory.
@@ -72,12 +72,12 @@ this remaining geometry limitation.
 
 The previous delivered gallery is frozen in `review-v8/`; its grouped scene,
 grounded scene, library and catalog are under `review-round-2/before/`.
-`verify_regrouping.py --before level-editor/work/york-refinement/review-v8/geometry.json`
+`verify_regrouping.py --before level-editor/work/active/york/review-v8/geometry.json`
 checks unchanged assets and every unsplit moved component.
 The floor audit uses the newly grouped baseline:
-`audit_grounding.py --before level-editor/work/york-refinement/review-round-2/ungrounded/geometry.json`.
+`audit_grounding.py --before level-editor/work/active/york/review-round-2/ungrounded/geometry.json`.
 Generate that baseline with `review_geometry.py -- --geometry-only --output
-level-editor/work/york-refinement/review-round-2/ungrounded` before grounding.
+level-editor/work/active/york/review-round-2/ungrounded` before grounding.
 Changed groupings return to the pending gallery; submitted approvals remain
 valid only for matching asset evidence.
 
@@ -100,9 +100,9 @@ its submitted approval and unchanged evidence.
 
 The preceding gallery is frozen in `review-v9/`; scenes, catalog and export are
 under `review-round-3/before/`. Run `verify_regrouping.py` with `--before
-level-editor/work/york-refinement/review-v9/geometry.json`, `--audit
+level-editor/work/active/york/review-v9/geometry.json`, `--audit
 level-editor/blender/york/grouping-audit-round-3.json` and `--output
-level-editor/work/york-refinement/review-round-3/preservation.json`.
+level-editor/work/active/york/review-round-3/preservation.json`.
 Gallery notes accumulate the audit records, and per-asset alternate camera
 settings come from their `view_overrides` entries. To prepare previews during
 export, run `build_gallery.py --previews-only`; after export succeeds, run
@@ -208,7 +208,7 @@ refuses an existing baseline. `group_scene.py` refuses an existing grouped blend
 Preserve earlier output revisions before rerunning either.
 
 ```sh
-node level-editor/pipeline/src/export-interior-layers.ts york level-editor/work/york-refinement/source-states-complete
+node level-editor/pipeline/src/export-interior-layers.ts york level-editor/work/active/york/source-states-complete
 blender --background --python level-editor/blender/york/setup_scene.py
 python3 level-editor/blender/york/survey.py
 python3 level-editor/blender/york/build_catalog.py
@@ -340,7 +340,7 @@ is part of this operation.
 
 The subsequent geometry pass is separate from the installed grouping milestone.
 `prepare_geometry.py -- <asset-id>` reconciles the grounded scene's ownership
-and creates immutable baseline packets under `work/york-refinement/geometry-pass-01/`.
+and creates immutable baseline packets under `work/active/york/geometry-pass-01/`.
 These are diagnostic packets, not geometry approvals; source masks, state
 receivers, and York lighting still need asset-specific review.
 
@@ -357,7 +357,7 @@ explicit native source region.
 
 ### Private restart2 controls
 
-The `restart2_*` recipes write only under `work/york-refinement/restart2/` and
+The `restart2_*` recipes write only under `work/active/york/restart2/` and
 refuse existing output directories. They preserve the installed grouping,
 canonical catalog, and existing gallery. `progress.json` and model-hash-bound
 self-reviews distinguish diagnostic candidates from approved geometry.
