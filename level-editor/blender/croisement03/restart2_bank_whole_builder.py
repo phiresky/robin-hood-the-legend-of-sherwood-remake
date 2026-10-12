@@ -162,7 +162,7 @@ def run():
    boundary_fallbacks=[];failures=[];sample_count=0;max_surface_error=0.
    for key in ('52','54'):
     for trace in data[key]['traces']:
-     pts=[Vector(data[key]['vertices'][i]) for i in trace['vertices']]
+     pts=[Vector(p) for p in trace.get('source_path_world',[data[key]['vertices'][i] for i in trace['vertices']])]
      for a,b in zip(pts,pts[1:]):
       distance=math.hypot(b.x-a.x,(-b.y*S-b.z*C)-(-a.y*S-a.z*C));count=max(2,int(distance*2)+1)
       for i in range(count):

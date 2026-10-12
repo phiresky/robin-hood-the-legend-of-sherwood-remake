@@ -1,5 +1,6 @@
 """Record independently inspected native appearance samples without inventing depth."""
 import json,hashlib
+import numpy as np
 from pathlib import Path
 from PIL import Image,ImageDraw
 R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-source-role-audit-v1'
@@ -19,4 +20,9 @@ def main():
  for index,(name,box,role,confidence,reason)in enumerate(samples):
   color='yellow'if role=='visible gold foliage'else'cyan'if role=='visible woody stem'else'lime'if role=='neighbor green foliage'else'magenta';draw.rectangle(tuple(v*4 for v in box),outline=color,width=2);draw.text((box[0]*4,box[1]*4-12),str(index),fill=color);sample=im.crop(box);records.append(dict(id=name,native_box=box,role=role,confidence=confidence,reason=reason,rgb_sha256=hashlib.sha256(sample.tobytes()).hexdigest()))
  crop.save(O/'independent-role-samples.png');report={'status':'PARTIAL_SOURCE_ROLE_AUDIT_NOT_GEOMETRY_AUTHORITY','source_sha256':hashlib.sha256(source.read_bytes()).hexdigest(),'samples':records,'confirmed_physical_empty_background_pixels':0,'selected_domain_complement_is_background':False,'limits':['Appearance samples are independent of selected leaf alpha; not a complete segmentation.','Dark samples may be shadowed own foliage or farther foliage; no inferred geometry deletion is authorized solely by their low brightness.','Keep source wood, native animation and off-map volume separate; no changes to canonical ownership.']};(O/'roles.json').write_text(json.dumps(report,indent=2)+'\n')
-if __name__=='__main__':main()
+def temporal_evidence():
+ frames=[np.array(Image.open(B/'tree01-native-fragment-v1'/f'{i:03}.png').convert('RGBA'))for i in range(14)];rgba=np.stack(frames);present=rgba[:,:,:,3]>0;dark=(rgba[:,:,:,:3].max(axis=3)<65)&present;roles=json.loads((O/'roles.json').read_text());results=[]
+ for r in roles['samples']:
+  x0,y0,x1,y1=r['native_box'];a=present[:,y0:y1,x0:x1];d=dark[:,y0:y1,x0:x1];results.append({'id':r['id'],'native_box':r['native_box'],'known_animated_leaf_pixels_ever':int(a.any(axis=0).sum()),'known_dark_leaf_pixels_ever':int(d.any(axis=0).sum()),'sample_pixels':(x1-x0)*(y1-y0),'frames_with_known_leaf':np.where(a.any(axis=(1,2)))[0].tolist(),'interpretation':'Opaque animation pixels prove a leaf at that phase; absent alpha does not prove empty background.'})
+ report={'status':'EXACT_NATIVE_ANIMATION_ROLE_EVIDENCE','frames':14,'native_alpha_pixels_ever':int(present.any(axis=0).sum()),'native_dark_leaf_pixels_ever':int(dark.any(axis=0).sum()),'dark_definition':'EveryRGBchannel<65; evidence of actual opaque dark leaf texture, not a background classifier.','samples':results,'frame_sha256':{str(i):hashlib.sha256((B/'tree01-native-fragment-v1'/f'{i:03}.png').read_bytes()).hexdigest()for i in range(14)}};(O/'temporal-role-evidence.json').write_text(json.dumps(report,indent=2)+'\n')
+if __name__=='__main__':main();temporal_evidence()
