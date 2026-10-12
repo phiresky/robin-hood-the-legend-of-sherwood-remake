@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Ground landing click-band candidate (2026-10-12)
+
+Nottingham line 24's t=0.95 landing `[2154.9255,1980.4553]` lies on its ground
+receiver but outside `nottingham-southeast-green-house/jump-zone-20`. Asset
+authoring script `stage-ground-jump-click-band.mjs` unions a local ground band
+behind the existing `jump-pair-18` landing edge into that click zone. It changes
+no movement floor, collision geometry, flight endpoint or runtime behavior.
+The band has depth 8, tangent margins 4, and a 2-unit margin across the edge
+for transformed/grid-rounded endpoint disagreement.
+
+The first depth-only candidate `ground-jump-click-band-XZE9as` fixes the
+full-map click miss (`saved-map-exports-rNL3Yn`: 369/390 upright cases pass).
+This export uses the published roof assets, not the separate unpublished
+roof-slab repair. Its copied-placement check passes 152/160; adding tangent
+margins alone does not change that result. Candidate
+`ground-jump-click-band-PEkMbT` adds the edge margin and passes 156/160 native
+click cases across `ground-jump-placements-ZVsUKu`: both independent copies at
+0/37/90 degrees and elevations 0/40 pass every case. At 180 degrees, each copy
+still stalls after the return flight's midpoint sample. The four failures
+report completed startup/turning and a nonzero difference from the authorized
+arrival; no general arrival tolerance was widened to accept them.
+
+`check-ground-jump-placements.mjs` preserves the asset's geometry while isolating
+the tested pair from its other overlays. The final candidate is unpublished;
+its larger band still needs a full-map regression run, the four post-landing
+failures need investigation, and these fixtures are not ZIP/render proof.
+
 ## Wychford tower entrance requires an authored landing (2026-10-12)
 
 `refinement/audit-lift-supports.mjs` inspects saved editor scenes and pinned
