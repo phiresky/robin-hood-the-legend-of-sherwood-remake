@@ -32,7 +32,10 @@ def main():
    for ob in group:
     ob.data.calc_loop_triangles();meshes.append({'name':ob.name,'vertices':[list(ob.matrix_world@v.co) for v in ob.data.vertices],'triangles':[list(t.vertices) for t in ob.data.loop_triangles]})
    report=write_atlases(meshes,OUT/f'{state}-aligned.png',destination/state);reports[state]=report
-   for ob,row in zip(group,report['owners']):ob.data.materials[0]=material(Path(row['path']))
+   for ob,row in zip(group,report['owners']):
+    projected=material(Path(row['path']));nodes=projected.node_tree.nodes;links=projected.node_tree.links;shader=nodes.get('Principled BSDF');mix=next(node for node in nodes if node.type=='MIX_RGB')
+    for link in list(shader.inputs['Base Color'].links):links.remove(link)
+    shader.inputs['Base Color'].default_value=(0,0,0,1);shader.inputs['Emission Strength'].default_value=1;ob.data.materials[0]=projected
   # Freeze eight actual-camera views before saving, with source direction first.
   pts=[ob.matrix_world@v.co for group in objects.values() for ob in group for v in ob.data.vertices];center=Vector(tuple((min(p[i] for p in pts)+max(p[i] for p in pts))/2 for i in range(3)));scale=max((p-center).length for p in pts)*2.15;views=[]
   for i in range(8):
