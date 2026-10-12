@@ -62,6 +62,29 @@ fn trace_exit_code(result: TraceRunResult<i32>) -> i32 {
 
 fn run_command() -> TraceRunResult<i32> {
     let options = parse_options();
+    if options.inspect_header {
+        // Recover capture settings from recorded facts, including input seeds
+        // that may differ between shard runs within the same corpus.
+        let native = requested_native_trace_path(&options.trace_path)?;
+        validate_standalone_native_trace(&native)?;
+        let header = read_binary_trace_header(&native)?.trace;
+        validate_trace_header(&header);
+        let footer =
+            read_binary_trace_footer(&native).storage_context("read native trace extent")?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "header": header,
+                "footer": {
+                    "version": footer.version,
+                    "frame_count": footer.frame_count,
+                    "final_frame": footer.final_frame,
+                },
+            }))
+            .expect("serialize trace startup state")
+        );
+        return Ok(0);
+    }
     if options.inspect_capabilities {
         // Inspection reads an existing native artifact; never convert or
         // quarantine a source recording as a side effect of inspection.

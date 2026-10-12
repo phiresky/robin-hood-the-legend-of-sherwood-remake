@@ -16,6 +16,15 @@ fn cli_checks_modes_values_and_repeated_entity_filters() {
     .unwrap();
     assert_eq!(args.dump_from, 3);
     assert_eq!(args.dump_entities.len(), 2);
+    assert!(
+        super::CliOptions::try_parse_from([
+            "parity",
+            "--inspect-header",
+            "trace.parity.bitcode.zst",
+        ])
+        .unwrap()
+        .inspect_header
+    );
     let historical = super::CliOptions::try_parse_from([
         "parity",
         "--initial-difficulty",
@@ -44,6 +53,7 @@ fn cli_checks_modes_values_and_repeated_entity_filters() {
             "trace.jsonl",
         ],
         vec!["parity", "--convert", "--reblock", "trace.jsonl"],
+        vec!["parity", "--inspect-header", "--convert", "trace.jsonl"],
         vec!["parity", "--reblock-records", "32", "trace.jsonl"],
         vec!["parity", "--http-server", "0", "trace.jsonl"],
         vec!["parity", "--start-paused", "trace.jsonl"],

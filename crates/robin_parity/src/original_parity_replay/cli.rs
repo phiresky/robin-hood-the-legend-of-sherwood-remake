@@ -9,6 +9,7 @@ pub(super) struct Options {
     #[cfg(not(feature = "client"))]
     pub(super) core_datadir: PathBuf,
     pub(super) inspect_capabilities: bool,
+    pub(super) inspect_header: bool,
     pub(super) scan_all: bool,
     pub(super) no_auto_dump: bool,
     pub(super) visual: bool,
@@ -39,6 +40,9 @@ pub(super) struct CliOptions {
     pub(super) core_datadir: Option<PathBuf>,
     #[arg(long, group = "mode")]
     pub(super) inspect_capabilities: bool,
+    /// Print the recorded startup state and extent without running the simulation.
+    #[arg(long, group = "mode")]
+    pub(super) inspect_header: bool,
     #[arg(long)]
     pub(super) scan_all: bool,
     #[arg(long)]
@@ -81,6 +85,7 @@ pub(super) fn parse_options() -> Options {
         initial_difficulty,
         core_datadir,
         inspect_capabilities,
+        inspect_header,
         scan_all,
         no_auto_dump,
         visual,
@@ -134,11 +139,12 @@ pub(super) fn parse_options() -> Options {
     assert!(
         usize::from(bench_encodings)
             + usize::from(inspect_capabilities)
+            + usize::from(inspect_header)
             + usize::from(convert)
             + usize::from(reblock)
             + usize::from(validate_native)
             <= 1,
-        "--inspect-capabilities, --bench-encodings, --convert, --reblock, and --validate-native are mutually exclusive"
+        "inspection, benchmark, conversion, reblock, and validation modes are mutually exclusive"
     );
     assert!(
         reblock || !reblock_policy_requested,
@@ -150,6 +156,7 @@ pub(super) fn parse_options() -> Options {
         #[cfg(not(feature = "client"))]
         core_datadir,
         inspect_capabilities,
+        inspect_header,
         scan_all,
         no_auto_dump,
         visual,
