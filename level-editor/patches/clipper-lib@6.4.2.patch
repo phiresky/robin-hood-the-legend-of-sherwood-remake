@@ -1,0 +1,12 @@
+diff --git a/clipper.js b/clipper.js
+--- a/clipper.js
++++ b/clipper.js
+@@ -2639,7 +2639,7 @@
+ 	ClipperLib.ClipperBase.SlopesEqual4 = function (pt1, pt2, pt3, UseFullRange)
+ 	{
+ 		if (UseFullRange)
+-			return Int128.op_Equality(Int128.Int128Mul(pt1.Y - pt2.Y, pt2.X - pt3.X), Int128.Int128Mul(pt1.X - pt2.X, pt2.Y - pt3.Y));
++			return BigInt(pt1.Y - pt2.Y) * BigInt(pt2.X - pt3.X) === BigInt(pt1.X - pt2.X) * BigInt(pt2.Y - pt3.Y);
+ 		else
+ 			return ClipperLib.Cast_Int64((pt1.Y - pt2.Y) * (pt2.X - pt3.X)) - ClipperLib.Cast_Int64((pt1.X - pt2.X) * (pt2.Y - pt3.Y)) === 0;
+ 	};

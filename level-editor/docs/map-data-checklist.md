@@ -15,6 +15,10 @@ definition presence and index hashes, not scene pins or gameplay completeness.
 stair-clearance preparation after roughly 52 minutes. Convex-region duplicate
 comparison no longer uses the failing polygon sweep, but a complete fresh export
 has not yet verified that correction. See [the failure and profiling scope](map-compilation-evidence.md#fresh-wychford-final-clearance-failure-2026-10-12).
+An exact-integer clipping patch reduces one measured terrain-generation run
+from 183 to 50 seconds with identical output; 289 focused tests and the editor
+build pass. Full export timing and completion remain pending. See
+[the clipping profile](map-compilation-evidence.md#exact-integer-terrain-clipping-profile-2026-10-12).
 
 This file also retains historical investigations. Results that depended on the
 retired physical-navigation solver do **not** establish current traversal parity;

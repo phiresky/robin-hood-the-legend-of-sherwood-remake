@@ -282,6 +282,32 @@ The cache-only comparison/profile run in `wychford-cpu-profile-ppz81c53`
 started before this fix. Its output cannot validate the corrected deduplication;
 the CPU profile is intended to identify remaining expensive compiler operations.
 
+## Exact-integer terrain clipping profile (2026-10-12)
+
+`wychford-cpu-profile-ppz81c53/terrain.cpuprofile` isolates terrain generation:
+182.717 seconds for 17,924 surfaces. About 128 sampled seconds are under the
+clipping library's emulated large-integer multiplication, primarily its
+three-point collinearity predicate while adding fixed-point paths.
+
+An isolated replacement of that full-range predicate with native `BigInt`
+produces byte-for-byte identical serialized terrain in 50.175 seconds. These
+are individual measurements under concurrent workloads, not an end-to-end export
+speed guarantee. The saved comparison is `bigint-terrain-review.json` beside the
+profile and baseline `terrain.json`.
+
+`patches/clipper-lib@6.4.2.patch`, registered in the workspace and lockfile,
+applies this exact-arithmetic change reproducibly. It preserves the small-range
+numeric branch. Tests compare translated inputs with the retained predicate and
+verify one-unit deviations at large coordinate deltas; the latter exposes a
+collinearity error in the old large-integer implementation. The patch does not
+reduce coordinate precision or change engine code.
+
+Offline installation downloads no packages. All 289 focused terrain, clipping,
+compiler, packaging and wall tests pass, together with app type-checking, scoped
+lint and the production editor build. The current full Wychford profile uses
+`patched-compile.log` and `patched-compiler.cpuprofile`; it includes the corrected
+convex-region deduplication and must complete before certifying current export.
+
 ## Supported integer jump-span search (2026-10-12)
 
 `refinement/review-jump-supported-spans.mjs` generates diagnostic replacements
