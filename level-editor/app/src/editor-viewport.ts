@@ -1415,7 +1415,7 @@ export class EditorViewport {
   seekNativeArt(tick: number, id?: string) {
     if (this.loopClocks.ready) {
       if (id !== undefined) this.loopClocks.seek(id, tick);
-      else for (const row of this.loopClocks.snapshot()) this.loopClocks.seek(row.id, tick);
+      else this.loopClocks.seekAll(tick);
       this.sampleLoopClocks();
     } else this.currentNativeArt.seek(tick, id);
     this.nativeSurface?.update(this.nativePreviewPixels());

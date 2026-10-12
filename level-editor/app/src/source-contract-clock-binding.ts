@@ -251,6 +251,11 @@ export class SourceContractClockBinding {
     this.clocks.seek(this.handle(id), tick);
     this.samplePhysical();
   }
+  seekAll(tick: number) {
+    this.assertExternalConsumers();
+    for (const handle of this.handles.values()) this.clocks.seek(handle, tick);
+    this.samplePhysical();
+  }
   advance(sequence: number, seconds: number) {
     // A rogue internally-playing representation must fail before the shared cursor moves.
     this.assertExternalConsumers();

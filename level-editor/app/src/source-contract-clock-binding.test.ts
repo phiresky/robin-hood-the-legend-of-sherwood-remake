@@ -335,6 +335,12 @@ test("explicit initial context preserves idle nonloop artwork without giving it 
     clocks.snapshot().find((e) => e.id === idle.id),
     before,
   );
+  clocks.seekAll(7);
+  assert.equal(clocks.snapshot().find((e) => e.id === "animation12")!.tick, 7);
+  assert.deepEqual(
+    clocks.snapshot().find((e) => e.id === idle.id),
+    before,
+  );
   for (const action of [
     () => clocks.seek(idle.id, 5),
     () => clocks.setPlaying(idle.id, true),
