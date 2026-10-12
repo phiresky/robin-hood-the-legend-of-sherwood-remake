@@ -11,17 +11,24 @@ import { sceneToGame, gltfToScene } from "../shared/src/geometry.ts";
 const { Triangle, Vector3 } = createRequire(new URL("../shared/package.json", import.meta.url))(
   "three",
 );
-const [stage] = process.argv.slice(2);
+const [stage, map = "nottingham", ...surfaceArguments] = process.argv.slice(2);
 assert.ok(stage);
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`));
-const scene = await readStoredMap("library/scenes/nottingham.rhlos-map.json", "library");
+const scene = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const output = await fs.mkdtemp("work/map-compile/roof-slab-mesh-review-");
 const results = [];
-for (const [id, surfaceId] of [
-  ["nottingham-north-street-roof-edge-slab", "building-140-walk-0"],
-  ["nottingham-north-stone-house", "building-113-walk-0"],
-  ["nottingham-upper-green-house", "building-159-walk-0"],
-]) {
+const reviewed = surfaceArguments.length
+  ? surfaceArguments.map((argument) => {
+      const pair = argument.split(":");
+      assert.equal(pair.length, 2, "Supply asset-id:surface-id pairs");
+      return pair;
+    })
+  : [
+      ["nottingham-north-street-roof-edge-slab", "building-140-walk-0"],
+      ["nottingham-north-stone-house", "building-113-walk-0"],
+      ["nottingham-upper-green-house", "building-159-walk-0"],
+    ];
+for (const [id, surfaceId] of reviewed) {
   const source = scene.assetSources.find((source) => source.id === id);
   const edit = edits.find((edit) => edit.asset === id);
   assert.ok(source && edit);
@@ -92,8 +99,9 @@ await fs.writeFile(
 console.log(output);
 console.log(
   JSON.stringify(
-    results.map(({ id, originalMaximumDistance, stagedMaximumDistance }) => ({
+    results.map(({ id, surfaceId, originalMaximumDistance, stagedMaximumDistance }) => ({
       id,
+      surfaceId,
       originalMaximumDistance,
       stagedMaximumDistance,
     })),

@@ -40,6 +40,24 @@ to the clipped face interior (`4hkiyx`), does not repair the placement matrix.
 Those candidate asset definitions remain unpublished. Complete flight success
 must not be substituted for complete click-to-arrival success.
 
+Full published York after early clearance (`saved-map-exports-8tuyfM`) takes
+610.89 seconds, loads natively and retains 28/720 failed ordinary-click probes.
+The copied fixture improvement therefore does not change the current full-map
+failure count. Retaining disconnected floor partitions was also tested in
+`connected-jump-placements-Dszh3m`; it worsened the staged edge candidate to
+124/160 failures, and the diagnostic compiler change was reverted.
+
+A narrower asset candidate aligns seven boundary vertices on the common plane
+intersection of roof faces 658/659 (maximum movement 0.669 units), without
+changing jump edges. Stage `york-ridge-only-stage-x9rlzazi` produces
+`connected-jump-placements-HsR3FM`: native geometry passes all eight placements,
+and ordinary clicks improve from 60 to 64 successes out of 160 without a passing
+case regressing. The mesh reviewer now accepts an explicit map and
+`asset-id:surface-id` list. Review `roof-slab-mesh-review-W9Ty6B` measures the first
+face's maximum boundary distance at 0.380 units (previously 0.374), with the
+second face unchanged at 1.102. The world-XY overlay was inspected. This remains
+a staged asset edit pending full-map verification and broader connection checks.
+
 ## Fresh York export after folded-floor preparation (2026-10-12)
 
 `saved-map-exports-YQaMEL` compiles the published York scene in 389.66 seconds
