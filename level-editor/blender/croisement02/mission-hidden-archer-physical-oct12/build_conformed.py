@@ -1,5 +1,7 @@
 """Apply measured local clearance to three private screen hypotheses."""
-import json
+import json,sys
+from pathlib import Path
+sys.path.insert(0,str(Path(__file__).resolve().parent))
 import build_models as build
 from render_slots import acquire,release
 
