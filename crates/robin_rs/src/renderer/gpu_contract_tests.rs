@@ -193,6 +193,12 @@ fn verify_map_patch_camera_alignment(gpu: GpuContext, oversized_atlas: bool) {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn verify_offscreen_gpu_contract(gpu: GpuContext) {
+    if let Ok(configuration) = std::env::var("ASSET_CHARACTER_RENDER_CONFIG") {
+        crate::game_render::archive_character_tests::capture(
+            gpu.clone(),
+            std::path::Path::new(&configuration),
+        );
+    }
     if let Ok(archive) = std::env::var("ASSET_APPEARANCE_EXPORT_ZIP") {
         verify_asset_archive_appearance(gpu.clone(), std::path::Path::new(&archive));
     }

@@ -4,6 +4,24 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Native platform character captures (2026-10-12)
+
+`render-connection-library-G5JiC2/character-capture.json` mounts the previously
+verified platform ZIP over an empty filesystem and draws a library guard atlas
+frame through the native entity renderer. The headless OpenGL test passes in
+2.65 seconds. Five 160×160 images in `native-character-captures/` were inspected:
+the upper platform and clear foreground show the character, the lower edge hides
+its feet, and the solid-interior diagnostic pose hides it completely. Changed
+pixel counts against the background are 804 (upper platform), 791 (behind),
+594 (lower edge), 0 (inside wall), and 804 (clear foreground).
+
+These are manually reviewed static poses, including deliberately unsupported
+occlusion probes. They are not five playable locations or animated traversals.
+The guard uses one real atlas frame, not a complete animation profile; native
+movement evidence remains separate. This establishes a reproducible actual-sprite
+inspection path but does not certify all map compositing, jump contact, appearance
+states, or projectile masking. No production renderer or movement code changes.
+
 ## Full Wychford browser round trip in progress (2026-10-12)
 
 Private fixture `wychford-rendered-library-sv656wxd` copies the current saved

@@ -37,6 +37,8 @@ pub(crate) use fog::{
     build_vector_fog_mask_rgba, fog_mask_cache_key, render_fog_of_war, vector_fog_mask_dimensions,
 };
 pub(crate) use view_cones::render_view_cone_overlay;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod archive_character_tests;
 mod debug;
 mod hud;
 mod minimap;

@@ -937,3 +937,19 @@ deadline in milliseconds (one hour by default). Progress is printed when it
 changes. A passing report proves the browser harness's document, gameplay, color,
 depth and appearance comparisons. Native ZIP loading, movement and rendered
 character compositing still require separate checks.
+
+For a static exported archive, set `ASSET_CHARACTER_RENDER_CONFIG` to a JSON
+configuration and run the ignored
+`gpu_upscale::tests::headless_downlevel_device_executes_every_multipass_profile`
+test in `robin_rs --lib`. On the headless software adapter, use
+`EGL_PLATFORM=surfaceless WGPU_BACKEND=gl` and `RUST_MIN_STACK=33554432`.
+The configuration contains `archive`, `sprite_sheet`, `sprite_rect` (`x,y,w,h`),
+`sprite_offset` (sprite-script draw offset), `output`, and `probes`. Each probe
+has `name`, `map` (`x,y`), `height`, `layer`, and `sector`.
+
+This mounts the archive over an empty filesystem and sends an actual atlas frame
+through the native entity renderer. It writes one PNG per pose and a changed-pixel
+report against the background alone. Inspect the images: zero changed pixels
+can mean intentional occlusion or an invalid pose, and counts alone are not
+fidelity assertions. Scenery animation and patch fixtures are rejected. This
+static visual check does not execute movement or prove actor contact during a jump.

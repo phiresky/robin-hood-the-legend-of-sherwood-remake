@@ -51,8 +51,11 @@ and sixteen expected occlusion checks, not 160 traversals.
 These full-map exports include concurrent local scene edits. The corrected asset's
 two-copy, rotated/raised browser ZIP now reopens and rebakes identically, loads
 without base-game data, and retains twelve archived traversals plus eight
-occlusion checks. Native character/depth compositing and full-map rendered ZIP
-fidelity remain open. See [the receiver correction](map-compilation-evidence.md#croisement03-authored-landing-receiver-2026-10-12).
+occlusion checks. Five native captures with an actual guard atlas frame now provide
+manually reviewed static upper-platform, edge and foreground compositing checks;
+animated contact and full-map rendered ZIP fidelity remain open. See
+[the captures](map-compilation-evidence.md#native-platform-character-captures-2026-10-12)
+and [the receiver correction](map-compilation-evidence.md#croisement03-authored-landing-receiver-2026-10-12).
 
 The published restoration of four asset-local keep movement contours improves Leicester
 to **226/230** offset jump clicks with no regressions. All 46 interior directions
