@@ -79,6 +79,33 @@ slab.asset.gameplay.movementClearances = [
   },
 ];
 changes.push({ beforeClearances, afterClearances: slab.asset.gameplay.movementClearances });
+// Stage a matching movement-only support volume. The original part remains the
+// visual/query geometry; compare both against the mesh before publication.
+const originalShape = slab.asset.parts.find(
+  (part) => part.node === slab.surface.node,
+).obstacle_local_game;
+assert.ok(
+  originalShape.points.every((point) => point.z_bottom === originalShape.points[0].z_bottom),
+);
+assert.ok(!slab.asset.gameplay.volumes?.length && !slab.asset.gameplay.movementSolids);
+const { projection_area: _projectionArea, material_indices: _materials, ...shape } = originalShape;
+const support = {
+  id: "building-140-contact-support",
+  node: slab.surface.node,
+  shape: {
+    ...shape,
+    mouse: false,
+    points: slabPoints.map(([x, y, z]) => ({
+      x,
+      y,
+      z_bottom: originalShape.points[0].z_bottom,
+      z_top: z,
+    })),
+  },
+};
+slab.asset.gameplay.volumes = [support];
+slab.asset.gameplay.movementSolids = [support.id];
+changes.push({ beforeSupport: originalShape, afterSupport: support });
 const edits = [];
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 for (const { id, asset, surface, indices } of selected) {

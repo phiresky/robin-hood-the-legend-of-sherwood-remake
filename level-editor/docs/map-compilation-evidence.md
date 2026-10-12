@@ -6,6 +6,28 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Unpublished roof-slab connection candidate (2026-10-12)
 
+Follow-up collision diagnostic `roof-approach-cuts-OZ6xeU` identifies the slab
+asset's solid as the cut on the stone-house roof at `[1593.5778,528.2111]`.
+The staged floor clearance alone does not remove that cross-plane obstruction.
+Candidate `roof-slab-contact-477dXb` adds a movement-only support volume aligned
+with the revised slab floor; the original part remains visual/query geometry.
+Its full-map export `saved-map-exports-655IfV` retains all 39 pairs and passes
+all ten slab jump samples. The full upright report is 374/390, with ten helper
+posture rejections and six unrelated overlay-selection failures remaining.
+This is not yet a publishable repair.
+
+`check-roof-slab-placements.mjs` isolates pair 32 while retaining the three
+assets' physical geometry, moves the assembly, and makes two independent copies.
+The default four-rotation run (`roof-slab-placements-binckZ`) stops at 90 degrees
+with an ambiguous/overlapping navigation join after compiling 0/37 degrees at
+both elevations. The explicit 0/37/180-degree run (`roof-slab-placements-5OHwJt`)
+retains two pairs in each of six descriptors, but only 52/120 native click
+traversals pass: 6/20 for each 0-degree case and 10/20 for each 37/180-degree
+case. Failures include missing receivers and incorrect overlay selection.
+Therefore the full-map improvement does not establish reusable-asset correctness.
+The candidate remains unpublished pending moved-receiver/overlay investigation,
+the 90-degree connection case, and mesh review.
+
 `refinement/stage-roof-slab-contact.mjs` stages local boundary sockets between
 the north-street roof slab and north stone house. The shared-edge adjustments
 are 1.552 and 0.916 game units; keeping the slab planar adjusts its opposite
