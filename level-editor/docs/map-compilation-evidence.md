@@ -4,6 +4,49 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Supported integer jump-span search (2026-10-12)
+
+`refinement/review-jump-supported-spans.mjs` generates diagnostic replacements
+from exported receivers and movement geometry. It searches nearby integer points,
+pairs opposite equal screen-space spans, retains the existing jump zones and
+rejects endpoints that cannot contain the full upright 6-by-3 half-footprint in
+the movement contour after subtracting every obstacle state. It ranks nearby
+spans with less endpoint height variation first. This is an authoring investigation,
+not a production compiler pass: continuous-span clearance, changing receiver
+states, flight obstruction and preservation of other connections still require
+guards before integration. It modifies neither published assets nor runtime code.
+
+The first search ranked by distance only (`supported-jump-spans-Y1d3vo`) passes
+311/432 interior clicks (`interior-jump-clicks-UMXOY0`). Preferring less height
+variation without the footprint guard (`supported-jump-spans-Rucz7j`) improves
+to 343/432 (`interior-jump-clicks-BQo7t9`), but its first candidate still fails.
+Those heuristics alone are insufficient.
+
+With the footprint guard, all 24 reviewed candidates pass all 432 interior clicks
+at 180 degrees (`supported-jump-spans-P8bM0u`, `interior-jump-clicks-DIJRR2`).
+The same candidates also pass all 240 perpendicular-offset clicks. The elevated
+copy (`supported-jump-spans-NmgreC`, `interior-jump-clicks-Fg5kZ5`) passes 432/432;
+its endpoints are exactly translated by `[0,-40,40]` and retain their ranking.
+At 90 degrees, `supported-jump-spans-WsBxIf` and `interior-jump-clicks-b8HzXm`
+also pass all 432 interior clicks.
+
+Taking only the first-ranked candidate for each of four angles, two elevations
+and two copies yields `supported-jump-placement-sweep-Px8ksu`: all 160 offset
+clicks traverse, with no occlusion-only classifications. All 288 interior clicks
+also pass (`interior-jump-clicks-fMet9s`). This matrix starts with the unpublished
+central-south roof stage, and isolates the cross-asset connection; it does not
+certify full asset behavior, rendered archives or the remaining York connections.
+
+Repeating the first-candidate matrix from the currently published asset definitions
+(`connected-jump-placements-qTlnO4`, without the roof stage) gives
+`supported-jump-published-sweep-3Xk3mj`: all 160/160 offset clicks traverse and
+all 288/288 interior clicks pass (`interior-jump-clicks-Zt5Iks`). The unchanged
+published export passed only 68/160 offset clicks. This isolates useful progress
+to endpoint preparation; the unpublished roof edits are not required for these
+results. Native verification used the existing `b232173b1aef353f` engine test
+binary and complete RobinTown sprite. No engine source was changed or rebuilt
+for this experiment.
+
 ## Great hall rotation failures (2026-10-12)
 
 While the full placement generator `great-hall-neighbour-placements-gzhML3`

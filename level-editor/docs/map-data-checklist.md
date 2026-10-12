@@ -108,6 +108,16 @@ not a publishable fix. They establish that integer endpoints can represent a
 working connection here. Automatic selection, clearance checks and broader
 placement verification remain necessary before changing export behavior.
 
+A geometry-driven search now rejects endpoints without full upright footprint
+clearance, preserves opposite equal integer spans and prefers less height
+variation. Its first-ranked candidate passes **160/160 offset traversals and
+288/288 interior clicks** across four rotations, two elevations and two copies
+using the published central-south assets. This improves the isolated published
+baseline of 68/160 offset traversals without requiring the staged roof edits.
+The search remains a diagnostic tool: production integration still needs complete
+span/flight-clearance checks, changing-receiver guards and regression checks on
+all connections. See [the search evidence](map-compilation-evidence.md#supported-integer-jump-span-search-2026-10-12).
+
 The published west-lane roof correction passes all **72 interior-click traversals**
 across nine angles, two elevations and two copies. It restores the mesh-supported
 roof outline and moves the takeoff inward. All 18 exports construct natively;
