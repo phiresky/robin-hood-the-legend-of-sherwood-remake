@@ -22,7 +22,10 @@ w=r/f'tree14-wood-v{a.revision}/assets/croisement01-tree-14'
 model=w/'baseline.blend';before=sha(model);bpy.ops.wm.open_mainfile(filepath=str(model))
 out=w/'inspection/solid-preview-v1';assert not out.exists()
 manifest=r/'tree14-wood-v9-projected/assets/croisement01-tree-14/input/views.json'
-render(manifest,out,modes=('solid',),width=384)
+packet=json.loads(manifest.read_text())
+for view in packet['views']:view['crop']={'width':packet['tile_size'][0],'height':packet['tile_size'][1]}
+(w/'inspection').mkdir(exist_ok=True);camera_file=w/'inspection/preview-cameras.json';camera_file.write_text(json.dumps(packet,indent=2)+'\n')
+render(camera_file,out,modes=('solid',),width=384)
 images=[Image.open(out/f'view-{i}-solid.png').convert('RGB') for i in range(8)]
 width,height=images[0].size;sheet=Image.new('RGB',(width*4,height*2))
 for i,image in enumerate(images):sheet.paste(image,((i%4)*width,(i//4)*height))
