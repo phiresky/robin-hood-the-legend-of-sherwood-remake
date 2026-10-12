@@ -23,7 +23,7 @@ bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.preferences.filepaths.s
 working=bpy.data.collections['Croisement01 Working'];terrain={'ground',*[f'building-{i:03d}' for i in range(10)]}
 for o in list(bpy.data.objects):
  if o.type=='MESH' and o.get('source_node') not in terrain:bpy.data.objects.remove(o,do_unlink=True)
-asset='croisement01-tree-14';node='scenery-tree14-wood';name='Northern Twisted Tree'
+asset='croisement01-tree-14';node='scenery-tree14-wood';asset_label='Northern Twisted Tree'
 core=base/'tree14-source-preparation-v1/known-trunk-root-domain.png';wood=Image.open(core).convert('L');wood.save(dest/'wood-domain.png')
 # The source traces define branch centerlines; unseen depth remains inferred.
 trace=json.loads((base/'tree14-source-preparation-v1/preparation.json').read_text())['trace_screen_coordinates']
@@ -72,7 +72,7 @@ while remaining:
 components.sort(key=len,reverse=True);assert len(components[0])>100000 and all(len(c)<=20 for c in components[1:])
 bmesh.ops.delete(bm,geom=[v for c in components[1:] for v in c],context='VERTS');bm.to_mesh(body.data);bm.free();body.data.update()
 mesh=body.data.copy();bpy.data.objects.remove(body,do_unlink=True);dummy=bpy.data.meshes.new('Wood slot');mat=bpy.data.materials.new('Unknown wood');mat.diffuse_color=(.34,.34,.34,1);dummy.materials.append(mat);obj=bpy.data.objects.new('Tree14 wood',dummy);working.objects.link(obj)
-for k,v in dict(source_node=node,asset_group=asset,asset_name=name,part_name='Conservative native bark and inferred continuous wood').items():obj[k]=v
+for k,v in dict(source_node=node,asset_group=asset,asset_name=asset_label,part_name='Conservative native bark and inferred continuous wood').items():obj[k]=v
 assign_mesh(obj,mesh);bpy.context.view_layer.update()
 native=json.loads((OUT/'baseline/masks/manifest.json').read_text())
 for row in native['masks']:row['png']=str(OUT/'baseline/masks'/row['png'])
@@ -81,7 +81,7 @@ catalog=json.loads((OUT/'catalog.json').read_text());groups=[]
 for group in catalog['groups']:
  parts=[p for p in group['parts'] if (f"building-{p['obstacle']:03d}" if 'obstacle' in p else p['node']) in terrain]
  if parts:groups.append(dict(group,parts=parts))
-groups.append(dict(id=asset,name=name,parts=[dict(node=node,name='Partly observed woody stem')]))
+groups.append(dict(id=asset,name=asset_label,parts=[dict(node=node,name='Partly observed woody stem')]))
 catalog.update(version=2,groups=groups,canonical_owners={f"building-{p['obstacle']:03d}" if 'obstacle' in p else p['node']:g['id'] for g in groups for p in g['parts']})
 cat=dest/'catalog.json';cat.write_text(json.dumps(catalog,indent=2)+'\n');inventory(dest/'inventory',collection_name=working.name,map_name='Croisement01',source_path=OUT/'baseline/covered.png',patch_manifest=OUT/'source-states/layers.json')
 masks=dest/'masks.json';masks.write_text(json.dumps(native,indent=2)+'\n');source=dest/'source-masks.json';source.write_text(json.dumps(dict(version=1,mask_inventory=str(masks),projections=dict(exterior=dict(state='Conservative native14 bark',source_sha256=sha(OUT/'baseline/covered.png'),assignments=[dict(reviewed=True,asset_group=asset,mask_indices=[214])]))),indent=2)+'\n')
