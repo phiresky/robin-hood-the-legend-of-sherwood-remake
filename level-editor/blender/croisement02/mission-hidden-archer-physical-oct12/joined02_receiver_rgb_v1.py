@@ -70,7 +70,9 @@ def main():
         'Native RGB passes through the existing PBR material and lighting; exact final appearance is not yet qualified.',
         'No canonical source or model changed.']
     report['targets']=[dict(name=t['obj'].name,source_mesh_fingerprint=t['before'])for t in TARGETS]
-    report['recipe']=original.q.pin(Path(__file__));p.write_text(json.dumps(report,indent=2)+'\n')
+    report['recipe']=original.q.pin(Path(__file__))
+    report['base_recipe']=original.q.pin(Path(original.__file__))
+    p.write_text(json.dumps(report,indent=2)+'\n')
 
 if __name__=='__main__':
     def available():return int(next(x.split()[1]for x in Path('/proc/meminfo').read_text().splitlines()if x.startswith('MemAvailable:')))*1024
