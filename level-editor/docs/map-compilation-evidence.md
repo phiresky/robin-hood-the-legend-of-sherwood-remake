@@ -4,13 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Croisement03 fallen-log cap repair (2026-10-12)
+
+The baseline ten-map batch `saved-map-exports-MqNblp` has finished: nine saved
+scenes compile, while Croisement03 fails on fallen-log volume `wood-90`. That
+fragment has nearly coincident edges which collapse at native float precision.
+This batch predates jump partitioning and is not ten-map gameplay certification.
+
+Stage `wood-cap-slivers-RbglcJ` applies the existing offline mesh-fragment repair
+to the draft log definition. It removes 186 fragments and retains 917, with
+footprint loss 0.0006266% and enclosed-volume loss 0.0003091%. Retained IDs and
+geometry are unchanged. All ten placements (five rotations, two elevations)
+compile and pass native geometry construction. Independent mesh-derived samples
+pass all 17,880 directed sight/projectile queries with zero failures. These
+samples do not certify every microscopic boundary or contact continuity.
+The repair is published with hash-guarded backups and an applied report in the
+stage's `publication` directory; the index and saved-scene descriptor pin are
+updated. Full-scene re-export and traversal checks remain required. No runtime code or
+general compiler policy for thin authored obstacles changes.
+
 ## Wychford native construction and rejected roof-flight investigation (2026-10-12)
 
 The ten-map batch `saved-map-exports-MqNblp` finishes Wychford in about 31 minutes.
 Its isolated completed-result snapshot `completed-scene-audit-9lvpu2on` passes
 native construction (26.58 seconds) and all 96 ordinary initial-state route
 samples (22.16 seconds). The batch started before jump partitioning was added.
-It continues processing other scenes; this is not a completed ten-map result.
+The completed batch's export results are recorded above; these native checks
+cover Wychford only.
 Wychford still omits the placed church-side-tower traversal: its entrance has
 height 134.10 while the supporting area at that point has height 88.33. The
 compiler retains other asset geometry and reports the omission. Full traversal,

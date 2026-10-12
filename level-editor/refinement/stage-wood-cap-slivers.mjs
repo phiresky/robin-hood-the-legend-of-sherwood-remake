@@ -37,7 +37,9 @@ for (const id of ids) {
   assert.equal(hash(bytes), entry.descriptor_sha256);
   const descriptor = JSON.parse(bytes);
   const gameplay = descriptor.gameplay;
-  assert.ok(gameplay.draft.issues.some((issue) => issue.startsWith("Mesh-derived wood collision")));
+  assert.ok(
+    gameplay.draft.issues.some((issue) => /^Mesh-derived (wood|log) collision/.test(issue)),
+  );
   assert.ok(
     gameplay.volumes.length && gameplay.volumes.every((volume) => /^wood-\d+$/.test(volume.id)),
   );
