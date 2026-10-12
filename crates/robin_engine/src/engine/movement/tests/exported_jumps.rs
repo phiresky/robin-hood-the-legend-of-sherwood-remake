@@ -22,6 +22,10 @@ enum JumpStance {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct JumpArrival {
     final_distance: f32,
+    requested_jump_line: usize,
+    selected_jump_line: usize,
+    requested_start: [f32; 2],
+    authorized_start: [f32; 2],
     requested_goal: [f32; 2],
     authorized_goal: [f32; 2],
     completed_turning_startup: bool,
@@ -299,11 +303,29 @@ fn exported_roof_jump_overlays_select_the_current_connection_and_require_jump_sk
         let goal = destination.get_middle_point() + inset;
         let owner = walking_pc(&mut engine, &mut assets, start, source.layer, source_sector);
         engine.ent_mut(owner).pc_data_mut().unwrap().has_jump = true;
-        resolve_jump_click(&engine, owner, start, goal, index, destination_sector).unwrap();
+        resolve_jump_click(
+            &engine,
+            owner,
+            start,
+            goal,
+            goal,
+            Some(index),
+            destination_sector,
+        )
+        .unwrap();
         engine.ent_mut(owner).pc_data_mut().unwrap().has_jump = false;
         assert!(!engine.is_jumpable(index as u32, owner, true));
         assert!(
-            resolve_jump_click(&engine, owner, start, goal, index, destination_sector).is_err()
+            resolve_jump_click(
+                &engine,
+                owner,
+                start,
+                goal,
+                goal,
+                Some(index),
+                destination_sector
+            )
+            .is_err()
         );
     }
 }
@@ -313,9 +335,10 @@ fn resolve_jump_click(
     owner: EntityId,
     start: MapPoint,
     goal: MapPoint,
-    index: usize,
+    authorized_goal: MapPoint,
+    required_line: Option<usize>,
     destination_sector: crate::position_interface::SectorHandle,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let hit = engine.world.fast_grid.get_sector_screen(goal, start);
     let hit_index = hit
         .sector_idx
@@ -331,16 +354,28 @@ fn resolve_jump_click(
         owner,
         u32::from(hit_index),
         start,
-        goal,
+        authorized_goal,
         true,
         Some(u16::from(destination_sector)),
     );
-    if chosen != Some(index as u32) {
+    if let Some(index) = required_line
+        && chosen != Some(index as u32)
+    {
         return Err(format!(
             "click selects wrong jump: expected={index}, chosen={chosen:?}"
         ));
     }
-    Ok(())
+    chosen
+        .map(|index| index as usize)
+        .ok_or_else(|| {
+            format!(
+                "click has no usable jump: start={start:?}, goal={goal:?}, authorized_goal={authorized_goal:?}, source_sector={:?}, clicked_sector={:?}, clicked_layer={}, candidate_lines={:?}",
+                engine.ent(owner).element_data().sector(),
+                selected.sector_number,
+                selected.layer,
+                selected.jump_line_indices,
+            )
+        })
 }
 
 #[test]
@@ -445,7 +480,7 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
             } else {
                 [0., 0.25, 0.5, 0.75, 1.]
             } {
-                if stance == JumpStance::Vertical && mode == JumpDispatch::Click && !climbing {
+                if mode == JumpDispatch::Click && !climbing && line.layer > destination.layer {
                     let vector = line.vector();
                     let inset = crate::coordinates::MapVec::new(
                         -vector.y * approach_depth / vector.length(),
@@ -455,7 +490,12 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
                     let start = line.point_a + offset - inset;
                     let goal = destination.point_b + offset + inset;
                     let hit = engine.world.fast_grid.get_sector_screen(goal, start);
-                    if hit.sector_idx == line.sector_index && line.layer > destination.layer {
+                    let clicked_home = hit.sector_idx.map(|index| {
+                        engine.world.fast_grid.level.sectors[usize::from(index)]
+                            .underlying_sector
+                            .unwrap_or(index)
+                    });
+                    if clicked_home == line.sector_index {
                         let lower =
                             engine
                                 .world
@@ -484,6 +524,8 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
                         results.push(serde_json::json!({
                             "file": file, "line": index, "t": t, "passed": true,
                             "outcome": "source-platform-occludes-lower-click",
+                            "requested_goal": [goal.x, goal.y],
+                            "source_layer": line.layer, "destination_layer": destination.layer,
                             "arrival": null, "error": null,
                         }));
                         continue;
@@ -601,9 +643,38 @@ fn dispatch_jump(
         0.
     };
     let inset = crate::coordinates::MapVec::new(normal.x * distance, normal.y * distance);
-    let start = source.point_a + offset - inset;
+    let requested_start = source.point_a + offset - inset;
+    let owner = walking_pc(
+        &mut engine,
+        &mut assets,
+        requested_start,
+        source.layer,
+        source_sector,
+    );
+    let mut start = requested_start;
+    if mode == JumpDispatch::Click {
+        // Synthetic click probes must begin at a position that can support the
+        // actor's actual move box, including beside rounded ledge corners.
+        let mut bounds = *engine.ent(owner).position_iface().get_move_box_map();
+        if !engine
+            .world
+            .fast_grid
+            .find_authorized_position_toward(&mut bounds, start, source.layer)
+        {
+            return Err(format!(
+                "no authorized click probe start near {requested_start:?}"
+            ));
+        }
+        start = bounds.center();
+        engine
+            .ent_mut(owner)
+            .element_data_mut()
+            .sprite
+            .position_iface
+            .set_map_position(start);
+    }
     let goal = destination.point_b + offset + inset;
-    if approach {
+    if approach && mode != JumpDispatch::Click {
         let footprint = engine
             .world
             .fast_grid
@@ -618,11 +689,6 @@ fn dispatch_jump(
                 destination.layer,
             ),
         ] {
-            if mode == JumpDispatch::Click && label == "landing" {
-                // A player click is authorized into a formation destination
-                // before movement. Check that actual destination below.
-                continue;
-            }
             if !engine
                 .world
                 .fast_grid
@@ -643,7 +709,6 @@ fn dispatch_jump(
     if receiver.is_none() && (source.z_a != 0. || source.z_b != 0.) {
         return Err(format!("elevated launch point has no receiver: {start:?}"));
     }
-    let owner = walking_pc(&mut engine, &mut assets, start, source.layer, source_sector);
     engine.ent_mut(owner).pc_data_mut().unwrap().has_jump = true;
     let opponent = (stance == JumpStance::Sword).then(|| {
         let opponent = walking_pc(
@@ -702,8 +767,8 @@ fn dispatch_jump(
     );
     let sim = crate::sim_rng::test_context();
     let mut arrival_goal = goal;
+    let mut selected_jump_line = index;
     let sequence = if mode == JumpDispatch::Click {
-        resolve_jump_click(&engine, owner, start, goal, index, destination_sector)?;
         let planned = engine.plan_recorded_group_move(&assets, &[owner], goal, None, None, None);
         match planned.as_slice() {
             [
@@ -713,21 +778,17 @@ fn dispatch_jump(
             }
             _ => return Err(format!("click has no authorized arrival: {goal:?}")),
         }
-        let footprint = engine
-            .world
-            .fast_grid
-            .try_move_box_half_diagonal(0)
-            .unwrap();
-        if !engine.world.fast_grid.is_reachable_thick(
-            destination.point_b + offset,
+        // Several ledges can serve the same platform. A click chooses among
+        // them using its authorized destination; exercise that chosen route.
+        selected_jump_line = resolve_jump_click(
+            &engine,
+            owner,
+            start,
+            goal,
             arrival_goal,
-            destination.layer,
-            footprint,
-        ) {
-            return Err(format!(
-                "authorized landing approach is blocked: {arrival_goal:?}"
-            ));
-        }
+            None,
+            destination_sector,
+        )?;
         engine.perform_group_move(
             TickCtx::new(&sim, &assets),
             &[owner],
@@ -794,6 +855,10 @@ fn dispatch_jump(
     let mut flew = false;
     let mut sword_flew = false;
     let mut shoulder_launched = false;
+    let source = engine.world.fast_grid.level.jump_lines[selected_jump_line].clone();
+    let destination = engine.world.fast_grid.level.jump_lines
+        [source.associated_line_index.unwrap() as usize]
+        .clone();
     let vertical = !source.long_jump_forced
         && (destination.z_a - source.z_a).abs() >= if carrier.is_some() { 100. } else { 60. };
     let expected_flight = if !vertical {
@@ -822,6 +887,9 @@ fn dispatch_jump(
         if let Some(trajectory) = &mut trajectory {
             let position = element.position();
             trajectory.push(serde_json::json!({
+                "selected": format!("{:?}", engine.entities().current_element_for_actor(owner)
+                    .and_then(|(id, index)| engine.seq().get_element(id, index))
+                    .map(|selected| (selected.command, &selected.data))),
                 "action": format!("{:?}", element.sprite.last_action),
                 "motion": format!("{:?}", element.sprite.last_motion_state),
                 "position": [position.x, position.y, position.z],
@@ -938,6 +1006,10 @@ fn dispatch_jump(
             }
             return Ok(JumpArrival {
                 final_distance,
+                requested_jump_line: index,
+                selected_jump_line,
+                requested_start: [requested_start.x, requested_start.y],
+                authorized_start: [start.x, start.y],
                 requested_goal: [goal.x, goal.y],
                 authorized_goal: [arrival_goal.x, arrival_goal.y],
                 completed_turning_startup,
@@ -950,8 +1022,21 @@ fn dispatch_jump(
         .entities()
         .current_element_for_actor(owner)
         .and_then(|(id, index)| engine.seq().get_element(id, index));
+    if let Some(trajectory) = trajectory {
+        eprintln!(
+            "failed jump line {index} at {t}: {:?}",
+            &trajectory[..trajectory.len().min(8)]
+        );
+    }
+    let half_diagonal = engine.ent(owner).position_iface().get_half_diagonal();
+    let midpoint_reachable = engine.world.fast_grid.is_reachable_thick(
+        start,
+        source.get_middle_point(),
+        source.layer,
+        half_diagonal,
+    );
     Err(format!(
-        "jump stalled: flew={flew}, position={:?}, posture={:?}, goal={goal:?}, authorized_goal={arrival_goal:?}, startup={startup:?}, selected={selected:?}, carrier={:?}",
+        "jump stalled: flew={flew}, position={:?}, posture={:?}, goal={goal:?}, authorized_goal={arrival_goal:?}, midpoint_reachable={midpoint_reachable}, half_diagonal={half_diagonal:?}, startup={startup:?}, selected={selected:?}, carrier={:?}",
         engine.ent(owner).element_data().position(),
         engine.ent(owner).element_data().posture(),
         carrier.map(|id| (

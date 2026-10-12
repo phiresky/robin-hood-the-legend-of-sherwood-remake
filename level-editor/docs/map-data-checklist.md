@@ -27,10 +27,14 @@ checks, with measured loss below 0.003% of footprint and 0.002% of volume.
 Supplemental wood 09/44 repairs are now published too. Croisement02 exports and
 passes native loading, six ordinary route samples, 35 unassisted jump-click
 attempts and all 40 assisted attempts. The five rejected unassisted attempts
-correctly require a helper. It retains 1,729 non-draft
+correctly require a helper. With the mask repair below it retains 1,728 non-draft
 warnings and existing mesh/collision mismatches. The click-route audit now checks
-authorized destinations rather than raw clicks. Isolated stump tests still report
-30 of 640 cases with launch or selection-identity problems. These results do not establish
+authorized starting boxes and destinations rather than unchecked synthetic points.
+Isolated stump tests pass 622 traversals and identify 18 clicks hidden by the
+upper platform; those 18 are not traversal successes. York passes 280 ordinary
+route samples, but its click sweep still has 54 failures, including missing
+receivers and stalled approaches (655 traversals pass; 11 clicks are occluded).
+These results do not establish
 full parity; see [the current evidence](map-compilation-evidence.md).
 
 **Mask binding update:** coverage-based layer binding restores Croisement02 shrub

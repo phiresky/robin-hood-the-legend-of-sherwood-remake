@@ -4,6 +4,42 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Authorized jump starts, hidden clicks and York traversal (2026-10-12)
+
+Click probes now authorize their synthetic starting movement box, use the
+authorized destination for ledge selection, and record both requested and actual
+positions/connection IDs. Full movement still has to finish on the expected
+receiver, layer and sector with the required animation and posture. The separate
+direct-dispatch checks retain their explicit edge-approach tests. These changes
+are confined to the native test harness; runtime routing is unchanged.
+
+`asset-jump-exports-0fTlUC` now passes 622 complete click traversals across the
+24 rotated/raised stump exports. Another 18 ground clicks are covered by the
+source platform: the audit verifies the upper receiver and lower jump overlay
+and reports these as occlusions, **not traversals**. Of successful traversals,
+74 synthetic starts move during authorization, by at most 3.827 units. None
+selects a different connection. Dedicated connection-selection tests still
+require the exact ledge. The three regular jump tests and all 40 assisted
+Croisement02 click routes (`saved-map-exports-XFMJuA`) pass; formatting and the
+game build pass.
+
+Croisement01 (`saved-map-exports-EmXHFO`) remains at 129/130 click traversals.
+Line 21 at 5% of its span queues a path to the source midpoint, which is not
+reachable with the actor's 6-by-3 half-box. The queued request fails before
+takeoff. The connection joins two separate placed assets, rather than one of
+the stump's internal jump pairs. A two-asset experiment
+(`stump-connection-probe-ziHDlx`) reproduces this failure. Moving the stump's
+socket edge inward by one local X/Y unit resolves its sampled approach; this
+is an unpublished candidate, not a verified arbitrary-placement repair. Other
+missing-scene click targets in that reduced fixture are not parity evidence.
+
+York (`saved-map-exports-YR17Lo`) passes 280 ordinary initial-state route samples.
+Its first complete-character click sweep has 655 successful traversals, 11
+verified occluded clicks and 54 failures: 20 missing landing receivers, 15
+missing launch receivers, nine stalls, five missing jump-overlay selections and
+five unavailable starting boxes. These failures still need asset/compiler
+diagnosis; native construction alone did not establish York gameplay parity.
+
 ## Mask coverage beyond walking boundaries (2026-10-12)
 
 Mask layer binding now considers projected mask coverage when the authored

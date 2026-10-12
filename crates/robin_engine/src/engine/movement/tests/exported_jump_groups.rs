@@ -58,7 +58,16 @@ fn exported_roof_jumps_support_group_clicks() {
                 let receiver =
                     engine.get_projection_area_index(&assets, source_sector, source.layer, start);
                 engine.set_obstacle_and_material(&assets, owner, receiver);
-                resolve_jump_click(&engine, owner, start, goal, index, destination_sector).unwrap();
+                resolve_jump_click(
+                    &engine,
+                    owner,
+                    start,
+                    goal,
+                    goal,
+                    Some(index),
+                    destination_sector,
+                )
+                .unwrap();
                 owners.push(owner);
             }
             for (i, &owner) in owners.iter().enumerate() {
