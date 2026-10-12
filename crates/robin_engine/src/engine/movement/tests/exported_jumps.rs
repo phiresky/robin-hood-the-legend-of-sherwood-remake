@@ -56,7 +56,13 @@ impl StartupWalkAudit {
     // A short move can consist solely of its finite startup animation. Turning
     // reduces travel without extending that animation. Accept only its measured
     // distance loss, never a general near-goal tolerance or a collision shortfall.
-    fn observe(&mut self, before: MapPoint, sprite: &crate::sprite::Sprite) {
+    fn observe(
+        &mut self,
+        before: MapPoint,
+        sprite: &crate::sprite::Sprite,
+        owner: EntityId,
+        distances: &[MotionDistanceObservation],
+    ) {
         if sprite.last_action == OrderType::TransitionWalkingUprightWaitingUpright
             && sprite.last_motion_state == Some(crate::sprite::MotionState::Terminated)
             && sprite.distance_for_animation(OrderType::TransitionWalkingUprightWaitingUpright) == 0
@@ -68,13 +74,17 @@ impl StartupWalkAudit {
             return;
         }
         self.start.get_or_insert(before);
-        let raw = sprite.current_frame_distance();
+        let steps: Vec<_> = distances
+            .iter()
+            .filter(|step| {
+                step.owner == owner
+                    && step.action == OrderType::TransitionWaitingUprightWalkingUpright
+            })
+            .collect();
+        assert_eq!(steps.len(), 1, "startup must have one observed motion step");
+        let raw = steps[0].raw;
+        let effective = steps[0].effective;
         let position = &sprite.position_iface;
-        let effective = if raw > 0. && position.get_direction() != position.get_direction_goal() {
-            (raw * 0.6).max(0.7)
-        } else {
-            raw
-        };
         self.raw_distance += raw;
         self.turning_loss += raw - effective;
         self.invalid_step |= ((position.map_position() - before).length() - effective).abs()
@@ -164,10 +174,18 @@ fn short_startup_finishes_its_animation_with_only_the_turning_distance_loss() {
         let sequence = engine.t_launch_in_progress(&assets, movement);
         engine.select_sequence_element(owner, Some((sequence, 0)));
         let mut audit = StartupWalkAudit::default();
+        let mut changed_goal_audit = StartupWalkAudit::default();
         for _ in 0..2 {
             let before = engine.ent(owner).element_data().position_map();
-            engine.t_tick_actor_owner_envelopes(&assets);
-            audit.observe(before, &engine.ent(owner).element_data().sprite);
+            let (_, distances) =
+                capture_motion_distances(|| engine.t_tick_actor_owner_envelopes(&assets));
+            let sprite = &engine.ent(owner).element_data().sprite;
+            audit.observe(before, sprite, owner, &distances);
+            let mut projected = sprite.clone();
+            projected
+                .position_iface
+                .set_direction(projected.position_iface.get_direction().opposite());
+            changed_goal_audit.observe(before, &projected, owner, &distances);
         }
         let sprite = &engine.ent(owner).element_data().sprite;
         assert_eq!(
@@ -178,6 +196,10 @@ fn short_startup_finishes_its_animation_with_only_the_turning_distance_loss() {
             (sprite.position_iface.map_position().x - start.x - expected_distance).abs() < 0.001
         );
         assert_eq!(audit.completed_while_turning(sprite, goal), turn != 0);
+        assert_eq!(
+            changed_goal_audit.completed_while_turning(sprite, goal),
+            turn != 0
+        );
         if turn != 0 {
             let reserved_stop_goal = MapPoint::new(404.0097, 300.);
             assert!(!audit.completed_while_turning(sprite, reserved_stop_goal));
@@ -1123,7 +1145,8 @@ fn dispatch_jump(
             engine.hourglass_phase_paths(TickCtx::new(&sim, &assets));
         }
         let before = engine.ent(owner).element_data().position_map();
-        engine.t_tick_actor_owner_envelopes(&assets);
+        let (_, distances) =
+            capture_motion_distances(|| engine.t_tick_actor_owner_envelopes(&assets));
         let element = engine.ent(owner).element_data();
         if let Some(trajectory) = &mut trajectory {
             let position = element.position();
@@ -1138,7 +1161,7 @@ fn dispatch_jump(
             }));
         }
         if approach && flew {
-            startup.observe(before, &element.sprite);
+            startup.observe(before, &element.sprite, owner, &distances);
         }
         flew |= element.posture() == Posture::Flying;
         sword_flew |= element.sprite.last_action == OrderType::JumpingLongSword;

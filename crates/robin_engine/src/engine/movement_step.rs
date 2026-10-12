@@ -1121,6 +1121,15 @@ impl EngineInner {
                 apply_speed_factor,
                 direction_differs_from_goal,
             );
+            #[cfg(test)]
+            MOTION_DISTANCES.with(|distances| {
+                distances.record(MotionDistanceObservation {
+                    owner: entity_id,
+                    action: order_action,
+                    raw: frame_dist_raw,
+                    effective: speed,
+                });
+            });
             // The selected action decides whether seeking wraps sprite motion.
             // Ladder and wall orders retain the route's SEEK flag but return their
             // direct motion result, including START and DONE.

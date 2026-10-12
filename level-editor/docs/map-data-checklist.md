@@ -75,9 +75,9 @@ solver is needed. Mesh contact and in-game actor/depth compositing remain open;
 earlier authoring experiments stay unpublished.
 See [the investigation](map-compilation-evidence.md#sherwood-stair-clearance-investigation-2026-10-12).
 
-**York jump checks (2026-10-12):** the latest full-map audit has 701 successful
-traversals, eleven occluded lower-click cases and eight failures out of 720.
-The remaining failures are lines 5 and 65. All ten selected interior-click
+**York jump checks (2026-10-12):** the latest full-map audit has 704 successful
+traversals, eleven occluded lower-click cases and five failures out of 720.
+The remaining failures are line 5's outside-zone clicks. All ten selected interior-click
 directions pass, but that does not clear wider click coverage or all placements.
 See [interior-click evidence](map-compilation-evidence.md#york-interior-jump-clicks-2026-10-12).
 
@@ -126,7 +126,11 @@ The central-south houses now include their missing opposite roof faces, derived
 from asset-local geometry and published with updated York scene pins. All 84 mesh
 samples have support, with height differences below 0.087 units. Export
 `saved-map-exports-Hvo6ax` passes native construction, all 130 stair routes and
-288 ordinary routes. Its jump checks improve five cases with zero regressions.
+288 ordinary routes. Its original jump audit improves five cases with zero regressions.
+The subsequent execution-distance audit correction clears three false landing
+failures without changing the map or runtime: projection may rewrite the facing
+goal after movement, so the audit now observes the actual step distance before
+that rewrite. Collision, displacement and completion checks remain required.
 Repositioned pair checks improve from 68/160 to **112/160**, with 44 improvements
 and zero regressions. Arbitrary placement remains incomplete. A native trace of
 the diagnostic endpoint replacement also confirms anchor penetration up to

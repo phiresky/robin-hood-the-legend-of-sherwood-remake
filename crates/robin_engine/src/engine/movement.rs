@@ -342,10 +342,29 @@ pub(super) struct PostExecuteCrossingObservation {
 
 #[cfg(test)]
 thread_local! {
+    static MOTION_DISTANCES: super::test_support::Probe<MotionDistanceObservation> =
+        const { super::test_support::Probe::new() };
     static MOBILE_CROSSING_INCREMENTS: super::test_support::Probe<MapVec> =
         const { super::test_support::Probe::new() };
     static POST_EXECUTE_CROSSINGS: super::test_support::Probe<PostExecuteCrossingObservation> =
         const { super::test_support::Probe::new() };
+}
+
+/// Distances at execution, before projection can rewrite the direction goal.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+pub(super) struct MotionDistanceObservation {
+    pub owner: EntityId,
+    pub action: OrderType,
+    pub raw: f32,
+    pub effective: f32,
+}
+
+#[cfg(test)]
+pub(super) fn capture_motion_distances<T>(
+    f: impl FnOnce() -> T,
+) -> (T, Vec<MotionDistanceObservation>) {
+    MOTION_DISTANCES.with(|distances| distances.capture(f))
 }
 
 #[cfg(test)]

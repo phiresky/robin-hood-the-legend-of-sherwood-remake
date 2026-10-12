@@ -57,6 +57,32 @@ successful interior clicks do not establish the short post-landing movement
 contract. These alternatives remain unpublished; receiving-face continuity and
 the observed startup steps need investigation before changing asset edges.
 
+### Execution-distance audit correction
+
+The apparent reverse-direction startup failures above were diagnostic errors.
+The bounded direction trace in
+`supported-jump-spans-OW4ZDM/native-direction-trace.txt` shows an aligned
+direction/goal of 11/11 during the second step, followed by a projection update
+to 11/14 at the owner tail. The actual startup moves 1.2 then 2 units. Reading
+the goal after projection incorrectly predicts two 1.2-unit steps and marks
+the valid second step as invalid.
+
+The audit now captures raw/effective distances at execution with a test-only
+probe. It still checks every displacement, blocked/deviated state, animation
+completion and exact accumulated turning loss. A focused regression rewrites
+the direction goal after execution and verifies the audit result is unchanged.
+No production movement or collision behavior changes; the probe is absent
+from non-test builds. The three ordinary exported-jump module tests pass and
+the game binary builds successfully.
+
+With the corrected audit, `supported-jump-spans-aAxkcA` passes **240/240**
+offset clicks. The unchanged `saved-map-exports-Hvo6ax` has **704 traversals,
+eleven occlusion checks and five failures**, all line 5 clicks outside the jump
+zone. Earlier reports are retained alongside as
+`actor-jump-click-report-before-execution-distance.json`. The candidate edges
+remain unpublished; their earlier 432/432 interior checks and flight clearance
+do not replace moved-asset and all-connection validation.
+
 ## Supported integer jump-span search (2026-10-12)
 
 `refinement/review-jump-supported-spans.mjs` generates diagnostic replacements
