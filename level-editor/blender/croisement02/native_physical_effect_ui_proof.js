@@ -44,13 +44,12 @@
    const r=cfg.cropRegion, origin=cfg.sourceOrigin;
    check('Source crop coordinates are explicit',origin[0]===0&&origin[1]===0&&r.x===888&&r.y===900&&r.width===96&&r.height===108,{region:r,origin,camera:v.bindings.document().camera});
    window.nativeEffectCrops=[];
-   const receiver=document.querySelector('[aria-label="Refined map background"]');
    for(const tick of [0,74]){
      v.seekNativeArt(tick,focus);
      const images=[];
      for(const presentation of ['original-art','physical-over-art','refined-map']){
        if(presentation==='original-art'){if(checkbox.checked)checkbox.click();}
-       else {if(!checkbox.checked)checkbox.click();const input=document.querySelector('[aria-label="Refined map background"]');const refined=presentation==='refined-map';if(input.checked!==refined)input.click();}
+       else {if(!checkbox.checked)checkbox.click();await wait(()=>document.querySelector('[aria-label="Refined map background"]'),'refined receiver control after effects enable');const input=document.querySelector('[aria-label="Refined map background"]');const refined=presentation==='refined-map';if(input.checked!==refined)input.click();}
        const pixels=v.nativePreviewPixels(), data=new Uint8ClampedArray(r.width*r.height*4);
        check('Crop inside actual buffer '+presentation+' '+tick,r.x-origin[0]>=0&&r.y-origin[1]>=0&&r.x-origin[0]+r.width<=pixels.width&&r.y-origin[1]+r.height<=pixels.height);
        for(let y=0;y<r.height;y++){const start=((r.y-origin[1]+y)*pixels.width+r.x-origin[0])*4;data.set(pixels.data.subarray(start,start+r.width*4),y*r.width*4);}
