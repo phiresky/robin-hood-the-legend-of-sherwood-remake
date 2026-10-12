@@ -126,8 +126,9 @@ all ZIP entries pass CRC validation. Native empty-base loading passes with
 185 sight obstacles, twenty door projections, 21,120 grid blocks and one
 appearance region for four controls. Color, depth, minimap and the editor
 document load without a base datadir; spawn points and soldiers are empty.
-The exact archived descriptor passes **12/12 player-click stair routes**, with
-no failures or permission skips. These are initial-state traversal checks;
+The exact archived descriptor passes **12/12 player-click stair routes** and
+**12/12 forced stair routes**, with no failures or permission skips in either
+audit. These are initial-state traversal checks;
 in-game actor/depth compositing and all-state traversal remain unverified.
 
 ## Sherwood stair clearance investigation (2026-10-12)
