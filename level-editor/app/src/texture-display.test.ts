@@ -26,6 +26,61 @@ test("smooth and pixel modes apply to all imported material textures", () => {
   assert.equal(map.anisotropy, 1);
 });
 
+test("smooth toggles preserve authored BC7 mip levels without requesting GPU generation", () => {
+  const mipmaps = [4, 2, 1].map((size, level) => ({
+    width: size,
+    height: size,
+    data: new Uint8Array(16).fill(level + 1),
+  }));
+  const texture = new THREE.CompressedTexture(mipmaps, 4, 4, THREE.RGBA_BPTC_Format);
+  const source = texture.source;
+  const bytes = mipmaps.map((level) => level.data.slice());
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(),
+    new THREE.MeshBasicMaterial({ map: texture }),
+  );
+  const display = new TextureDisplay();
+  // Also repair a texture configured by an earlier display pass.
+  texture.generateMipmaps = true;
+  for (const smooth of [true, false, true]) {
+    display.smooth = smooth;
+    display.apply(mesh, 8);
+    assert.equal(texture.generateMipmaps, false);
+    assert.equal(texture.magFilter, smooth ? THREE.LinearFilter : THREE.NearestFilter);
+    assert.equal(texture.minFilter, smooth ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter);
+    assert.equal(texture.anisotropy, smooth ? 8 : 1);
+    assert.equal(texture.mipmaps, mipmaps);
+    assert.equal(texture.source, source);
+    assert.equal(texture.format, THREE.RGBA_BPTC_Format);
+    mipmaps.forEach((level, index) => assert.deepEqual(level.data, bytes[index]));
+    const version = texture.version;
+    display.apply(mesh, 8);
+    assert.equal(texture.version, version, "unchanged settings must not re-upload compressed data");
+  }
+});
+
+test("base-level compressed textures use linear filtering without requiring missing mip levels", () => {
+  const texture = new THREE.CompressedTexture(
+    [{ width: 4, height: 4, data: new Uint8Array(16) }],
+    4,
+    4,
+    THREE.RGBA_BPTC_Format,
+  );
+  const mesh = new THREE.Mesh(
+    new THREE.BoxGeometry(),
+    new THREE.MeshBasicMaterial({ map: texture }),
+  );
+  const display = new TextureDisplay();
+  for (const smooth of [true, false, true]) {
+    display.smooth = smooth;
+    display.apply(mesh);
+    assert.equal(texture.generateMipmaps, false);
+    assert.equal(texture.minFilter, smooth ? THREE.LinearFilter : THREE.NearestFilter);
+    assert.equal(texture.magFilter, smooth ? THREE.LinearFilter : THREE.NearestFilter);
+    assert.equal(texture.mipmaps.length, 1);
+  }
+});
+
 test("ownership shader preserves opaque geometry and toggles through a shared uniform, including selected clones", () => {
   const display = new TextureDisplay();
   const material = new THREE.MeshBasicMaterial();

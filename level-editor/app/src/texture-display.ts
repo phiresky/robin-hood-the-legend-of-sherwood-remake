@@ -137,19 +137,27 @@ export class TextureDisplay {
     });
     for (const texture of textures) {
       const smooth = this.smooth && !this.nearestRequired.has(texture);
+      const compressed = texture instanceof THREE.CompressedTexture;
+      // Compressed levels are authored offline; the GPU cannot generate them.
+      const generateMipmaps = smooth && !compressed;
+      const mipmapped = !compressed || texture.mipmaps.length > 1;
       const mag = smooth ? THREE.LinearFilter : THREE.NearestFilter;
-      const min = smooth ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter;
+      const min = smooth
+        ? mipmapped
+          ? THREE.LinearMipmapLinearFilter
+          : THREE.LinearFilter
+        : THREE.NearestFilter;
       const anisotropy = smooth ? maxAnisotropy : 1;
       if (
         texture.magFilter === mag &&
         texture.minFilter === min &&
         texture.anisotropy === anisotropy &&
-        texture.generateMipmaps === smooth
+        texture.generateMipmaps === generateMipmaps
       )
         continue;
       texture.magFilter = mag;
       texture.minFilter = min;
-      texture.generateMipmaps = smooth;
+      texture.generateMipmaps = generateMipmaps;
       texture.anisotropy = anisotropy;
       texture.needsUpdate = true;
     }
