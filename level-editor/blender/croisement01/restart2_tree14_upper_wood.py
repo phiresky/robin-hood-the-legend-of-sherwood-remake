@@ -16,7 +16,7 @@ acquire(slots=2)
 assert shutil.disk_usage(OUT).free>10*1024**3+512*1024**2
 available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024
 assert available>6*1024**3
-base=OUT/'restart2';dest=base/'tree14-wood-v7';dest.mkdir(exist_ok=False)
+base=OUT/'restart2';dest=base/'tree14-wood-v8';dest.mkdir(exist_ok=False)
 bank=base/'tree05-regional-banks-v18/assets/croisement01-tree-05/model.blend'
 assert sha(bank)=='7926500e407950bd66b78d13e0ce65b3829dd2263d7db4ba5c57a7ece5dbc818'
 bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.preferences.filepaths.save_version=0
@@ -87,7 +87,17 @@ while remaining:
    other=edge.other_vert(vertex)
    if other in remaining:remaining.remove(other);component.add(other);stack.append(other)
  components.append(component)
-components.sort(key=len,reverse=True);print('Remesh component sizes', [len(c) for c in components], flush=True);assert len(components[0])>100000 and all(len(c)<=20 for c in components[1:])
+components.sort(key=len,reverse=True)
+from mathutils.bvhtree import BVHTree
+bm.verts.ensure_lookup_table();bm.faces.ensure_lookup_table();bm.verts.index_update();bm.faces.index_update()
+component_for={v.index:i for i,c in enumerate(components) for v in c};faces=list(bm.faces)
+bvh=BVHTree.FromPolygons([body.matrix_world@v.co for v in bm.verts],[[v.index for v in f.verts] for f in faces]);ray=Vector((0,-COS,SIN));counts=[0]*len(components)
+for y,x in zip(*np.nonzero(np.asarray(wood)>0)):
+ origin=Vector((689+float(x)+.5,-(122+float(y)+.5)/SIN,0))+ray*5000;hit,normal,index,distance=bvh.ray_cast(origin,-ray,10000)
+ if hit is not None:counts[component_for[faces[index].verts[0].index]]+=1
+proof=[dict(vertices=len(c),known_source_hits=counts[i],world_bounds=[[min((body.matrix_world@v.co)[axis] for v in c) for axis in range(3)],[max((body.matrix_world@v.co)[axis] for v in c) for axis in range(3)]]) for i,c in enumerate(components)]
+(dest/'remesh-components.json').write_text(json.dumps(proof,indent=2)+'\n');print('Remesh component source evidence',proof,flush=True)
+assert len(components[0])>100000 and all(len(c)<=64 and counts[i]==0 for i,c in enumerate(components) if i>0)
 bmesh.ops.delete(bm,geom=[v for c in components[1:] for v in c],context='VERTS');bm.to_mesh(body.data);bm.free();body.data.update()
 mesh=body.data.copy();bpy.data.objects.remove(body,do_unlink=True);dummy=bpy.data.meshes.new('Wood slot');mat=bpy.data.materials.new('Unknown wood');mat.diffuse_color=(.34,.34,.34,1);dummy.materials.append(mat);obj=bpy.data.objects.new('Tree14 wood',dummy);working.objects.link(obj)
 for k,v in dict(source_node=node,asset_group=asset,asset_name=asset_label,part_name='Conservative native bark and inferred continuous wood').items():obj[k]=v
