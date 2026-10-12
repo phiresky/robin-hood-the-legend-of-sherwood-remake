@@ -45,7 +45,7 @@
       "model": "3d-assets/york/york-bridge-square-scaffolded-corner-house/model.glb",
       "model_sha256": "3e9a64b7556c5ccb0e4c05cfd8866f186d2d86249b7448aab75db0bec555fdeb",
       "descriptor": "3d-assets/york/york-bridge-square-scaffolded-corner-house/asset.json",
-      "descriptor_sha256": "0eed6df64a0cdf305108d9bdd2ef588af913fdc3a6bce117d44095c3fa8bd0fb",
+      "descriptor_sha256": "5290c31914316cf1bb4e0810d8db3d47b0deec8139ede19789491d7df6b78697",
       "id": "york-bridge-square-scaffolded-corner-house"
     },
     {
@@ -171,7 +171,7 @@
       "model": "3d-assets/york/york-castle-southwest-bastion/model.glb",
       "model_sha256": "b78a9f96782ef870f73f5904f6d6c4eb960a06087b9f5faf7e9a8b4c59cface5",
       "descriptor": "3d-assets/york/york-castle-southwest-bastion/asset.json",
-      "descriptor_sha256": "1363fe8e18d3ad31e5e65f25592ffaab22cd95218c6f12e756dc4205edd8d600",
+      "descriptor_sha256": "1e0caa01c4cddd4899d34f721220c381cca8dbda66d7812a217ccc8d90399ac5",
       "id": "york-castle-southwest-bastion"
     },
     {
@@ -248,7 +248,7 @@
       "model": "3d-assets/york/york-central-lane-polygonal-corner-house/model.glb",
       "model_sha256": "5291e2956aab3d5be0e8630334ece0579b8ebaa9f5148ce475dc382c4f5c0ece",
       "descriptor": "3d-assets/york/york-central-lane-polygonal-corner-house/asset.json",
-      "descriptor_sha256": "deef7ad11889a1faee37b2edb2ddad0c99c6955c5b1d96efa6d5b9f6f3e5bd07",
+      "descriptor_sha256": "d51fd937c0c5a3b8754afe697fbdc8687b7f746d81d98b077a6751f295cdc706",
       "id": "york-central-lane-polygonal-corner-house"
     },
     {
@@ -276,7 +276,7 @@
       "model": "3d-assets/york/york-central-south-golden-timber-house/model.glb",
       "model_sha256": "f6fd8cf6b401c5c549f56edbce1a4b6f2ffde41840a9fd8dcd80c51c860e65df",
       "descriptor": "3d-assets/york/york-central-south-golden-timber-house/asset.json",
-      "descriptor_sha256": "229f169ee9fd4d3bf81ffa94616b19c3aec591a85f49ade1ddf5205b6ad84331",
+      "descriptor_sha256": "84a1a240f371838d7be8fd06329ef8368eac4a442ad94b0e28cef9c3b73c65d9",
       "id": "york-central-south-golden-timber-house"
     },
     {
@@ -556,7 +556,7 @@
       "model": "3d-assets/york/york-market-southwest-central-hipped-house/model.glb",
       "model_sha256": "73b98d74963a8800582f99011c01448a8a11d2761f015b0e235d79d1e4833574",
       "descriptor": "3d-assets/york/york-market-southwest-central-hipped-house/asset.json",
-      "descriptor_sha256": "198fd5ad0c1943c2de203ef057f5c76851c86a85bfc849e88622fb6f72de8ab5",
+      "descriptor_sha256": "af5a6acc22759285338d71891c7e41d46b777245f0b0e586c98917e1c878e6db",
       "id": "york-market-southwest-central-hipped-house"
     },
     {
@@ -1333,7 +1333,7 @@
       "model": "3d-assets/york/york-southeast-lane-eastern-timber-house/model.glb",
       "model_sha256": "99c80272b761701720c3e2add927b38783b9c80751d328d1b164c036de67df45",
       "descriptor": "3d-assets/york/york-southeast-lane-eastern-timber-house/asset.json",
-      "descriptor_sha256": "ea593511582e23d33d7430fe9342480782a1166034b969bc85c2759d92d1bfdb",
+      "descriptor_sha256": "51cd40806b3951241cca7c6ea2819eeece177ce7c2467edd455f548c99063421",
       "id": "york-southeast-lane-eastern-timber-house"
     },
     {
@@ -1536,7 +1536,7 @@
       "model": "3d-assets/york/york-west-bridge-street-arcade-house/model.glb",
       "model_sha256": "90e089ad15476ea4e5289a891c75451dae50130f7b0df742af070cc0f63268c7",
       "descriptor": "3d-assets/york/york-west-bridge-street-arcade-house/asset.json",
-      "descriptor_sha256": "2984c80d599cf28c8dba61780580df2c2f422e5f17391e98992c20d281d14633",
+      "descriptor_sha256": "d7f0daa70194249da96c94130b971c822ff3bc97b76870094b334b655b18de3e",
       "id": "york-west-bridge-street-arcade-house"
     },
     {
@@ -1669,7 +1669,7 @@
       "model": "3d-assets/york/york-west-town-lane-rear-timber-house/model.glb",
       "model_sha256": "caa9fea7c65dda2c165ea0f24e7cdab350ab12b24345d4fbe83e814598b79dd2",
       "descriptor": "3d-assets/york/york-west-town-lane-rear-timber-house/asset.json",
-      "descriptor_sha256": "7560681ffe92837c255d3eff7aefb1efc42f0ca8c3383bb6bde35e2418d3d02e",
+      "descriptor_sha256": "66bb70a78fd115e6e9e043d57eee988aace2c1eacdf96151ec7ff25fb436ef47",
       "id": "york-west-town-lane-rear-timber-house"
     },
     {
