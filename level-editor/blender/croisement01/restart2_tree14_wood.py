@@ -1,7 +1,7 @@
 """Private continuous stem hypothesis from conservative native bark evidence."""
 import json,math,shutil,sys
 from pathlib import Path
-import bpy,numpy as np
+import bpy,bmesh,numpy as np
 from mathutils import Vector
 sys.path.insert(0,str(Path(__file__).parent))
 from restart2_tree18 import OUT,SIN,COS,union,assign_mesh,fit_native_width
@@ -16,7 +16,7 @@ acquire(slots=2)
 assert shutil.disk_usage(OUT).free>10*1024**3+512*1024**2
 available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024
 assert available>6*1024**3
-base=OUT/'restart2';dest=base/'tree14-wood-v2';dest.mkdir(exist_ok=False)
+base=OUT/'restart2';dest=base/'tree14-wood-v3';dest.mkdir(exist_ok=False)
 bank=base/'tree05-regional-banks-v18/assets/croisement01-tree-05/model.blend'
 assert sha(bank)=='7926500e407950bd66b78d13e0ce65b3829dd2263d7db4ba5c57a7ece5dbc818'
 bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.preferences.filepaths.save_version=0
@@ -27,6 +27,9 @@ asset='croisement01-tree-14';node='scenery-tree14-wood';name='Northern Twisted T
 core=base/'tree14-source-preparation-v1/known-trunk-root-domain.png';wood=Image.open(core).convert('L');wood.save(dest/'wood-domain.png')
 # The source traces define branch centerlines; unseen depth remains inferred.
 trace=json.loads((base/'tree14-source-preparation-v1/preparation.json').read_text())['trace_screen_coordinates']
+trace['root_left']=[[849,395,18],[829,397,10],[811,404,6],[794,409,.8]]
+trace['root_front']=[[850,405,20],[830,413,12],[815,420,7],[797,435,1]]
+trace['root_forward_base']=[[852,401,18],[852,414,14],[850,424,.5]]
 base_y=-412/SIN
 point=lambda x,y:Vector((x,base_y,(412-y)/COS))
 main=trace['main_stem'];body=helpers.tube('Continuous twisted trunk',[point(x,y) for x,y,r in main],[r for x,y,r in main]);body['defer_union']=True
@@ -53,6 +56,19 @@ ray=Vector((0,-COS,SIN))
 for name,rows in [('inferred rear canopy limb',[(818,258,0,8),(814,223,-75,5),(815,183,-140,.5)]),('inferred front canopy limb',[(820,250,0,7),(846,217,70,4),(856,183,135,.4)])]:
  union(body,helpers.tube(name,[point(x,y)+ray*depth for x,y,depth,radius in rows],[radius for x,y,depth,radius in rows]))
 bpy.context.view_layer.objects.active=body;m=body.modifiers.new('Joined continuous wood','REMESH');m.mode='VOXEL';m.voxel_size=.65;m.use_remove_disconnected=False;bpy.ops.object.modifier_apply(modifier=m.name)
+# Remove only tiny voxel remnants, retaining the complete connected wood.
+# Fresh source-ray coverage below independently checks the resulting model.
+bm=bmesh.new();bm.from_mesh(body.data);remaining=set(bm.verts);components=[]
+while remaining:
+ component={remaining.pop()};stack=list(component)
+ while stack:
+  vertex=stack.pop()
+  for edge in vertex.link_edges:
+   other=edge.other_vert(vertex)
+   if other in remaining:remaining.remove(other);component.add(other);stack.append(other)
+ components.append(component)
+components.sort(key=len,reverse=True);assert len(components[0])>100000 and all(len(c)<=20 for c in components[1:])
+bmesh.ops.delete(bm,geom=[v for c in components[1:] for v in c],context='VERTS');bm.to_mesh(body.data);bm.free();body.data.update()
 mesh=body.data.copy();bpy.data.objects.remove(body,do_unlink=True);dummy=bpy.data.meshes.new('Wood slot');mat=bpy.data.materials.new('Unknown wood');mat.diffuse_color=(.34,.34,.34,1);dummy.materials.append(mat);obj=bpy.data.objects.new('Tree14 wood',dummy);working.objects.link(obj)
 for k,v in dict(source_node=node,asset_group=asset,asset_name=name,part_name='Conservative native bark and inferred continuous wood').items():obj[k]=v
 assign_mesh(obj,mesh);bpy.context.view_layer.update()
