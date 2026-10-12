@@ -3,7 +3,7 @@ import json,math,hashlib
 from pathlib import Path
 from collections import Counter
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-shoulder-lofts-cpu-v2';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-shoulder-lofts-cpu-v3';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 def cap(points):
  p=np.array(points)[:,:2];ids=list(range(len(p)));out=[]
  def cross(a,b,c):return float((b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]))
@@ -24,7 +24,7 @@ def main():
   left=points[0][0]-3;right=points[-1][0]+(5 if 'middle' in t['id'] else 3);fractions.update((p[0]-left)/(right-left)for p in points);rows.append({'name':t['id'],'points':points,'left':left,'right':right});provenance.append({'trace':t['id'],'observed_core':projected,'preserved_world':points,'reclassified_inferred_extensions':[{'vertex':i,'world':old['vertices'][i],'native':[old['vertices'][i][0],-old['vertices'][i][1]*S-old['vertices'][i][2]*C],'origin':'extend_stripes generated shoulder continuation, not measured artwork'}for i in [t['vertices'][0],t['vertices'][-1]]]})
  fractions=sorted(fractions);rings=[];labels=[];nfront=len(fractions)
  # The top strip remains wholly forward of the exact shared52/54 ridge.
- front=[[335+t*83,-(357+t*23+3)/S,85/C]for t in fractions];rings.append(front+[[418,-380/S,85/C],[376.5,-368.5/S,85/C],[335,-357/S,85/C]]);labels.append('fixed shared ridge strip')
+ a,b=[np.array([x,-y/S,z/C])for x,y,z in data['guards']['interface52_54']];front=[(a*(1-t)+b*t+np.array([0.,-3/S,0.])).tolist()for t in fractions];rings.append(front+[b.tolist(),((a+b)/2).tolist(),a.tolist()]);labels.append('fixed shared ridge strip')
  for row in rows:
   pts=np.array(row['points']);xs=[row['left']]+list(pts[:,0])+[row['right']];ys=[pts[0,1]]+list(pts[:,1])+[pts[-1,1]];zs=[pts[0,2]]+list(pts[:,2])+[pts[-1,2]];front=[[x,float(np.interp(x,xs,ys)),float(np.interp(x,xs,zs))]for x in [row['left']+t*(row['right']-row['left'])for t in fractions]];center=np.mean(front,axis=0);back=[[row['right']-1,front[-1][1]+12/S,front[-1][2]],[center[0],center[1]+25/S,center[2]],[row['left']+1,front[0][1]+12/S,front[0][2]]];rings.append(front+back);labels.append(row['name'])
  front=[[350+t*29,-float(np.interp(t,[0,.5,1],[449,457,450]))/S,0.]for t in fractions];rings.append(front+[[378,-433/S,0.],[364.5,-426/S,0.],[351,-433/S,0.]]);labels.append('inferred narrow grounded closure')

@@ -3,14 +3,14 @@ import json,math,hashlib
 from pathlib import Path
 from collections import Counter
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-east-loft-cpu-v4';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-east-loft-cpu-v5';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 def main():
  O.mkdir(exist_ok=False);inp=B/'bank-sidewall-cpu-v1/geometry.json';data=json.loads(inp.read_text());mesh=data['52'];traces={t['id']:[mesh['vertices'][i]for i in t['vertices']]for t in mesh['traces']};xs=[560,575,587,590,594,596,603,606,610,613,616];rings=[];names=[]
  def ring(height,front,name):
   # Front points follow the visible rock course; the rear closes into bank bulk.
   # A planar joining strip at x560..565 is hidden inside the retained main bank.
   ring=[[x,-float(np.interp(x,[p[0]for p in front],[p[1]for p in front]))/S,height/C]for x in xs]
-  ring += [[610,-270/S,height/C],[575,-250/S,height/C],[560,-245/S,height/C]];rings.append(ring);names.append(name)
+  ring += [[610,-max(270,height+186)/S,height/C],[575,-max(250,height+186)/S,height/C],[560,-max(245,height+186)/S,height/C]];rings.append(ring);names.append(name)
  ring(85,[(560,292),(575,281),(590,274),(603,276),(610,281),(613,285),(616,286)],'upper inferred shoulder')
  left={'east-upper-block-upper':300.,'east-upper-block-lower':301.5,'east-middle-block-upper':330.,'east-middle-block-lower':331.5,'east-low-block-upper':340.,'east-low-block-lower':341.5}
  for name in left:
