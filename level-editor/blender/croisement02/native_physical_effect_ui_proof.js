@@ -2,6 +2,7 @@
  const v=window.reviewViewport,cfg=window.canonicalSmoke,checks=[];
  const check=(name,pass,detail)=>{checks.push({name,pass:!!pass,detail});window.canonicalSmokeEvidence={checks};if(!pass)throw Error(name)};
  if(cfg.boundedReceiver){const doc=v.bindings.document();check('Bounded receiver subset is explicit',doc.assetSources.length===cfg.receiverAssets.length&&doc.assetSources.every(s=>cfg.receiverAssets.includes(s.id)),{included:doc.assetSources.map(s=>s.id),scope:'Not a full-map proof'});}
+ if(cfg.expectedAssetIds){const doc=v.bindings.document();check('Full canonical asset inventory loaded',JSON.stringify(doc.assetSources.map(s=>s.id).sort())===JSON.stringify([...cfg.expectedAssetIds].sort())&&JSON.stringify(doc.sceneAssets.map(s=>s.id).sort())===JSON.stringify([...cfg.expectedSceneAssetIds].sort()),{assets:doc.assetSources.length,sceneAssets:doc.sceneAssets.length});}
  const wait=async(fn,label)=>{for(let i=0;i<1200;i++){if(fn())return;const failure=document.querySelector('#result')?.textContent;if(failure?.startsWith('FAIL'))throw Error(label+': '+failure);await new Promise(r=>setTimeout(r,100))}throw Error('Timeout '+label)};
  const select=(label,value)=>{const el=document.querySelector('select[aria-label="'+label+'"]');check('Offered '+label,el&&[...el.options].some(o=>o.value===value));el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))};
  const digest=async p=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',p.data))].map(n=>n.toString(16).padStart(2,'0')).join('');

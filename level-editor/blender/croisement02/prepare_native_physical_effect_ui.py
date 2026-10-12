@@ -59,7 +59,7 @@ def prepare(out,refined=False,receiver_assets=None,crops=False,decode_workers=No
  dump(out/'runtime-inputs.json',{**snap,**pins})
  for name in ['editor.tsx','observe-library.js']:shutil.copy2(old/name,out/name)
  shutil.copy2(R/'level-editor/blender/croisement02/native_physical_effect_ui_proof.js',out/'check.js')
- contract=json.loads(Path(req['contract']['path']).read_text());dump(out/'check-config.json',{'entry':req['entry'],'focus':contract['focus_element_id'],'refined':refined,'boundedReceiver':receiver_assets is not None,'receiverAssets':receiver_assets,'cropRegion':{'x':888,'y':900,'width':96,'height':108} if crops else None,'sourceOrigin':contract['native']['origin']})
+ contract=json.loads(Path(req['contract']['path']).read_text());dump(out/'check-config.json',{'entry':req['entry'],'focus':contract['focus_element_id'],'refined':refined,'boundedReceiver':receiver_assets is not None,'receiverAssets':receiver_assets,'cropRegion':{'x':888,'y':900,'width':96,'height':108} if crops else None,'sourceOrigin':contract['native']['origin'],'expectedAssetIds':[r['id'] for r in canonical['assetSources']] if decode_workers is not None else None,'expectedSceneAssetIds':[r['id'] for r in canonical['sceneAssets']] if decode_workers is not None else None})
  run=(old/'run.mjs').read_text().replace(str(old.relative_to(R)),str(out.relative_to(R)))
  run=run.replace('const privateRoutes=new Map();','const privateRoutes=new Map(Object.entries('+json.dumps(routes)+'));')
  run=run.replace("if(p.stage.name!=='canonical-source-camera')throw Error('Unexpected capture');", "if(!/^b05-(physical-over-art|original-art|refined-map|comparison-crop)-tick[0-9]+$/.test(p.stage.name))throw Error('Unexpected capture');")
