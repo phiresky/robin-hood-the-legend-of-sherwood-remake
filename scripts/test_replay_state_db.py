@@ -1724,6 +1724,58 @@ class ReplayStateDatabaseTests(unittest.TestCase):
             ["Final set is exact at EOF on authoritative latest attested evidence."],
         )
 
+    def test_retired_replay_preserves_evidence_and_cannot_be_scheduled(self) -> None:
+        logical = "parity-save-replays/corpus/traces/save/replay-001-session-0001.jsonl.zst"
+        evidence = self.evidence("obsolete", "1", "first parity divergence after frame 942\n")
+        with self.connection:
+            DB.import_result(self.connection, evidence, self.root / "audit", None, "test")
+            DB.activate_corpus(self.connection, "parity-save-replays/corpus", 1,
+                               None, None, None, str(self.root))
+            DB.add_work(self.connection, logical, "replay", "2" * 64, None, None,
+                        "3" * 64, 0)
+            replay_id = self.connection.execute("SELECT replay_id FROM replays").fetchone()[0]
+            corpus_id = self.connection.execute("SELECT corpus_id FROM replays").fetchone()[0]
+            self.connection.execute("INSERT INTO final_corpus_members VALUES(?,?,?)",
+                                    (corpus_id, replay_id, "test"))
+        self.assertTrue(DB.retire_replay(self.connection, logical, "intentional correction",
+                                         "audit.json", "3" * 64))
+        self.assertFalse(DB.retire_replay(self.connection, logical, "intentional correction",
+                                          "audit.json", "3" * 64))
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM replay_runs").fetchone()[0], 1)
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM work_items").fetchone()[0], 1)
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM final_corpus_members").fetchone()[0], 0)
+        report = DB.overview(self.connection)["final_set"][0]
+        self.assertEqual(report["registered"], 0)
+        self.assertEqual(report["expected_replays"], 0)
+        self.assertIsNone(DB.claim_work(self.connection, "replay", "test", 60))
+        with self.assertRaisesRegex(ValueError, "retired replay"):
+            DB.add_work(self.connection, logical, "replay", "2" * 64, None, None,
+                        "3" * 64, 0)
+        snapshot = self.root / "obsolete.snapshot"
+        snapshot.write_text(logical.replace("/", "__") + "\n")
+        with self.assertRaisesRegex(ValueError, "retired replay"):
+            DB.import_final_snapshot(self.connection, snapshot)
+        with self.connection, self.assertRaisesRegex(sqlite3.IntegrityError, "retired replay"):
+            self.connection.execute("INSERT INTO final_corpus_members VALUES(?,?,?)",
+                                    (corpus_id, replay_id, "test"))
+        queued = DB.enqueue_corpus_replay_work(self.connection, "parity-save-replays/corpus",
+                                              "2" * 64, 0)
+        self.assertEqual(queued["members"], 0)
+        with self.assertRaisesRegex(ValueError, "conflicting retirement"):
+            DB.retire_replay(self.connection, logical, "different reason", "audit.json", "3" * 64)
+
+    def test_retirement_keeps_other_corpus_members_active(self) -> None:
+        root = "parity-save-replays/corpus"
+        with self.connection:
+            DB.activate_corpus(self.connection, root, 2, None, None, None, str(self.root))
+            paths = [f"{root}/traces/save/replay-{i:03d}-session-0001.jsonl.zst" for i in (1, 2)]
+            for path in paths:
+                DB.add_replay(self.connection, path)
+        DB.retire_replay(self.connection, paths[0], "intentional correction", "audit.json", "3" * 64)
+        report = DB.overview(self.connection)["final_set"][0]
+        self.assertEqual(report["registered"], 1)
+        self.assertEqual(report["expected_replays"], 1)
+
     def test_retired_corpus_is_hidden_from_operational_overview(self) -> None:
         result = self.evidence("exact", "0", f"{DB.EOF_MARKER}\n")
         with self.connection:

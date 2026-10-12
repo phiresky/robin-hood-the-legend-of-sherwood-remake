@@ -1129,6 +1129,49 @@ def register_corpus(connection: sqlite3.Connection, corpus: Path, workspace: Pat
     return count
 
 
+def retire_replay(
+    connection: sqlite3.Connection, logical_path: str, reason: str,
+    evidence_path: str, native_sha256: str,
+) -> bool:
+    """Exclude an obsolete capture without changing its bytes or run evidence."""
+    if not reason.strip() or not evidence_path.strip():
+        raise ValueError("retirement requires a reason and evidence path")
+    if not re.fullmatch(r"[0-9a-f]{64}", native_sha256):
+        raise ValueError("retirement requires a lowercase native SHA-256 digest")
+    replay = connection.execute(
+        "SELECT replay_id,corpus_id FROM replays WHERE logical_path=?", (logical_path,)
+    ).fetchone()
+    if replay is None:
+        raise ValueError(f"unknown replay: {logical_path}")
+    with connection:
+        inserted = connection.execute(
+            """INSERT OR IGNORE INTO replay_retirements(
+                 replay_id,reason,evidence_path,native_sha256) VALUES(?,?,?,?)""",
+            (replay["replay_id"], reason, evidence_path, native_sha256),
+        ).rowcount
+        if not inserted:
+            prior = connection.execute(
+                "SELECT reason,evidence_path,native_sha256 FROM replay_retirements WHERE replay_id=?",
+                (replay["replay_id"],),
+            ).fetchone()
+            if tuple(prior) != (reason, evidence_path, native_sha256):
+                raise ValueError(f"conflicting retirement: {logical_path}")
+            return False
+        has_members = connection.execute(
+            "SELECT EXISTS(SELECT 1 FROM final_corpus_members WHERE corpus_id=?)",
+            (replay["corpus_id"],),
+        ).fetchone()[0]
+        removed = connection.execute(
+            "DELETE FROM final_corpus_members WHERE replay_id=?", (replay["replay_id"],)
+        ).rowcount
+        if removed or not has_members:
+            connection.execute(
+                """UPDATE corpora SET expected_replays=max(0,expected_replays-1)
+                   WHERE corpus_id=?""", (replay["corpus_id"],),
+            )
+    return True
+
+
 def retire_corpus(
     connection: sqlite3.Connection, logical_root: str, reason: str
 ) -> None:
@@ -1402,6 +1445,10 @@ def import_final_snapshot(connection: sqlite3.Connection, snapshot: Path) -> dic
     grouped: dict[int, list[int]] = {}
     for key in keys:
         replay = replay_by_key[key]
+        if connection.execute(
+            "SELECT 1 FROM replay_retirements WHERE replay_id=?", (replay["replay_id"],)
+        ).fetchone():
+            raise ValueError(f"snapshot contains retired replay: {replay['logical_path']}")
         corpus_id = replay["corpus_id"]
         if corpus_id is None:
             logical_root = str(Path(replay["logical_path"]).parent)
@@ -1690,7 +1737,8 @@ def overview(connection: sqlite3.Connection) -> dict[str, object]:
             ).fetchall()
         else:
             replay_rows = connection.execute(
-                "SELECT replay_id,logical_path,completion_marker FROM replays WHERE corpus_id=?",
+                """SELECT replay_id,logical_path,completion_marker FROM replays WHERE corpus_id=?
+                   AND replay_id NOT IN (SELECT replay_id FROM replay_retirements)""",
                 (corpus["corpus_id"],),
             ).fetchall()
         source_only = native_only = coexisting = missing = markers = 0
@@ -1732,6 +1780,7 @@ def overview(connection: sqlite3.Connection) -> dict[str, object]:
                            JOIN runners ru USING(runner_id)
                            LEFT JOIN replay_run_corrections c USING(evidence_key)
                            WHERE r.corpus_id=?
+                             AND r.replay_id NOT IN (SELECT replay_id FROM replay_retirements)
                              AND (?=0 OR EXISTS(
                                SELECT 1 FROM final_corpus_members f
                                WHERE f.corpus_id=r.corpus_id AND f.replay_id=r.replay_id
@@ -1785,6 +1834,7 @@ def overview(connection: sqlite3.Connection) -> dict[str, object]:
                  JOIN runners runner USING(runner_id)
                  LEFT JOIN replay_run_corrections correction USING(evidence_key)
                  WHERE replay.corpus_id=?
+                   AND replay.replay_id NOT IN (SELECT replay_id FROM replay_retirements)
                    AND (?=0 OR EXISTS(
                      SELECT 1 FROM final_corpus_members member
                      WHERE member.corpus_id=replay.corpus_id
@@ -2097,6 +2147,10 @@ def add_work(
     ).fetchone()
     if replay is None:
         raise ValueError(f"unknown replay: {logical_path}")
+    if connection.execute(
+        "SELECT 1 FROM replay_retirements WHERE replay_id=?", (replay["replay_id"],)
+    ).fetchone():
+        raise ValueError(f"retired replay: {logical_path}")
     if replay["corpus_id"] is None or replay["logical_path"] is None:
         raise ValueError(f"replay has no schedulable corpus/path: {logical_path}")
     runner_id = None
@@ -2404,7 +2458,9 @@ def enqueue_corpus_replay_work(
     else:
         rows = connection.execute(
             """SELECT logical_path,completion_marker FROM replays
-               WHERE corpus_id=? ORDER BY logical_path""",
+               WHERE corpus_id=?
+                 AND replay_id NOT IN (SELECT replay_id FROM replay_retirements)
+               ORDER BY logical_path""",
             (corpus["corpus_id"],),
         ).fetchall()
     corpus_path = Path(corpus["corpus_path"]) if corpus["corpus_path"] else None
@@ -2520,6 +2576,7 @@ def claim_work(
         filters = [
             "wi.operation=?", "done.work_id IS NULL",
             "superseded.work_id IS NULL",
+            "wi.replay_id NOT IN (SELECT replay_id FROM replay_retirements)",
         ]
         filter_args: list[object] = [operation]
         if runner_trust is not None:
@@ -2898,6 +2955,12 @@ def parser() -> argparse.ArgumentParser:
     retire.add_argument("database", type=Path)
     retire.add_argument("logical_root")
     retire.add_argument("--reason", required=True)
+    retire_one = commands.add_parser("retire-replay")
+    retire_one.add_argument("database", type=Path)
+    retire_one.add_argument("logical_path")
+    retire_one.add_argument("--reason", required=True)
+    retire_one.add_argument("--evidence-path", required=True)
+    retire_one.add_argument("--native-sha256", required=True)
     activate = commands.add_parser("activate-corpus")
     activate.add_argument("database", type=Path)
     activate.add_argument("logical_root")
@@ -3078,6 +3141,10 @@ def main() -> None:
         print(json.dumps({"evidence_key": exact_evidence_key(
             connection, args.logical_path, args.runner_trust, args.native_sha256,
         )}, sort_keys=True))
+    elif args.command == "retire-replay":
+        inserted = retire_replay(connection, args.logical_path, args.reason,
+                                args.evidence_path, args.native_sha256)
+        print(json.dumps({"retired": args.logical_path, "inserted": inserted}))
     elif args.command == "retire-corpus":
         with connection:
             retire_corpus(connection, args.logical_root, args.reason)

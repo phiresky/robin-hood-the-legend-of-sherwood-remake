@@ -52,6 +52,22 @@ CREATE TABLE IF NOT EXISTS final_corpus_members (
     PRIMARY KEY(corpus_id,replay_id)
 ) STRICT;
 
+-- Retirement preserves capture identity and all historical run evidence.
+CREATE TABLE IF NOT EXISTS replay_retirements (
+    replay_id INTEGER PRIMARY KEY REFERENCES replays(replay_id),
+    reason TEXT NOT NULL CHECK (length(trim(reason)) > 0),
+    evidence_path TEXT NOT NULL CHECK (length(trim(evidence_path)) > 0),
+    native_sha256 TEXT NOT NULL CHECK (length(native_sha256) = 64),
+    retired_utc TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+) STRICT;
+
+CREATE TRIGGER IF NOT EXISTS final_members_reject_retired
+BEFORE INSERT ON final_corpus_members
+WHEN EXISTS (SELECT 1 FROM replay_retirements WHERE replay_id=NEW.replay_id)
+BEGIN
+    SELECT RAISE(ABORT, 'retired replay cannot enter active membership');
+END;
+
 CREATE TABLE IF NOT EXISTS runners (
     runner_id INTEGER PRIMARY KEY,
     identity_key TEXT NOT NULL UNIQUE CHECK (length(identity_key) = 64),
