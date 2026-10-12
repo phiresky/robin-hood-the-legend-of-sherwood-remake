@@ -73,11 +73,21 @@ This York change is not published yet while receiver-zone and joined-roof
 alternatives are evaluated.
 
 An asset-local audit identifies ten mismatched York ledge/anchor receiving
-planes and eleven in Nottingham. It is a diagnostic, not a proof for edges
+planes and twelve in Nottingham. It is a diagnostic, not a proof for edges
 without a matching local surface: those can legitimately land on neighbouring
 terrain. Reports are `local-jump-receiver-audit-NUlYCv` (York) and `MlB6mx`
 (Nottingham). Derby (`V1WYXl`), Leicester (`9bP6rO`) and Sherwood (`pH8sGV`) have
 no detected mismatched planes in this audit; that does not certify traversal.
+
+The remaining scene scans likewise find no mismatched matching-local-face
+planes: Lincoln (`local-jump-receiver-audit-CYSyC5`, 20 edges), Croisement01
+(`ZRvZO2`, 26), Croisement02 (`qwNOPc`, eight), Croisement03 (`KeaEUi`, 20) and
+Wychford (`zSkusk`, nine). Respectively 0/13/4/6/4 edges lack a matching local
+surface; these require scene-level checks because the receiver can belong to
+another asset. Nottingham has twelve mismatches, correcting the earlier count
+of eleven. Its prototype stage `york-zone-bindings-m6ptgt` uses an explicit
+one-millionth-unit authoring precision grid to clip nearly coincident polygon
+edges; it is not published or traversal-verified.
 
 ## Authorized jump starts, hidden clicks and York traversal (2026-10-12)
 
