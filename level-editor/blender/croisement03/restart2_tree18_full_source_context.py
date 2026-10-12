@@ -1,0 +1,33 @@
+"""Complete original raster plus full observed native frames, without source reassignment."""
+import argparse,json,hashlib
+from pathlib import Path
+import numpy as np
+from PIL import Image,ImageDraw
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';W=B/'restart2'
+def main():
+ p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);out=p.parse_args().output;assert not out.exists();pins={}
+ def pin(path):pins[str(path)]=hashlib.sha256(path.read_bytes()).hexdigest();return path
+ inventory=json.loads(pin(B/'source-inventory.json').read_text());source=Image.open(pin(B/'baseline/covered.png')).convert('RGBA');revealed=Image.open(pin(B/'baseline/revealed.png')).convert('RGBA');role=json.loads(pin(W/'tree18-role-reconciliation-v1/receipt.json').read_text());animation=next(a for a in inventory['animations']if a['index']==4);box=(220,165,625,550);out.mkdir();source.crop(box).save(out/'original-complete-source.png');revealed.crop(box).save(out/'revealed-complete-source.png')
+ def panel(im,bounds,title,scale=2):
+  crop=im.crop(bounds).convert('RGB');w,h=crop.width*scale,crop.height*scale;sheet=Image.new('RGB',(w+60,h+60),'#252525');sheet.paste(crop.resize((w,h),Image.Resampling.NEAREST),(50,40));draw=ImageDraw.Draw(sheet);draw.text((5,5),title,fill='white');draw.text((5,20),f'Source XYXY{bounds}; unmarked pixels',fill='white')
+  for x in range(((bounds[0]+24)//25)*25,bounds[2],25):draw.text((50+(x-bounds[0])*scale-8,29),str(x),fill='white')
+  for y in range(((bounds[1]+24)//25)*25,bounds[3],25):draw.text((15,40+(y-bounds[1])*scale-4),str(y),fill='white')
+  return sheet
+ panel(source,box,'Original map source: stone + bark + leaves + ivy + ground').save(out/'original-source-coordinate-context.png');phases=[]
+ for i,row in enumerate(animation['frames']):
+  rawpath=pin(Path(row['source']));imagepath=pin(Path(row['image']));assert pins[str(rawpath)]==row['sha256'];raw=np.array(Image.open(rawpath).convert('RGBA'));expected=raw.copy();expected[np.all(raw[:,:,:3]==[0,251,0],axis=2)]=0;frame=Image.open(imagepath).convert('RGBA');assert np.array_equal(expected,np.array(frame));x,y,w,h=row['bbox'];assert frame.size==(w,h);native=Image.new('RGBA',source.size);native.paste(frame,(x,y));composite=Image.alpha_composite(source,native);dest=out/f'complete-source-phase-{i:02}.png';composite.crop(box).save(dest);phases.append({'phase':i,'source_box_xywh':row['bbox'],'raw_sha256':pins[str(rawpath)],'normalized_sha256':pins[str(imagepath)],'full_rgba_key_conversion_exact':True,'fullframe_actual_alpha_pixels':int((np.array(frame)[:,:,3]>0).sum()),'composite_crop_sha256':hashlib.sha256(dest.read_bytes()).hexdigest()})
+  if i in [0,7]:panel(composite,box,f'Complete map artwork + full Arbre05 native phase{i:02}').save(out/f'complete-source-phase-{i:02}-coordinate-context.png')
+ patches=[
+ ('central-left-crown',(270,225,365,345),'Observed dense gold leaves, thin dark twigs and intermittent stone windows. Animated alpha supplies only part of this visible network; gaps cannot be called rock by complement.'),
+ ('central-right-crown',(465,220,563,341),'Gold branch/leaf network over mossy stone. Some visible stone is already independently traced; surrounding static leaves/twigs and their ownership remain unresolved.'),
+ ('main-fork-and-bark',(404,286,467,435),'Visible fork/bark and crossing leaves; mask18 is not a bark domain. Current wood scaffold remains untextured and absent from bank+native diagnostic.'),
+ ('left-static-ivy',(253,345,364,431),'Dense gold/green ivy and leafy foreground; gray receiver areas behind it are not evidence of exposed stone.'),
+ ('right-static-ivy',(468,348,565,436),'Green ivy, smaller twig structure and dark foliage base in original source. No accepted separate Tree18 static owner exists.'),
+ ('southern-stone-windows',(370,350,416,414),'Several pale stone faces and dark joints interleaved with twigs/ivy. Existing bounded source proposals remain separate from the entire rectangle.'),
+ ('root-and-ground',(357,426,494,547),'Bark/root-like forms, ivy and ground contact. Native phase alpha is not complete root coverage; root height/contact still inferred.'),
+ ('upper-visible-rock',(228,170,292,222),'Broad stone cap is visibly source-supported, with sparse twig/leaf interference near edges. Gray at such supported fronts means projection unfinished; hidden3D backside is a separate question.')]
+ rows=[]
+ for name,bounds,description in patches:
+  panel(source,bounds,name,4).save(out/f'{name}-unmarked-source.png');rows.append({'id':name,'source_bounds_xyxy':bounds,'observed_context':description,'status':'CONTEXT_DESCRIPTION_ONLY_NOT_PIXEL_DOMAIN'})
+ report={'status':'COMPLETE_2D_SOURCE_CONTEXT_SEPARATE_OWNERSHIP_UNRESOLVED','pins':pins,'crop_xyxy':box,'composition':'Exact original covered map RGBA remains intact as base; full decoded native Arbre05 frame overlaid at exact frame XYWH origin. Nothing removed or synthesized.','phases':phases,'patches':rows,'covered_revealed_crop_equal':bool(np.array_equal(np.array(source.crop(box)),np.array(revealed.crop(box)))),'static_role_limit':'Original map artwork contains static foliage, bark, ivy, stone and terrain together. It is complete2Dreference, NOT an extracted/accepted static foliage domain and NOT a proof of which animationphase is baked into the map.','central_gray_interpretation':['Bank+Arbre05 saved images intentionally omit static foliage and Tree18 wood. Full original-source reference shows dense foreground network in many central gray areas.','Do not assign whole central gray wedges as stone or request unknown-rock fill based on sparse source projection.','Source-coordinate patches identify visible mixed content for reconciliation; none assigns every enclosed pixel to one role.','Original view cannot expose unseen bank backside/underside. Such surfaces are inferred3D; classify their actual native visibility using saved geometry before associating them with source pixels.'],'missing_proof':role['concrete_missing_proof'],'limits':['CPU source-reference assembly only. No new domain masks, model changes, assignments or synthesis.','All14 exact shared frames remain available separately; physical Tree18 ownership and production display ordering remain separate proofs.','No claim that this composite exactly reproduces an original runtime frame; base-phase provenance remains explicit.']};report['output_pins']={p.name:hashlib.sha256(p.read_bytes()).hexdigest()for p in out.iterdir()if p.is_file()};(out/'receipt.json').write_text(json.dumps(report,indent=2)+'\n');print({'phases':len(phases),'context_patches':len(rows),'source_states_equal':report['covered_revealed_crop_equal']})
+if __name__=='__main__':main()
