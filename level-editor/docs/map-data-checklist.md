@@ -115,6 +115,13 @@ loads without base-game data. Its archived geometry passes all twelve stair
 player-click routes. In-game actor/depth compositing remains unverified.
 See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-checks-2026-10-12).
 
+Lincoln's passing movement samples do not cover six omitted drawbridge passages
+or the omitted south-wall step. A staged drawbridge definition restores the two
+deck floors and all six passage records, and constructs natively. It remains
+unpublished: all six open-state actor round trips fail because their compiled
+clearance requirements allow no state. Bank contacts, mesh edges and
+rotated/raised placement also need verification.
+
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and
 state guards. The published oak-platform footprint passes all 36 scripted

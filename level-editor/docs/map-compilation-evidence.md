@@ -1154,8 +1154,12 @@ drawbridge passages and their control links. Native construction passes in
 1.62 seconds (67 areas, 593 sight obstacles, 85 doors, 71,668 grid blocks).
 The candidate remains **unpublished**: its mesh review supports 976/1,042 and
 911/1,044 sampled points, with boundary gaps up to 4.117 and 1.067 units. None of
-its eight declared edge joins finds matching neighbouring boundaries. Locked/open
-actor traversal, bank contacts and rotated/raised placement still require checks;
+its eight declared edge joins finds matching neighbouring boundaries. The native
+prepared-passage audit passes all six closed and six reset checks but rejects
+all six open-state round trips. Every restored door has an empty allowed-state
+clearance requirement, so activation cannot make the candidate traversable.
+`actor-passage-control-report.json` records the failure. Bank contacts, passage
+clearance, mesh edges and rotated/raised placement need repair and verification;
 construction and retained door counts do not establish a usable drawbridge.
 
 Fresh export `saved-map-exports-jjSJNf` compiles in approximately 24 seconds and

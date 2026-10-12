@@ -1,5 +1,10 @@
 use super::*;
 
+mod passage_control_audit {
+    use super::*;
+    include!("exported_passage_controls.rs");
+}
+
 #[test]
 fn exported_alternating_posture_openings_follow_independent_asset_states() {
     let (mut engine, assets) = compiled_walkway(include_bytes!(concat!(
@@ -2037,7 +2042,8 @@ fn audit_changing_climbs(sprite: Option<&crate::sprite::Sprite>) {
 fn exported_climb_angles_preserve_barriers_through_apply_reset() {
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap()).unwrap();
+        serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
+            .unwrap();
     assert_eq!(manifest["complete"], true);
     let fixtures: Vec<serde_json::Value> = manifest["results"]
         .as_array()
@@ -2066,7 +2072,10 @@ fn exported_climb_angles_preserve_barriers_through_apply_reset() {
     .unwrap();
 }
 
-fn audit_changing_climb_fixtures(fixtures: &[serde_json::Value], sprite: Option<&crate::sprite::Sprite>) {
+fn audit_changing_climb_fixtures(
+    fixtures: &[serde_json::Value],
+    sprite: Option<&crate::sprite::Sprite>,
+) {
     for (rotation, fixture) in fixtures.iter().enumerate() {
         let lift_type = &fixture["asset_geometry"]["lifts"][0]["lift_type"];
         let bounds = &fixture["walkable_polygon"][2];
@@ -2113,13 +2122,7 @@ fn audit_changing_climb_fixtures(fixtures: &[serde_json::Value], sprite: Option<
                     true,
                 );
                 let actor_result = sprite.map(|sprite| {
-                    walk_exported_lift(
-                        engine.clone(),
-                        assets.clone(),
-                        entrance,
-                        exit,
-                        Some(sprite),
-                    )
+                    walk_exported_lift(engine.clone(), assets.clone(), entrance, exit, Some(sprite))
                 });
                 assert_eq!(
                     route.is_some(),
