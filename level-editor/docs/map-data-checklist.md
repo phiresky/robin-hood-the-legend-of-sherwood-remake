@@ -58,6 +58,16 @@ loads through native mod discovery, image/animation decoding and engine map
 construction without a base datadir. This does not certify visual accuracy or
 every playable route.
 
+**Nottingham receivers (2026-10-12):** twelve corrected ledge zones across ten
+assets are published with draft warnings. Full-scene traversal improves from
+280/380 to 355/380, with no passing case regressing; 25 failures remain. All 80
+isolated placement exports load natively, but only 522/850 attempted upright
+traversals pass (ten additional clicks are occluded). A separate required-helper
+fixture passes 50/80 cases and exposes receiver loss during the jump-up landing
+animation. This is under investigation; no runtime behavior changed. Fresh
+published York also loads and reproduces its 680 traversals, eleven occlusions
+and 29 failures. Neither map is at full parity.
+
 **Mask binding update:** coverage-based layer binding restores Croisement02 shrub
 77's missing mask. The fresh 53-mask export loads natively and changes only masks
 and warnings relative to the previous export. Compiler/packaging tests pass;

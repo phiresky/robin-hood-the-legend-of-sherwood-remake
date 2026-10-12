@@ -12,7 +12,9 @@ const polygonClipping = createRequire(new URL("../shared/src/jump-clearance.ts",
 
 // Reviewed asset-local ledge/face associations. Digests prevent applying these
 // authoring decisions to changed geometry. Export never reads this recipe.
-const reviewed = [
+const map = process.argv[2] ?? "york";
+assert.ok(["york", "nottingham"].includes(map) && process.argv.length <= 3);
+const york = [
   [
     "york-bridge-square-scaffolded-corner-house",
     "0eed6df64a0cdf305108d9bdd2ef588af913fdc3a6bce117d44095c3fa8bd0fb",
@@ -68,6 +70,19 @@ const reviewed = [
     [["jump-pair-55-side-0", "jump-zone-85", "building-594-walk-0"]],
   ],
 ];
+const reviewed =
+  map === "york"
+    ? york
+    : JSON.parse(
+        await fs.readFile(
+          new URL("./reviewed-nottingham-jump-receivers.json", import.meta.url),
+          "utf8",
+        ),
+      );
+// The Nottingham review uses this explicit authoring precision to join nearly
+// coincident clipping endpoints. The installed polygons carry the result.
+const clipPoint = (point) =>
+  map === "nottingham" ? point.map((value) => Math.round(value * 1e6) / 1e6) : point;
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8"));
 const edits = [],
@@ -104,8 +119,8 @@ for (const [id, descriptorHash, modelHash, rules] of reviewed) {
     const height = planeHeight(plane, point);
     assert.ok(inside(point, vertices, true) && Math.abs(height - midpoint[2]) < 1.1);
     const clipped = polygonClipping.intersection(
-      [zone.polygon.map(([x, y, z]) => [x, y - z])],
-      [vertices.map(([x, y]) => [x, y])],
+      [zone.polygon.map(([x, y, z]) => clipPoint([x, y - z]))],
+      [vertices.map(([x, y]) => clipPoint([x, y]))],
     );
     const regions = clipped.filter((region) => inside(point, region[0], true));
     assert.equal(regions.length, 1);

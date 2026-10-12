@@ -1,0 +1,66 @@
+[
+  [
+    "nottingham-market-front-brown",
+    "f648e8745481be5a67751603283060df6f5e40b68ef65e8b60fa86b2358170bd",
+    "fe28b9b8243a5c043d7b55eb8dfb3ba00c39c219e2ea22cea6fee9d6c5df9c7f",
+    [["jump-pair-14-side-1", "jump-zone-15", "building-013-walk-0"]]
+  ],
+  [
+    "nottingham-market-front-east-green",
+    "104c8a74177acb8544ef3fc1894bb5533df1ef52e107703d1c4e7540c6957813",
+    "1180f1e0010a90fcbb531ef9f76c5a0bcbe0bc187a66ea5511aa9f57f291d607",
+    [["jump-pair-15-side-0", "jump-zone-17", "building-009-walk-0"]]
+  ],
+  [
+    "nottingham-market-front-west-green",
+    "ab630bde47481ab94c522c15408a0bc973cafe092c49f9cf5960f13759190df9",
+    "b9b522b5d5ed62a7ece96bd307282b53be2134917c36e9d0f9e9019850d190af",
+    [["jump-pair-13-side-0", "jump-zone-15", "building-000-walk-0"]]
+  ],
+  [
+    "nottingham-north-stone-house",
+    "2c5e1458a77fdad8dfb2025015ebb0cd87e5569b8462ce61ed0d8de287f1ef26",
+    "2c98374ffed78b104d15b19a1b1e0957fffe2c49a6a1a72ad0ef22ae9c1ef4ca",
+    [["jump-pair-33-side-1", "jump-zone-34", "building-117-walk-0"]]
+  ],
+  [
+    "nottingham-south-gate-house",
+    "ff4626ae579747d41580fd7af4f3dfa6af9553cf23602f028f3bbf0b0c4ec4a4",
+    "e40847a982508b30a05205f4f4663ffbcacd764815fe1ba54b2b1541aecf519a",
+    [
+      ["jump-pair-23/0", "jump-zone-24", "building-033-walk-0"],
+      ["jump-pair-24/1", "jump-zone-27", "building-056-walk-0"],
+      ["jump-pair-26/0", "jump-zone-27", "building-056-walk-0"]
+    ]
+  ],
+  [
+    "nottingham-southeast-green-house",
+    "faeff46b9d50e1cf24e9ccfbb076997ddca4ed6f6cfb9d5b7be6361237f8daa7",
+    "c672e31f4e225bf96d3c5dc7fb4963a53548fc2834f2a873b0e2069b18cd9323",
+    [["jump-pair-20-side-1", "jump-zone-22", "building-047-walk-0"]]
+  ],
+  [
+    "nottingham-southeast-shutter-house",
+    "19bc877ac0b2f7dd471f8148ed272e1efade5b37fcd13d43f14a5e4593aa5f3c",
+    "c45d6957d891d3f30702fbc011c28c6504f17cbf6291440a804faba75cdb92d5",
+    [["jump-pair-20-side-0", "jump-zone-23", "building-041-walk-0"]]
+  ],
+  [
+    "nottingham-south-stair-house",
+    "d049d5c4c2b906057e97abe7dab5592d20d42b92a7c8b4a81dca96e8e9741dec",
+    "76d4437142f88365a2a3505df3561e0a21c9e50775a61f7e3ac97fd37e4f11d3",
+    [["jump-pair-21-side-0", "jump-zone-23", "building-027-walk-0"]]
+  ],
+  [
+    "nottingham-upper-red-house",
+    "543733ffe9e748e084ee54fc78ada8af833c48e63496733712c9ac208b6b28ca",
+    "192b436ba2a3ca03d8ece8df00be240555ee9f95b4b56ebda438b53606730f17",
+    [["jump-pair-30-side-1", "jump-zone-31", "building-147-walk-0"]]
+  ],
+  [
+    "nottingham-north-dormer-house-remainder",
+    "2aa11c809d85c9f3fd601b60ff1175cc5155dd744a059b1a9c71c204a9ecddf1",
+    "d24bd1d00f2fcd49ccbc5e14fd52c6d8e0fccc1ca0d26bfdc73be0e8beecaf5c",
+    [["jump-pair-33-side-0", "jump-zone-36", "building-123-walk-0"]]
+  ]
+]

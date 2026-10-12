@@ -4,6 +4,49 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published Nottingham jump receivers and fresh York verification (2026-10-12)
+
+Fresh published York `saved-map-exports-Gnpyri` finishes in about 460 seconds,
+constructs native geometry and reproduces the candidate's 680 successful click
+traversals, eleven occlusions and 29 failures. Its descriptor differs from
+`saved-map-exports-t7jSeo` only in draft warnings. The prior attempt `FrRfaH`
+terminated with SIGTERM before writing a descriptor; no kernel journal was
+available in the sandbox to establish why. It is not a verification result.
+
+Nottingham's twelve receiver-specific ledge zones span ten assets. Prototype
+`york-zone-bindings-m6ptgt` passes native construction at all 80 isolated
+placements (`asset-jump-exports-XiozQ5`). Compared with `gfTReC`, its upright
+click sweep improves from 454 to **522 successful traversals**, with ten
+occluded clicks in both and failures falling from 396 to 328. No passing case
+regresses. These fixtures cover internal pairs, not isolated external sockets.
+
+Full-scene baseline `saved-map-exports-gXTUcO` has 280 successful traversals and
+100 failures. Candidate `saved-map-exports-TvwQjA` constructs natively and has
+**355 successful traversals and 25 failures**, with no occlusions or regressed
+passing cases. Remaining findings comprise nine rejected actor postures, six
+missing click overlays, three unavailable starting boxes, three stalls, two
+missing landing receivers and two actor receiver mismatches. Rejected postures
+still require separate verification with the required helper/posture.
+
+`stage-reviewed-jump-receivers.mjs nottingham` records the explicit rules and
+hash guards in `reviewed-nottingham-jump-receivers.json`. Stage
+`reviewed-jump-receivers-b4cwD8` reproduces the tested gameplay exactly except
+for draft warning text. Its publication report confirms all ten definitions
+installed and Nottingham's scene pins refreshed. Rotated traversal and flight
+contact warnings remain; this is an improved draft publication, not full parity.
+
+The upper red house's required-posture fixture
+`nottingham-helper-receiver-mly9s8mq` passes 50/80 cases: assisted ascents and
+upright descents. Twenty failures lose the actor's roof receiver and ten miss
+the rotated click overlay. Test-only tracing confirms the destination midpoint
+resolves the correct roof and the airborne landing installs it; it becomes
+`None` during `TransitionJumpingUpWaitingCrouched`. The actor then reaches the
+requested map coordinate at ground height. This remains an unresolved landing
+transition issue, not evidence that its midpoint is outside the roof. The
+trace now records receivers and retains failure trajectories and midpoint
+queries. Three regular jump tests, Rust formatting and the game build pass;
+no runtime behavior was changed in this batch.
+
 ## Receiver-specific York zones and Derby rendering (2026-10-12)
 
 York stage `york-zone-bindings-L4ay3w` clips ten mismatched ledge zones to their

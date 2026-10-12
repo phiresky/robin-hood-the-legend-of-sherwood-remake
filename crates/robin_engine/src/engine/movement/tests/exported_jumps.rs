@@ -893,6 +893,7 @@ fn dispatch_jump(
                 "action": format!("{:?}", element.sprite.last_action),
                 "motion": format!("{:?}", element.sprite.last_motion_state),
                 "position": [position.x, position.y, position.z],
+                "receiver": format!("{:?}", element.sprite.position_iface.get_obstacle()),
             }));
         }
         if approach && flew {
@@ -947,7 +948,19 @@ fn dispatch_jump(
                 destination_sector,
                 destination.layer,
                 element.position_map(),
-            )?;
+            )
+            .map_err(|error| {
+                let probe = destination.get_middle_point();
+                let receiver = engine.get_projection_area_index(
+                    &assets,
+                    destination_sector,
+                    destination.layer,
+                    probe,
+                );
+                format!(
+                    "{error}; landing midpoint={probe:?}, midpoint receiver={receiver:?}, trajectory={trajectory:?}"
+                )
+            })?;
             if !expected_flight_seen {
                 return Err(format!("jump did not execute {expected_flight:?}"));
             }
