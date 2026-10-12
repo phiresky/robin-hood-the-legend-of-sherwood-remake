@@ -70,7 +70,9 @@ try {
   );
   let heartbeats = 0;
   const heartbeat = setInterval(() => heartbeats++, 0);
-  worker = new MapExportWorker();
+  worker = new MapExportWorker((stage) => {
+    result.textContent = `RUNNING ${stage}`;
+  });
   const exportWorker = worker;
   let baked;
   try {
