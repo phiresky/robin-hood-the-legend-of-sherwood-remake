@@ -29,6 +29,13 @@ probes. All ten selected full-map interior clicks pass. Rendered traversal and
 the remaining wider click-coverage failures remain open; the asset retains its
 draft status.
 
+Its published 180-degree/elevated browser fixture now passes lossless PNG/ZIP
+packaging, editor reopening and native loading without base-game data. Complete
+asset definitions reveal another gap: both copied internal raised-lane return
+jumps stall after landing (6/8 directions pass, including all four repaired
+cross-asset directions). These additional failures remain open; the isolated
+72-click result does not cover every jump owned by the two assets.
+
 **Subpixel rotated floors (2026-10-12):** simple folded floors now receive
 walking clearance before integer normalization can erase them. York's copied
 two-house fixture retains both jump connections at all eight placements,

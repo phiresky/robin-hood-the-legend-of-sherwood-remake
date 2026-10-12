@@ -86,9 +86,35 @@ selects only the rear-house asset and York scene pin, with `applied: false`.
 the model pin is unchanged and the only saved-scene change is this asset's
 descriptor hash. Fresh published matrix `connected-jump-placements-ERCBGg`
 reproduces all eight native-validated `HyXC70` descriptors byte-for-byte.
-The definition retains its existing draft warnings. Rendered sprite contact,
-complete exported ZIP round trips for this correction and all-map parity remain
-unverified.
+The definition retains its existing draft warnings. Rendered sprite contact
+and all-map parity remain unverified; the browser ZIP check follows below.
+
+### Published York roof browser ZIP round trip
+
+`prepare-connection-render-library.mjs` creates an isolated saved scene backed
+by the complete published asset definitions and pinned models. Fixture
+`render-connection-library-js2wxV` contains two independent copies at 180 degrees
+and elevation 40, without mission content. The actual editor bake/reopen test
+passes: 2500×2500 color and 16-bit depth PNGs, 17 sight obstacles, and a
+13,204,354-byte `york-roof-rendered.zip`. Reopened editor authoring data, rendered
+pixels, compiled gameplay, warnings and appearance data match exactly. The
+baked color image was inspected. Initial browser loading exceeded the runner's
+five-second observation limit; after that runner exited, a new run with a
+60-second observation limit completed normally.
+
+The ZIP passes `full_editor_archive_constructs_native_map_without_base_datadir`
+in 5.48 seconds: native mod discovery, empty-base mounting, background/depth/
+minimap decoding, engine construction and mission-content absence checks. Its
+extracted descriptor also passes native geometry construction.
+
+Unlike the isolated cross-asset fixture, complete definitions retain the lane's
+internal `jump-pair-56` in both copies. Therefore this descriptor is intentionally
+not byte-identical to the isolated fixture. Native interior-click artifact
+`interior-jump-clicks-R6XcPo` passes six of eight directions: all four repaired
+cross-asset directions and the two internal outward jumps. Both internal return
+jumps (lines 1 and 3) fly, then stall after landing. These are unresolved parity
+failures exposed by checking the complete assets. In-game actor/depth compositing
+and rendered traversal remain unverified.
 
 `check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,
 ordered by distance to the takeoff edge. Each point must pass static corridor
