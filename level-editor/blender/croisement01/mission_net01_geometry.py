@@ -3,6 +3,8 @@ import sys,json,math,hashlib,time,shutil
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement')]
 from render_slots import acquire,release
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+from mission_net01_intersections import intersection_points
 import bpy,bmesh,numpy as np
 from mathutils import Vector
 from PIL import Image
@@ -17,7 +19,7 @@ def main():
  acquire(slots=2)
  try:
   while not guard():print('Resource guard: awaiting 6 GiB available RAM and 10 GiB disk',flush=True);time.sleep(30)
-  packet=json.loads((OUT/'source.json').read_text());dest=OUT/'candidate-v9';dest.mkdir(exist_ok=False)
+  packet=json.loads((OUT/'source.json').read_text());dest=OUT/'candidate-v10';dest.mkdir(exist_ok=False)
   wood_only='--wood-only' in sys.argv;cores=json.loads((OUT/'wood-cores-continuous-v2.json').read_text())
   def wood_surface(source,x,y):
    rows=np.asarray(cores[source]['profile']);cy=float(np.interp(x,rows[:,0],rows[:,1]));radius=float(np.interp(x,rows[:,0],rows[:,2]));delta=(cy-y)/COS
@@ -141,15 +143,15 @@ def main():
   clearance=[]
   for state in ['empty','occupied']:
    bag=next(o for o in objects[state] if 'fitted bag' in o.name);vertices=[v.co.copy() for v in bag.data.vertices];faces=[tuple(f.vertices) for f in bag.data.polygons];bvh=BVHTree.FromPolygons(vertices,faces);overlap=support_tree.overlap(bvh);zmin=min(v.z for v in vertices);assert zmin>0 and not overlap,(state,zmin,len(overlap));clearance.append({'state':state,'bag_min_z':zmin,'bag_branch_surface_intersection_pairs':len(overlap),'scope':'Endpoint surface intersection and flat-ground clearance; not transition sweep or containment certification.'})
-  rope_contacts=[]
+  rope_contacts=[];contact_failures=[]
   for state,owned in objects.items():
    for ob in owned:
     if not any(term in ob.name for term in ['cord','bag neck','upper left support']):continue
-    vertices=[v.co.copy() for v in ob.data.vertices];faces=[tuple(f.vertices) for f in ob.data.polygons];pairs=support_tree.overlap(BVHTree.FromPolygons(vertices,faces));ys=[-vertices[i].y*SIN-vertices[i].z*COS for _,face_index in pairs for i in faces[face_index]]
-    if state=='initial':assert not ys or max(ys)<360,('Initial rope intersects tree below the support region',max(ys))
-    else:assert not ys or max(ys)<346,('Applied rope intersects tree below its support region',max(ys))
-    rope_contacts.append({'state':state,'object':ob.name,'intersection_pairs':len(pairs),'intersection_native_y_bounds':[min(ys),max(ys)] if ys else None,'scope':'Contacts near branch attachment are allowed and disclosed; no intersections farther down the suspended cords.'})
+    vertices=[v.co.copy() for v in ob.data.vertices];faces=[tuple(f.vertices) for f in ob.data.polygons];pairs=support_tree.overlap(BVHTree.FromPolygons(vertices,faces));contacts=[Vector(p) for ti,ci in pairs for p in intersection_points(context_vertices,context_faces[ti],vertices,faces[ci])];assert not pairs or contacts,('Unresolved surface-pair contact',ob.name);ys=[-p.y*SIN-p.z*COS for p in contacts]
+    if ys and max(ys)>=(360 if state=='initial' else 346):contact_failures.append({'object':ob.name,'state':state,'max_native_y':max(ys)})
+    rope_contacts.append({'state':state,'object':ob.name,'intersection_pairs':len(pairs),'exact_intersection_point_count':len(contacts),'intersection_native_y_bounds':[min(ys),max(ys)] if ys else None,'scope':'Contacts near branch attachment are allowed and disclosed; no intersections farther down the suspended cords.'})
   (dest/'support-bindings.json').write_text(json.dumps({'tree':context_pin,'bindings':support_bindings,'bag_clearance':clearance,'rope_tree_contacts':rope_contacts,'scope':'Right anchor and initial weight use exact native source rays. Upper left connector routing and initial rope depth are inferred; ground source domains remain unchanged.'},indent=2)+'\n')
+  assert not contact_failures,('Cord/tree contacts outside attachment region',contact_failures)
   ld=bpy.data.lights.new('Diagnostic fixed light','SUN');ld.energy=2;lo=bpy.data.objects.new('Diagnostic fixed light',ld);scene.collection.objects.link(lo);lo.rotation_euler=(.65,-.5,-.4)
   cd=bpy.data.cameras.new('Review camera');cd.type='ORTHO';cd.clip_end=10000;co=bpy.data.objects.new('Review camera',cd);scene.collection.objects.link(co);scene.camera=co
   allpts=[o.matrix_world@v.co for os in objects.values() for o in os for v in o.data.vertices];low=Vector(tuple(min(p[i] for p in allpts) for i in range(3)));high=Vector(tuple(max(p[i] for p in allpts) for i in range(3)));center=(low+high)/2;cd.ortho_scale=(high-low).length*1.2
