@@ -43,6 +43,15 @@ the full-scene result to 665 successful traversals and 44 failures, with no
 previously passing case regressing. York receiver/rotation repairs remain under
 review and are not published.
 
+The subsequent receiver-specific York zone candidate improves this to **680
+successful traversals, 11 occluded clicks and 29 failures**. It removes all
+missing launch/landing receiver errors, with no previously passing case
+regressing, but remains unpublished pending placement review.
+Fresh Derby passes 144 ordinary routes and all 20 required-posture jump cases.
+Its browser export exposed unsupported GLB PBR materials in the depth pass;
+standard/physical material depth now passes rendered coverage tests. The full
+Derby editable-ZIP round trip is being rerun and is not yet verified.
+
 **Mask binding update:** coverage-based layer binding restores Croisement02 shrub
 77's missing mask. The fresh 53-mask export loads natively and changes only masks
 and warnings relative to the previous export. Compiler/packaging tests pass;

@@ -192,6 +192,30 @@ try {
     "cutout depth must reveal ground",
   );
   check(Math.abs(rendered.depth[30 * 1100 + 190]! - expectedDepth) <= 2, "ownership alpha depth");
+  // GLB assets can retain PBR materials, including physical materials. Their
+  // alpha coverage and geometry must produce the same depth as unlit assets.
+  for (const Material of [THREE.MeshStandardMaterial, THREE.MeshPhysicalMaterial]) {
+    const pbrRoot = bakeScene([root]);
+    pbrRoot.traverse((node) => {
+      if (!(node instanceof THREE.Mesh)) return;
+      const source = node.material as THREE.MeshBasicMaterial;
+      node.material = new Material({
+        color: source.color,
+        map: source.map,
+        alphaTest: source.alphaTest,
+        side: source.side,
+      });
+      node.material.userData = { ...source.userData };
+    });
+    const pbr = renderMapBake(pbrRoot, camera, compiled.bounds);
+    check(
+      pbr.depth.every((value, index) => value === rendered.depth[index]),
+      `${Material.name} changed opaque, cutout, or ownership depth`,
+    );
+    pbrRoot.traverse((node) => {
+      if (node instanceof THREE.Mesh) node.material.dispose();
+    });
+  }
   check(
     Math.abs(rendered.depth[30 * 1100 + 30]! - expectedDepth) <= 2,
     `depth mismatch: ${rendered.depth[30 * 1100 + 30]} expected ${expectedDepth}`,

@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Receiver-specific York zones and Derby rendering (2026-10-12)
+
+York stage `york-zone-bindings-L4ay3w` clips ten mismatched ledge zones to their
+asset-local receiving faces and anchors them on those faces. Full export
+`saved-map-exports-t7jSeo` constructs native geometry and passes 680 complete
+click traversals, with 11 verified occlusions and 29 failures. Comparing every
+line/parameter case against `saved-map-exports-YR17Lo` finds 25 fixes and no
+regressed passing cases. Missing launch/landing receiver failures are gone;
+14 stalls, five missing overlays, five unavailable starts and five unavailable
+destinations remain. This candidate is not published. Isolated corner-house
+and bastion tests (`asset-jump-exports-EYc86j`) pass 112/160 cases; arbitrary
+placement parity is still incomplete.
+
+Fresh Derby `saved-map-exports-4xvy7y` constructs natively, passes 144 ordinary
+routes and all 20 required-posture vertical-jump cases (assisted ascents and
+upright descents). These are gameplay checks, not rendered ZIP verification.
+Its browser export failed while converting an `Unfinished volume preview`
+material to depth. The depth baker now accepts standard GLB PBR materials,
+including physical materials, using their existing geometry and alpha rules.
+The browser bake contract confirms identical depth pixels for unlit, standard
+and physical materials across opaque geometry, physical cutouts and synthesized
+ownership alpha. Typechecking, targeted lint and formatting checks pass.
+The complete Derby browser export/reopen/rebake is still pending.
+
 ## Published stump takeoff repair and full-scene York check (2026-10-12)
 
 The stump socket inset is now published. `stage-reviewed-jump-anchors.mjs`

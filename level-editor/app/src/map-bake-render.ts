@@ -112,7 +112,13 @@ export function contentBakeBounds(
 }
 
 function depthMaterial(source: THREE.Material, camera: MapCamera, bounds: BakeBounds) {
-  if (!(source instanceof THREE.MeshBasicMaterial || source instanceof THREE.MeshLambertMaterial))
+  if (
+    !(
+      source instanceof THREE.MeshBasicMaterial ||
+      source instanceof THREE.MeshLambertMaterial ||
+      source instanceof THREE.MeshStandardMaterial
+    )
+  )
     throw new Error(
       `Cannot compile depth for material ${source.name || source.type}. Expected a map or terrain material.`,
     );
