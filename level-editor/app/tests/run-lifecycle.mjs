@@ -134,18 +134,35 @@ try {
     if (!Number.isSafeInteger(length) || length <= 0)
       throw new Error("No compiled mod ZIP produced by the fixture");
     const bytes = new Uint8Array(length);
-    // A full map can be tens of megabytes; avoid one enormous CDP JSON reply.
+    // Keep binary exports compact across CDP instead of expanding each byte
+    // into a JSON number. Small string batches stay below argument-count limits.
     for (let offset = 0; offset < length; offset += 262144) {
       const chunk = await evaluate(
         socket,
         ++id,
-        `Array.from(window.__bakeZip.slice(${offset}, ${offset + 262144}))`,
+        `(() => {
+          const bytes = Uint8Array.from(window.__bakeZip.slice(${offset}, ${offset + 262144}));
+          let binary = "";
+          for (let i = 0; i < bytes.length; i += 8192)
+            binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+          return btoa(binary);
+        })()`,
         {
           signal: lifetime.signal,
           timeoutMs: 10000,
         },
       );
-      bytes.set(chunk, offset);
+      const decoded = Buffer.from(chunk, "base64");
+      if (decoded.length !== Math.min(262144, length - offset))
+        throw new Error("Incomplete compiled mod ZIP download chunk");
+      bytes.set(decoded, offset);
+      if (
+        process.env.TEST_PROGRESS &&
+        (offset % (262144 * 16) === 0 || offset + decoded.length === length)
+      )
+        console.log(
+          `RUNNING saving ZIP: ${Math.round(((offset + decoded.length) / length) * 100)}%`,
+        );
     }
     await writeFile(process.env.TEST_BAKE_ZIP, bytes);
   }

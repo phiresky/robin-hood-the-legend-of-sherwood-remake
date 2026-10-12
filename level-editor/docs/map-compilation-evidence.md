@@ -107,21 +107,28 @@ coverage remains the two cases recorded above.
 
 Private browser fixture `render-connection-library-nFvrls` contains two published
 hall/ramp/annex assemblies at 90 degrees, elevation forty, on editor terrain.
-Its browser ZIP/reopen/rebake audit is running; preparation and browser startup
-are not archive or rendering validation.
+Its completed browser ZIP/reopen/rebake audit is recorded below.
 
 The final raised 180-degree descriptor, prepared in
 `hall-final-placement-prepared-Yg8jxQ`, passes all twelve forced and twelve
 player-click routes with explicit expected-count coverage and no skips.
 Combined with the preceding seven placements this establishes **96/96 forced
 routes and 96/96 player clicks** across both copies, four angles and two
-elevations. The neighbour generator's final negative cases are still running.
+elevations. The neighbour generator has completed all eight exports and all
+64 missing/raised-neighbour rejection checks.
 
 The rotated/raised browser fixture now reports a successful round trip:
 2500×2500 pixels, 185 sight obstacles and 122,629,206 ZIP bytes. Reopened
 gameplay, editor serialization, color/depth images and all fifteen appearance
-states match. The browser runner is still saving the archive through CDP;
-native empty-base loading and traversal of the saved ZIP remain pending.
+states match. The saved `lincoln-hall-rotated-raised.zip` has SHA-256
+`a9696ba050beab8db31aad6731e8730a85ca6d53bdb8ae31fc98bfb0205387ac`;
+all ZIP entries pass CRC validation. Native empty-base loading passes with
+185 sight obstacles, twenty door projections, 21,120 grid blocks and one
+appearance region for four controls. Color, depth, minimap and the editor
+document load without a base datadir; spawn points and soldiers are empty.
+The exact archived descriptor passes **12/12 player-click stair routes**, with
+no failures or permission skips. These are initial-state traversal checks;
+in-game actor/depth compositing and all-state traversal remain unverified.
 
 ## Sherwood stair clearance investigation (2026-10-12)
 

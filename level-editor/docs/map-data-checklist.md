@@ -52,14 +52,15 @@ Export now keeps quantized ordinary endpoints on their receiving surfaces and
 prepares ordinary stair approaches before recomputing passage states. The
 four-angle diagnostic passes all 48 forced routes and 48 player clicks. Fresh
 zero-elevation 90-degree and raised zero-degree assemblies pass all 24 forced
-routes and 24 player clicks. The full raised rotation matrix and rendered
-verification remain pending. Fresh Derby/Lincoln regressions retain all 44
+routes and 24 player clicks. Fresh Derby/Lincoln regressions retain all 44
 stair-click routes, 326 ordinary route samples, 100 Lincoln upright jump probes
 and twenty Derby posture-aware jump probes.
 All eight placements now pass 96/96 forced routes and 96/96 player clicks
 after integrated passage preparation, including raised 180-degree coverage.
-The final neighbour-rejection matrix remains pending; a rotated/raised browser
-ZIP audit is running.
+All 64 missing/raised-neighbour cases are rejected. The rotated/raised browser
+ZIP reopens and rebakes identically, including fifteen appearance states, and
+loads without base-game data. Its archived geometry passes all twelve stair
+player-click routes. In-game actor/depth compositing remains unverified.
 See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-checks-2026-10-12).
 
 **Sherwood stair gap (2026-10-12):** fresh published data passes 50 ordinary
