@@ -51,6 +51,13 @@ def main():
         board.paste(enlarged, (index * width * scale, 30), enlarged)
         draw.text((index * width * scale + 4, 5), label, fill='white')
     board.save(args.output / 'source-model-silhouette.png')
+    marked = native.resize((width * scale, height * scale), Image.Resampling.NEAREST)
+    marking = ImageDraw.Draw(marked)
+    for record in packet['pixels']:
+        x, y = record['pixel']
+        px, py = (x - crop[0]) * scale, (y - crop[1]) * scale
+        marking.rectangle((px, py, px + scale - 1, py + scale - 1), outline='#ff00ff')
+    marked.save(args.output / 'forty-pixel-locations.png')
     report = dict(status='UNRESOLVED_VISUAL_COMPARISON_NOT_OWNERSHIP_APPROVAL',
                   model_sha256=evidence['model_sha256'],
                   source_crop=crop, native_render_crop=evidence['source_crop'],
