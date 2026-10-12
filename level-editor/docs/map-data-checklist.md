@@ -297,7 +297,15 @@ native integration tests pass, as does the game build. Fresh ten-map checks
 are pending. No per-tick geometry solver is added. See
 [the boundary evidence](map-compilation-evidence.md#receiver-coverage-at-compiled-floor-boundaries-2026-10-12).
 
-**Nottingham ZIP verified (2026-10-12):** the full 57,942,452-byte archive reopens
+**Current Nottingham jump coverage (2026-10-12):** fresh export
+`saved-map-exports-mog5ON` has verified traversal for all **390 sampled cases**:
+375 normal clicks, ten assisted ascents and five hidden-floor clicks. The helper
+audit now retains all map overlays and passes all twenty ascent/descent cases.
+Descriptor hashes, line indices, click parameters and approach depths match
+across modes. This closes the isolated-helper-test gap, not all moved-placement
+or rendered-actor coverage. See [full-overlay evidence](map-compilation-evidence.md#nottingham-helper-routes-with-all-map-overlays-2026-10-12).
+
+**Earlier Nottingham ZIP verification (2026-10-12):** the full 57,942,452-byte archive reopens
 with identical gameplay, color and depth, and loads through native mod/resource
 loading without a base data directory. Fresh gameplay data passes 184 ordinary
 route samples and retains 355/380 successful jump clicks. The remaining 25

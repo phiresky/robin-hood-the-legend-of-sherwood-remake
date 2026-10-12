@@ -1,17 +1,19 @@
-// Isolate helper-required vertical pairs for the native posture-aware harness.
-// Preserve physical geometry; record original line and zone numbers for comparison.
+// Review helper-required vertical pairs, optionally retaining every map overlay.
+// Record original line and zone numbers even when isolating the selected pairs.
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const [directory] = process.argv.slice(2);
+const retainOverlays = process.argv.includes("--retain-overlays");
+const [directory] = process.argv.slice(2).filter((argument) => argument !== "--retain-overlays");
 assert.ok(directory, "Supply a completed saved-map export directory");
 const manifest = JSON.parse(await fs.readFile(path.join(directory, "diagnostics.json")));
 assert.equal(manifest.complete, true);
 const output = await fs.mkdtemp("work/map-compile/required-jump-postures-");
 const results = [];
 for (const result of manifest.results) {
-  const descriptor = JSON.parse(await fs.readFile(path.join(directory, result.file)));
+  const bytes = await fs.readFile(path.join(directory, result.file));
+  const descriptor = JSON.parse(bytes);
   const geometry = descriptor.asset_geometry;
   const originalPairs = geometry.jump_line_pairs ?? [];
   const selected = originalPairs.flatMap((pair, index) => {
@@ -27,21 +29,29 @@ for (const result of manifest.results) {
     return [{ pair, index }];
   });
   if (!selected.length) continue;
-  geometry.jump_line_pairs = selected.map(({ pair }) => pair);
   const originalZones = [
     ...new Set(
       selected.flatMap(({ pair }) => [pair.line1.jump_zone_index, pair.line2.jump_zone_index]),
     ),
   ];
-  geometry.jump_zones = originalZones.map((index) => geometry.jump_zones[index]);
-  for (const { pair } of selected)
-    for (const line of [pair.line1, pair.line2])
-      line.jump_zone_index = originalZones.indexOf(line.jump_zone_index);
-  await fs.writeFile(path.join(output, result.file), JSON.stringify(descriptor));
+  if (!retainOverlays) {
+    geometry.jump_line_pairs = selected.map(({ pair }) => pair);
+    geometry.jump_zones = originalZones.map((index) => geometry.jump_zones[index]);
+    for (const { pair } of selected)
+      for (const line of [pair.line1, pair.line2])
+        line.jump_zone_index = originalZones.indexOf(line.jump_zone_index);
+  }
+  await fs.writeFile(
+    path.join(output, result.file),
+    retainOverlays ? bytes : JSON.stringify(descriptor),
+  );
   results.push({
     file: result.file,
     approach_depth: result.approach_depth ?? 8,
     original_lines: selected.flatMap(({ index }) => [index * 2, index * 2 + 1]),
+    ...(retainOverlays
+      ? { jump_lines: selected.flatMap(({ index }) => [index * 2, index * 2 + 1]) }
+      : {}),
     original_zones: originalZones,
   });
 }
@@ -50,7 +60,10 @@ await fs.writeFile(
   path.join(output, "diagnostics.json"),
   JSON.stringify({
     complete: true,
-    scope: "selected-helper-jump-pairs-not-full-map-parity",
+    scope: retainOverlays
+      ? "selected-helper-routes-with-full-exported-overlays-not-complete-map-parity"
+      : "selected-helper-jump-pairs-not-full-map-parity",
+    retainOverlays,
     source: directory,
     results,
   }),

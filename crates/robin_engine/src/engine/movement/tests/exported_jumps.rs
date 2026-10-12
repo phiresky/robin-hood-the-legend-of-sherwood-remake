@@ -671,7 +671,36 @@ fn audit_jump_dispatch_with_precision(
                 assert!(line.vector().length() > 1e-4);
             }
         }
-        for index in 0..engine.world.fast_grid.level.jump_lines.len() {
+        let line_count = engine.world.fast_grid.level.jump_lines.len();
+        let selected_lines: Vec<usize> = match result.get("jump_lines") {
+            Some(selection) => {
+                let indices: Vec<_> = selection
+                    .as_array()
+                    .expect("jump_lines must be an array")
+                    .iter()
+                    .map(|index| {
+                        let index =
+                            usize::try_from(index.as_u64().expect("jump line must be unsigned"))
+                                .unwrap();
+                        assert!(index < line_count, "selected jump line is absent");
+                        index
+                    })
+                    .collect();
+                assert!(!indices.is_empty(), "selected jump lines must not be empty");
+                assert_eq!(
+                    indices
+                        .iter()
+                        .copied()
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len(),
+                    indices.len(),
+                    "duplicate selected jump line"
+                );
+                indices
+            }
+            None => (0..line_count).collect(),
+        };
+        for index in selected_lines {
             let line = &engine.world.fast_grid.level.jump_lines[index];
             let destination = &engine.world.fast_grid.level.jump_lines
                 [line.associated_line_index.unwrap() as usize];

@@ -180,6 +180,35 @@ image was inspected; this does not establish rendered character contact or
 sprite depth compositing. The offset-coverage failures and previously measured
 airborne anchor/solid contacts remain recorded, not excused by these routes.
 
+## Nottingham helper routes with all map overlays (2026-10-12)
+
+Fresh `saved-map-exports-mog5ON` compiles in 62.228 seconds and is identical
+to the previous `saved-map-exports-ae9DMv` descriptor. The normal audit still
+passes 375/390 traversals; ten ascent probes require a helper and five covered
+roof probes require hidden selection.
+
+`check-required-jump-postures.mjs --retain-overlays` keeps the complete exported
+descriptor byte-for-byte and supplies explicit `jump_lines` to the native test.
+The test validates that selection is nonempty, unique and in range; it filters
+only the exercised routes, without removing any geometry, zones or overlays.
+No production engine or exporter behavior changes. The ordinary exported-jump
+module tests and game build pass.
+
+Full-overlay fixtures `required-jump-postures-8MiYHZ` and
+`required-jump-postures-R4cZ1J` both pass all twenty complete helper-ascent and
+upright-descent click routes on original line indices 30/31/52/53. The latter
+uses the fresh export. `nottingham-hidden-clicks-4m262kqk` retains the same full
+descriptor and passes all five hidden-selection routes on line 62.
+
+`saved-map-exports-mog5ON/jump-dispatch-coverage.json` checks identical descriptor
+SHA-256, exact `(file, line, t)` case correspondence and equal approach depths
+across these modes. All **390 cases** have successful traversal: 375 normal,
+ten helper-only ascents and five hidden-floor clicks. Each is a traversal,
+not an occlusion-only result. This closes the prior isolated-helper evidence
+gap; arbitrary placements, broader inputs and in-game character rendering
+remain separate requirements. The all-normal test still fails its fifteen
+unsupported-mode requests, as expected.
+
 ## Supported integer jump-span search (2026-10-12)
 
 `refinement/review-jump-supported-spans.mjs` generates diagnostic replacements
