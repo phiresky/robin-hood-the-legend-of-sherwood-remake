@@ -245,6 +245,23 @@ No whole-map speedup is claimed yet. Fresh Wychford baseline
 `saved-map-exports-PgbVhn` was started before the change; its completed profile
 and a matching optimized export are needed to measure the effect on that scene.
 
+### Native fixture refresh after clearance preparation
+
+The five stored-fixture mismatches above are now resolved. Current wall exports
+retain their geometry and update only the prepared graph bytes; the multi-plane
+fixture also includes the current projected floor clearance and receiving outline.
+The two cropped point-mask fixtures were regenerated from their editor inputs.
+The wall progress assertion now covers the final stair-clearance and passage
+approach preparation stages as well as sight finalization.
+
+Artifacts: `refreshed-native-fixtures-AzgOTH`. All 252 focused editor compiler,
+packaging and wall tests pass. The native `asset_map_compilation` suite passes
+72 tests, with seven environment-dependent tests ignored. In particular, it
+verifies routing around wall ends, crossing the multi-plane seam with actor
+clearance while rejecting routes outside it, cropped mask ownership, repeated
+materials, sight blocking and elevated wall lighting. No native assertions were
+weakened and no production engine code changed for this refresh.
+
 ## Supported integer jump-span search (2026-10-12)
 
 `refinement/review-jump-supported-spans.mjs` generates diagnostic replacements

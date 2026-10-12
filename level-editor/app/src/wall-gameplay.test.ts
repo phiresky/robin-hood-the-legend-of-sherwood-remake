@@ -126,7 +126,9 @@ test("wall export matches the fixture exercised by native routing and sight", as
   assert.ok(stages.includes("Constructing terrain"));
   assert.ok(stages.includes("Connecting navigation regions"));
   assert.ok(stages.includes("Constructing masks"));
-  assert.equal(stages.at(-1), "Finalizing sight and appearance bindings");
+  assert.ok(stages.includes("Finalizing sight and appearance bindings"));
+  assert.ok(stages.includes("Preparing joined stair clearance"));
+  assert.equal(stages.at(-1), "Preparing passage approaches");
 });
 
 test("cropped point masks preserve owned floors through native fixtures and ZIP reopening", async () => {
