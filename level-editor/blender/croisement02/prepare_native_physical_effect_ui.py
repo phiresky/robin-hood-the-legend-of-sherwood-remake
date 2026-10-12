@@ -4,7 +4,7 @@ from pathlib import Path
 R=Path.cwd();LIB=R/'level-editor/library'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def dump(p,v):p.write_text(json.dumps(v,indent=2)+'\n')
-def prepare(out,refined=False,receiver_assets=None,crops=False):
+def prepare(out,refined=False,receiver_assets=None,crops=False,decode_workers=None,source_from=None):
  old=R/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1/canonical-postinstall-smoke-v2'
  reqpath=R/'level-editor/work/croisement02-refinement/restart217-butterfly05-private-contract-v1/request.json';req=json.loads(reqpath.read_text())
  for row in [req['contract'],req['model'],*req['source_files']]:assert sha(Path(row['path']))==row['sha256'],row
@@ -29,9 +29,33 @@ def prepare(out,refined=False,receiver_assets=None,crops=False):
    key=str(p.relative_to(R));snap[key]=sha(p)
    if p.suffix in {'.ts','.tsx','.js','.jsx','.mjs','.cjs','.css','.json'}:
     dst=out/'snapshot'/key;dst.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,dst)
+ if source_from is not None:
+  baseline=json.loads((source_from/'source-snapshot.json').read_text())
+  assert set(snap)==set(baseline),'Source membership changed between diagnostic packets'
+  for key,expected in baseline.items():
+   src=source_from/'snapshot'/key
+   if src.exists():
+    dst=out/'snapshot'/key;dst.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(src,dst)
+   else:assert sha(R/key)==expected
+  snap=baseline
+ if decode_workers is not None:
+  assert receiver_assets is None and decode_workers in (1,8)
+  key='level-editor/app/src/map-candidate.ts';path=out/'snapshot'/key
+  source=path.read_text();oldline='await Promise.all(Array.from({ length: Math.min(8, references.length) }, worker));'
+  assert source.count(oldline)==1
+  original=snap[key];path.write_text(source.replace(oldline,oldline.replace('Math.min(8,','Math.min('+str(decode_workers)+',')))
+  snap[key]=sha(path)
+  dump(out/'source-variant.json',{'scope':'Frozen diagnostic only; canonical source unchanged','path':key,'original_sha256':original,'served_sha256':snap[key],'asset_decode_workers':decode_workers,'texture_encode_workers':2,'source_statement':oldline,'served_statement':oldline.replace('Math.min(8,','Math.min('+str(decode_workers)+',')})
  authority['membership']=sorted(snap);authority['index']={'path':str(LIB/'3d-assets/index.json'),'initial_sha256':sha(LIB/'3d-assets/index.json')}
  dump(out/'source-snapshot.json',snap);dump(out/'runtime-authority.json',authority)
  pins={str(p):sha(p) for p in [reqpath,LIB/'3d-assets/index.json',LIB/'scenes/croisement02.rhlos-map.json',LIB/'mission-states/index.json',*[Path(p)for p in routes.values()]]}
+ if decode_workers is not None:
+  data_pins={};canonical=json.loads((LIB/'scenes/croisement02.rhlos-map.json').read_text())
+  for reference in [*canonical['sceneAssets'],*canonical['assetSources']]:
+   for field in ['model','descriptor']:data_pins[str(LIB/reference[field])]=reference[field+'_sha256']
+   descriptor=json.loads((LIB/reference['descriptor']).read_text())
+   for resource in descriptor.get('resources',[]):data_pins[str(LIB/resource['path'])]=resource['sha256']
+  dump(out/'canonical-resource-pins.json',data_pins);pins.update(data_pins)
  dump(out/'runtime-inputs.json',{**snap,**pins})
  for name in ['editor.tsx','observe-library.js']:shutil.copy2(old/name,out/name)
  shutil.copy2(R/'level-editor/blender/croisement02/native_physical_effect_ui_proof.js',out/'check.js')
@@ -43,6 +67,10 @@ def prepare(out,refined=False,receiver_assets=None,crops=False):
  run=run.replace("await readFile(join(privateLibrary,path))", "await readFile(privateRoutes.get('/library/'+path)??join(privateLibrary,path))")
  run=run.replace("if(s?.startsWith('FAIL'))throw Error(s);", "await writeFile(join(out,'readiness.json'),JSON.stringify({at:Date.now(),status:s}));if(s?.startsWith('FAIL'))throw Error(s);")
  run=run.replace("await writeFile(join(out,'canonical-checkpoint.json'),JSON.stringify(result,null,2));", "await writeFile(join(out,'canonical-checkpoint.json'),JSON.stringify(result,null,2));const crops=await evaluate('window.nativeEffectCrops??[]');for(const row of crops){if(!/^b05-crop-(original-art|physical-over-art|refined-map)-tick(0|74)$/.test(row.name))throw Error('Unexpected crop');await writeFile(join(out,row.name+'.png'),Buffer.from(row.png.split(',')[1],'base64'));delete row.png;}await writeFile(join(out,'source-pixel-crops.json'),JSON.stringify(crops,null,2));")
+ if decode_workers is not None:
+  run=run.replace('let ready=false;for',"let lastReadyStatus;let ready=false;for")
+  run=run.replace("await writeFile(join(out,'readiness.json'),JSON.stringify({at:Date.now(),status:s}));", "await writeFile(join(out,'readiness.json'),JSON.stringify({at:Date.now(),status:s}));if(s!==lastReadyStatus){lastReadyStatus=s;await appendFile(join(out,'readiness-history.jsonl'),JSON.stringify({at:Date.now(),status:s,resources:resourceSample()})+'\\n');}")
+  run=run.replace("if(!ready)throw Error('Editor readiness timeout');", "if(!ready)throw Error('Editor readiness timeout');hostEvent('full-canonical-map-ready');")
  (out/'run.mjs').write_text(run)
  for p in out.iterdir():
   if p.is_file():pins[str(p)]=sha(p)
@@ -50,4 +78,4 @@ def prepare(out,refined=False,receiver_assets=None,crops=False):
  dump(out/'request.json',{'status':'PREPARED_NOT_LAUNCHED','run':str(out/'run.mjs'),'run_sha256':sha(out/'run.mjs'),'scope':('Bounded receiver subset; full canonical scene proof remains required. ' if receiver_assets is not None else '')+'Actual editor UI physical-effects/native-art prototype, normal frame seek and loop restoration. Original camera. No geometry approval or whole-map completion.','input_request':str(reqpath),'input_sha256':sha(reqpath)})
  print(out)
 if __name__=='__main__':
- p=argparse.ArgumentParser();p.add_argument('--out',type=Path,required=True);p.add_argument('--refined',action='store_true');p.add_argument('--receiver-assets',nargs='*',default=None);p.add_argument('--crops',action='store_true');a=p.parse_args();prepare(a.out.resolve(),a.refined,a.receiver_assets,a.crops)
+ p=argparse.ArgumentParser();p.add_argument('--out',type=Path,required=True);p.add_argument('--refined',action='store_true');p.add_argument('--receiver-assets',nargs='*',default=None);p.add_argument('--crops',action='store_true');p.add_argument('--decode-workers',type=int,choices=[1,8]);p.add_argument('--source-from',type=Path);a=p.parse_args();prepare(a.out.resolve(),a.refined,a.receiver_assets,a.crops,a.decode_workers,a.source_from.resolve() if a.source_from else None)
