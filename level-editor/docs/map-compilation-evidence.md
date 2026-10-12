@@ -229,6 +229,42 @@ failure. This isolates the next investigation to the keep's narrow receiving
 and movement surfaces and their jump zones. It does not yet establish whether
 the defect is in asset metadata, compiler preparation or probe placement.
 
+### Keep movement-clearance recovery (2026-10-12)
+
+The four narrow roof strips on `leicester-great-keep` had lost their authored
+movement clearance. Their movement contours followed the narrower receiving
+outlines, leaving no usable full actor box on several strips. One-time authoring
+recipe `stage-leicester-keep-clearance.mjs` restores four asset-local contours;
+the compiler still reads only placed assets. Stage `leicester-keep-clearance-z57mTD`
+retains the model, receiving-plane definitions, materials, jump definitions,
+doors, lifts, masks and appearance states.
+
+Full staged Leicester `saved-map-exports-QRKVMK` improves from 140/230 to 226/230
+ordinary offset jump-click probes, with no previously passing case regressing.
+The four remaining failures are line 8 landings on the neighbouring strip.
+Native construction and all 162 ordinary route samples pass. Interior fixture
+`interior-jump-clicks-22EZLe` now generates all 46 directions: 45 pass ordinary
+selection, and its line-12 covered destination passes hidden selection in
+`interior-jump-clicks-JVCaAz`. This does not clear the four offset failures.
+
+Across eight placements (0/37/90/180 degrees, elevations 0/40), staged fixture
+`asset-jump-exports-cBAsm7` passes native construction and 1,240/1,360 offset
+click probes. Unchanged-asset fixture `asset-jump-exports-magfE9` passes only
+722/1,360. The matched comparison finds 518 improvements and no regressions;
+120 placement failures remain. These checks do not certify rendered ZIPs or
+every placement.
+
+Only compiled movement data and four non-solid, non-opaque mouse receiver
+contours change in the full-scene descriptor. These generated receivers follow
+the recovered clearance. Physical collision, masks, materials, doors, lifts,
+buildings and jump records are unchanged. No runtime code changes are involved.
+
+The reviewed clearance is now published. The publication report in
+`leicester-keep-clearance-z57mTD/publication` records only the keep asset and
+Leicester/Wychford descriptor pins. Published gameplay exactly matches the
+tested stage, and both saved-scene hashes verify. Draft warnings remain; full
+Wychford traversal and fresh rendered archive checks are not established here.
+
 `check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,
 ordered by distance to the takeoff edge. Each point must pass static corridor
 clearance against both native and precise floor contours with an additional

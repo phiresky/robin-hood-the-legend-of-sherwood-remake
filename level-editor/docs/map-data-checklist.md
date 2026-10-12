@@ -20,6 +20,14 @@ pass; fourteen other directions have no conservative supported probe and remain
 unverified. These are traversal findings, not a new rendered ZIP certification.
 See [the fresh checks](map-compilation-evidence.md#fresh-derby-and-leicester-traversal-checks-2026-10-12).
 
+The published restoration of four asset-local keep movement contours improves Leicester
+to **226/230** offset jump clicks with no regressions. All 46 interior directions
+now have probes: 45 pass ordinary selection and one passes hidden selection.
+Eight rotated/elevated placements improve from 722/1,360 to 1,240/1,360 passing
+offset probes, also without regressions. Four full-scene and 120 placement
+failures remain; rendered ZIP validation is still outstanding. See
+[the clearance recovery](map-compilation-evidence.md#keep-movement-clearance-recovery-2026-10-12).
+
 **York jump checks (2026-10-12):** the current full-map audit has 696 successful
 traversals, eleven occluded lower-click cases and thirteen failures out of 720.
 The remaining failures are lines 5, 57 and 65. All ten selected interior-click
