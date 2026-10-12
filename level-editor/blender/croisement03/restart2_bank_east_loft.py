@@ -3,7 +3,7 @@ import json,math,hashlib
 from pathlib import Path
 from collections import Counter
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-east-loft-cpu-v7';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-east-loft-cpu-v8';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 def main():
  O.mkdir(exist_ok=False);inp=B/'bank-sidewall-cpu-v1/geometry.json';data=json.loads(inp.read_text());mesh=data['52'];traces={t['id']:[mesh['vertices'][i]for i in t['vertices']]for t in mesh['traces']};xs=[560,575,587,590,594,596,603,606,610,613,616];rings=[];names=[]
  def ring(height,front,name):
@@ -19,8 +19,11 @@ def main():
  expanded=[];expanded_names=[]
  for i,ring in enumerate(rings):
   expanded.append(ring);expanded_names.append(names[i])
-  if i in (1,2,3,4,5):
-   a=np.array(ring);b=np.array(rings[i+1]);gap=float(np.min(a[:,2]-b[:,2]));assert gap>0;belly=i in (1,3,5);distance=min(3. if belly else 5.,gap*.25/S)*(1 if belly else -1);expanded.append(((a+b)/2+np.array([0.,-C,S])*distance).tolist());expanded_names.append('inferred rounded course' if belly else 'inferred recessed riser')
+  if i<len(rings)-1:
+   a=np.array(ring);b=np.array(rings[i+1]);gap=float(np.min(a[:,2]-b[:,2]));assert gap>0;belly=i in (0,1,3,5,6)
+   for t in (.18,.38,.62,.82):
+    mid=a*(1-t)+b*t;phase=np.array(xs);lobes=.35+.65*np.maximum(np.exp(-((phase-(601+i%2*3))/9)**2),.75*np.exp(-((phase-579)/8)**2));lobes[:1]=0
+    weights=np.r_[lobes,[0.,0.,0.]];distance=min(13. if belly else 8.,gap*.40/S)*math.sin(math.pi*t)*(1 if belly else -1);mid+=weights[:,None]*np.array([0.,-C,S])*distance;expanded.append(mid.tolist());expanded_names.append('inferred convex rock masses' if belly else 'inferred irregular recessed joint')
  rings=expanded;names=expanded_names
  v=np.array(rings).reshape((-1,3)).tolist();n=len(rings[0]);faces=[]
  for row in range(len(rings)-1):

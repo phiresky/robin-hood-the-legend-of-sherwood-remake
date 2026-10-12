@@ -6,7 +6,7 @@ R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).parent),s
 from render_slots import acquire,release
 import restart2_bank_whole_builder as whole
 import restart2_bank_full_v1 as base
-B=R/'level-editor/work/croisement03-refinement/restart2';CPU=B/'bank-shoulder-lofts-cpu-v6';E=B/'bank-east-loft-cpu-v7/geometry.json';OUT=B/'bank-shoulder-lofts-saved-v4'
+B=R/'level-editor/work/croisement03-refinement/restart2';CPU=B/'bank-shoulder-lofts-cpu-v7';E=B/'bank-east-loft-cpu-v8/geometry.json';OUT=B/'bank-shoulder-lofts-saved-v5'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def resources():
  assert shutil.disk_usage(R).free>=10*1024**3+32*1024**2
