@@ -946,6 +946,8 @@ test in `robin_rs --lib`. On the headless software adapter, use
 The configuration contains `archive`, `sprite_sheet`, `sprite_rect` (`x,y,w,h`),
 `sprite_offset` (sprite-script draw offset), `output`, and `probes`. Each probe
 has `name`, `map` (`x,y`), `height`, `layer`, and `sector`.
+Set a probe's optional `flying` flag to exercise airborne-human masking; it
+defaults to false. This changes posture, not the selected atlas frame.
 
 This mounts the archive over an empty filesystem and sends an actual atlas frame
 through the native entity renderer. It writes one PNG per pose and a changed-pixel

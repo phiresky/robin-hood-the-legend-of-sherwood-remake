@@ -21,6 +21,8 @@ struct Probe {
     height: f32,
     layer: u16,
     sector: u16,
+    #[serde(default)]
+    flying: bool,
 }
 
 pub(crate) fn capture(gpu: GpuContext, configuration: &std::path::Path) {
@@ -155,7 +157,11 @@ pub(crate) fn capture(gpu: GpuContext, configuration: &std::path::Path) {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-')
         );
-        let mut element = engine_element::ElementData::from_initial_posture(Posture::Upright);
+        let mut element = engine_element::ElementData::from_initial_posture(if probe.flying {
+            Posture::Flying
+        } else {
+            Posture::Upright
+        });
         element.kind = ElementKind::ActorPc;
         element.active = true;
         element.sprite = robin_engine::sprite::Sprite::new(scripts.clone(), Arc::new(Vec::new()));

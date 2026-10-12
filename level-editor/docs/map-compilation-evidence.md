@@ -22,6 +22,18 @@ movement evidence remains separate. This establishes a reproducible actual-sprit
 inspection path but does not certify all map compositing, jump contact, appearance
 states, or projectile masking. No production renderer or movement code changes.
 
+The follow-up `flying-character-capture.json` compares the same five poses in
+upright and flying postures. The native GPU test passes in 3.19 seconds; each
+flying pose changes 834 pixels while upright counts remain as above. Flying
+humans use the explicit projectile/altitude mask path, and this fixture has no
+masks, so the depth PNG does not hide their pixels. This is a coverage finding,
+not proof that an actual jump is incorrectly rendered: some diagnostic poses
+are inside solids, and airborne mask rules intentionally differ from grounded
+depth. Validate real flight positions and asset-local application boundaries
+before changing mask data. The trace-enabled ordinary jump audit still reports
+the same two unauthorized endpoint clicks, ten successful traversals and eight
+expected occlusion checks; their existing hidden-selection coverage is unchanged.
+
 ## Full Wychford browser round trip in progress (2026-10-12)
 
 Private fixture `wychford-rendered-library-sv656wxd` copies the current saved
