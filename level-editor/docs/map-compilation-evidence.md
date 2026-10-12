@@ -1146,6 +1146,18 @@ the defect is in asset metadata, compiler preparation or probe placement.
 
 ### Fresh Lincoln traversal checks (2026-10-12)
 
+Drawbridge candidate `lincoln-drawbridge-floors-mFbVPq` restores two local deck
+surfaces from the asset's solid tops at height 220.001. The published definition
+has no walkable surfaces and instead binds its two receivers to height zero.
+Candidate export `saved-map-exports-N7BGlC` retains all six previously omitted
+drawbridge passages and their control links. Native construction passes in
+1.62 seconds (67 areas, 593 sight obstacles, 85 doors, 71,668 grid blocks).
+The candidate remains **unpublished**: its mesh review supports 976/1,042 and
+911/1,044 sampled points, with boundary gaps up to 4.117 and 1.067 units. None of
+its eight declared edge joins finds matching neighbouring boundaries. Locked/open
+actor traversal, bank contacts and rotated/raised placement still require checks;
+construction and retained door counts do not establish a usable drawbridge.
+
 Fresh export `saved-map-exports-jjSJNf` compiles in approximately 24 seconds and
 passes 182 ordinary route samples, all sixteen stair player-click routes and
 100/100 actual jump traversals. Native test times are 1.50, 2.31 and 1.76 seconds,
