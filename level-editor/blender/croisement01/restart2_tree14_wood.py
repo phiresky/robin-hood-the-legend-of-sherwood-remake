@@ -45,7 +45,7 @@ for name,rows in trace.items():
   offsets={'upper_branch':-35,'right_fork':45,'right_tip':65,'left_main':-45,'left_upper':30,'left_twig':45}
   # Native camera rays leave branch depth unconstrained. Offset progressively
   # from the connected base while preserving every traced screen centerline.
-  ray=Vector((0,-COS,SIN));centers=[point(x,y)+ray*(offsets[name]*(j/(len(rows)-1))**1.5) for j,(x,y,radius) in enumerate(rows)]
+  ray=Vector((0,-COS,SIN));start_depth={'right_tip':13,'left_twig':8.5}.get(name,0);centers=[point(x,y)+ray*(start_depth+(offsets[name]-start_depth)*(j/(len(rows)-1))**1.5) for j,(x,y,radius) in enumerate(rows)]
  union(body,helpers.tube(name,centers,[radius for x,y,radius in rows]))
 # Unobserved crown-bearing limbs complete the depth instead of assuming that
 # all visible forks grow in one plane. They remain neutral pending appearance.
