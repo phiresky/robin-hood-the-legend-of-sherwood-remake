@@ -4,10 +4,10 @@ from pathlib import Path
 from collections import Counter
 import numpy as np
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-cpu-upper-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-cpu-upper-v2';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 # Hand-reviewed native bark boundaries; topmost foliage-obscured section remains
 # inferred. These controls do not assign native pixels or authorize a texture.
-CONTROLS={3:[(70,81,87),(92,79,84),(105,78,83),(118,77,82),(135,77,82)],4:[(85,95,99),(96,97,101),(108,98,104),(121,100,106),(133,102,108)],5:[(75,151,156),(91,148,154),(105,146,152),(119,144,151),(127,143,150)]}
+CONTROLS={3:[(70,81,87),(92,79,84),(105,78,83),(118,77,82),(135,77,82)],4:[(85,95,99),(96,97,101),(108,98,104),(121,100,106),(133,102,108)],5:[(75,151,156),(91,151,156),(105,150,156),(119,149,155)]}
 def main():
  inp=B/'tree01-cpu-roots-v1/geometry.json';data=json.loads(inp.read_text());O.mkdir(exist_ok=False);rows=[];source=Image.open(B.parent/'baseline/covered.png').convert('RGB');draw=ImageDraw.Draw(source)
  for p in data['parts']:
