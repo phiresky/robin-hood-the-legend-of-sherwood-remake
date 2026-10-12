@@ -1360,7 +1360,7 @@ Fresh published York and Sherwood exports (`saved-map-exports-vDlOcb`) pass all
 the runtime corrections, including the final contact-separation geometry.
 Their rendered integration remains unverified.
 
-The current library-wide audit (`gameplay-coverage-OhuGjZ`) finds 21 of 1,279
+The current library-wide audit (`gameplay-coverage-nlq6Ph`) finds 21 of 1,278
 indexed assets without gameplay definitions. None is referenced by placements,
 scene assets or wall-spline sources/corner assets in the ten saved scenes. The
 audit now includes spline references: Wychford uses 84 distinct assets rather
