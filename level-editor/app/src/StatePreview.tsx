@@ -107,6 +107,11 @@ export default function StatePreview(props: {
     setActorEnabled(false);
     setActorBusy(false);
   }
+  const [loadedScope, setLoadedScope] = createSignal<{
+    root: FileSystemDirectoryHandle;
+    map: string;
+    mission: string;
+  } | null>(null);
   let generation = 0,
     request = 0,
     lastLibrary: FileSystemDirectoryHandle | null | undefined,
@@ -152,6 +157,7 @@ export default function StatePreview(props: {
     context: number,
   ) {
     const attempt = ++request;
+    setLoadedScope(null);
     clearActor();
     setSelected(entry.id);
     setContract(null);
@@ -192,6 +198,7 @@ export default function StatePreview(props: {
         setContract(loaded.contract);
         setFamily(loaded.contract.families[0]!.id);
       }
+      setLoadedScope({ root, map: lastMap, mission: lastMission });
       setMode("art");
       setTick(0);
       setStatus("");
@@ -214,6 +221,7 @@ export default function StatePreview(props: {
       lastMission = mission;
       const context = ++generation;
       request++;
+      setLoadedScope(null);
       clearActor();
       setEntries([]);
       setContract(null);
@@ -246,9 +254,21 @@ export default function StatePreview(props: {
       loaded: contract() ?? loopContract() ?? patchContract(),
       familyId: family(),
       view: mode(),
+      scope: loadedScope(),
+      root: props.library?.() ?? null,
+      map: props.document()?.map ?? "",
+      mission: props.document()?.mission?.importedFrom ?? "",
     }),
-    ({ active, loaded, familyId, view }) => {
-      if (!active) {
+    ({ active, loaded, familyId, view, scope, root, map, mission }) => {
+      // A mission/map change retires viewport resources before queued UI effects run.
+      // Never apply a previous context's loaded contract to the new viewport.
+      if (
+        !active ||
+        !scope ||
+        scope.root !== root ||
+        scope.map !== map ||
+        scope.mission !== mission
+      ) {
         props.viewport.setStatePresentationMode("physical");
         setPlaying(false);
       } else if (loaded && familyId) applyMode(view, familyId);

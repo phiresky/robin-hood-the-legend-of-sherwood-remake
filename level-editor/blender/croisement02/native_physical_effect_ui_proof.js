@@ -47,5 +47,14 @@
  select('State preview view','art');
  select('Mission','');await wait(()=>!v.bindings.document()?.mission?.importedFrom,'mission retired');
  check('Physical substitution retires with mission',!v.physicalNativeEffects&&!v.physicalNativeEffectsEnabled);
+ await new Promise(r=>setTimeout(r,100));
+ select('Mission',cfg.entry.mission);
+ await wait(()=>document.querySelector('[aria-label="State preview asset"] option[value="'+cfg.entry.id+'"]'),'mission UI recovers after retirement');
+ select('State preview asset',cfg.entry.id);
+ await wait(()=>v.loopClocks.ready&&v.missionStates.players.size===1&&v.physicalNativeEffects,'physical preview rebinds after retirement');
+ check('Reactive UI survives mission retirement and rebind',v.nativeArtStatus().ready);
+ select('Mission','');await wait(()=>!v.bindings.document()?.mission?.importedFrom,'second mission retirement');
+ await new Promise(r=>setTimeout(r,100));
+
  return {status:'SCATTER_EXECUTED_PENDING_VISUAL_REVIEW',checks,states,scope:'Real UI and source-bound saved B05 geometry on native artwork; no geometry approval, actor crossing, or whole-map closure. Refined receiver is exercised only when requested.'};
 })()
