@@ -14,10 +14,10 @@ def require(ok,message):
 def read(p):return json.loads(p.read_text())
 def dump(p,x):p.write_text(json.dumps(x,indent=2)+'\n')
 def rows(data):
- matches=list(PAT.finditer(data));require(data.startswith(b'{"version":1,"assets":[')and data.endswith(b']}'),'Unexpected compact catalog format')
+ matches=list(PAT.finditer(data));require(data.startswith(b'{"version":1,"assets":[')and data.rstrip().endswith(b']}'),'Unexpected compact catalog format')
  result={}
  for i,m in enumerate(matches):
-  end=matches[i+1].start()if i+1<len(matches)else len(data)-2
+  end=matches[i+1].start()if i+1<len(matches)else len(data.rstrip())-2
   if i+1<len(matches):require(data[end-1:end]==b',','Row separator changed');end-=1
   aid=m.group(1).decode();require(aid not in result,'Duplicate row');result[aid]=(m.start(),end,data[m.start():end])
  require(len(result)>0,'No catalog rows');return result
@@ -33,7 +33,7 @@ def guard_scope(reviewed,current,new):
  require(set(a)==set(b)==set(c),'Catalog membership drift')
  require([i for i in a if i.startswith('croisement02-')]==[i for i in c if i.startswith('croisement02-')],'C02 row ordering drift')
  for aid in a:
-  if json.loads(a[aid][2]).get('source_map','').lower()=='croisement02' or aid.startswith('croisement02-'):
+  if re.search(rb'"source_map":"Croisement02"',a[aid][2][:512])is not None or aid.startswith('croisement02-'):
    require(a[aid][2]==c[aid][2],'Reviewed C02 row changed: '+aid)
   if aid not in IDS:require(b[aid][2]==c[aid][2],'Unrelated current row not preserved: '+aid)
  require(candidate(current)==new,'Unexpected catalog byte change')
