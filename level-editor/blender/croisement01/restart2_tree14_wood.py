@@ -16,7 +16,7 @@ acquire(slots=2)
 assert shutil.disk_usage(OUT).free>10*1024**3+512*1024**2
 available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024
 assert available>6*1024**3
-base=OUT/'restart2';dest=base/'tree14-wood-v1';dest.mkdir(exist_ok=False)
+base=OUT/'restart2';dest=base/'tree14-wood-v2';dest.mkdir(exist_ok=False)
 bank=base/'tree05-regional-banks-v18/assets/croisement01-tree-05/model.blend'
 assert sha(bank)=='7926500e407950bd66b78d13e0ce65b3829dd2263d7db4ba5c57a7ece5dbc818'
 bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.preferences.filepaths.save_version=0
@@ -41,8 +41,17 @@ for name,rows in trace.items():
   for j,(x,y,radius) in enumerate(rows):
    z=(412-y)/COS if j==0 else max(.4,radius*.7)
    centers.append(Vector((x,-(y+z*COS)/SIN,z)))
- else:centers=[point(x,y) for x,y,radius in rows]
+ else:
+  offsets={'upper_branch':-35,'right_fork':45,'right_tip':65,'left_main':-45,'left_upper':30,'left_twig':45}
+  # Native camera rays leave branch depth unconstrained. Offset progressively
+  # from the connected base while preserving every traced screen centerline.
+  ray=Vector((0,-COS,SIN));centers=[point(x,y)+ray*(offsets[name]*(j/(len(rows)-1))**1.5) for j,(x,y,radius) in enumerate(rows)]
  union(body,helpers.tube(name,centers,[radius for x,y,radius in rows]))
+# Unobserved crown-bearing limbs complete the depth instead of assuming that
+# all visible forks grow in one plane. They remain neutral pending appearance.
+ray=Vector((0,-COS,SIN))
+for name,rows in [('inferred rear canopy limb',[(818,258,0,8),(814,223,-75,5),(815,183,-140,.5)]),('inferred front canopy limb',[(820,250,0,7),(846,217,70,4),(856,183,135,.4)])]:
+ union(body,helpers.tube(name,[point(x,y)+ray*depth for x,y,depth,radius in rows],[radius for x,y,depth,radius in rows]))
 bpy.context.view_layer.objects.active=body;m=body.modifiers.new('Joined continuous wood','REMESH');m.mode='VOXEL';m.voxel_size=.65;m.use_remove_disconnected=False;bpy.ops.object.modifier_apply(modifier=m.name)
 mesh=body.data.copy();bpy.data.objects.remove(body,do_unlink=True);dummy=bpy.data.meshes.new('Wood slot');mat=bpy.data.materials.new('Unknown wood');mat.diffuse_color=(.34,.34,.34,1);dummy.materials.append(mat);obj=bpy.data.objects.new('Tree14 wood',dummy);working.objects.link(obj)
 for k,v in dict(source_node=node,asset_group=asset,asset_name=name,part_name='Conservative native bark and inferred continuous wood').items():obj[k]=v
@@ -60,6 +69,6 @@ cat=dest/'catalog.json';cat.write_text(json.dumps(catalog,indent=2)+'\n');invent
 masks=dest/'masks.json';masks.write_text(json.dumps(native,indent=2)+'\n');source=dest/'source-masks.json';source.write_text(json.dumps(dict(version=1,mask_inventory=str(masks),projections=dict(exterior=dict(state='Conservative native14 bark',source_sha256=sha(OUT/'baseline/covered.png'),assignments=[dict(reviewed=True,asset_group=asset,mask_indices=[214])]))),indent=2)+'\n')
 review=dest/'grouping-review.json';review.write_text(json.dumps(dict(status='reviewed',reviewer='Codex',catalog_sha256=sha(cat),inventory_sha256=sha(dest/'inventory/inventory.json'),evidence='7551 native lower trunk/root pixels only; upper branch foliage ambiguity deferred. Native043/044/045 proxy correspondence measured separately; no gameplay changes. Root depth and hidden wood inferred; crown excluded.'),indent=2)+'\n')
 worker=dest/'assets'/asset;prepare(worker,asset_id=asset,scene_name='Croisement01 Refinement',collection_name=working.name,source_path=OUT/'baseline/covered.png',grouping_manifest=cat,inventory_path=dest/'inventory/inventory.json',review_path=review,source_mask_manifest=source,width=384,height=384,framing_padding=1.2,lighting=dict(toward_sun=[-.6,-.4,.7],ambient=.22,diffuse=.78,shadow_epsilon=.05));validate(worker);modified(worker)
-(dest/'construction.json').write_text(json.dumps(dict(status='PRIVATE_GEOMETRY_PENDING_SAVED_VIEW_SOURCE_AND_CONTACT_REVIEW',model_sha256=sha(worker/'model.blend'),known_bark_pixels=7551,deferred_mixed_pixels=4781,bank_sha256=sha(bank),source_partition_sha256=sha(base/'tree14-source-preparation-v1/preparation.json'),crown_excluded=True,no_gameplay_mutation=True),indent=2)+'\n')
+(dest/'construction.json').write_text(json.dumps(dict(status='PRIVATE_GEOMETRY_PENDING_SAVED_VIEW_SOURCE_AND_CONTACT_REVIEW',model_sha256=sha(worker/'model.blend'),known_bark_pixels=7551,deferred_mixed_pixels=4781,bank_sha256=sha(bank),source_partition_sha256=sha(base/'tree14-source-preparation-v1/preparation.json'),crown_excluded=True,inferred_nonplanar_branches=True,no_gameplay_mutation=True),indent=2)+'\n')
 (worker/'inspection').mkdir(exist_ok=True)
 import render_candidate;sys.argv=['render','--',str(worker)];render_candidate.main()
