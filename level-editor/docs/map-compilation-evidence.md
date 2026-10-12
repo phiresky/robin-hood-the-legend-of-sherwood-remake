@@ -64,6 +64,16 @@ or a receiver; these are retained as failures, not counted as successful routes.
 Full York candidate `saved-map-exports-D4r29E` is still compiling. The asset is
 not published yet; full-map regression checks and rendered traversal remain open.
 
+The published comparison at the five additional angles,
+`connected-jump-placements-c4g84t`, retains no jump pairs at either 135-degree
+elevation. Among its 160 remaining offset probes, 72 succeed; the candidate
+fixes all 88 failures with no regressions and adds forty 135-degree probes.
+Published interior subset `interior-jump-clicks-RtTK62` passes 20/32, with both
+135-degree exports explicitly unavailable. The interior generator now records
+absent jump arrays as unavailable and exits nonzero, instead of throwing before
+writing the diagnostic. Publication preview for `york-west-lane-roof-HoTN5S`
+selects only the rear-house asset and York scene pin, with `applied: false`.
+
 `check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,
 ordered by distance to the takeoff edge. Each point must pass static corridor
 clearance against both native and precise floor contours with an additional

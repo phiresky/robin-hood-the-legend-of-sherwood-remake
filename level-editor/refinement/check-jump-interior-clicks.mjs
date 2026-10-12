@@ -25,7 +25,8 @@ for (const entry of manifest.results) {
       areas.set(sector, area);
       sector += 1 + area.obstacles.length;
     }
-  const lines = geometry.jump_line_pairs.flatMap((pair) => [pair.line1, pair.line2]);
+  const lines = (geometry.jump_line_pairs ?? []).flatMap((pair) => [pair.line1, pair.line2]);
+  if (!lines.length) unavailable.push({ file: entry.file, missing: ["jump lines"] });
   const probes = [];
   const cache = new Map();
   const interior = (index) => {

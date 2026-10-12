@@ -19,6 +19,12 @@ on one side and remain untested by this probe. These results narrow the
 investigation; they do not replace the full-map 28/720 failure count or prove
 rotated placements. See [interior-click evidence](map-compilation-evidence.md#york-interior-jump-clicks-2026-10-12).
 
+A staged west-lane roof correction now passes all **72 interior-click traversals**
+across nine angles, two elevations and two copies. It restores the mesh-supported
+roof outline and moves the takeoff inward. All 18 exports construct natively;
+56/360 perpendicular-offset probes still fail, and full York regression checks
+are pending. The definition remains unpublished.
+
 **Subpixel rotated floors (2026-10-12):** simple folded floors now receive
 walking clearance before integer normalization can erase them. York's copied
 two-house fixture retains both jump connections at all eight placements,
