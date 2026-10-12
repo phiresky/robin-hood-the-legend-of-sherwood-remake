@@ -11,6 +11,14 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**Subpixel rotated floors (2026-10-12):** simple folded floors now receive
+walking clearance before integer normalization can erase them. York's copied
+two-house fixture retains both jump connections at all eight placements,
+including 37 degrees. Native traversal improves from 40/120 tested probes plus
+two omitted exports to 60/160 probes, with no previously passing probe regressing.
+The remaining 100 failures and full-map verification remain open. This changes
+export preparation only; the staged York edge edit remains unpublished.
+
 **Folded-roof export preparation (2026-10-12):** the compiler now prepares
 world-oriented joins, projection clearance and physically supported ordinary
 passages without runtime solving. Fresh copied assemblies load at 0/37/90/180

@@ -1,5 +1,7 @@
 import { terrainGameplay } from "./authored-terrain.ts";
 import { compileNavigationGraph, prepareCorridorStates } from "./compile-navigation-graph.ts";
+import { projectStairClearance } from "./project-stair-clearance.ts";
+import { NAVIGATION_HALF_DIAGONAL } from "./navigation-footprint.ts";
 import earcut, { flatten } from "earcut";
 import { placeGameplaySurface } from "./place-gameplay-surface.ts";
 import { compilePhysicalStairRegion } from "./compile-physical-stair-region.ts";
@@ -1701,6 +1703,40 @@ function compileAssetGameplayAttempt(
           blockers: polygon.slice(1).map((h) => ring(h, "Wall navigation hole", 1e-7)),
         });
       continue;
+    }
+    // A folded floor can project to less than one pixel. Prepare its supported
+    // walking clearance before normalization can erase the receiving surface.
+    // Holed or disconnected regions retain the existing obstacle preparation.
+    if (!lift && 1 + plane[1] < 0 && merged.length === 1 && merged[0]!.length === 1) {
+      const receivingPolygon = merged[0]![0]!;
+      const worldBoundary = receivingPolygon.map((p): Point => [
+        p[0],
+        p[1] + planeHeight(plane, p),
+      ]);
+      const corrected = projectStairClearance(worldBoundary, worldPlane, true, {
+        movementHalf: NAVIGATION_HALF_DIAGONAL,
+      });
+      const rounded =
+        corrected &&
+        quantizeGeneratedMotionPolygon(
+          [corrected],
+          quantize,
+          "Folded navigation clearance",
+          warnings,
+        );
+      if (rounded) {
+        navigationPieces.push({
+          layer,
+          plane,
+          worldPlane,
+          navigationRegion,
+          forceCrouched,
+          polygon: rounded[0]!,
+          receivingPolygon,
+          blockers: [],
+        });
+        continue;
+      }
     }
     const normalized = walls.descriptors.length
       ? normalizeGeneratedMotion(merged, `Movement layer ${layer}`, warnings)

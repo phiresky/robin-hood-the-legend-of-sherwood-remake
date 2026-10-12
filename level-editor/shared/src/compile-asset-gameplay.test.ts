@@ -2706,6 +2706,31 @@ test("explicit joined roof receivers retain their fractional shared seam", () =>
     }
 });
 
+test("a nearly edge-on folded floor survives movement quantization with its receiving plane", () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  hut.gameplay!.collision = "none";
+  hut.gameplay!.doors = [];
+  hut.gameplay!.surfaces = [
+    {
+      id: "edge-on-roof",
+      node: "building-999",
+      navigationRegion: "roof",
+      polygon: [
+        [0, 0],
+        [100, 0],
+        [100, 100],
+        [0, 100],
+      ],
+      height: [20, 20, 120.5, 120.5],
+      projectionMaterials: { defaultMaterial: 1, regions: [] },
+    },
+  ];
+  document.objects = document.objects.filter((object) => object.group);
+  const compiled = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.ok(compiled.motion_data.layers.flat().length > 0);
+  assert.ok(compiled.sight_obstacles.some((shape) => shape.projection_area));
+});
+
 test("a rotated authored loop exports connected floors without an explicit precision flag", () => {
   const { document, assets, hut } = assetCompilerFixture();
   const surface = (

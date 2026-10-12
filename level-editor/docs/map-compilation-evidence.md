@@ -4,6 +4,24 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Preserve subpixel folded floors before normalization (2026-10-12)
+
+The 37-degree central-house floor exists in authored geometry but projects to a
+thin strip with height-plane coefficients near -100 and -208. Preparing folded
+clearance only after movement normalization was too late: the native-grid
+normalization had already erased the floor. The compiler now prepares supported
+clearance before that step for a single, unholed folded region, retaining its
+precise receiving polygon. Holed/disconnected regions keep existing processing.
+
+`connected-jump-placements-aQ1U8U` retains both copied pairs at all eight
+rotation/elevation combinations and passes native geometry construction.
+Ordinary clicks pass 60/160 probes: twenty new successful traversals at 37
+degrees, no regressions among the previous 120 probes, and 100 failures still
+open. The authored York edge is unchanged. A synthetic nearly edge-on floor
+regression fails with this preparation disabled because no movement floor is
+emitted, and passes with it enabled. This is export-only preparation; no native
+movement code changes or asset publications are part of this fix.
+
 ## Fresh York export after folded-floor preparation (2026-10-12)
 
 `saved-map-exports-YQaMEL` compiles the published York scene in 389.66 seconds
