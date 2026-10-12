@@ -49,9 +49,11 @@ See [the fresh checks](map-compilation-evidence.md#fresh-derby-and-leicester-tra
 identically and loads without base-game data or mission content. Fresh tests of
 its archived descriptor pass 152 ordinary routes, 28 stairs through prepared and
 player-click dispatch, and twenty posture-aware jump traversals. GPU appearance
-checks pass all 32 control combinations. Opaque black patches in the lower
-courtyard need geometry/material diagnosis; animated character compositing and
-broader interactions remain open. See [the archive evidence](map-compilation-evidence.md#full-derby-rendered-archive-2026-10-12).
+checks pass all 32 control combinations. The lower-courtyard black shelter is
+fixed by restoring its draft material's unlit flag; a fresh browser round trip
+and native ZIP load pass with identical gameplay and depth data. Animated
+character compositing and broader interactions remain open. See
+[the archive evidence](map-compilation-evidence.md#full-derby-rendered-archive-2026-10-12).
 
 **Current Croisement checks (2026-10-12):** all three current scene exports load
 natively and pass 16/6/24 ordinary route samples. Croisement01 passes all 130

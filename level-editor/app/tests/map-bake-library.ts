@@ -254,7 +254,7 @@ try {
     compiled.descriptor.volumes.length;
   result.textContent = `PASS ${name}: ${compiled.bounds[2]}x${compiled.bounds[3]}, ${obstacles} sight obstacles, ${archive.length} ZIP bytes${roundtrip ? "; reopened gameplay and rendered color/depth match" : ""}`;
 } catch (error) {
-  result.textContent = `FAIL ${error instanceof Error ? error.stack : String(error)}`;
+  result.textContent = `FAIL ${error instanceof Error ? error.stack || error.message || String(error) : String(error)}`;
 } finally {
   worker?.dispose();
   viewport?.dispose();

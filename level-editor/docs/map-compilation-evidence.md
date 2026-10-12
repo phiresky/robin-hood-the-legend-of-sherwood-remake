@@ -6,6 +6,24 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Full Derby rendered archive (2026-10-12)
 
+The subsequent `derby-unlit-library-syww3455` check resolves the black shelter
+finding below. `derby-lower-west-canvas-shelter` had a legacy unfinished-preview
+material without the unlit flag already emitted by the current authoring tool.
+Restoring that flag preserves all GLB binary chunks and geometry; regenerated
+lossy/preview derivatives retain verified receipts. The asset remains an
+unfinished appearance draft.
+
+The repaired `derby-unlit.zip` contains 25,264,890 bytes, SHA-256
+`f531f88fe398045a1ca9900077e6d8d1284edaaa690680c7ee7c9005c5e5c1e1`.
+Full browser export/reopen/rebake passes. Compared with the previous archive,
+the parsed gameplay descriptor, every depth image and all four appearance states
+are identical. Color changes are confined to map bounds (427,2071)–(471,2100)
+and the corresponding minimap pixels. Pixel (440,2080) changes from opaque black
+to (196,179,149,255); the corrected shelter crop was inspected. Native loading
+without a base datadir passes in 2.42 seconds with the same geometry counts.
+`material-comparison.json` records the image/descriptor comparison. These checks
+resolve the material defect, not the broader compositing and interaction gaps.
+
 `derby-rendered-library-KJuvDL` snapshots the saved scene without authored mission
 content and loads all 69 sources. Its 1920×2752 browser export reopens and rebakes
 with matching editor document, gameplay, color/depth and four appearance states.
