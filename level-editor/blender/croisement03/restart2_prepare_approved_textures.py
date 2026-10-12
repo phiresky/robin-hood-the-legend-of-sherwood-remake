@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from prepare_texture_packet import prepare
 from build_review_gallery import build
-OUT=ROOT/'level-editor/work/croisement03-refinement';R=OUT/'restart2'
+OUT=ROOT/'level-editor/work/active/croisement03';R=OUT/'restart2'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def write(p,data):Path(p).write_text(json.dumps(data,indent=2)+'\n')
 def main():

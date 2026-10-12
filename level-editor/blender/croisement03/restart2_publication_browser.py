@@ -12,7 +12,7 @@ from stored_map import expand_document
 from asset_index import write_asset_index, discover_asset_index
 from canonical_assets import read_model
 
-STAGE = ROOT / 'level-editor/work/croisement03-refinement/restart2/publication-five-v1'
+STAGE = ROOT / 'level-editor/work/active/croisement03/restart2/publication-five-v1'
 
 
 def sha(path):

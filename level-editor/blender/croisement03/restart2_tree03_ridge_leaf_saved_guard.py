@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).parent
 from restart2_tree03_ridge_leaf_derivative import surfaces,digest
 from evidence_io import sha,write_json
 from render_slots import acquire,release
-B=ROOT/'level-editor/work/croisement03-refinement/restart2/tree03-ridge-leaf-derivative-v2'
+B=ROOT/'level-editor/work/active/croisement03/restart2/tree03-ridge-leaf-derivative-v2'
 def main():
  acquire()
  try:

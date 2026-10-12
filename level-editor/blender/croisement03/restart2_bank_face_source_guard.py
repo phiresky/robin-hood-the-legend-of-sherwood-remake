@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
 from restart2_bank_boundary_ray import boundary_hits
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-face-source-proposal-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=np.array([0.,-C,S])
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'bank-face-source-proposal-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=np.array([0.,-C,S])
 def main():
  output=O/'cpu-firsthits-v1.json';assert not output.exists();paths=[B/'bank-boulder-fronts-cpu-v8/geometry.json',B/'bank-boulder-east-cpu-v8/geometry.json',B/'bank-continuous-strata-plan-v1/geometry.json'];data,east,west=[json.loads(p.read_text())for p in paths];mask=np.array(Image.open(O/'proposed-native-stone.png'))>0;owner=Image.new('L',(mask.shape[1],mask.shape[0]));draw=ImageDraw.Draw(owner)
  for row in json.loads((B/'bank-visible-face-traces-v1/faces.json').read_text())['faces']:draw.polygon([tuple(p)for p in row['native_outline']],fill=row['owner'])

@@ -20,7 +20,7 @@ def main():
     number = parser.parse_args().round
     count, exact_text = ((4, 'All four textures approved') if number == 1
                          else (1, 'Firewood texture approved'))
-    root = ROOT / 'level-editor/work/croisement03-refinement/restart2'
+    root = ROOT / 'level-editor/work/active/croisement03/restart2'
     reviewed = root / f'texture-review-round{number}'
     frozen = json.loads((reviewed / 'freeze.json').read_text())
     assert sha(reviewed / 'texture-candidates.json') == frozen['manifest_sha256']

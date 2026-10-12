@@ -7,7 +7,7 @@ from shapely.geometry import box,Polygon
 from shapely.ops import unary_union
 from shapely import constrained_delaunay_triangles
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement03-refinement/baseline'
+BASE=ROOT/'level-editor/work/active/croisement03/baseline'
 OUT=BASE.parent/'restart2/rail-profiles-v1'
 
 def main():

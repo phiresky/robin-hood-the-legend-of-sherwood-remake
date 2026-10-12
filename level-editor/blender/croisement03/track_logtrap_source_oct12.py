@@ -4,7 +4,7 @@ import json,hashlib
 import numpy as np
 from PIL import Image,ImageDraw
 from scipy.ndimage import binary_erosion
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/croisement03-refinement/mission-logtrap-oct12-v1'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/croisement03/mission-logtrap-oct12-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  out=WORK/'motion-tracks-v1';out.mkdir(exist_ok=False);manifest=WORK/'motion-source-v1/manifest.json';m=json.loads(manifest.read_text());frames=sorted((f for f in m['frames'] if f['opaque_wood_pixels']),key=lambda f:min(f['updates']));initial=WORK/'initial-aligned.png';previous=np.array(Image.open(initial).convert('RGB'),dtype=float).mean(axis=2);anchors=[]

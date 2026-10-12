@@ -10,7 +10,7 @@ from restart2_tree13_wood_v1 import mesh_for
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'tree12-wood-v2';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
+B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'tree12-wood-v2';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
 SPECS={25:dict(ground=179,points=[(986,179,4),(985,151,4),(985,136,4),(983.5,116,3.5),(982.5,96,3),(981,60,4),(983.5,25,4),(986,0,4),(988,-35,2.5),(985,-65,.5)]),24:dict(ground=187,points=[(995,187,4),(996,151,3),(997,132,3),(999,112,3),(1001,94,3),(1003,60,3),(1004,25,3),(1007,0,3),(1008,-35,2),(1005,-65,.4)]),47:dict(ground=187,points=[(1003,187,4),(1004,165,3.4),(1004.5,148,3.3),(1006,131,3.5),(1007,117,3.5),(1009.5,102,3.6),(1010.5,90,4),(1011,60,5),(1017,25,5.5),(1022,0,6),(1023,-40,3),(1019,-70,.5)])}
 def main():
  assert shutil.disk_usage(ROOT).free>25*1024**3;OUT.mkdir(exist_ok=False);acquire()

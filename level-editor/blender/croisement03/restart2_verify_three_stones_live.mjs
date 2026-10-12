@@ -5,7 +5,7 @@ import {resolve} from 'node:path';
 import {chromeEndpoint,socketOpen,evaluate} from '../../app/tests/cdp.mjs';
 const live=process.argv.includes('--live');
 if(!live)throw Error('This bounded verifier requires installed --live scope');
-const base=resolve('level-editor/work/croisement03-refinement/restart2/approved-stone-integration-preflight/three-stones-stage-v1');
+const base=resolve('level-editor/work/active/croisement03/restart2/approved-stone-integration-preflight/three-stones-stage-v1');
 const origin=process.argv.find(value=>value.startsWith('http://'))??'http://127.0.0.1:5180';
 const verificationAssets=live?resolve('level-editor/library/3d-assets'):base+'/assets';
 const outputPrefix=live?'live-browser':'browser-export';

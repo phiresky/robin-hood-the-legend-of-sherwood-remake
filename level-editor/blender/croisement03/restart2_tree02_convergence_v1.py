@@ -10,7 +10,7 @@ from render_views import render_views
 
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
- e=ROOT/'level-editor/work/croisement03-refinement/restart2';p=e/sys.argv[sys.argv.index('--')+1];out=p/'transparency-convergence';assert not out.exists();assert shutil.disk_usage(ROOT).free>10*1024**3+32*1024**2
+ e=ROOT/'level-editor/work/active/croisement03/restart2';p=e/sys.argv[sys.argv.index('--')+1];out=p/'transparency-convergence';assert not out.exists();assert shutil.disk_usage(ROOT).free>10*1024**3+32*1024**2
  acquire()
  try:
   bpy.ops.wm.open_mainfile(filepath=str(p/'worker.blend'));manifest={};scene=bpy.data.scenes['Tree02 isolated'];assert scene.render.engine=='CYCLES';scene.render.threads_mode='FIXED';scene.render.threads=2;scene.view_layers.update();points=[o.matrix_world@v.co for o in scene.objects if o.type=='MESH' for v in o.data.vertices]

@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-face-source-proposal-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'bank-face-source-proposal-v1'
 def main():
  assert not O.exists();O.mkdir();path=B.parent/'baseline/covered.png';src=Image.open(path).convert('RGB');rgb=np.array(src).astype(int);rows=json.loads((B/'bank-visible-face-traces-v1/faces.json').read_text())['faces'];old=np.array(Image.open(B/'bank-exposed-rock-proposal-v1/candidate-rock-seeds.png'))>0;r,g,b=rgb[:,:,0],rgb[:,:,1],rgb[:,:,2];neutral=(b>=40)&(r>=70)&(g>=60)&(abs(r-g)<=60)&(g-b<=55)&(r>=g*.9);union=np.zeros(old.shape,bool);counts=[]
  for row in rows:

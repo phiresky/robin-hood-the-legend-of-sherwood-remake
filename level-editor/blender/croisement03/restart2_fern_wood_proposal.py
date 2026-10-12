@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement03-refinement/baseline'
+BASE=ROOT/'level-editor/work/active/croisement03/baseline'
 OUT=BASE.parent/'restart2/fern-wood-proposal-v1'
 SPECS={35:dict(wood=13,polygon=[(1045,64),(1050,64),(1048,77),(1048,88),(1044,91),(1043,78)]),76:dict(wood=12,polygon=[(1005,142),(1009,142),(1008,152),(1007,158),(1007,168),(1003,171),(1003,159),(1004,153)])}
 

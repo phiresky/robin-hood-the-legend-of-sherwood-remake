@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement03-refinement'
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement03'
 def main():
     w=OUT/'restart2/stone-wall-v1/assets/croisement03-southeast-stone-wall';r=json.loads((w/'inspection/source-comparison/report.json').read_text());x,y,x1,y1=r['crop'];a=np.asarray(Image.open(w/'inspection/source-comparison/render.png').convert('RGBA'))
     assert hashlib.sha256((w/'model.blend').read_bytes()).hexdigest()==r['model_sha256']

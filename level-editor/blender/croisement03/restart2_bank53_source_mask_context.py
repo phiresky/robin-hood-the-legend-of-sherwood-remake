@@ -3,7 +3,7 @@ import argparse,hashlib,json
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';W=B/'restart2'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';W=B/'restart2'
 def main():
  p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);args=p.parse_args();assert not args.output.exists();pins={}
  def read(path):pins[str(path)]=hashlib.sha256(path.read_bytes()).hexdigest();return json.loads(path.read_text())

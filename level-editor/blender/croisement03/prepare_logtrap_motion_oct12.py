@@ -4,7 +4,7 @@ import json,hashlib
 import numpy as np
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3]
-WORK=ROOT/'level-editor/work/croisement03-refinement/mission-logtrap-oct12-v1'
+WORK=ROOT/'level-editor/work/active/croisement03/mission-logtrap-oct12-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  out=WORK/'motion-source-v1';out.mkdir(exist_ok=False)

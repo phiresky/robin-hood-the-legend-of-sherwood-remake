@@ -13,7 +13,7 @@ def pixels(image):
  a=np.empty(len(image.pixels),np.float32);image.pixels.foreach_get(a);return a.reshape(image.size[1],image.size[0],4)
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
- e=ROOT/'level-editor/work/croisement03-refinement/restart2/texture-batch-v7/croisement03-tree-25/experiment';out=e/'v5-closeup-diagnostic';dest=out/'gray-rays-envelope.json';assert not dest.exists();acquire()
+ e=ROOT/'level-editor/work/active/croisement03/restart2/texture-batch-v7/croisement03-tree-25/experiment';out=e/'v5-closeup-diagnostic';dest=out/'gray-rays-envelope.json';assert not dest.exists();acquire()
  bpy.ops.wm.open_mainfile(filepath=str(e/'material-partition-v1/model.blend'));asset='croisement03-tree-25';native={}
  for o in bpy.data.objects:
   if o.type=='MESH' and o.get('asset_group')==asset:

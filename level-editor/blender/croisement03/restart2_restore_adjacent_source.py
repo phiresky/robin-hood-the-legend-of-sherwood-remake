@@ -9,7 +9,7 @@ from render_slots import acquire,release
 from refinement_workspace import _geometry
 from render_views import render_views
 from evidence_io import sha,write_json
-TREE=int(sys.argv[sys.argv.index('--')+1]);assert TREE in (12,14);B=ROOT/f'level-editor/work/croisement03-refinement/restart2/tree{TREE}-approved-wood-texture-v1'
+TREE=int(sys.argv[sys.argv.index('--')+1]);assert TREE in (12,14);B=ROOT/f'level-editor/work/active/croisement03/restart2/tree{TREE}-approved-wood-texture-v1'
 def digest(im):return hashlib.sha256(np.asarray(im.pixels[:],np.float32).tobytes()).hexdigest()
 def shape(o):return ([tuple(v.co) for v in o.data.vertices],[tuple(f.vertices) for f in o.data.polygons],tuple(x for row in o.matrix_world for x in row))
 def main():

@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 R = Path(__file__).resolve().parents[3]
-B = R / 'level-editor/work/croisement03-refinement/restart2'
+B = R / 'level-editor/work/active/croisement03/restart2'
 S, C = math.sin(math.radians(35)), math.cos(math.radians(35))
 RAY = np.array([0., -C, S])
 UP = np.array([0., -S, -C])

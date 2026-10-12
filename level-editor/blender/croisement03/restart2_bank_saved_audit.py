@@ -6,7 +6,7 @@ R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).parent),s
 from restart2_bank_full_v1 import world
 from render_slots import acquire,release
 from evidence_io import sha,write_json
-B=R/'level-editor/work/croisement03-refinement';O=Path(sys.argv[sys.argv.index('--')+1]).resolve() if '--' in sys.argv else B/'restart2/bank-full-prototype-v2'
+B=R/'level-editor/work/active/croisement03';O=Path(sys.argv[sys.argv.index('--')+1]).resolve() if '--' in sys.argv else B/'restart2/bank-full-prototype-v2'
 def fingerprint(o):
  m=o.data
  return dict(vertices=[list(v.co) for v in m.vertices],faces=[list(f.vertices) for f in m.polygons],uvs=[list(v.uv) for v in m.uv_layers.active.data],world=[list(r) for r in world(o)])

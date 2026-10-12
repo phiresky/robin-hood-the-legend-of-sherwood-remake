@@ -5,7 +5,7 @@ from PIL import Image
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from prepare_texture_packet import prepare
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2'
+B=ROOT/'level-editor/work/active/croisement03/restart2'
 def main(number):
  assert number in range(6,12);ASSET=f'croisement03-tree-{number:02}';CASE=B/f'approved-hub-textures-v1/{ASSET}/wood-input-v1'
  a=B/'approved-hub-v17-v23-plus-two-v1';archive=json.loads((a/'verified-scope.json').read_text());receipt=json.loads((a/'user-approval.json').read_text());assert receipt['status']=='USER_APPROVED' and sha(a/'user-approval.json')==archive['receipt_sha256'];approval=archive['effective_assets'][ASSET];assert approval['scope']=='geometry';norm=json.loads((CASE/'normalization.json').read_text());native=json.loads((CASE/'native-audit.json').read_text());assert native['accepted_bark_changes']==native['provisional_foliage_changes']==native['known_misses']==native['ray_exhaustions']==0;assert sha(CASE/'normalized.blend')==native['model_sha256']==norm['normalized_model_sha256'];assert sha(Path(approval['model']))==approval['model_sha256'];assert norm['approved_model_sha256']==approval['model_sha256'];workspace=CASE/'asset';validation=json.loads((workspace/'validation.json').read_text());assert validation['status']=='PASS';out=CASE/'packet-v1';out.mkdir(exist_ok=False);evidence={}

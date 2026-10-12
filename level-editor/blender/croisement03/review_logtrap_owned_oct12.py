@@ -10,7 +10,7 @@ from render_slots import acquire,release
 from scenery_geometry import Mesh
 from logtrap_first_hit_oct12 import write_atlases,SIN,COS
 from log_trap_state_candidate import material
-OUT=ROOT/'level-editor/work/croisement03-refinement/mission-logtrap-oct12-v1'
+OUT=ROOT/'level-editor/work/active/croisement03/mission-logtrap-oct12-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  destination=OUT/'owned-candidate-v1';destination.mkdir(exist_ok=False)

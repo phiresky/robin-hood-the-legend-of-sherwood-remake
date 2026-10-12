@@ -40,7 +40,7 @@ def signature(obj, detail=False):
 
 
 def main():
-    root = ROOT / 'level-editor/work/croisement03-refinement/restart2/integration-round1'
+    root = ROOT / 'level-editor/work/active/croisement03/restart2/integration-round1'
     plan = json.loads((root / 'plan.json').read_text())
     for field in ['baseline', 'catalog', 'handoffs', 'source_level']:
         assert sha(Path(plan[field])) == plan[field + '_sha256']

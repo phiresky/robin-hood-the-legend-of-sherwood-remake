@@ -6,7 +6,7 @@ from PIL import Image
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from render_views import render_views
-B=ROOT/'level-editor/work/croisement03-refinement/restart2'
+B=ROOT/'level-editor/work/active/croisement03/restart2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main(tree):
  assert tree in (12,14);assert shutil.disk_usage(ROOT).free>25*1024**3;out=B/f'tree{tree}-static-leaf-crown-v1';out.mkdir(exist_ok=False);proposal=B/'trio-tree-integration-v1/static-leaf-source-proposal-v2';source=B/f'tree{tree}-approved-wood-texture-v1/source-restored-fill-v1/worker.blend';guards={str(source):sha(source),str(proposal/'scope.json'):sha(proposal/'scope.json')};acquire()

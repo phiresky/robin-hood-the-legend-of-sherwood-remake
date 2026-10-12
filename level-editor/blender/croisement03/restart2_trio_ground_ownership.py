@@ -4,7 +4,7 @@ import hashlib,io,json,struct
 import numpy as np
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
-B=ROOT/'level-editor/work/croisement03-refinement/restart2'
+B=ROOT/'level-editor/work/active/croisement03/restart2'
 OUT=B/'trio-tree-integration-v1/ownership-resolution-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():

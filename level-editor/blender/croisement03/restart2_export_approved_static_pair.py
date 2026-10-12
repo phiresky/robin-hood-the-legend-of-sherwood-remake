@@ -9,7 +9,7 @@ from render_slots import acquire,release
 from export_editor import export_editor
 from restart2_adjacent_export_composite_v2 import flatten_normal_gate,finalize_document
 from restart2_static_pair_export_guard import validate
-B=R/'level-editor/work/croisement03-refinement/restart2'
+B=R/'level-editor/work/active/croisement03/restart2'
 def mesh_signature(obj):
  m=obj.data;return (tuple(tuple(v.co) for v in m.vertices),tuple(tuple(p.vertices) for p in m.polygons),tuple((u.name,tuple(tuple(x.uv) for x in u.data)) for u in m.uv_layers),tuple(tuple(r) for r in obj.matrix_world))
 def crown(leaf,role,native_faces,asset,collection):

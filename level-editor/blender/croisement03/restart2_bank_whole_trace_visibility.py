@@ -6,7 +6,7 @@ from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 R=Path(__file__).resolve().parents[3];sys.path.insert(0,str(R/'level-editor/refinement'))
 from render_slots import acquire,release
-B=R/'level-editor/work/croisement03-refinement';O=Path(sys.argv[sys.argv.index('--')+1]).resolve() if '--' in sys.argv else B/'restart2/bank-whole-prototype-v2';P=None;S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S))
+B=R/'level-editor/work/active/croisement03';O=Path(sys.argv[sys.argv.index('--')+1]).resolve() if '--' in sys.argv else B/'restart2/bank-whole-prototype-v2';P=None;S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S))
 def main():
  acquire()
  try:

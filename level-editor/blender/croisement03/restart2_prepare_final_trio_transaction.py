@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from asset_index import write_asset_index,validate_asset_index
-BASE=ROOT/'level-editor/work/croisement03-refinement/restart2'
+BASE=ROOT/'level-editor/work/active/croisement03/restart2'
 LIB=ROOT/'level-editor/library';ASSETS=LIB/'3d-assets'
 OLD=BASE/'combined-trio-stage-v2'
 CANDIDATE=BASE/'combined-trio-inferred-crown-candidate-v1'

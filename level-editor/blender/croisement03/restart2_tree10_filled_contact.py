@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2'
+B=ROOT/'level-editor/work/active/croisement03/restart2'
 def stored_world(o):return stored_world(o.parent)@o.matrix_parent_inverse@o.matrix_basis if o.parent else o.matrix_basis.copy()
 def main():
  out=B/'approved-hub-textures-v1/croisement03-tree-10/wood-input-v1/filled-contact-v1';assert shutil.disk_usage(ROOT).free>10*1024**3;out.mkdir(exist_ok=False);model=B/'approved-hub-textures-v1/croisement03-tree-10/wood-input-v1/source-restored-fill-v1/worker.blend';sources={str(model):sha(model)};available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024;assert available>=6*1024**3;acquire()

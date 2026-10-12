@@ -7,7 +7,7 @@ from render_slots import acquire,release
 from export_editor import export_asset_library
 from refinement_workspace import _geometry
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';ASSET='croisement03-tree-25'
+B=ROOT/'level-editor/work/active/croisement03/restart2';ASSET='croisement03-tree-25'
 def main():
  approval=B/'texture-approval-v12-tree25-cluster-v6/scope.json';decision=json.loads(approval.read_text());source=Path(decision['model']);assert decision['status']=='approved' and decision['scope']=='texture';assert sha(source)==decision['model_sha256']=='9e8ece3cc693a2ef387333c762e8a85d2cc3fa808a7726c821bebd9233cb0272';out=B/'tree25-cluster-integration-v1';assert not out.exists();assert shutil.disk_usage(ROOT).free>25*1024**3;acquire()
  try:

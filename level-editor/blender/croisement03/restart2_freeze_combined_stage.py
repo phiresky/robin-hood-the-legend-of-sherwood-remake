@@ -1,7 +1,7 @@
 """Freeze the private combined scene and describe guarded root-owned publication steps."""
 import hashlib,json
 from pathlib import Path
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2/combined-trio-stage-v2';L=B/'library';CAN=R/'level-editor/library'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2/combined-trio-stage-v2';L=B/'library';CAN=R/'level-editor/library'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def read(p):return json.loads(p.read_text())
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')

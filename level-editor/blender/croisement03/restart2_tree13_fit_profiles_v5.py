@@ -10,7 +10,7 @@ from restart2_tree13_wood_v1 import mesh_for
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'tree13-wood-v5';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
+B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'tree13-wood-v5';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
 def components(a):
  seen=set();result=[]
  for y,x in zip(*np.nonzero(a)):

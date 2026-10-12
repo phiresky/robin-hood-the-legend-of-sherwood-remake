@@ -2,7 +2,7 @@
 import argparse,bisect,hashlib,json,math,sys
 from collections import Counter
 from pathlib import Path
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03'
 RECIPE=B/'restart2/bank-morphology-trace-v1/recipe.json'
 PLAN=B/'restart2/bank-continuous-strata-plan-v1'
 OUT=B/'restart2/bank-continuous-strata-v1'

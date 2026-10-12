@@ -3,7 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement03-refinement'
+OUT=ROOT/'level-editor/work/active/croisement03'
 TREES={0:[0,1],1:[2,3,4,5],2:[6],3:[7],4:[8,9,10],5:[11,12,14],6:[13],7:[15,16,17],8:[18],9:[19],10:[20],11:[21,22,23],12:[24,25,47],13:[31,32,48],14:[26,27],15:[28,29,30],18:[33,34],19:[39],20:[37,38],21:[40],22:[41],23:[43],24:[42,44],25:[46],26:[45,50,51]}
 GROUPS=[
  ('northwest-shrub-rocks','Northwest Shrub Rocks',[35,36],[104,105,106]),

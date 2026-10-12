@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 R=Path(__file__).resolve().parents[3]
-B=R/'level-editor/work/croisement03-refinement/restart2'
+B=R/'level-editor/work/active/croisement03/restart2'
 O=B/'tree01-role-exclusions-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():

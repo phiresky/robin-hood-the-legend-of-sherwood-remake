@@ -10,7 +10,7 @@ from render_multiview_asset import render
 
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
- e=ROOT/'level-editor/work/croisement03-refinement/restart2/texture-batch-v7/croisement03-tree-25/experiment';p=e/'cluster-geometry-v6';out=p/'transparency-convergence';assert not out.exists();assert shutil.disk_usage(ROOT).free>25*1024**3
+ e=ROOT/'level-editor/work/active/croisement03/restart2/texture-batch-v7/croisement03-tree-25/experiment';p=e/'cluster-geometry-v6';out=p/'transparency-convergence';assert not out.exists();assert shutil.disk_usage(ROOT).free>25*1024**3
  acquire()
  try:
   bpy.ops.wm.open_mainfile(filepath=str(p/'worker.blend'));manifest=json.loads((e/'views-grid8-v4.json').read_text());scene=bpy.data.scenes[manifest.get('scene_name','Derby Refinement')];assert scene.render.engine=='CYCLES';old=scene.cycles.transparent_max_bounces;manifest['views']=[v for v in manifest['views'] if v['index'] in (0,4)];out.mkdir();mp=out/'views.json';mp.write_text(json.dumps(manifest));scene.render.film_transparent=True;scene.render.image_settings.color_mode='RGBA';records=[];previous=None

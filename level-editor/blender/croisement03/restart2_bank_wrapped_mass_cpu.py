@@ -3,7 +3,7 @@ import json,math,hashlib
 from pathlib import Path
 from collections import Counter
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-wrapped-masses-cpu-v1';E=B/'bank-wrapped-east-cpu-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=np.array([0.,-C,S])
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'bank-wrapped-masses-cpu-v1';E=B/'bank-wrapped-east-cpu-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=np.array([0.,-C,S])
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def project(v):return np.column_stack((v[:,0],-v[:,1]*S-v[:,2]*C))
 def revise(mesh,owner,proposals):

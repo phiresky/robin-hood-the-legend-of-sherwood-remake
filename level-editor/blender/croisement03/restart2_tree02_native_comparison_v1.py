@@ -7,7 +7,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).parent
 from restart2_tree02_firsthit_v1 import rows_for,sample
 from render_slots import acquire,release
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2'
+B=ROOT/'level-editor/work/active/croisement03/restart2'
 def main():
  ver=sys.argv[sys.argv.index('--')+1];out=B/f'tree02-isolated-prototype-{ver}';guard=json.loads((out/'firsthit.json').read_text());assert guard['status'].startswith('PASS');assert not (out/'native-comparison.png').exists();acquire()
  try:

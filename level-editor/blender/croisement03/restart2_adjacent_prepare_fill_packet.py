@@ -5,7 +5,7 @@ from PIL import Image
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from prepare_texture_packet import prepare
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';TREE=int(sys.argv[1]);assert TREE in (12,14);CASE=B/f'tree{TREE}-approved-wood-texture-v1';ASSET=f'croisement03-tree-{TREE}'
+B=ROOT/'level-editor/work/active/croisement03/restart2';TREE=int(sys.argv[1]);assert TREE in (12,14);CASE=B/f'tree{TREE}-approved-wood-texture-v1';ASSET=f'croisement03-tree-{TREE}'
 def main():
  a=B/'user-approval-v14';ap=a/f'croisement03-tree-{TREE}-shared-crown-fragment.json';approval=json.loads(ap.read_text());assert approval['scope']=='geometry' and approval['status']=='approved';norm=json.loads((CASE/'normalization.json').read_text());native=json.loads((CASE/'native-audit.json').read_text());assert native['accepted_bark_changes']==native['provisional_foliage_changes']==0;assert norm['approved_model_sha256']==approval['model_sha256'];workspace=CASE/'asset';validation=json.loads((workspace/'validation.json').read_text());assert validation['status']=='PASS';out=CASE/'packet-v1';out.mkdir(exist_ok=False);evidence={}
  def bind(key,p):evidence[key]=dict(path=str(p.resolve()),sha256=sha(p))

@@ -8,7 +8,7 @@ from render_slots import acquire,release
 from bake_reviewed_asset import stage
 
 def main():
-    tree=int(sys.argv[sys.argv.index('--')+1]);assert tree in (10,11);base=ROOT/f'level-editor/work/croisement03-refinement/restart2/approved-hub-textures-v1/croisement03-tree-{tree:02}/wood-input-v1'
+    tree=int(sys.argv[sys.argv.index('--')+1]);assert tree in (10,11);base=ROOT/f'level-editor/work/active/croisement03/restart2/approved-hub-textures-v1/croisement03-tree-{tree:02}/wood-input-v1'
     experiment=base/'packet-v1/experiment'
     output=experiment/'baked-projection-v1'
     assert not output.exists()

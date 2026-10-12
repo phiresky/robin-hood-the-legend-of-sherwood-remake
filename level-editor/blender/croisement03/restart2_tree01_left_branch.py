@@ -4,7 +4,7 @@ from pathlib import Path
 from collections import Counter
 import numpy as np
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-left-branch-source-v2';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'tree01-left-branch-source-v2';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 # Ordered from foliage-covered upper continuation to an inferred lower join.
 CONTROLS=[(75,44,3,False),(95,45,5,True),(110,47,6,True),(125,50,6,True),(140,54,7,True),(155,59,7,True),(175,65,7,False),(192,65,6,False),(210,79,8,False)]
 def main():

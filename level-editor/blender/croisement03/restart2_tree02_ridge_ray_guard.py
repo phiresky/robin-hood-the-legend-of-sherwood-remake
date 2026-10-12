@@ -10,7 +10,7 @@ from restart2_tree02_firsthit_v1 import rows_for
 from restart2_tree02_joint_context_v4 import hit
 from render_slots import acquire,release
 from evidence_io import sha,write_json
-B=R/'level-editor/work/croisement03-refinement/restart2';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+B=R/'level-editor/work/active/croisement03/restart2';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 def main():
  version=sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'v4';assert version in ('v2','v3','v4');right=260 if version=='v3' else 340
  assert shutil.disk_usage(R).free>10*1024**3+2*1024**2;out=B/f'tree02-ridge-ray-guard-{version}';out.mkdir(exist_ok=False);acquire()

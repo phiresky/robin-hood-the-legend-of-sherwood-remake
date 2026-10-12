@@ -3,7 +3,7 @@ import json,hashlib,shutil,math
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-native-transition-cpu-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'tree01-native-transition-cpu-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  assert not O.exists();O.mkdir();source=B/'tree01-canopy-volume-cpu-v6';d=json.loads((source/'geometry.json').read_text());v=np.array(d['vertices']);original=d['inferred_back_faces'];assert original==len(d['clusters'])*6;faces=d['faces'][:original];domain=np.array(Image.open(B/'tree01-native-fragment-v1/spatial-proposal.png'))>0;rng=np.random.default_rng(31012677);kept=[];rejected_boundary=[]

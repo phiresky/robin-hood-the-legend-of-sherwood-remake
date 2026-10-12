@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 from PIL import Image
 R=Path(__file__).resolve().parents[3]
-B=R/'level-editor/work/croisement03-refinement/restart2/approved-hub-textures-v1/trio-ground'
+B=R/'level-editor/work/active/croisement03/restart2/approved-hub-textures-v1/trio-ground'
 OLD=B/'experiment'
 OUT=B/'correction-v2'
 PROMPT='The gray pixels are holes left by removed scenery, not objects. Replace each hole with continuous small-scale forest-floor texture that matches the immediately adjoining painted pixels: dense tiny olive-brown moss flecks, leaf litter, granular earth and mottled shadows. Carry the nearby texture frequency, contrast and warm/dark variation smoothly across every cutout boundary. Completely erase the visual shape of every former trunk: there must be no smooth vertical bands, upright strips, column-like shadows, flat green patches, sharp interior seams or tree-shaped regions. Do not shade these shapes as cylinders or preserve their outlines. Every formerly gray pixel needs the same fine irregular ground grain as its immediate surroundings, including the narrow lower strips. The enlarged target crop shows precisely where the fine nearby texture must continue; it is a locator, not a new output canvas. The two native floor examples show the required material detail. Keep all existing non-gray source pixels at their exact coordinates and colors. Do not add trunks, roots, branches, crowns, standing vegetation, large leaves, objects or terrain relief. Return the complete original 1408x960 atlas.'

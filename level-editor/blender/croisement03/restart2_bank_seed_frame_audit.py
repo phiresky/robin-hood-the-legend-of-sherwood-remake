@@ -3,7 +3,7 @@ import hashlib,json
 from pathlib import Path
 import numpy as np
 from PIL import Image
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';O=B/'restart2/bank-exposed-rock-proposal-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';O=B/'restart2/bank-exposed-rock-proposal-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  mp=B/'animation-references/manifest.json';sp=O/'candidate-rock-seeds.png';domain=np.array(Image.open(sp))>0;ys,xs=np.nonzero(domain);box=[int(xs.min()),int(ys.min()),int(xs.max()+1),int(ys.max()+1)];records=[];union=np.zeros(domain.shape,bool)

@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 R=Path(__file__).resolve().parents[3];sys.path.insert(0,str(R/'level-editor/refinement'))
 from prepare_planar_texture_packet import coverage
-B=R/'level-editor/work/croisement03-refinement/restart2';A=B/'approved-hub-v17-v23-plus-two-v1';D=B/'trio-tree-integration-v1/terrain-input-proposal-v5';O=B/'approved-hub-textures-v1/trio-ground/experiment'
+B=R/'level-editor/work/active/croisement03/restart2';A=B/'approved-hub-v17-v23-plus-two-v1';D=B/'trio-tree-integration-v1/terrain-input-proposal-v5';O=B/'approved-hub-textures-v1/trio-ground/experiment'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main():

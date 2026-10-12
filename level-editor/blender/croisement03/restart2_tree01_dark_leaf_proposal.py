@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-dark-static-proposal-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'tree01-dark-static-proposal-v1'
 def main():
  assert not O.exists();O.mkdir();source=B.parent/'baseline/covered.png';src=np.array(Image.open(source).convert('RGBA'))[:175,:175];fragment=B/'tree01-native-fragment-v1';frame=np.array(Image.open(fragment/'000.png').convert('RGBA'));union=np.array(Image.open(fragment/'alpha-union.png'))>0;known=np.array(Image.open(B/'tree01-static-leaf-proposal-v1/candidate.png'))>0;wood=np.array(Image.open(B/'tree01-static-leaf-proposal-v1/excluded-wood-projection.png'))>0;domain=np.array(Image.open(fragment/'spatial-proposal.png'))>0;best=np.full((175,175),999)
  for dy,dx in [(0,1),(0,-1),(1,0),(-1,0)]:

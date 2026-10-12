@@ -14,7 +14,7 @@ from hybrid_library import stage_hybrid
 from asset_index import write_asset_index
 from canonical_assets import read_model
 
-WORK = ROOT / 'level-editor/work/croisement03-refinement/restart2'
+WORK = ROOT / 'level-editor/work/active/croisement03/restart2'
 LIVE = ROOT / 'level-editor/library'
 OUT = WORK / 'publication-five-v1'
 

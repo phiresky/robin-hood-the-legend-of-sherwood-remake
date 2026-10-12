@@ -3,7 +3,7 @@ import path from 'node:path';
 import {createServer} from '../../app/node_modules/vite/dist/node/index.js';
 
 const root=process.cwd();
-const config=path.join(root,'level-editor/work/croisement03-refinement/restart2/trio-tree-integration-v1/stage-v1/browser-preparation-v1/config.json');
+const config=path.join(root,'level-editor/work/active/croisement03/restart2/trio-tree-integration-v1/stage-v1/browser-preparation-v1/config.json');
 const server=await createServer({root:path.join(root,'level-editor/app'),server:{host:'127.0.0.1',port:0,hmr:false,watch:null,fs:{allow:[root]}}});
 try {
   await server.listen();

@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
+B=ROOT/'level-editor/work/active/croisement03/restart2';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
 def main():
  tree=int(sys.argv[sys.argv.index('--')+1]);assert tree in (12,14);old,new=(4,5) if tree==12 else (2,3);src=B/f'tree{tree}-crownfragment-v{old}';out=B/f'tree{tree}-crownfragment-v{new}';assert shutil.disk_usage(ROOT).free>25*1024**3;out.mkdir(exist_ok=False);acquire()
  try:

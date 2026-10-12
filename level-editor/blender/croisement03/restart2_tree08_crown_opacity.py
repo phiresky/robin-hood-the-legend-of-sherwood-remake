@@ -13,7 +13,7 @@ from evidence_io import sha, write_json
 from render_slots import acquire, release
 from render_views import render_views
 
-B = ROOT / 'level-editor/work/croisement03-refinement/restart2'
+B = ROOT / 'level-editor/work/active/croisement03/restart2'
 
 
 def main(tree=8, revision=1):

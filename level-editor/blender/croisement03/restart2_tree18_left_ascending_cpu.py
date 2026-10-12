@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw
 import restart2_tree18_cpu_wood as sweeps
 import restart2_tree18_root_connectivity as topology
 
-B=Path(__file__).resolve().parents[3]/'level-editor/work/croisement03-refinement/restart2'
+B=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement03/restart2'
 
 
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()

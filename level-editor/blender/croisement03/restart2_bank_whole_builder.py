@@ -3,7 +3,7 @@ import argparse,hashlib,json,math,sys
 from collections import Counter
 from pathlib import Path
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';P=B/'restart2/bank-whole-source-plan-v1/plan.json';O=B/'restart2/bank-whole-geometry-plan-v4'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';P=B/'restart2/bank-whole-source-plan-v1/plan.json';O=B/'restart2/bank-whole-geometry-plan-v4'
 W=None
 S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 

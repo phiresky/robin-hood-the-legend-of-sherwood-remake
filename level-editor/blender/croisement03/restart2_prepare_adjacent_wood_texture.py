@@ -7,7 +7,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from refinement_workspace import prepare,modified,_geometry
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';TREE=int(sys.argv[sys.argv.index('--')+1]);assert TREE in (12,14);ASSET=f'croisement03-tree-{TREE}'
+B=ROOT/'level-editor/work/active/croisement03/restart2';TREE=int(sys.argv[sys.argv.index('--')+1]);assert TREE in (12,14);ASSET=f'croisement03-tree-{TREE}'
 def triangles(objects):
  rows=[]
  for obj in objects:

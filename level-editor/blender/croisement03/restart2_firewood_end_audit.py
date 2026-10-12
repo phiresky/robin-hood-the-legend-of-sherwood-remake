@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement03-refinement'
+OUT=ROOT/'level-editor/work/active/croisement03'
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('workspace',type=Path);args=parser.parse_args();w=args.workspace.resolve()
     report=json.loads((w/'inspection/source-comparison/report.json').read_text());crop=report['crop']

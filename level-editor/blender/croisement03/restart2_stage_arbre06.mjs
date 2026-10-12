@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';import path from 'node:path';import crypto fro
 import {recoverSceneryAnimation} from '../../pipeline/src/recover-scenery-animation.ts';
 import {compileSceneryAnimation} from '../../shared/src/compile-scenery-animation.ts';
 import {writeSceneryAnimationAssets} from '../../pipeline/src/author-scenery-animation-assets.ts';
-const root=process.cwd(),b=path.join(root,'level-editor/work/croisement03-refinement/restart2'),out=path.join(b,'combined-trio-stage-v2');await fs.mkdir(out,{recursive:true});
+const root=process.cwd(),b=path.join(root,'level-editor/work/active/croisement03/restart2'),out=path.join(b,'combined-trio-stage-v2');await fs.mkdir(out,{recursive:true});
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex'),read=async p=>JSON.parse(await fs.readFile(p,'utf8'));
 const levelPath=path.join(b,'../baseline/Croisement03.rhp.json'),level=await read(levelPath),source=level.animations[5];assert.equal(source.sprite.profile_name,'Croisement03 - Arbre06');
 const bank=path.join(root,'datadirs/fullgame_gog_hackable/Data/Animations/Day/Treecr03.rhs.d'),manifestPath=path.join(bank,'manifest.json'),manifest=await read(manifestPath),profile=manifest.profiles.find(p=>p.name===source.sprite.profile_name);assert.ok(profile);assert.equal(profile.rows.length,1);assert.equal(profile.rows[0].frames.length,14);assert.ok(profile.rows[0].frames.every(f=>f.delay===3));

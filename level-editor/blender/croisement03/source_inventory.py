@@ -3,7 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement03-refinement'
+OUT=ROOT/'level-editor/work/active/croisement03'
 
 def main():
     level=json.loads((OUT/'baseline/Croisement03.rhp.json').read_text())

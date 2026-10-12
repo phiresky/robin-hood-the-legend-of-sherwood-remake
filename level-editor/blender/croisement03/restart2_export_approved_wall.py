@@ -16,7 +16,7 @@ def sha(path):
 
 
 def main():
-    root = ROOT / 'level-editor/work/croisement03-refinement/restart2/wall-tree-integration-preflight'
+    root = ROOT / 'level-editor/work/active/croisement03/restart2/wall-tree-integration-preflight'
     handoff_path = root / 'wall-texture-handoff/handoff.json'
     handoff = json.loads(handoff_path.read_text())
     receipt = json.loads((handoff_path.parent / 'receipt.json').read_text())
@@ -29,7 +29,7 @@ def main():
         assert verified['geometry_verified'] and verified['model_sha256'] == receipt['model_sha256']
         output.mkdir()
         result = export_asset_library('Croisement03', output / '3d-assets',
-            ROOT / 'level-editor/work/croisement03-refinement/baseline/Croisement03.rhp.json',
+            ROOT / 'level-editor/work/active/croisement03/baseline/Croisement03.rhp.json',
             asset_ids=['croisement03-southeast-stone-wall'])
         assert all(sha(path) == digest for path, digest in handoff['protected_files'].items())
         report = dict(status='Private approved wall export; browser, world-gameplay comparison and live integration pending',

@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'tree13-wood-v3';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
+B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'tree13-wood-v3';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
 def geom(o):return {'matrix':[list(r) for r in o.matrix_world],'vertices':[list(v.co) for v in o.data.vertices],'faces':[list(f.vertices) for f in o.data.polygons]}
 def main():
  assert shutil.disk_usage(ROOT).free>25*1024**3;OUT.mkdir(exist_ok=False);source=B/'tree13-wood-v2/worker.blend';assert sha(source)=='520c66162f3014654592ea8d865c0c5531c8baf02106777ba89f03554d5b7ca2';source_rgb=Image.open(B.parent/'baseline/covered.png').convert('RGB');proposal=json.loads((B/'tree13-bark-proposal-v1/proposal.json').read_text());assert proposal['total_proposed_pixels']==153;acquire()

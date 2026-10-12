@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 R=Path(__file__).resolve().parents[3]
-B=R/'level-editor/work/croisement03-refinement/restart2'
+B=R/'level-editor/work/active/croisement03/restart2'
 E=B/'approved-hub-textures-v1/trio-ground/experiment'
 O=E.parent/'appearance-review-v1'
 SUFFIX='Fill only the neutral-gray receiver cutouts in the northeast corner with continuous shaded olive-brown forest floor, moss and fine fallen-leaf litter at the native pixel scale. These are ground beneath removed trees: do not reconstruct tree silhouettes, trunks, roots, crowns, standing shrubs or large leaves. Preserve all surrounding painted scenery exactly. Use the two supplied same-map floor crops only for ground material character. The gray shapes are edit regions, not silhouettes of objects to redraw.'

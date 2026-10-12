@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/croisement03-refinement/restart2'
+OUT = ROOT / 'level-editor/work/active/croisement03/restart2'
 
 
 def partition(flags):

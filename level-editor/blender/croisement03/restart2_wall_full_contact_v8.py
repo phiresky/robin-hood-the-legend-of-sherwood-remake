@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from render_views import render_views
 from texture_camera import depth_clip_range
-OUT=ROOT/'level-editor/work/croisement03-refinement';R=OUT/'restart2'
+OUT=ROOT/'level-editor/work/active/croisement03';R=OUT/'restart2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
     wall=R/'stone-wall-v8/assets/croisement03-southeast-stone-wall';wood=R/'tree25-full-v15/assets/croisement03-tree-25';out=R/'tree25-wall-ground-joint-v8';out.mkdir(exist_ok=False)

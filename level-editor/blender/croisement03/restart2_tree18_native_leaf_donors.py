@@ -3,7 +3,7 @@ import argparse,hashlib,json
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03'
 def main():
  p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);out=p.parse_args().output;assert not out.exists();out.mkdir();pins={}
  def pin(path):pins[str(path)]=hashlib.sha256(path.read_bytes()).hexdigest();return path

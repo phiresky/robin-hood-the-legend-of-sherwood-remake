@@ -5,7 +5,7 @@ R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).parent),s
 from render_slots import acquire,release
 import restart2_bank_whole_builder as whole
 import restart2_bank_full_v1 as base
-B=R/'level-editor/work/croisement03-refinement/restart2';CPU=B/'bank-curved-body-cpu-v1';OUT=B/'bank-curved-body-saved-v1'
+B=R/'level-editor/work/active/croisement03/restart2';CPU=B/'bank-curved-body-cpu-v1';OUT=B/'bank-curved-body-saved-v1'
 def resources():
  assert shutil.disk_usage(R).free>=10*1024**3+32*1024**2
  mem={r.split(':')[0]:int(r.split()[1])*1024 for r in Path('/proc/meminfo').read_text().splitlines()};assert mem['MemAvailable']>=6*1024**3

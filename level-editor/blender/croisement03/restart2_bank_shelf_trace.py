@@ -3,7 +3,7 @@ import json,hashlib,math
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';O=B/'restart2/bank-morphology-trace-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';O=B/'restart2/bank-morphology-trace-v1'
 S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 
 # These are visible source crease samples, not traced vegetation silhouettes.

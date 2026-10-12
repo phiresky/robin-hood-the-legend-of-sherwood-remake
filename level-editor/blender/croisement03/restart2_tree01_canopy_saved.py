@@ -7,7 +7,7 @@ from PIL import Image
 R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/blender/croisement02')]
 from render_slots import acquire,release
 from tree_geometry import material,one_sided,replace_mesh
-B=R/'level-editor/work/croisement03-refinement/restart2';I=B/'tree01-canopy-volume-cpu-v1';O=B/'tree01-canopy-volume-saved-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));EXTRA_BUILD=None;EXTRA_VERIFY=None
+B=R/'level-editor/work/active/croisement03/restart2';I=B/'tree01-canopy-volume-cpu-v1';O=B/'tree01-canopy-volume-saved-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));EXTRA_BUILD=None;EXTRA_VERIFY=None
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def resources():
  assert shutil.disk_usage(R).free>=10*1024**3+32*1024**2

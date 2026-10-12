@@ -11,7 +11,7 @@ sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/refinement/bl
 from render_slots import acquire,release
 from evidence_io import sha,write_json
 from render_views import render_views
-B=R/'level-editor/work/croisement03-refinement';O=B/'restart2/bank-full-prototype-v2'
+B=R/'level-editor/work/active/croisement03';O=B/'restart2/bank-full-prototype-v2'
 S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S))
 
 def world(o):return world(o.parent)@o.matrix_parent_inverse@o.matrix_basis if o.parent else o.matrix_basis.copy()

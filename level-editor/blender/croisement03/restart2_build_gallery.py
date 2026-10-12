@@ -3,7 +3,7 @@ import json,hashlib,sys,math
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
 from build_review_gallery import build
-OUT=ROOT/'level-editor/work/croisement03-refinement';RESTART=OUT/'restart2'
+OUT=ROOT/'level-editor/work/active/croisement03';RESTART=OUT/'restart2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
     if (RESTART/'approval-round1/decision.json').exists():

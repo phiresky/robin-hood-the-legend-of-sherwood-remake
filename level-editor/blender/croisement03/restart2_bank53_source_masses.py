@@ -8,7 +8,7 @@ import shutil
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/croisement03-refinement'
+BASE = ROOT / 'level-editor/work/active/croisement03'
 
 
 def sha(path):

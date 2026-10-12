@@ -15,7 +15,7 @@ def write(path, data):
 
 
 def main():
-    out = ROOT / 'level-editor/work/croisement03-refinement'
+    out = ROOT / 'level-editor/work/active/croisement03'
     root = out / 'restart2'
     destination = root / 'integration-round1'
     destination.mkdir(exist_ok=True)

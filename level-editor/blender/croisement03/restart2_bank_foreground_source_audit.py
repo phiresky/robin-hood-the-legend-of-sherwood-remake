@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';O=B/'restart2/bank-foreground-source-audit-v2'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';O=B/'restart2/bank-foreground-source-audit-v2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  assert not O.exists();O.mkdir();lp=B/'baseline/Croisement03.rhp.json';ip=B/'source-inventory.json';sp=B/'baseline/covered.png';level=json.loads(lp.read_text());inventory=json.loads(ip.read_text());src=Image.open(sp).convert('RGB');pins={str(p):sha(p)for p in [lp,ip,sp]}

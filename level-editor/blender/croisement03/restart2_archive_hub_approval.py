@@ -1,7 +1,7 @@
 """Rehash scoped user approvals and preserve Tree03 derivative precedence."""
 import hashlib,json,shutil
 from pathlib import Path
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'approved-hub-v17-v23-plus-two-v1';RECEIPT=R/'level-editor/work/croisement02-refinement/restart3-review-batches/pending-v17-v23-plus-two-hub-v1/user-approval.json';EXPECTED='ca25ba9362b26dfb8ac1239f7acd7b56929463498b125bed0f42dcd98ec628f4'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'approved-hub-v17-v23-plus-two-v1';RECEIPT=R/'level-editor/work/active/croisement02/restart3-review-batches/pending-v17-v23-plus-two-hub-v1/user-approval.json';EXPECTED='ca25ba9362b26dfb8ac1239f7acd7b56929463498b125bed0f42dcd98ec628f4'
 def sha(p):
  h=hashlib.sha256()
  with Path(p).open('rb') as f:

@@ -6,7 +6,7 @@ from PIL import Image
 R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).parent),str(R/'level-editor/refinement'),str(R/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from render_views import render_views
-B=R/'level-editor/work/croisement03-refinement/restart2';I=B/'bank-sidewall-cpu-v1';O=B/'bank-sidewall-saved-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+B=R/'level-editor/work/active/croisement03/restart2';I=B/'bank-sidewall-cpu-v1';O=B/'bank-sidewall-saved-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def fingerprint(o):
  m=o.data;return {'vertices':[list(v.co)for v in m.vertices],'faces':[list(f.vertices)for f in m.polygons],'materials':[x.name for x in m.materials],'indices':[f.material_index for f in m.polygons],'uv':[list(v.uv)for v in m.uv_layers.active.data]if m.uv_layers.active else [],'world':[list(row)for row in o.matrix_world],'properties':dict(o.items())}

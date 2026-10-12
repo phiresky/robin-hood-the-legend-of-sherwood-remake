@@ -8,7 +8,7 @@ from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement';OUT=B/'restart2/tree13-wood-v3/source-coverage';RAY=Vector((0,-math.cos(math.radians(35)),math.sin(math.radians(35))))
+B=ROOT/'level-editor/work/active/croisement03';OUT=B/'restart2/tree13-wood-v3/source-coverage';RAY=Vector((0,-math.cos(math.radians(35)),math.sin(math.radians(35))))
 def main():
  OUT.mkdir(exist_ok=False);model=OUT.parent/'worker.blend';level=json.loads((B/'baseline/Croisement03.rhp.json').read_text());box=(1030,0,1110,112);source=Image.open(B/'baseline/covered.png').convert('RGB');native=Image.new('L',source.size);native.paste(Image.open(B/'baseline/masks/000013.png'),tuple(level['masks'][13]['box_top_left']));mask=np.array(native.crop(box))>0;known=np.array(Image.open(B/'restart2/tree13-bark-proposal-v1/proposed-bark.png').crop(box))>0;acquire()
  try:

@@ -3,7 +3,7 @@ import hashlib,json,sys
 from pathlib import Path
 R=Path(__file__).resolve().parents[3];sys.path.insert(0,str(R/'level-editor/refinement/blender'))
 from build_review_gallery import build
-B=R/'level-editor/work/croisement03-refinement/restart2'
+B=R/'level-editor/work/active/croisement03/restart2'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main():

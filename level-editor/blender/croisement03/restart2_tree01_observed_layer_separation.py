@@ -2,7 +2,7 @@
 import sys,json,hashlib,math,shutil
 from pathlib import Path
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';I=B/'tree01-native-transition-cpu-v1';O=B/'tree01-native-transition-cpu-v2'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';I=B/'tree01-native-transition-cpu-v1';O=B/'tree01-native-transition-cpu-v2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  assert not O.exists();O.mkdir();pins={str(I/n):sha(I/n)for n in ['geometry.json','native-donor-atlas.png','cells-native.json','cells-static.json']}

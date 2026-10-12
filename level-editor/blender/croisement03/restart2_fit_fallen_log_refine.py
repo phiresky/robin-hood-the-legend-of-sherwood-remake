@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
 from scipy.optimize import differential_evolution
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement03-refinement/restart2'
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement03/restart2'
 RINGS=[(574,919,13),(595,914,13),(615,909,12),(640,900,12),(663,889,10),(687,881,8),(713,878,7),(738,875,6),(752,871,5),(764,864,4),(769,860,2.5)]
 SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));CROP=(570,845,780,935)
 EXPECTED=np.asarray(Image.open(OUT/'fallen-log-v1/observed-domain.png').crop(CROP))>0

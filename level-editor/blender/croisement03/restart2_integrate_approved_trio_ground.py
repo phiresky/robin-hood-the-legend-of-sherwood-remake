@@ -3,7 +3,7 @@ import copy,hashlib,io,json,struct
 from pathlib import Path
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement03-refinement/restart2';LIB=ROOT/'level-editor/library'
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement03/restart2';LIB=ROOT/'level-editor/library'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def read(p):return json.loads(Path(p).read_text())
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
@@ -12,7 +12,7 @@ def glb(path):
  raw=Path(path).read_bytes();n=struct.unpack_from('<I',raw,12)[0];d=json.loads(raw[20:20+n]);binary=raw[28+n:];buffers=[(Path(path).parent/x['uri']).resolve().read_bytes() if 'uri'in x else binary[:x['byteLength']] for x in d['buffers']];return d,buffers
 
 def main():
- out=B/'approved-trio-ground-integration-v1';assert not out.exists();receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/next-ground-storehouse-hole-v1/user-approval-ground.json';approval=read(receipt);assert approval['status']=='USER_APPROVED';decision=approval['decision'];src=Path(decision['model']);atlas=Path(decision['atlas']);assert sha(src)==decision['model_sha256']=='ab505cb2bcc3d4b27c4179518b489a7e69a199299c96fb6e34ce1743fbff1a82';assert sha(atlas)==decision['atlas_sha256']=='694ac0d631c047f0ed7f854dc82ef5bb2f87505132148b6783dbee68b0f7a268'
+ out=B/'approved-trio-ground-integration-v1';assert not out.exists();receipt=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/next-ground-storehouse-hole-v1/user-approval-ground.json';approval=read(receipt);assert approval['status']=='USER_APPROVED';decision=approval['decision'];src=Path(decision['model']);atlas=Path(decision['atlas']);assert sha(src)==decision['model_sha256']=='ab505cb2bcc3d4b27c4179518b489a7e69a199299c96fb6e34ce1743fbff1a82';assert sha(atlas)==decision['atlas_sha256']=='694ac0d631c047f0ed7f854dc82ef5bb2f87505132148b6783dbee68b0f7a268'
  exp=atlas.parent.parent;view=read(exp/'views.json');mask=rgba(exp/'mask.png')[:,:,3]==0;filled=rgba(atlas);original=rgba(view['atlas_source']);assert mask.sum()==17447 and filled.shape==original.shape==(960,1408,4);assert np.array_equal(filled[~mask],original[~mask]) and np.array_equal(filled[:,:,3],original[:,:,3])
  doc,buffers=glb(src);before=copy.deepcopy(doc);assert len(doc['images'])==len(doc['meshes'])==1;imageview=doc['images'][0]['bufferView'];v=doc['bufferViews'][imageview];oldbytes=buffers[v.get('buffer',0)][v.get('byteOffset',0):v.get('byteOffset',0)+v['byteLength']];assert np.array_equal(rgba(io.BytesIO(oldbytes)),original)
  newblob=bytearray();viewproof=[]

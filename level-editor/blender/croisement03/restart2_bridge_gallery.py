@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'level-editor/refinement/blender'))
 from build_review_gallery import build
-OUT = ROOT / 'level-editor/work/croisement03-refinement'
+OUT = ROOT / 'level-editor/work/active/croisement03'
 EXPECTED = '017c016a13ebfe108b5402d71ad9541f29515e1f0d22486521665015b79ab380'
 def sha(p): return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():

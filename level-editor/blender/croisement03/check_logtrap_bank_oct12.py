@@ -7,14 +7,14 @@ import bpy
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 from render_slots import acquire,release
-OUT=ROOT/'level-editor/work/croisement03-refinement/mission-logtrap-oct12-v1'
+OUT=ROOT/'level-editor/work/active/croisement03/mission-logtrap-oct12-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  acquire(slots=2)
  try:
   mem=dict(x.split(':',1) for x in Path('/proc/meminfo').read_text().splitlines());assert int(mem['MemAvailable'].split()[0])*1024>=6*1024**3;assert shutil.disk_usage(ROOT).free>=10*1024**3
   target=OUT/'bank-contact-v2';target.mkdir(exist_ok=False)
-  model=OUT/'owned-candidate-v2/worker.blend';bank=ROOT/'level-editor/work/croisement03-refinement/restart2/bank-coupled-left-full-source-v3/worker.blend'
+  model=OUT/'owned-candidate-v2/worker.blend';bank=ROOT/'level-editor/work/active/croisement03/restart2/bank-coupled-left-full-source-v3/worker.blend'
   assert sha(model)=='b910b45b5b1d759a7db09c65f9d0eb7b0e6a4299f5b7b9afe668acad10e95283'
   assert sha(bank)=='cf1a1347f706ef9e46d2cfc2b391424bed21ea59a9af61509958cbb7cf163f6b'
   bpy.ops.wm.open_mainfile(filepath=str(model));logs=[o for o in bpy.context.scene.objects if o.type=='MESH' and o.get('state_endpoint')]

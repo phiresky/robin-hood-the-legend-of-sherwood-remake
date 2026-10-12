@@ -3,7 +3,7 @@ import json,hashlib
 import numpy as np
 from pathlib import Path
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-source-role-audit-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'tree01-source-role-audit-v1'
 def main():
  O.mkdir(exist_ok=True);source=B.parent/'baseline/covered.png';im=Image.open(source).convert('RGB');crop=im.crop((0,0,175,175)).resize((700,700));draw=ImageDraw.Draw(crop)
  samples=[

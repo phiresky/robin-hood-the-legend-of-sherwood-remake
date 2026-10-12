@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-edito
 from render_slots import acquire,release
 
 def main():
- p=ROOT/'level-editor/work/croisement03-refinement/restart2'/sys.argv[sys.argv.index('--')+1];assert not (p/'proportions.json').exists();acquire()
+ p=ROOT/'level-editor/work/active/croisement03/restart2'/sys.argv[sys.argv.index('--')+1];assert not (p/'proportions.json').exists();acquire()
  try:
   bpy.ops.wm.open_mainfile(filepath=str(p/'worker.blend'));rows=[];allpoints=[]
   for o in bpy.data.scenes['Tree13 isolated wood'].objects:

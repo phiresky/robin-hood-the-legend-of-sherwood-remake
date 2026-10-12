@@ -3,7 +3,7 @@ from pathlib import Path
 import hashlib,json
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'trio-tree-integration-v1/static-leaf-source-proposal-v2'
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'trio-tree-integration-v1/static-leaf-source-proposal-v2'
 TRACES={12:[[(935,22),(945,15),(958,21),(973,12),(988,17),(1002,30),(1011,48),(1005,70),(1025,76),(1033,91),(1047,96),(1042,113),(1029,123),(1013,114),(1002,101),(986,107),(974,96),(960,104),(948,92),(937,83),(932,65),(937,47)]],14:[[(1080,12),(1094,2),(1114,4),(1127,15),(1139,19),(1144,32),(1157,39),(1169,50),(1161,67),(1149,77),(1136,70),(1128,89),(1114,91),(1105,103),(1092,94),(1096,78),(1083,63),(1087,44),(1077,28)]]}
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():

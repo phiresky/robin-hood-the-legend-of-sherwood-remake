@@ -2,7 +2,7 @@
 import json,hashlib
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement03-refinement/baseline'
+BASE=ROOT/'level-editor/work/active/croisement03/baseline'
 OUT=BASE.parent/'restart2/bridge-elevation'
 
 def inside(point,vertices):

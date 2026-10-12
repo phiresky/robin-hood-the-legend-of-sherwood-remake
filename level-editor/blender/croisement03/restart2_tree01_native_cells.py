@@ -3,7 +3,7 @@ import json,math,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-native-cells-cpu-v5';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=np.array([0.,-C,S]);SOURCE=B/'tree01-native-fragment-v1';FRAME='000.png';UNION='alpha-union.png';SOURCE_KIND='dynamic-frame0-provenance'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'tree01-native-cells-cpu-v5';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=np.array([0.,-C,S]);SOURCE=B/'tree01-native-fragment-v1';FRAME='000.png';UNION='alpha-union.png';SOURCE_KIND='dynamic-frame0-provenance'
 def main():
  source=SOURCE;scope=json.loads((source/'scope.json').read_text());crown_path=B/'tree01-canopy-volume-cpu-v6/geometry.json';crown=json.loads(crown_path.read_text());centers=np.array([row['world_center']for row in crown['supports']]);radii=np.array([row['radii']for row in crown['supports']]);union=np.array(Image.open(source/UNION))>0;vertices=[];uvs=[];faces=[];fallbacks=[]
  def point(x,y):

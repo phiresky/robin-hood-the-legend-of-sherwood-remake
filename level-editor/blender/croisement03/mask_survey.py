@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/croisement03-refinement'
+OUT = ROOT / 'level-editor/work/active/croisement03'
 def main():
     level = json.loads((OUT / 'baseline/Croisement03.rhp.json').read_text())
     source = Image.open(OUT / 'baseline/covered.png').convert('RGB')

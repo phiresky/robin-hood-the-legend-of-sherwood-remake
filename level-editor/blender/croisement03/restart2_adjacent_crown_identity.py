@@ -12,7 +12,7 @@ sys.path[:0] = [str(ROOT / 'level-editor/refinement'), str(ROOT / 'level-editor/
 from evidence_io import sha, write_json
 from render_slots import acquire, release
 
-B = ROOT / 'level-editor/work/croisement03-refinement/restart2'
+B = ROOT / 'level-editor/work/active/croisement03/restart2'
 
 
 def digest(value):

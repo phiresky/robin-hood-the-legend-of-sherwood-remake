@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[2]
 REPO = ROOT.parent
-BASE = ROOT / 'work/croisement03-refinement'
+BASE = ROOT / 'work/active/croisement03'
 OUT = BASE / 'mission-endpoint-preparation-oct12-v1'
 DATA = REPO / 'datadirs/fullgame_gog_hackable/Data'
 LIB = ROOT / 'library/game-data/Data'
@@ -199,27 +199,27 @@ def make_recipes(report):
          ['Trace normalized initial leaf footprint and30-frame transition; no final action row exists.',
           'Compute aperture and replacement terrain per source placement, including receiver slope. Last transition can integrate into background; absent final animation is not absent terrain.',
           'Keep per-instance masks, flags and layer changes; never union restoration rectangles across unrelated controls.'],
-         'level-editor/work/croisement02-refinement/restart47-explicit-rgb-sampling-v1/holes/integration-focused.json'),
+         'level-editor/work/active/croisement02/restart47-explicit-rgb-sampling-v1/holes/integration-focused.json'),
         ('hiding-mounds', 6, ['hiding Pc'], 'Reusable leaf-clump construction with25 source origins and27 mission occurrences; fit source-visible silhouette per site.',
          ['Initial compact mound becomes scattered leaves over15 transition frames, not a character body.',
           'Keep raw delay0 in first transition frame; timing normalization is a runtime concern.',
           'Several sprite origins are outside the image; evaluate actual offset bounds before classifying geometry as off-map. Infer missing physical continuation only where clipped source requires it.'],
-         'level-editor/work/croisement02-refinement/restart47-explicit-rgb-sampling-v1/mounds/reader-config.json'),
+         'level-editor/work/active/croisement02/restart47-explicit-rgb-sampling-v1/mounds/reader-config.json'),
         ('archer-covers', 7, ['hidden archer'], 'Four distinct ivy/brush cover variants, not four archer bodies.',
          ['Reconstruct source initial cover and lowered three-frame transition shapes at each fixed origin.',
           'Maintain01/02/03/04 distinct shapes and offsets. Locate associated static stump/log ownership before removing or replacing any existing geometry.',
           'The revealed central opening must remain open; do not fill it with inferred foliage or duplicate native cover.'],
-         'level-editor/work/croisement02-refinement/restart52-climbing-browser-v1/handoff.json'),
+         'level-editor/work/active/croisement02/restart52-climbing-browser-v1/handoff.json'),
         ('cart05', 8, ['chariot05'], 'Build the striped covered cart body, wheels and terminal wreck as separate source-owned parts.',
          ['Main action160 begins with moving cart and horse and ends empty; b2 retains collapsed canopy/body and b3 retains detached wheel/block.',
           'Action0 is empty except b4 residual source fragment; do not invent a persistent initial complete cart.',
           'Keep the horse and source shadows separate from reusable cart geometry. Resolve script sequencing before combining100/73/36/1 frame rows.'],
-         'level-editor/work/croisement02-refinement/restart3-north-cart/terminal-source-inputs-v1/handoff.json'),
+         'level-editor/work/active/croisement02/restart3-north-cart/terminal-source-inputs-v1/handoff.json'),
         ('cart04', 9, ['chariot04'], 'Reconstruct own wreck/body and suspended log mechanism; it is not a material variant of cart05.',
          ['Main action160 has100 frames with a different terminal wreck. b2 has33 frames including rope/log and debris; b3 retains a hanging log through30 frames; b4 has81 frames and ends empty.',
           'All initial action0 rows are empty. Preserve own action offsets; do not place each image at the target anchor without subtracting center.',
           'Split horse, rope, suspended log, cart body and transient debris by source ownership; no runtime motion inferred merely from shared action160.'],
-         'level-editor/work/croisement02-refinement/restart3-north-cart/terminal-source-inputs-v1/handoff.json'),
+         'level-editor/work/active/croisement02/restart3-north-cart/terminal-source-inputs-v1/handoff.json'),
     ]
     recipes = []
     for name, priority, terms, next_geometry, steps, donor in definitions:

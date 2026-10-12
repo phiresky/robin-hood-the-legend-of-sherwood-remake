@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 R=Path(__file__).resolve().parents[3]
-B=R/'level-editor/work/croisement03-refinement/restart2'
+B=R/'level-editor/work/active/croisement03/restart2'
 
 
 def sha(p):

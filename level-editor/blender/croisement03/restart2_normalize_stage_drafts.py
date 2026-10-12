@@ -1,7 +1,7 @@
 """Deduplicate warnings privately, preserving every distinct gameplay warning and all other fields."""
 import hashlib,json,shutil
 from pathlib import Path
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2/combined-trio-stage-v2';L=B/'library';M=L/'scenes/croisement03.rhlos-map.json'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2/combined-trio-stage-v2';L=B/'library';M=L/'scenes/croisement03.rhlos-map.json'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  assert not (B/'draft-normalization.json').exists(), 'Stage already normalized; preserve its evidence receipt'

@@ -5,7 +5,7 @@ import bpy
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
 def main():
- out=ROOT/'level-editor/work/croisement03-refinement/restart2/tree13-exact-export-v1';acquire()
+ out=ROOT/'level-editor/work/active/croisement03/restart2/tree13-exact-export-v1';acquire()
  try:
   bpy.ops.wm.read_factory_settings(use_empty=True);bpy.ops.import_scene.gltf(filepath=str(out/'model.glb'));rows=[]
   for m in bpy.data.materials:

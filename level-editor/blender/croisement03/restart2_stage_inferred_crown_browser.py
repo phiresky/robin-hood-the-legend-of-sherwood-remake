@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from asset_index import editor_descriptor
-BASE=ROOT/'level-editor/work/croisement03-refinement/restart2'
+BASE=ROOT/'level-editor/work/active/croisement03/restart2'
 STAGE=BASE/'combined-trio-stage-v2'
 SOURCE=STAGE/'browser-library-overlay-v2'
 CANDIDATE=BASE/'combined-trio-inferred-crown-candidate-v1'

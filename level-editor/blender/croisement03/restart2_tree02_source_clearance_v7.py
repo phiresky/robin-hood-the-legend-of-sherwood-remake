@@ -6,7 +6,7 @@ from mathutils import Vector
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2'
+B=ROOT/'level-editor/work/active/croisement03/restart2'
 def main():
  src=B/'tree02-isolated-prototype-v6';out=B/'tree02-isolated-prototype-v7';assert not out.exists();assert shutil.disk_usage(ROOT).free>10*1024**3+128*1024**2;acquire()
  try:

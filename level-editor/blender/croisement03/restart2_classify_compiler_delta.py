@@ -1,7 +1,7 @@
 """Prove the exact authorized animation and named-asset warning delta."""
 import argparse,collections,copy,hashlib,json
 from pathlib import Path
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';D=B/'compiler-rebase-diagnosis-v2'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';D=B/'compiler-rebase-diagnosis-v2'
 def read(p):return json.loads(p.read_text())
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():

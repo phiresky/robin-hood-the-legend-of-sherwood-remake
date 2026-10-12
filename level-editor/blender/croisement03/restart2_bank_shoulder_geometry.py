@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 from restart2_bank_whole_builder import mesh
 from restart2_bank_boundary_ray import boundary_hits
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-shoulder-geometry-plan-v5';S=math.sin(math.radians(35));C=math.cos(math.radians(35));ray=np.array([0.,-C,S])
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'bank-shoulder-geometry-plan-v5';S=math.sin(math.radians(35));C=math.cos(math.radians(35));ray=np.array([0.,-C,S])
 
 def planarize(boundary,lines):
  paths=[('boundary',boundary+[boundary[0]])]+lines

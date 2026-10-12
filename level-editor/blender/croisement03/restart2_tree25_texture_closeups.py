@@ -3,7 +3,7 @@ from pathlib import Path
 from PIL import Image,ImageDraw
 import hashlib,json
 ROOT=Path(__file__).resolve().parents[3]
-e=ROOT/'level-editor/work/croisement03-refinement/restart2/texture-batch-v7/croisement03-tree-25/experiment'
+e=ROOT/'level-editor/work/active/croisement03/restart2/texture-batch-v7/croisement03-tree-25/experiment'
 out=e/'v5-closeup-diagnostic';out.mkdir(exist_ok=False)
 refs=json.loads((e/'auxiliary-references.json').read_text())['references']
 items=[('Tree25 native view',e/'baked-preserved-v5/actual/view-0-textured.png',(85,95,185,195)),('Tree25 reverse view 1',e/'baked-preserved-v5/actual/view-1-textured.png',(130,125,230,225)),('Tree25 reverse view 4',e/'baked-preserved-v5/actual/view-4-textured.png',(140,195,240,295)),('Permitted cottage native',Path(refs[0]['parent_image']),(72,62,172,162)),('Permitted moat native',Path(refs[1]['parent_image']),(75,65,175,165)),('Saved generated view 4',e/'generation-short-no-mask-with-lighting-openrouter-with-auxiliary/generated-preserved.png',(140,579,240,679))]

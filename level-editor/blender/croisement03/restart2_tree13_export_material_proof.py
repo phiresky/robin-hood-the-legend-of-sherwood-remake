@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
 def main():
- out=ROOT/'level-editor/work/croisement03-refinement/restart2/tree13-exact-export-v2';raw=(out/'model.glb').read_bytes();size=struct.unpack_from('<I',raw,12)[0];doc=json.loads(raw[20:20+size]);blob=raw[28+size:];report=json.loads((out/'report.json').read_text());materials={m['name']:m for m in doc['materials']};proof=[]
+ out=ROOT/'level-editor/work/active/croisement03/restart2/tree13-exact-export-v2';raw=(out/'model.glb').read_bytes();size=struct.unpack_from('<I',raw,12)[0];doc=json.loads(raw[20:20+size]);blob=raw[28+size:];report=json.loads((out/'report.json').read_text());materials={m['name']:m for m in doc['materials']};proof=[]
  def image(texture):
   im=doc['images'][doc['textures'][texture['index']]['source']];view=doc['bufferViews'][im['bufferView']];return blob[view.get('byteOffset',0):view.get('byteOffset',0)+view['byteLength']]
  for obj in report['records']:

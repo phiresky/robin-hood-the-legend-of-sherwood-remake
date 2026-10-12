@@ -3,7 +3,7 @@ import json,math,hashlib
 from pathlib import Path
 from collections import Counter
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-cpu-wood-v1';P=B/'tree01-width-depth-constraints-v1/constraints.json'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'tree01-cpu-wood-v1';P=B/'tree01-width-depth-constraints-v1/constraints.json'
 def main():
  assert not O.exists();O.mkdir();data=json.loads(P.read_text());parts=[]
  for part in data['parts']:

@@ -9,7 +9,7 @@ from mathutils.geometry import barycentric_transform
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';RAY=Vector((0,-math.cos(math.radians(35)),math.sin(math.radians(35))));SIN=math.sin(math.radians(35))
+B=ROOT/'level-editor/work/active/croisement03/restart2';RAY=Vector((0,-math.cos(math.radians(35)),math.sin(math.radians(35))));SIN=math.sin(math.radians(35))
 def main():
  out=B/'tree14-approved-wood-texture-v1';assert not (out/'native-audit.json').exists();acquire()
  try:

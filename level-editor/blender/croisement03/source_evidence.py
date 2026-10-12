@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement03-refinement'
+OUT=ROOT/'level-editor/work/active/croisement03'
 DATA=ROOT/'datadirs/fullgame_gog_hackable/Data'
 
 def main():

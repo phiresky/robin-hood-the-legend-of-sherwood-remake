@@ -4,7 +4,7 @@ from pathlib import Path
 from collections import Counter
 import numpy as np
 from scipy.spatial import Delaunay
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-sidewall-cpu-v1';ray=np.array([0.,-np.cos(np.deg2rad(35)),np.sin(np.deg2rad(35))])
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'bank-sidewall-cpu-v1';ray=np.array([0.,-np.cos(np.deg2rad(35)),np.sin(np.deg2rad(35))])
 def main():
  O.mkdir(exist_ok=False);source=B/'bank-whole-geometry-plan-v4/geometry.json';data=json.loads(source.read_text());routing=json.loads((B/'bank-shoulder-face-routing-v1/routing.json').read_text());m=data['54'];old=copy.deepcopy(m);vertices=copy.deepcopy(m['vertices']);faces=[];revisions=[];rows=routing['rows']
  for fi,face in enumerate(m['faces']):

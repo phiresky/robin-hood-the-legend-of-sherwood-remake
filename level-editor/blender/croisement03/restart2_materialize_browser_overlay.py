@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-STAGE = ROOT / 'level-editor/work/croisement03-refinement/restart2/combined-trio-stage-v2'
+STAGE = ROOT / 'level-editor/work/active/croisement03/restart2/combined-trio-stage-v2'
 SOURCE = STAGE / 'browser-library-overlay-v1'
 OUT = STAGE / 'browser-library-overlay-v2'
 FIXTURE = STAGE / 'browser-check-fixture-v2'

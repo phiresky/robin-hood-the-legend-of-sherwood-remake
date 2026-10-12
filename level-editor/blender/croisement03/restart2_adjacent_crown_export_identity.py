@@ -12,7 +12,7 @@ from evidence_io import sha, write_json
 from export_editor import export_editor
 from render_slots import acquire, release
 
-B = ROOT / 'level-editor/work/croisement03-refinement/restart2'
+B = ROOT / 'level-editor/work/active/croisement03/restart2'
 
 
 def export(path, tree, target):

@@ -19,7 +19,7 @@ from render_slots import acquire, release
 from refinement_workspace import _geometry
 from workspace_components import appearance_state
 
-E = ROOT / 'level-editor/work/croisement03-refinement/restart2/texture-batch-v7/croisement03-tree-25/experiment'
+E = ROOT / 'level-editor/work/active/croisement03/restart2/texture-batch-v7/croisement03-tree-25/experiment'
 SIN, COS = math.sin(math.radians(35)), math.cos(math.radians(35))
 RAY = Vector((0,-COS,SIN))
 

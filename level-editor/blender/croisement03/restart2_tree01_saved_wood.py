@@ -7,7 +7,7 @@ from PIL import Image,ImageDraw
 R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(R/'level-editor/refinement'),str(Path(__file__).parent)]
 from render_slots import acquire,release
 from restart2_bank_boundary_ray import boundary_hits
-B=R/'level-editor/work/croisement03-refinement/restart2';I=B/'tree01-cpu-wood-v1';O=B/'tree01-saved-wood-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S))
+B=R/'level-editor/work/active/croisement03/restart2';I=B/'tree01-cpu-wood-v1';O=B/'tree01-saved-wood-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S))
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def resources():
  assert shutil.disk_usage(R).free>10*1024**3

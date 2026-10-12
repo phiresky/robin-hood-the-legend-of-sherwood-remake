@@ -67,7 +67,7 @@ def evaluate(model, view):
 
 
 def main():
-    e = ROOT / 'level-editor/work/croisement03-refinement/restart2/texture-batch-v7/croisement03-tree-25/experiment'
+    e = ROOT / 'level-editor/work/active/croisement03/restart2/texture-batch-v7/croisement03-tree-25/experiment'
     out = e / 'rearpatch-geometry-v3'; report = json.loads((out / 'construction.json').read_text())
     before, after = e / 'rearpatch-geometry-v2/worker.blend', out / 'worker.blend'
     assert sha(before) == report['source_model_sha256'] and sha(after) == report['model_sha256']

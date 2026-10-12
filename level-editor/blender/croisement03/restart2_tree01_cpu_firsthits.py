@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from restart2_bank_boundary_ray import boundary_hits
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-cpu-wood-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'tree01-cpu-wood-v1'
 def main():
  global O
  parser=argparse.ArgumentParser();parser.add_argument('--input',type=Path,default=O);O=parser.parse_args().input.resolve()

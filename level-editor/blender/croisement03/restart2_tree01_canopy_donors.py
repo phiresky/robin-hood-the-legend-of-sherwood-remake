@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';O=B/'restart2/tree01-canopy-donors-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';O=B/'restart2/tree01-canopy-donors-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  inv=B/'restart2/tree01-canopy-source-v1/canopy-inputs.json';packet=json.loads(inv.read_text());frame=Path(packet['frames'][0]['path']);assert sha(frame)==packet['frames'][0]['sha256'];im=Image.open(frame).convert('RGBA');rgba=np.array(im);candidates=[]

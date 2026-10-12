@@ -10,7 +10,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).parent
 from render_slots import acquire,release
 from evidence_io import sha,write_json
 from restart2_tree03_wood_v2 import mesh_for
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'tree02-isolated-prototype-v5';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN));UP=Vector((0,SIN,COS));CAP=128*1024**2
+B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'tree02-isolated-prototype-v5';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN));UP=Vector((0,SIN,COS));CAP=128*1024**2
 # The second small lower track has an inferred buried connection to the one main stem.
 SPECS={6:dict(ground=238,points=[(210,238,5),(211,175,3.7),(211.5,164,3.7),(210,150,3),(209,138,3),(209,128,3),(212,119,4),(216,102,2.6),(215,78,2.4),(205,45,2),(195,5,1.3),(189,-25,.2)]),61:dict(ground=238,points=[(209,127,4),(219,125.5,5.8),(230,128.3,5.7),(240,123,5),(250,114,4.2),(257,97,2.4),(256,70,1.8),(245,35,1.2),(231,-5,.2)]),62:dict(ground=238,points=[(209,136,2.7),(202,141,2.5),(197,144,2.8),(187,136,1.5),(178,115,.9),(175,88,.2)]),63:dict(ground=238,points=[(210,174,2.4),(202,162,2.7),(201.5,155,2.8),(201,145,2.5),(202,141,1.5)])}
 # Branch depth follows a connected hierarchy; source projection remains fixed.

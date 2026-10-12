@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image,ImageChops
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from prepare_texture_packet import prepare
-OUT=ROOT/'level-editor/work/croisement03-refinement';R=OUT/'restart2';ASSET='croisement03-southwest-firewood-stack'
+OUT=ROOT/'level-editor/work/active/croisement03';R=OUT/'restart2';ASSET='croisement03-southwest-firewood-stack'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
     parent=R/'texture-round1'/ASSET;old=parent/'experiment';destination=parent/'experiment-reference-retry1'

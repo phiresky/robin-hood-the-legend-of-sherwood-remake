@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';O=B/'restart2/northwest-bank-source-study-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';O=B/'restart2/northwest-bank-source-study-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  O.mkdir(exist_ok=False);level=json.loads((B/'baseline/Croisement03.rhp.json').read_text());src=Image.open(B/'baseline/covered.png').convert('RGB');arrays={}

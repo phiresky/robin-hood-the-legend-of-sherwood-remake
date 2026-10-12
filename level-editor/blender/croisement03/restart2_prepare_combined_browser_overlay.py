@@ -3,7 +3,7 @@ import copy,hashlib,json,sys
 from pathlib import Path
 R=Path(__file__).resolve().parents[3];sys.path.insert(0,str(R/'level-editor/refinement'))
 from asset_index import editor_descriptor
-S=R/'level-editor/work/croisement03-refinement/restart2/combined-trio-stage-v2';LIVE=R/'level-editor/library';OUT=S/'browser-library-overlay-v1';LIB=OUT/'library'
+S=R/'level-editor/work/active/croisement03/restart2/combined-trio-stage-v2';LIVE=R/'level-editor/library';OUT=S/'browser-library-overlay-v1';LIB=OUT/'library'
 def sha(p):
  with Path(p).open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
 def read(p):return json.loads(Path(p).read_bytes())

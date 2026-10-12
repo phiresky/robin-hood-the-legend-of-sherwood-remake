@@ -3,8 +3,8 @@ from pathlib import Path
 import hashlib,json,re
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3]
-SRC=ROOT/'level-editor/work/croisement03-refinement/mission-endpoint-preparation-oct12-v1'
-OUT=ROOT/'level-editor/work/croisement03-refinement/mission-logtrap-oct12-v1'
+SRC=ROOT/'level-editor/work/active/croisement03/mission-endpoint-preparation-oct12-v1'
+OUT=ROOT/'level-editor/work/active/croisement03/mission-logtrap-oct12-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  OUT.mkdir(exist_ok=True);d=json.loads((SRC/'inventory.json').read_text());targets=[t for t in d['targets'] if 'buches01_b' in t['name']];crop=(420,380,720,620);pins={str(SRC/'inventory.json'):sha(SRC/'inventory.json')};records=[]

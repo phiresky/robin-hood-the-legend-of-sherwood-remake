@@ -11,7 +11,7 @@ from restart2_tree13_wood_v1 import mesh_for,SPECS,ASSET
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'tree13-wood-v2'
+B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'tree13-wood-v2'
 def main():
  assert shutil.disk_usage(ROOT).free>25*1024**3;OUT.mkdir(exist_ok=False);source=B/'tree13-wood-v1/assets'/ASSET/'model.blend';acquire()
  try:

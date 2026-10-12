@@ -2,8 +2,8 @@
 import hashlib,json
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-B=ROOT/'level-editor/work/croisement03-refinement/restart2'
-RECEIPTS=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches'
+B=ROOT/'level-editor/work/active/croisement03/restart2'
+RECEIPTS=ROOT/'level-editor/work/active/croisement02/restart3-review-batches'
 OUT=B/'approved-trees02-11-reconciliation-v1'
 def sha(p):
  with Path(p).open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()

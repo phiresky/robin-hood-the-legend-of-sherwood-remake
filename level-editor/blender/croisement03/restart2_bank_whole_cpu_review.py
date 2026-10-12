@@ -3,7 +3,7 @@ import hashlib,json,math,sys
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';O=Path(sys.argv[1]) if len(sys.argv)>1 else B/'restart2/bank-whole-geometry-plan-v4';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';O=Path(sys.argv[1]) if len(sys.argv)>1 else B/'restart2/bank-whole-geometry-plan-v4';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 def main():
  d=json.loads((O/'geometry.json').read_text());d['53']=json.loads((B/'restart2/bank-continuous-strata-plan-v1/geometry.json').read_text());v=[];faces=[];owners=[]
  for k in ['52','53','54']:

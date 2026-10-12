@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-upper-bark-proposal-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'tree01-upper-bark-proposal-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  assert not O.exists();O.mkdir();path=B.parent/'baseline/covered.png';src=Image.open(path).convert('RGBA');rgb=np.array(src);native=np.zeros((960,1408),bool)

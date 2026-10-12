@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';O=B/'restart2/tree01-native-fragment-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';O=B/'restart2/tree01-native-fragment-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  inv=B/'restart2/tree01-canopy-source-v1/canopy-inputs.json';data=json.loads(inv.read_text());polygon=[(0,0),(174,0),(174,145),(125,170),(86,142),(46,123),(0,111)];mask=Image.new('L',(175,175));ImageDraw.Draw(mask).polygon(polygon,fill=255);selected=np.array(mask)>0;O.mkdir(exist_ok=False);mask.save(O/'spatial-proposal.png');rows=[];union=np.zeros_like(selected);sheet=Image.new('RGBA',(700,350),'#333333')

@@ -7,7 +7,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2'
+B=ROOT/'level-editor/work/active/croisement03/restart2'
 def main():
  ver=sys.argv[sys.argv.index('--')+1];out=B/f'tree02-isolated-prototype-{ver}';guard=json.loads((out/'firsthit.json').read_text());assert guard['status'].startswith('PASS');assert guard['model_sha256']==sha(out/'worker.blend');assert shutil.disk_usage(ROOT).free>10*1024**3+128*1024**2;modelroot=out;out=modelroot/'review-unclipped-v1';assert not out.exists();acquire()
  try:

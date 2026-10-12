@@ -1,12 +1,12 @@
 """Freeze approved bark and current catalog sources for private scoped export."""
 import hashlib,json
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement03-refinement/restart2';LIB=ROOT/'level-editor/library'
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement03/restart2';LIB=ROOT/'level-editor/library'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def read(p):return json.loads(Path(p).read_text())
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main():
- out=B/'approved-tree10-11-integration-v1';assert not out.exists();out.mkdir();receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/next-six-textures-channels-v1/user-approval.json';assert sha(receipt)=='7f6abc55fa21eee6ebd3b10c4f079e91e7f8159127a30a23fb9a6955d52e3f9d';approval=read(receipt);mappath=LIB/'scenes/croisement03.rhlos-map.json';mapdoc=read(mappath);pins={str(receipt):sha(receipt),str(mappath):sha(mappath)};rows=[]
+ out=B/'approved-tree10-11-integration-v1';assert not out.exists();out.mkdir();receipt=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/next-six-textures-channels-v1/user-approval.json';assert sha(receipt)=='7f6abc55fa21eee6ebd3b10c4f079e91e7f8159127a30a23fb9a6955d52e3f9d';approval=read(receipt);mappath=LIB/'scenes/croisement03.rhlos-map.json';mapdoc=read(mappath);pins={str(receipt):sha(receipt),str(mappath):sha(mappath)};rows=[]
  descriptors={}
  for p in (LIB/'3d-assets/croisement03').glob('*/asset.json'):descriptors[p]=read(p)
  for tree,nodes,version in [(10,[20],'v3'),(11,[21,22,23],'v4')]:

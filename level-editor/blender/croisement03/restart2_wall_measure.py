@@ -4,7 +4,7 @@ from pathlib import Path
 import bpy
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-OUT=ROOT/'level-editor/work/croisement03-refinement'
+OUT=ROOT/'level-editor/work/active/croisement03'
 def main():
     acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement03-grouped.blend'));rows=[]
     for o in bpy.data.collections['Croisement03 Working'].all_objects:

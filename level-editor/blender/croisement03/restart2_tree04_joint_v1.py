@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2'
+B=ROOT/'level-editor/work/active/croisement03/restart2'
 def stored_world(o):return stored_world(o.parent)@o.matrix_parent_inverse@o.matrix_basis if o.parent else o.matrix_basis.copy()
 def main():
  out=B/'tree04-crown-joint-v1';assert shutil.disk_usage(ROOT).free>25*1024**3;out.mkdir(exist_ok=False);model=B/'tree04-crown-prototype-v1/worker.blend';sources={str(model):sha(model)};acquire()

@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 R=Path(__file__).resolve().parents[3]
-B=R/'level-editor/work/croisement03-refinement'
+B=R/'level-editor/work/active/croisement03'
 O=B/'restart2/bank-exposed-rock-proposal-v1'
 # Source-inspected interior patches avoid the large central gold crown and ivy wall.
 PATCHES={

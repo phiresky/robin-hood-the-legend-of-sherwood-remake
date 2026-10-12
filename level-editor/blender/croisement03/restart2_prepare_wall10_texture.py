@@ -4,14 +4,14 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from prepare_texture_packet import prepare
-OUT=ROOT/'level-editor/work/croisement03-refinement/restart2'
+OUT=ROOT/'level-editor/work/active/croisement03/restart2'
 ASSET='croisement03-southeast-stone-wall'
 MODEL='0d93ac6c5898fcb843eeb246a9a4847b34f1d74942f0348af1e09d801b211949'
 RECEIPT='3886eb09b2868b98a4d26160110f5db947661efa19bacdf0a0d4e7298abeab00'
 def sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 def write(path,data):Path(path).write_text(json.dumps(data,indent=2)+'\n')
 def main():
-    receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/batch-v6-expanded/user-approval.json'
+    receipt=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/batch-v6-expanded/user-approval.json'
     assert sha(receipt)==RECEIPT
     approval=json.loads(receipt.read_text())
     decision=next(d for d in approval['decisions'] if d['card_id']=='geometry-'+ASSET)

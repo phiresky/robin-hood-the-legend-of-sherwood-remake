@@ -9,7 +9,7 @@ from evidence_io import sha,write_json
 from restart2_adjacent_export_composite_v2 import flatten_normal_gate,finalize_document
 from restart2_export_approved_static_pair import crown
 from restart2_tree10_11_export_guard import validate
-B=ROOT/'level-editor/work/croisement03-refinement/restart2'
+B=ROOT/'level-editor/work/active/croisement03/restart2'
 def main(tree):
  assert tree in (10,11);planpath=B/'approved-tree10-11-integration-v1/plan.json';plan=json.loads(planpath.read_text());entry=next(r for r in plan['rows'] if r['asset_id']==f'croisement03-tree-{tree}');out=planpath.parent/f'full-export-v1/tree{tree}';assert not out.exists()
  for p,h in plan['pins'].items():assert sha(p)==h,p

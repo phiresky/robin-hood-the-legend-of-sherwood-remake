@@ -12,7 +12,7 @@ from promote_staged_publication import sha, library_lock, _apply, asset_file_pai
 import promote_staged_publication as promotion
 from restart2_scoped_index import writer
 
-WORK = ROOT / 'level-editor/work/croisement03-refinement/restart2'
+WORK = ROOT / 'level-editor/work/active/croisement03/restart2'
 STAGE = WORK / 'publication-five-v1'
 LIVE = ROOT / 'level-editor/library'
 BROWSER_RESULT = STAGE / 'browser-retry2/result.json'

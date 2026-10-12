@@ -11,7 +11,7 @@ from render_slots import acquire,release
 
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
- e=ROOT/'level-editor/work/croisement03-refinement/restart2/texture-batch-v7/croisement03-tree-25/experiment';out=e/'foliage-detail-retry-v1';assert not out.exists();acquire()
+ e=ROOT/'level-editor/work/active/croisement03/restart2/texture-batch-v7/croisement03-tree-25/experiment';out=e/'foliage-detail-retry-v1';assert not out.exists();acquire()
  model=e/'baked-preserved-v5/worker.blend';assert sha(model)=='324c3f747958806798d729f1f1a4bcc37a022bf95d5e7e580a6e6916b918689f';bpy.ops.wm.open_mainfile(filepath=str(model));obj=next(o for o in bpy.data.objects if o.type=='MESH' and o.get('asset_group')=='croisement03-tree-25');mesh=obj.data;mesh.calc_loop_triangles();verts=[obj.matrix_world@v.co for v in mesh.vertices];tris=list(mesh.loop_triangles);bvh=BVHTree.FromPolygons(verts,[list(t.vertices) for t in tris],all_triangles=True);atlas={};source=mesh.color_attributes['Source ownership']
  for slot,m in enumerate(mesh.materials):
   if not m or not m.get('foliage_physical_opacity'):continue

@@ -7,7 +7,7 @@ from collections import Counter
 from pathlib import Path
 
 R=Path(__file__).resolve().parents[3]
-B=R/'level-editor/work/croisement03-refinement'
+B=R/'level-editor/work/active/croisement03'
 RECIPE=B/'restart2/bank-morphology-trace-v1/recipe.json'
 OUT=B/'restart2/bank-shelf-prototype-v5'
 S=math.sin(math.radians(35));C=math.cos(math.radians(35))

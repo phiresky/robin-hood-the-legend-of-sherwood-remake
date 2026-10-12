@@ -21,7 +21,7 @@ def sha(p):
 
 def main():
     assert shutil.disk_usage(ROOT).free > 25 * 1024**3
-    run = ROOT / 'level-editor/work/croisement03-refinement/restart2'
+    run = ROOT / 'level-editor/work/active/croisement03/restart2'
     stage = run / 'tree25-cluster-integration-v2/stage-v1'
     library = stage / 'map-assets'
     out = stage / 'derivative-review-v1'

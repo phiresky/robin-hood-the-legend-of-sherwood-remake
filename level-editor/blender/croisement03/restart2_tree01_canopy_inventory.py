@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';O=B/'restart2/tree01-canopy-source-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';O=B/'restart2/tree01-canopy-source-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  src=B/'source-inventory.json';inv=json.loads(src.read_text());animation=next(a for a in inv['animations']if a['profile']=='Croisement03 - Arbre08');level=json.loads((B/'baseline/Croisement03.rhp.json').read_text());mask=level['masks'][124];ma=Image.new('L',(1408,960));ma.paste(Image.open(B/'baseline/masks/000124.png'),mask['box_top_left']);occupancy=np.array(ma)>0;rows=[];union=np.zeros_like(occupancy)

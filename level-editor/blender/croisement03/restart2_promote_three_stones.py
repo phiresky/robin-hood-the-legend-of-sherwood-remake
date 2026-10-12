@@ -6,7 +6,7 @@ sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 import promote_staged_publication as promotion
 from promote_staged_publication import sha,library_lock,asset_file_pairs
 from restart2_three_stones_index import writer
-WORK=ROOT/'level-editor/work/croisement03-refinement/restart2'
+WORK=ROOT/'level-editor/work/active/croisement03/restart2'
 STAGE=WORK/'approved-stone-integration-preflight/three-stones-stage-v1'
 PARITY=WORK/'approved-stone-integration-preflight/metadata-parity-v3'
 LIVE=ROOT/'level-editor/library'

@@ -18,7 +18,7 @@ from render_slots import acquire, release
 
 
 def main():
-    e = ROOT / 'level-editor/work/croisement03-refinement/restart2/texture-batch-v7/croisement03-tree-25/experiment'
+    e = ROOT / 'level-editor/work/active/croisement03/restart2/texture-batch-v7/croisement03-tree-25/experiment'
     out = e / 'rearpatch-geometry-v1'
     assert not (out / 'role-attribution-full-v2.json').exists()
     acquire()

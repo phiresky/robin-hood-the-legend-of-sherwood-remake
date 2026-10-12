@@ -2,7 +2,7 @@
 import json,hashlib
 from pathlib import Path
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';O=B/'restart2/bank-shoulder-source-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';O=B/'restart2/bank-shoulder-source-v1'
 def main():
  O.mkdir(exist_ok=True);assert not(O/'traces.json').exists();source=B/'baseline/covered.png';src=Image.open(source).convert('RGB');im=src.copy();d=ImageDraw.Draw(im)
  traces=[{'id':'east-upper-outer-shoulder','owner':52,'points':[[604,189],[610,195],[613,205],[612,213],[616,223],[614,234],[612,243],[609,251]],'color':'#00ffff'}, {'id':'east-lower-outer-shoulder','owner':52,'points':[[603,257],[610,260],[613,269],[610,278],[613,286],[608,296],[602,307]],'color':'#ff66ff'}, {'id':'south-upper-short-shoulder','owner':54,'points':[[402,345],[410,348],[416,354],[412,361],[418,367],[414,374],[409,382]],'color':'#00ffff'}, {'id':'south-low-tip-shoulder','owner':54,'points':[[365,409],[376,414],[379,421],[376,427],[380,432],[374,438]],'color':'#ff66ff'}]

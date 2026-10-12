@@ -9,7 +9,7 @@ from mathutils.geometry import barycentric_transform
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';RAY=Vector((0,-math.cos(math.radians(35)),math.sin(math.radians(35))));SIN=math.sin(math.radians(35))
+B=ROOT/'level-editor/work/active/croisement03/restart2';RAY=Vector((0,-math.cos(math.radians(35)),math.sin(math.radians(35))));SIN=math.sin(math.radians(35))
 def main(number):
  assert number in range(6,12)
  config={6:((535,0,620,220),154,10,75,'07'),7:((600,0,735,280),154,10,130,'07'),8:((736,0,792,190),135,6,39,'06'),9:((769,0,811,180),135,6,31,'06'),10:((794,0,856,195),135,6,56,'06'),11:((844,0,952,195),135,6,102,'06')}

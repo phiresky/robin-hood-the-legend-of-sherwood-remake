@@ -5,7 +5,7 @@ import math
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-RUN = ROOT / 'level-editor/work/croisement03-refinement/restart2/wall-tree-integration-preflight'
+RUN = ROOT / 'level-editor/work/active/croisement03/restart2/wall-tree-integration-preflight'
 
 
 def sha(path):

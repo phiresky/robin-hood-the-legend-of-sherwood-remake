@@ -3,7 +3,7 @@ import json,math,hashlib
 from pathlib import Path
 from collections import Counter
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-cpu-roots-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'tree01-cpu-roots-v1'
 def main():
  inp=B/'tree01-cpu-wood-v3/geometry.json';data=json.loads(inp.read_text());O.mkdir(exist_ok=False);rows=[]
  for p in data['parts']:

@@ -10,7 +10,7 @@ from restart2_tree02_firsthit_v1 import rows_for,sample
 from restart2_tree02_joint_context_v4 import hit
 from render_slots import acquire,release
 from evidence_io import sha,write_json
-B=R/'level-editor/work/croisement03-refinement/restart2';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S))
+B=R/'level-editor/work/active/croisement03/restart2';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=Vector((0,-C,S))
 def digest(values):return hashlib.sha256(np.asarray(values).tobytes()).hexdigest()
 def surfaces(objects):
  result={}

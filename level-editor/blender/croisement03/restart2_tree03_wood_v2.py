@@ -10,7 +10,7 @@ import bmesh
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'tree03-wood-prototype-v2';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
+B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'tree03-wood-prototype-v2';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
 SPECS={7: {'ground': 227, 'polygon': 0, 'points': [(294, 227, 12), (293, 171, 10), (293, 155, 9), (293, 140, 8), (296, 125, 8), (299, 115, 7), (299, 100, 6), (299, 83, 5.5), (297, 65, 5), (294, 40, 4), (286, 10, 3), (274, -25, 0.8)]}, 71: {'ground': 227, 'polygon': 2, 'points': [(297, 123, 7), (310, 113, 7), (326, 106, 6.5), (342, 98, 5), (354, 89, 4.5), (364, 73, 3.8), (369, 51, 3), (367, 20, 2), (364, -15, 0.5)]}, 72: {'ground': 227, 'polygon': 3, 'points': [(294, 128, 7), (284, 120, 6), (273, 115, 4), (261, 110, 3), (250, 99, 2), (245, 81, 0.4)]}}
 
 # Local source-supported underside correction; preserve the branch attachment.

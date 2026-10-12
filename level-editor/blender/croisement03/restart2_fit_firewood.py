@@ -6,7 +6,7 @@ from PIL import Image,ImageDraw
 from scipy.optimize import differential_evolution
 from scipy.spatial import ConvexHull
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement03-refinement/restart2/firewood-fit-v1'
+OUT=ROOT/'level-editor/work/active/croisement03/restart2/firewood-fit-v1'
 BASE=OUT.parents[1]/'baseline'
 SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))
 

@@ -8,7 +8,7 @@ import numpy as np
 from restart2_static_pair_export_guard import read_glb
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/croisement03-refinement/restart2'
+BASE = ROOT / 'level-editor/work/active/croisement03/restart2'
 OUT = BASE / 'combined-trio-inferred-crown-candidate-v1'
 
 

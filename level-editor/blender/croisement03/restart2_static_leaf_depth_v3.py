@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2'
+B=ROOT/'level-editor/work/active/croisement03/restart2'
 def geom(o):return hashlib.sha256(np.asarray([tuple(v.co) for v in o.data.vertices],np.float32).tobytes()).hexdigest()
 def main(tree):
  assert tree in (12,14);assert shutil.disk_usage(ROOT).free>25*1024**3;src=B/f'tree{tree}-static-leaf-crown-v1';out=B/f'tree{tree}-static-leaf-crown-v3';out.mkdir(exist_ok=False);acquire()

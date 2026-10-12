@@ -7,7 +7,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2'
+B=ROOT/'level-editor/work/active/croisement03/restart2'
 def main(tree,version=1):
  assert tree in (12,14);p=B/f'tree{tree}-static-leaf-crown-v{version}';out=p/'physical-opacity-audit';out.mkdir(exist_ok=False);acquire()
  try:

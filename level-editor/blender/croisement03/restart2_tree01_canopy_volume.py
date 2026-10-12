@@ -3,7 +3,7 @@ import json,math,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'tree01-canopy-volume-cpu-v6';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=np.array([0.,-C,S])
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'tree01-canopy-volume-cpu-v6';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=np.array([0.,-C,S])
 def main():
  packet_path=B/'tree01-canopy-donors-v1/packet.json';packet=json.loads(packet_path.read_text());O.mkdir(exist_ok=False);atlas=Image.new('RGBA',(64,48));donors=[]
  for i,row in enumerate(packet['donors']):

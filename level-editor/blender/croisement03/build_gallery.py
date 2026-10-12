@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
 from build_review_gallery import build
-OUT=ROOT/'level-editor/work/croisement03-refinement'
+OUT=ROOT/'level-editor/work/active/croisement03'
 def main():
     groups=json.loads((OUT/'catalog.json').read_text())['groups'];missing=[];items=[]
     for group in groups:

@@ -7,7 +7,7 @@ from PIL import Image
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from render_views import render_views
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'trio-tree-integration-v1/terrain-contact-before-v2'
+B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'trio-tree-integration-v1/terrain-contact-before-v2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def stored_world(o):return stored_world(o.parent)@o.matrix_parent_inverse@o.matrix_basis if o.parent else o.matrix_basis.copy()
 def main():

@@ -5,7 +5,7 @@ from collections import Counter
 import numpy as np
 from PIL import Image,ImageDraw
 from scipy.ndimage import binary_opening
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';W=B/'restart2';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';W=B/'restart2';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def firstheight(mesh,q):
  v=np.array(mesh['vertices']);screen=np.column_stack((v[:,0],-v[:,1]*S-v[:,2]*C));near=np.full(len(q),-np.inf);triangles=np.full(len(q),-1)

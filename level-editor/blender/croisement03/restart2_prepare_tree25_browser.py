@@ -29,7 +29,7 @@ def write(p, data):
 
 
 def main():
-    stage = ROOT / 'level-editor/work/croisement03-refinement/restart2/tree25-cluster-integration-v2/stage-v1'
+    stage = ROOT / 'level-editor/work/active/croisement03/restart2/tree25-cluster-integration-v2/stage-v1'
     live = ROOT / 'level-editor/library'
     receipt = read(stage / 'receipt.json')
     guards = copy.deepcopy(receipt['live_guards'])

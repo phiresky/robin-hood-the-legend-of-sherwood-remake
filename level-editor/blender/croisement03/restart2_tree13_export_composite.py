@@ -8,8 +8,8 @@ sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinem
 from render_slots import acquire,release
 from evidence_io import sha,write_json
 from export_editor import export_editor
-B=ROOT/'level-editor/work/croisement03-refinement/restart2'
-CONVERTER=ROOT/'level-editor/work/croisement02-refinement/restart2-textures/exact_composite_export_v2.py'
+B=ROOT/'level-editor/work/active/croisement03/restart2'
+CONVERTER=ROOT/'level-editor/work/active/croisement02/restart2-textures/exact_composite_export_v2.py'
 assert sha(CONVERTER)=='5457f186ef9e34b4665a6db941caaeecf61a583dd341947e25f29dc41bc389d2'
 sys.path.insert(0,str(CONVERTER.parent))
 from exact_composite_export_v2 import convert,finalize_document

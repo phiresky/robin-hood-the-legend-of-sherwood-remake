@@ -7,7 +7,7 @@ from scipy.spatial import Delaunay
 from scipy.interpolate import LinearNDInterpolator
 from scipy.sparse import lil_matrix
 from scipy.sparse.linalg import spsolve
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-boulder-fronts-cpu-v8';E=B/'bank-boulder-east-cpu-v8';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=np.array([0.,-C,S])
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'bank-boulder-fronts-cpu-v8';E=B/'bank-boulder-east-cpu-v8';S=math.sin(math.radians(35));C=math.cos(math.radians(35));RAY=np.array([0.,-C,S])
 def project(v):return np.column_stack((v[:,0],-v[:,1]*S-v[:,2]*C))
 def inside(p,poly):
  x,y=p;hit=False

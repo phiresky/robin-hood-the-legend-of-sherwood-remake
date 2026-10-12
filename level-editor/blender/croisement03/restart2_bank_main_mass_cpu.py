@@ -11,7 +11,7 @@ from PIL import Image, ImageDraw
 from restart2_bank_boulder_faces import inside, project
 
 R = Path(__file__).resolve().parents[3]
-B = R / 'level-editor/work/croisement03-refinement/restart2'
+B = R / 'level-editor/work/active/croisement03/restart2'
 O = B / 'bank-main-masses-cpu-v1'
 S, C = math.sin(math.radians(35)), math.cos(math.radians(35))
 RAY = np.array([0., -C, S])

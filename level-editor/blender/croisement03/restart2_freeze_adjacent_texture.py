@@ -7,7 +7,7 @@ from build_review_gallery import build
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main():
- tree=int(sys.argv[1]);assert tree in (12,14);b=ROOT/'level-editor/work/croisement03-refinement/restart2';src=b/f'tree{tree}-approved-wood-texture-v1/source-restored-fill-v1';out=b/f'texture-review-tree{tree}-crownfragment-v1';assert not out.exists();out.mkdir()
+ tree=int(sys.argv[1]);assert tree in (12,14);b=ROOT/'level-editor/work/active/croisement03/restart2';src=b/f'tree{tree}-approved-wood-texture-v1/source-restored-fill-v1';out=b/f'texture-review-tree{tree}-crownfragment-v1';assert not out.exists();out.mkdir()
  model=src/'worker.blend';assert sha(model)=={12:'30e93ac1b8ae794a1c5ff38e75bd4841b3f1bff8f7bbb662eeac91679c196777',14:'935ca2ac333f4d253a9660f02098d1e63bf8aab92de4258024d7aac97353a993'}[tree]
  native=json.loads((src/'native-audit.json').read_text());assert native['accepted_bark_changes']==native['provisional_foliage_changes']==native['known_misses']==0
  notes=['APPEARANCE ONLY: generated inferred wood RGB on user-approved V14 adjacent-tree geometry. Source-part joins preserve physical triangles; no canopy change.',

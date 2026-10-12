@@ -3,7 +3,7 @@ import json,sys,hashlib,shutil
 from pathlib import Path
 import bpy,bmesh,numpy as np
 R=Path(__file__).resolve().parents[3];sys.path.insert(0,str(R/'level-editor/refinement'));from render_slots import acquire,release
-B=R/'level-editor/work/croisement03-refinement/restart2';I=B/'tree01-cpu-upper-v1';O=B/'tree01-cpu-root-union-v1'
+B=R/'level-editor/work/active/croisement03/restart2';I=B/'tree01-cpu-upper-v1';O=B/'tree01-cpu-root-union-v1'
 def resources():
  assert shutil.disk_usage(R).free>10*1024**3
  mem={r.split(':')[0]:int(r.split()[1])*1024 for r in Path('/proc/meminfo').read_text().splitlines()};assert mem['MemAvailable']>=6*1024**3

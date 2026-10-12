@@ -17,7 +17,7 @@ def pixels(image):
     out=np.empty(len(image.pixels),np.float32);image.pixels.foreach_get(out)
     return out.reshape(image.size[1],image.size[0],4)
 def main():
-    e=ROOT/'level-editor/work/croisement03-refinement/restart2/texture-batch-v7/croisement03-tree-25/experiment'
+    e=ROOT/'level-editor/work/active/croisement03/restart2/texture-batch-v7/croisement03-tree-25/experiment'
     src=e/'baked-preserved-v4';out=e/'baked-preserved-v5';assert not out.exists()
     assert sha(src/'worker.blend')=='e97ae23d7ae2bec4837aa459211b3f5e0b9472dc270337055591ce96e41d16a0'
     normalized=e/'material-partition-v1/model.blend';guard=json.loads((e/'material-partition-v1/normalization.json').read_text());assert sha(normalized)==guard['output_model_sha256']

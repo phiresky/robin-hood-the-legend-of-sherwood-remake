@@ -11,7 +11,7 @@ from restart2_tree02_shared_ridge_joint_v5 import hit
 from render_slots import acquire,release
 from restart2_tree01_canopy_saved import resources
 from evidence_io import sha,write_json
-B=R/'level-editor/work/croisement03-refinement/restart2';O=Path(sys.argv[sys.argv.index('--')+1]).resolve() if '--' in sys.argv else B/'bank-full-prototype-v2'
+B=R/'level-editor/work/active/croisement03/restart2';O=Path(sys.argv[sys.argv.index('--')+1]).resolve() if '--' in sys.argv else B/'bank-full-prototype-v2'
 
 def main():
  assert not (O/'neighbor-firsthits.json').exists();resources();acquire(slots=2)

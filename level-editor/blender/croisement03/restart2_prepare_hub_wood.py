@@ -7,7 +7,7 @@ R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(R/'level-editor/refineme
 from render_slots import acquire,release
 from refinement_workspace import prepare,modified,_geometry
 from evidence_io import sha,write_json
-B=R/'level-editor/work/croisement03-refinement/restart2'
+B=R/'level-editor/work/active/croisement03/restart2'
 def triangle_signature(objects):
  rows=[]
  for o in objects:

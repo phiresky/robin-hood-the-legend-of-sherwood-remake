@@ -3,7 +3,7 @@ import json,hashlib,copy,argparse
 from pathlib import Path
 from collections import Counter
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';I=B/'tree01-cpu-wood-v1/geometry.json';O=B/'tree01-cpu-wood-v2'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';I=B/'tree01-cpu-wood-v1/geometry.json';O=B/'tree01-cpu-wood-v2'
 def main():
  global O
  ap=argparse.ArgumentParser();ap.add_argument('--output',type=Path,default=O);ap.add_argument('--smooth',action='store_true');args=ap.parse_args();O=args.output.resolve()

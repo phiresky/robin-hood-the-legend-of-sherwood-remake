@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { translateGameplayFrames } from '../../pipeline/src/translate-gameplay-frames.ts';
-const root=process.cwd(), run=path.join(root,'level-editor/work/croisement03-refinement/restart2');
+const root=process.cwd(), run=path.join(root,'level-editor/work/active/croisement03/restart2');
 const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const read=async p=>JSON.parse(await fs.readFile(p,'utf8'));
 function equal(a,b,where='root'){

@@ -9,7 +9,7 @@ from refinement_workspace import modified
 from evidence_io import write_json,sha
 
 def main():
-    w=ROOT/'level-editor/work/croisement03-refinement/restart2/bridge-v6/assets/croisement03-timber-bridge'
+    w=ROOT/'level-editor/work/active/croisement03/restart2/bridge-v6/assets/croisement03-timber-bridge'
     acquire();bpy.ops.wm.open_mainfile(filepath=str(w/'model.blend'));bpy.context.preferences.filepaths.save_version=0
     config=json.loads((w/'workspace.json').read_text());objects=list(bpy.data.collections['Croisement03 Working'].all_objects);ground=[o for o in objects if o.type=='MESH' and o.get('source_node')=='ground'];assert len(ground)==1
     config['source_projection_ground_exclusion']['object_name']=ground[0].name;write_json(w/'workspace.json',config);modified(w)

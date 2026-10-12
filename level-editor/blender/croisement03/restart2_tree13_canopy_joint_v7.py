@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'tree13-canopy-joint-v7'
+B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'tree13-canopy-joint-v7'
 def main():
  assert shutil.disk_usage(ROOT).free>25*1024**3;OUT.mkdir(exist_ok=False);wood=B/'tree13-canopy-prototype-v7/worker.blend';fern=B/'texture-round1/croisement03-fern-35/experiment/baked-preserved-v1/worker.blend';hashes={str(p):sha(p) for p in (wood,fern)};acquire()
  try:

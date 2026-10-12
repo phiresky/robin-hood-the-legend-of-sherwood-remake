@@ -8,7 +8,7 @@ from PIL import Image
 
 
 def main():
-    root = Path(__file__).resolve().parents[2] / 'work/croisement03-refinement'
+    root = Path(__file__).resolve().parents[2] / 'work/active/croisement03'
     output = root / 'restart2/east-shrub61-preflight'
     manifest_path = root / 'animation-references/manifest.json'
     manifest = json.loads(manifest_path.read_text())

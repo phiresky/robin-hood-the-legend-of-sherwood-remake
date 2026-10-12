@@ -5,7 +5,7 @@ import struct
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/croisement03-refinement/restart2'
+BASE = ROOT / 'level-editor/work/active/croisement03/restart2'
 BROWSER = BASE / 'combined-trio-full-editor-browser-v2/browser-v1'
 OUT = BASE / 'combined-trio-stage-v2/browser-crown-diagnosis-v1'
 

@@ -3,7 +3,7 @@ from pathlib import Path
 import hashlib,json
 import numpy as np
 from PIL import Image,ImageFilter
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'trio-tree-integration-v1/static-leaf-source-proposal-v1'
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'trio-tree-integration-v1/static-leaf-source-proposal-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  OUT.mkdir(exist_ok=False);source=B.parent/'baseline/covered.png';native=Image.open(source).convert('RGB');rgb=np.array(native).astype(int);reserved=np.zeros(rgb.shape[:2],bool);level=json.loads((B.parent/'baseline/Croisement03.rhp.json').read_text())

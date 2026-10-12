@@ -6,7 +6,7 @@ from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-OUT=ROOT/'level-editor/work/croisement03-refinement'
+OUT=ROOT/'level-editor/work/active/croisement03'
 def main():
     worker=OUT/'restart2/stone-wall-v1/assets/croisement03-southeast-stone-wall';source=OUT/'restart2/southeast-wall-source';audit=json.loads((source/'gray-owner-audit.json').read_text());digest=hashlib.sha256((worker/'model.blend').read_bytes()).hexdigest();assert digest==audit['model_sha256']
     acquire();bpy.ops.wm.open_mainfile(filepath=str(worker/'model.blend'));trees=[]

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/croisement03-refinement/restart2'
+BASE = ROOT / 'level-editor/work/active/croisement03/restart2'
 
 
 def crossing_pairs(part):

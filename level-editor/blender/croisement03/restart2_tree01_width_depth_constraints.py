@@ -2,7 +2,7 @@
 import json,math,hashlib
 from pathlib import Path
 from PIL import Image,ImageDraw
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';O=B/'restart2/tree01-width-depth-constraints-v1'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';O=B/'restart2/tree01-width-depth-constraints-v1'
 def main():
  assert not O.exists();O.mkdir();level=json.loads((B/'baseline/Croisement03.rhp.json').read_text());source=Image.open(B/'baseline/covered.png').convert('RGB');mark=source.copy();draw=ImageDraw.Draw(mark);s=math.sin(math.radians(35));c=math.cos(math.radians(35))
  # Visible approximate wood extents, not a pixel ownership mask; omit leaf crossings.

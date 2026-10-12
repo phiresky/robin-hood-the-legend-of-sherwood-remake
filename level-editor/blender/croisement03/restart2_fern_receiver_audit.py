@@ -9,7 +9,7 @@ from mathutils.bvhtree import BVHTree
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-OUT=ROOT/'level-editor/work/croisement03-refinement'
+OUT=ROOT/'level-editor/work/active/croisement03'
 def main():
     target=OUT/'restart2/fern-receiver-audit-v1';target.mkdir(exist_ok=False)
     acquire();bpy.ops.wm.open_mainfile(filepath=str(OUT/'croisement03-grouped.blend'))

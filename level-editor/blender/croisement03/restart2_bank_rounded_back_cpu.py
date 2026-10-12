@@ -3,7 +3,7 @@ import json,math,hashlib
 from pathlib import Path
 from collections import Counter
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-rounded-backing-cpu-v1';E=B/'bank-rounded-east-cpu-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'bank-rounded-backing-cpu-v1';E=B/'bank-rounded-east-cpu-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def rebuild(mesh,template,owner):
  old=np.array(mesh['vertices']);faces=mesh['faces'];nr=len(template['ring_names']);n=len(template['vertices'])//nr;nf=n-3;assert n*nr==len(template['vertices']);front=set(i for f in faces[-mesh['front_reconstruction']['new_front_triangles']:]for i in f);v=old.tolist();params={};fixed=set(front)

@@ -22,7 +22,7 @@ def sha(p): return hashlib.sha256(p.read_bytes()).hexdigest()
 
 def main():
     assert shutil.disk_usage(ROOT).free>25*1024**3
-    e=ROOT/'level-editor/work/croisement03-refinement/restart2/texture-batch-v7/croisement03-tree-25/experiment'
+    e=ROOT/'level-editor/work/active/croisement03/restart2/texture-batch-v7/croisement03-tree-25/experiment'
     source=e/'cluster-geometry-v4'; out=e/'cluster-geometry-v6'; assert not out.exists()
     report=json.loads((source/'construction.json').read_text()); assert sha(source/'worker.blend')==report['model_sha256']
     acquire()

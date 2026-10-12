@@ -10,7 +10,7 @@ from restart2_tree13_wood_v1 import mesh_for
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'tree05-wood-prototype-v1';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
+B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'tree05-wood-prototype-v1';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
 SPECS={11: {'ground': 221, 'polygon': 0, 'observed': (55, 135), 'points': [(511, 221, 8), (512, 170, 7), (512, 134, 6), (513, 115, 5), (514, 95, 5), (515, 75, 4.5), (517, 55, 4), (519, 25, 3.8), (515, -10, 2.7), (501, -40, 0.6)]}, 501: {'ground': 214, 'polygon': 1, 'observed': (89, 150), 'points': [(530, 214, 6), (531, 170, 4.7), (532, 149, 4), (533, 130, 3.5), (534, 110, 3.5), (535, 90, 3.4), (535, 55, 3), (538, 15, 2.4), (548, -35, 0.5)]}, 502: {'ground': 199, 'polygon': 2, 'observed': (75, 149), 'points': [(550, 199, 7), (552, 169, 5), (553, 147, 4.5), (554, 125, 4.2), (555, 105, 4), (555, 85, 4), (554, 74, 3.8), (552, 35, 3.3), (547, 0, 2.3), (538, -30, 0.6)]}, 14: {'ground': 191, 'polygon': 3, 'observed': (72, 157), 'points': [(565, 191, 7), (565, 170, 5.5), (565, 156, 5), (565, 140, 4.5), (565, 120, 4.5), (565, 100, 4.5), (565, 80, 4.2), (565, 72, 4), (563, 35, 3.2), (565, 0, 2.3), (575, -30, 0.5)]}}
 
 def main():

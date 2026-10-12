@@ -26,9 +26,9 @@
   "normal_http_proof_sha256": "b623d549dd30de2e4276b118122c62f084f8d48b7a8ca38a4f92a3016b77ea92",
   "full_private_browser_sha256": "301fa10b1529f456521066275766e20415afcf0ac69305241fa2d2df00830046",
   "screenshots": {
-    "level-editor/work/croisement03-refinement/restart2/approved-stone-integration-preflight/three-stones-stage-v1/croisement03-southeast-stone-wall-live-browser.png": "f433919e53e0a63d57a6fd64c882a44b9f71f790dc0d9ea8403977074fc72ccb",
-    "level-editor/work/croisement03-refinement/restart2/approved-stone-integration-preflight/three-stones-stage-v1/croisement03-east-tree-rocks-live-browser.png": "1374530decd4ad5a182c49e993080641282dfd9894435570529d2b8b9d38248d",
-    "level-editor/work/croisement03-refinement/restart2/approved-stone-integration-preflight/three-stones-stage-v1/croisement03-central-shrub-boulder-live-browser.png": "c47179c27d9c5d0be2daa32012bdb53403a1ce33c5157b3be3ce6885a160cd1c"
+    "level-editor/work/active/croisement03/restart2/approved-stone-integration-preflight/three-stones-stage-v1/croisement03-southeast-stone-wall-live-browser.png": "f433919e53e0a63d57a6fd64c882a44b9f71f790dc0d9ea8403977074fc72ccb",
+    "level-editor/work/active/croisement03/restart2/approved-stone-integration-preflight/three-stones-stage-v1/croisement03-east-tree-rocks-live-browser.png": "1374530decd4ad5a182c49e993080641282dfd9894435570529d2b8b9d38248d",
+    "level-editor/work/active/croisement03/restart2/approved-stone-integration-preflight/three-stones-stage-v1/croisement03-central-shrub-boulder-live-browser.png": "c47179c27d9c5d0be2daa32012bdb53403a1ce33c5157b3be3ce6885a160cd1c"
   },
   "visual_review": "Installed screenshot portions personally viewed; default browser viewport clips complete object framing, so full saved GLB eight-view derivative evidence remains authoritative for complete geometry. Exact normalHTTP model/descriptor checks pass.",
   "root_stage_visual_review": "Root personally reviewed map-before-insertion and all three derivative actual8 sheets; scoped placement/appearance PASS.",

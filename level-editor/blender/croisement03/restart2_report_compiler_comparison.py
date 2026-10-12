@@ -1,7 +1,7 @@
 """Report every same-compiler canonical/staged difference without filtering fields."""
 import argparse,collections,gzip,hashlib,json
 from pathlib import Path
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2/compiler-rebase-diagnosis-v2'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2/compiler-rebase-diagnosis-v2'
 def main():
  ap=argparse.ArgumentParser();ap.add_argument('--candidate',type=Path,default=B/'candidate.json');args=ap.parse_args();a=json.loads((B/'canonical.json').read_text());b=json.loads(args.candidate.read_text());b=b.get('candidate',b);b={key:b[key]for key in ('geometry','scenerySources')};diff=[]
  def compare(x,y,path=''):

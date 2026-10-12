@@ -1,7 +1,7 @@
 /** Prepare a full same-compiler comparison; no installed library writes. */
 import fs from 'node:fs/promises';import path from 'node:path';import assert from 'node:assert/strict';
 import {compilerPins,verifyPins,compilePinned,hash} from './restart2_trio_compiler_guard.mjs';
-const [destination,reuse]=process.argv.slice(2);assert.ok(destination);const out=path.resolve(destination);const b=path.resolve('level-editor/work/croisement03-refinement/restart2');const code=await compilerPins();
+const [destination,reuse]=process.argv.slice(2);assert.ok(destination);const out=path.resolve(destination);const b=path.resolve('level-editor/work/active/croisement03/restart2');const code=await compilerPins();
 if(reuse){const bytes=await fs.readFile(reuse),snapshot=JSON.parse(bytes);assert.equal(snapshot.status,'PASS_SAME_COMPILER_FULL_GAMEPLAY_AND_SCENERY');assert.equal(snapshot.nodeVersion,process.version);assert.deepEqual(snapshot.compilerPins,code);await verifyPins(snapshot.prior.inputPins);await verifyPins(snapshot.candidate.inputPins);assert.deepEqual(snapshot.prior.geometry,snapshot.candidate.geometry);assert.deepEqual(snapshot.prior.scenerySources,snapshot.candidate.scenerySources);assert.ok(snapshot.candidate.inputPins[b+'/combined-trio-inferred-crown-candidate-v1/browser-library-v1/library/scenes/croisement03.rhlos-map.json']);await fs.writeFile(out,bytes);console.log(JSON.stringify({output:out,sha256:hash(bytes),status:snapshot.status,reused:true}));process.exit(0);}
 await fs.writeFile(out+'.compiler-pins.json',JSON.stringify({status:'COMPILING',compilerPins:code,nodeVersion:process.version}));
 const prior=await compilePinned(b+'/combined-trio-stage-v2/library/scenes/croisement03.rhlos-map.json',b+'/combined-trio-stage-v2/library');

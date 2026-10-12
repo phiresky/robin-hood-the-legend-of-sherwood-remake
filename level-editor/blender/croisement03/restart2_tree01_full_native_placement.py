@@ -2,7 +2,7 @@
 import argparse,hashlib,json,math
 from pathlib import Path
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';W=B/'restart2';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';W=B/'restart2';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 def main():
  p=argparse.ArgumentParser();p.add_argument('--output',type=Path,required=True);out=p.parse_args().output;assert not out.exists();pins={}
  def pin(path):pins[str(path)]=hashlib.sha256(path.read_bytes()).hexdigest();return path

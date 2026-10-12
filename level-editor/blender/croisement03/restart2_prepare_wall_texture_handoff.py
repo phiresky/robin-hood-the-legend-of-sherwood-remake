@@ -10,7 +10,7 @@ sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from texture_decisions import evidence, fields
 from texture_staging import validate_texture_handoff
 
-R = ROOT / 'level-editor/work/croisement03-refinement/restart2'
+R = ROOT / 'level-editor/work/active/croisement03/restart2'
 ASSET = 'croisement03-southeast-stone-wall'
 
 
@@ -23,7 +23,7 @@ def write(path, value):
 
 
 def main():
-    batch = ROOT / 'level-editor/work/croisement02-refinement/restart3-review-batches/batch-v7'
+    batch = ROOT / 'level-editor/work/active/croisement02/restart3-review-batches/batch-v7'
     receipt = batch / 'user-approval.json'
     assert sha(receipt) == '262e46f66799913d51cd0e34404cb58333772f6f11ea6897f57bc828d5f5a13c'
     approval = json.loads(receipt.read_text())

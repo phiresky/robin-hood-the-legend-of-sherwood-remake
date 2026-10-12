@@ -6,7 +6,7 @@ No model save, rendering, source-domain edits or geometry corrections are perfor
 """
 import argparse,hashlib,json,math,sys,shutil
 from pathlib import Path
-R=Path(__file__).resolve().parents[3];W=R/'level-editor/work/croisement03-refinement/restart2'
+R=Path(__file__).resolve().parents[3];W=R/'level-editor/work/active/croisement03/restart2'
 OMIT=('Tree01 observed native frame0 provisional cells','Tree01 observed native proposed static samples')
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():

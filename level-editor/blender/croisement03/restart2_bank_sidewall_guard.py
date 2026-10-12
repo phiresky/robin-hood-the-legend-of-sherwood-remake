@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from restart2_bank_boundary_ray import boundary_hits
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-sidewall-cpu-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));ray=np.array([0.,-C,S])
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'bank-sidewall-cpu-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));ray=np.array([0.,-C,S])
 def main():
  old=json.loads((B/'bank-whole-geometry-plan-v4/geometry.json').read_text());new=json.loads((O/'geometry.json').read_text());west=json.loads((B/'bank-continuous-strata-plan-v1/geometry.json').read_text());old['53']=new['53']=west;meshes=lambda d:{k:(d[k]['vertices'],d[k]['faces'])for k in ['52','53','54']};before=meshes(old);after=meshes(new);rows=json.loads((B/'bank-shoulder-face-routing-v1/routing.json').read_text())['rows'];control_errors=[]
  for row in rows:

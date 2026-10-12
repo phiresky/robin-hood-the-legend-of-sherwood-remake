@@ -3,7 +3,7 @@ import hashlib,json
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageChops
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement03-refinement';R=OUT/'restart2'
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement03';R=OUT/'restart2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def write(p,j):p.write_text(json.dumps(j,indent=2)+'\n')
 def clean(image):
@@ -21,7 +21,7 @@ def main():
             for number in [35,76]:
                 add(R/f'fern-ownership-v1/fern-{number}/observed-source.png',f'croisement03-fern-{number}', 'Own native observed fern foliage after traced bark removal. Fine golden olive and brown frond texture only; preserve the target fixed leaves and openings, do not add a trunk or copy plant layout.')
         elif 'firewood' in asset:
-            archive=ROOT/'level-editor/work/croisement02-refinement/user-reviews/croisement02-north-firewood-stack/da08898704c0518a20db03f6693188e832891e1c4a70bebe72bd156296df2dd8/modified/views'
+            archive=ROOT/'level-editor/work/active/croisement02/user-reviews/croisement02-north-firewood-stack/da08898704c0518a20db03f6693188e832891e1c4a70bebe72bd156296df2dd8/modified/views'
             add(archive/'view-0-textured.png','croisement02-north-firewood-stack','Observed rough brown billet bark and pale cut wood ends; material grain example only. The target remains exactly three compact round logs, with its own lighting and proportions.',box=[130,110,168,148],known=archive/'view-0-known.png',scale=5)
             source=OUT/'baseline/covered.png';image=Image.open(source).convert('RGBA');domain=Image.open(R/'firewood-v7/observed-wood-domain.png').convert('L');level=json.loads((OUT/'baseline/Croisement03.rhp.json').read_text())
             for number in [45,54]:

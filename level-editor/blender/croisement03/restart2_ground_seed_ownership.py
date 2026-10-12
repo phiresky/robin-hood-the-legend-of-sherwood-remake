@@ -3,7 +3,7 @@ import hashlib,json,math,struct
 from pathlib import Path
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'trio-tree-integration-v1/seed-ground-ownership-v2'
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'trio-tree-integration-v1/seed-ground-ownership-v2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  OUT.mkdir(exist_ok=False);p=B.parent/'baseline/croisement03-volumes.scene.glb';data=p.read_bytes();n=struct.unpack_from('<I',data,12)[0];g=json.loads(data[20:20+n]);binary=data[28+n:]

@@ -4,7 +4,7 @@ import hashlib
 import math
 from pathlib import Path
 import numpy as np
-B=Path(__file__).resolve().parents[3]/'level-editor/work/croisement03-refinement/restart2'
+B=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement03/restart2'
 
 
 def main():

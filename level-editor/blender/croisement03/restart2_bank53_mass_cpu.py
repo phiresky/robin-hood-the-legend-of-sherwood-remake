@@ -3,7 +3,7 @@ import argparse,hashlib,json,math,sys
 from pathlib import Path
 from collections import Counter
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 sys.path.insert(0,str(Path(__file__).parent))
 from restart2_bank_continuous_strata import triangulate
 

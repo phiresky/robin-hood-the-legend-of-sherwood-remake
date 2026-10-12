@@ -7,7 +7,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 
 def main():
- e=ROOT/'level-editor/work/croisement03-refinement/restart2/texture-batch-v7/croisement03-tree-25/experiment';out=e/'leaf-mapping-audit-v1';out.mkdir(exist_ok=False);model=e/'baked-preserved-v5/worker.blend';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();assert sha(model)=='324c3f747958806798d729f1f1a4bcc37a022bf95d5e7e580a6e6916b918689f';acquire();bpy.ops.wm.open_mainfile(filepath=str(model));obj=next(o for o in bpy.data.objects if o.type=='MESH' and o.get('asset_group')=='croisement03-tree-25');mesh=obj.data;mesh.calc_loop_triangles();ownership=mesh.color_attributes['Source ownership'];rows=[];panels=[]
+ e=ROOT/'level-editor/work/active/croisement03/restart2/texture-batch-v7/croisement03-tree-25/experiment';out=e/'leaf-mapping-audit-v1';out.mkdir(exist_ok=False);model=e/'baked-preserved-v5/worker.blend';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();assert sha(model)=='324c3f747958806798d729f1f1a4bcc37a022bf95d5e7e580a6e6916b918689f';acquire();bpy.ops.wm.open_mainfile(filepath=str(model));obj=next(o for o in bpy.data.objects if o.type=='MESH' and o.get('asset_group')=='croisement03-tree-25');mesh=obj.data;mesh.calc_loop_triangles();ownership=mesh.color_attributes['Source ownership'];rows=[];panels=[]
  for slot,mat in enumerate(mesh.materials):
   if not mat or not mat.get('foliage_physical_opacity'):continue
   node=next(n for n in mat.node_tree.nodes if n.type=='TEX_IMAGE' and n.image);uv=mesh.uv_layers[node.inputs['Vector'].links[0].from_node.uv_map];width,height=node.image.size;ratios=[];areas=[];flags=set()

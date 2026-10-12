@@ -5,7 +5,7 @@ from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from prepare_texture_packet import prepare
-OUT=ROOT/'level-editor/work/croisement03-refinement/restart2'
+OUT=ROOT/'level-editor/work/active/croisement03/restart2'
 SPECS={
  'tree25': ('croisement03-tree-25','d53bf850b4ac24e6f5251de508508527f7bf2670921b7da564ad61ea29c1eb6d','geometry-round2-tree25-v17','tree25-full-v17','Static tree geometry only; texture and wind pending; permitted external tree references only.'),
  'boulder': ('croisement03-central-shrub-boulder','907af649155149ca69de12d8f14dacaef015b96ef02700da3056439b22ada31e','geometry-round2-boulder-v2','central-boulder-v2','Stone geometry only;83 mask48 fringe pixels explicitly excluded from appearance approval; plants and real terrain unfinished.')}
@@ -15,7 +15,7 @@ RECEIPT='262e46f66799913d51cd0e34404cb58333772f6f11ea6897f57bc828d5f5a13c'
 def sha(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 def write(path,data):Path(path).write_text(json.dumps(data,indent=2)+'\n')
 def main():
-    receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/batch-v7/user-approval.json'
+    receipt=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/batch-v7/user-approval.json'
     assert sha(receipt)==RECEIPT
     approval=json.loads(receipt.read_text())
     decision=next(d for d in approval['decisions'] if d['card_id']=='geometry-'+ASSET)

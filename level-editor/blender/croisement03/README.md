@@ -1,7 +1,7 @@
 # Croisement03 refinement
 
 Private work and frozen source evidence live in
-`level-editor/work/croisement03-refinement/`. These recipes do not modify the
+`level-editor/work/active/croisement03/`. These recipes do not modify the
 published editor library. Crossings03 is the English task name for Croisement03.
 
 `setup_scene.py` imports the archived volume scene, freezes source artwork and

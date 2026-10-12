@@ -1,7 +1,7 @@
 """Freeze the exact reviewed receiver input scope for grouped approval."""
 import json,hashlib
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement03-refinement/restart2';D=B/'trio-tree-integration-v1/terrain-input-proposal-v5';OUT=B/'texture-input-round1-trio-ground-v5'
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement03/restart2';D=B/'trio-tree-integration-v1/terrain-input-proposal-v5';OUT=B/'texture-input-round1-trio-ground-v5'
 def h(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def write(p,v):p.write_text(json.dumps(v,indent=2)+'\n')
 def main():

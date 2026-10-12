@@ -1,7 +1,7 @@
 """Prepare canonical trio editor verification without launching a browser."""
 import json,hashlib,shutil,subprocess
 from pathlib import Path
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';OLD=B/'combined-trio-editor-interaction-browser-v1';O=B/'combined-trio-canonical-postinstall-browser-v2';LIB=R/'level-editor/library'
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';OLD=B/'combined-trio-editor-interaction-browser-v1';O=B/'combined-trio-canonical-postinstall-browser-v2';LIB=R/'level-editor/library'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main():

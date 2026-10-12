@@ -3,7 +3,7 @@ import json,hashlib,math
 from pathlib import Path
 from collections import defaultdict,Counter
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-curved-body-cpu-v1';ray=np.array([0.,-math.cos(math.radians(35)),math.sin(math.radians(35))])
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'bank-curved-body-cpu-v1';ray=np.array([0.,-math.cos(math.radians(35)),math.sin(math.radians(35))])
 def main():
  O.mkdir(exist_ok=False);input_=B/'bank-sidewall-cpu-v1/geometry.json';data=json.loads(input_.read_text());report=[]
  for owner in ['52','54']:

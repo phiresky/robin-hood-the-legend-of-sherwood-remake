@@ -3,7 +3,7 @@ import json,hashlib,math
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw,ImageFilter
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';O=B/'restart2/tree01-static-leaf-proposal-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';O=B/'restart2/tree01-static-leaf-proposal-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  source=B/'baseline/covered.png';fragment=B/'restart2/tree01-native-fragment-v1';wood=B/'restart2/tree01-cpu-complete-wood-v3/geometry.json';d=json.loads(wood.read_text());domain=np.array(Image.open(fragment/'spatial-proposal.png'))>0;union=np.array(Image.open(fragment/'alpha-union.png'))>0;reserved=Image.new('L',(175,175));draw=ImageDraw.Draw(reserved)

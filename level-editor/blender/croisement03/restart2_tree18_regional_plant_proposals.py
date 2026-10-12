@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 R=Path(__file__).resolve().parents[3]
-B=R/'level-editor/work/croisement03-refinement'
+B=R/'level-editor/work/active/croisement03'
 W=B/'restart2'
 
 def main():

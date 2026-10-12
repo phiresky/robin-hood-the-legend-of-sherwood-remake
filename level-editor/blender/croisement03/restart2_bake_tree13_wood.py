@@ -8,7 +8,7 @@ from render_slots import acquire,release
 from bake_reviewed_asset import stage
 
 def main():
-    base=ROOT/'level-editor/work/croisement03-refinement/restart2/tree13-approved-wood-texture-v2'
+    base=ROOT/'level-editor/work/active/croisement03/restart2/tree13-approved-wood-texture-v2'
     experiment=base/'packet-v1/experiment'
     output=experiment/'baked-projection-v1'
     assert not output.exists()

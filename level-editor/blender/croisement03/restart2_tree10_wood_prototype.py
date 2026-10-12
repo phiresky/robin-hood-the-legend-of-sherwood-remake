@@ -10,7 +10,7 @@ from restart2_tree13_wood_v1 import mesh_for
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'tree10-wood-prototype-v1';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
+B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'tree10-wood-prototype-v1';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
 SPECS={20:dict(ground=175,points=[(834,175,7.2),(833,167,5.3),(832.5,154,4),(832.5,139,3.5),(832,125,3.2),(833,113,3),(833,90,2.9),(831,65,2.7),(829,35,2.5),(827,0,2.1),(824,-27,1.5),(818,-48,.4)])}
 
 def main():

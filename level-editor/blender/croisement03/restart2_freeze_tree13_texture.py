@@ -7,7 +7,7 @@ from build_review_gallery import build
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main():
- b=ROOT/'level-editor/work/croisement03-refinement/restart2';src=b/'tree13-approved-wood-texture-v2/source-restored-fill-v1';out=b/'texture-review-tree13-local75-v1';assert not out.exists();out.mkdir()
+ b=ROOT/'level-editor/work/active/croisement03/restart2';src=b/'tree13-approved-wood-texture-v2/source-restored-fill-v1';out=b/'texture-review-tree13-local75-v1';assert not out.exists();out.mkdir()
  model=src/'worker.blend';assert sha(model)=='ef3f45a211714993959e420ff99fb3b2c709068971861ce6336c9a010f4cc553'
  native=json.loads((src/'native-audit.json').read_text());assert native['accepted_bark_changes']==native['provisional_foliage_changes']==native['known_misses']==0
  notes=['APPEARANCE ONLY: generated inferred wood RGB on user-approved tree13/local75 geometry. Three source-part joins preserve physical triangles; no canopy change.',

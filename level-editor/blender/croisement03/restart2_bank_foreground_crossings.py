@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 R = Path(__file__).resolve().parents[3]
-B = R / 'level-editor/work/croisement03-refinement'
+B = R / 'level-editor/work/active/croisement03'
 O = B / 'restart2/bank-foreground-crossings-v1'
 
 

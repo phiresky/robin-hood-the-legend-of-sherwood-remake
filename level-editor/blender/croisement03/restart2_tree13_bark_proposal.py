@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement03-refinement';OUT=BASE/'restart2/tree13-bark-proposal-v1'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement03';OUT=BASE/'restart2/tree13-bark-proposal-v1'
 POLYGONS={48:[(1045,59),(1048,60),(1048,69),(1046,72),(1045,84),(1043,85),(1043,75),(1044,68)],31:[(1069,46),(1071,46),(1072,58),(1070,62),(1068,59),(1068,51)],32:[(1089,58),(1091,59),(1090,67),(1088,75),(1086,78),(1086,72),(1088,65)]}
 def main():
  OUT.mkdir(exist_ok=False);source=Image.open(BASE/'baseline/covered.png').convert('RGB');rgb=np.array(source);level=json.loads((BASE/'baseline/Croisement03.rhp.json').read_text());domain=Image.new('L',source.size);domain.paste(Image.open(BASE/'baseline/masks/000013.png'),tuple(level['masks'][13]['box_top_left']));native=np.array(domain)>0;union=np.zeros(native.shape,bool);rows=[]

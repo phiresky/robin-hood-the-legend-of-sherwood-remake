@@ -9,7 +9,7 @@ from PIL import Image
 from render_slots import acquire,release
 from scenery_geometry import Mesh
 from log_trap_state_candidate import point,material,SIN,COS,RAY
-OUT=ROOT/'level-editor/work/croisement03-refinement/mission-logtrap-oct12-v1'
+OUT=ROOT/'level-editor/work/active/croisement03/mission-logtrap-oct12-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def resources():
  values=dict(line.split(':',1) for line in Path('/proc/meminfo').read_text().splitlines());assert int(values['MemAvailable'].split()[0])*1024>=6*1024**3,'RAM guard';assert shutil.disk_usage(ROOT).free>=10*1024**3,'disk guard'

@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageChops
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement03-refinement'
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement03'
 def main():
     source=OUT/'baseline/covered.png';art=Image.open(source).convert('RGBA');level=json.loads((OUT/'baseline/Croisement03.rhp.json').read_text());destination=OUT/'restart2/southeast-wall-source';destination.mkdir(parents=True,exist_ok=True)
     def mask(number):

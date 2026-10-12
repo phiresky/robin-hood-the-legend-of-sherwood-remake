@@ -3,7 +3,7 @@ import copy,hashlib,json,shutil
 from pathlib import Path
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement03-refinement/restart2';O=B/'combined-trio-stage-v2';LIB=ROOT/'level-editor/library'
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement03/restart2';O=B/'combined-trio-stage-v2';LIB=ROOT/'level-editor/library'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def read(p):return json.loads(Path(p).read_text())
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')

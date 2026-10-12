@@ -3,7 +3,7 @@ import hashlib,io,json,struct
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement03-refinement/restart2';CASE=B/'trio-tree-integration-v1';OUT=CASE/'terrain-input-proposal-v4'
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement03/restart2';CASE=B/'trio-tree-integration-v1';OUT=CASE/'terrain-input-proposal-v4'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  OUT.mkdir(exist_ok=False);model=ROOT/'level-editor/library/3d-assets/croisement03/croisement03-terrain/model.glb';data=model.read_bytes();n=struct.unpack_from('<I',data,12)[0];g=json.loads(data[20:20+n]);v=g['bufferViews'][g['images'][0]['bufferView']];im=Image.open(io.BytesIO(data[28+n+v.get('byteOffset',0):28+n+v.get('byteOffset',0)+v['byteLength']])).convert('RGB');original=np.array(im);candidate=np.zeros(original.shape[:2],bool);guards={str(model):sha(model)}

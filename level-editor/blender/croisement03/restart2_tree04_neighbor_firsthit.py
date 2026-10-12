@@ -9,7 +9,7 @@ from mathutils.geometry import barycentric_transform
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';SIN=math.sin(math.radians(35));RAY=Vector((0,-math.cos(math.radians(35)),SIN))
+B=ROOT/'level-editor/work/active/croisement03/restart2';SIN=math.sin(math.radians(35));RAY=Vector((0,-math.cos(math.radians(35)),SIN))
 def world(o):return world(o.parent)@o.matrix_parent_inverse@o.matrix_basis if o.parent else o.matrix_basis.copy()
 def main():
  version=sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'v1';out=B/f'tree04-crown-prototype-{version}';assert not (out/'neighbor-firsthit-baseline.json').exists();acquire()

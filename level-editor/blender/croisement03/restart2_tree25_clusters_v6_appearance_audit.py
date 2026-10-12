@@ -7,7 +7,7 @@ from render_slots import acquire,release
 
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
- p=ROOT/'level-editor/work/croisement03-refinement/restart2/texture-batch-v7/croisement03-tree-25/experiment/cluster-geometry-v6';out=p/'appearance-audit.json';assert not out.exists();model=p/'worker.blend';assert sha(model)=='9e8ece3cc693a2ef387333c762e8a85d2cc3fa808a7726c821bebd9233cb0272';acquire()
+ p=ROOT/'level-editor/work/active/croisement03/restart2/texture-batch-v7/croisement03-tree-25/experiment/cluster-geometry-v6';out=p/'appearance-audit.json';assert not out.exists();model=p/'worker.blend';assert sha(model)=='9e8ece3cc693a2ef387333c762e8a85d2cc3fa808a7726c821bebd9233cb0272';acquire()
  try:
   bpy.ops.wm.open_mainfile(filepath=str(model));o=next(o for o in bpy.data.objects if o.type=='MESH' and o.get('asset_group')=='croisement03-tree-25');rows=[]
   for slot in sorted({f.material_index for f in o.data.polygons}):

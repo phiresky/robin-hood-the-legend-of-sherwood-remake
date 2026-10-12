@@ -5,7 +5,7 @@ from collections import Counter
 import numpy as np
 from PIL import Image,ImageDraw
 from restart2_bank_boundary_ray import boundary_hits
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-shoulder-face-routing-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));ray=np.array([0.,-C,S])
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03/restart2';O=B/'bank-shoulder-face-routing-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));ray=np.array([0.,-C,S])
 def main():
  O.mkdir(exist_ok=False);path=B/'bank-whole-geometry-plan-v4/geometry.json';data=json.loads(path.read_text());west=json.loads((B/'bank-continuous-strata-plan-v1/geometry.json').read_text());data['53']=west;meshes={k:(v['vertices'],v['faces'])for k,v in data.items()if k in ['52','53','54']};source=json.loads((B/'bank-shoulder-source-v1/traces.json').read_text());rows=[];counts=Counter();im=Image.open(B.parent/'baseline/covered.png').convert('RGB');draw=ImageDraw.Draw(im)
  for trace in source['traces']:

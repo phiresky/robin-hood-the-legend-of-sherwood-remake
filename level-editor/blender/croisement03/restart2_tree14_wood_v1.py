@@ -10,7 +10,7 @@ from restart2_tree13_wood_v1 import mesh_for
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=ROOT/'level-editor/work/croisement03-refinement/restart2';OUT=B/'tree14-wood-v1';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
+B=ROOT/'level-editor/work/active/croisement03/restart2';OUT=B/'tree14-wood-v1';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=Vector((0,-COS,SIN))
 SPECS={26:dict(ground=137,points=[(1135,137,8),(1135,115,7),(1134,90,6),(1134,60,5.5),(1134.5,35,5),(1135,0,6),(1137,-35,4),(1136,-70,.5)]),27:dict(ground=137,points=[(1117,137,4),(1116.5,110,3.5),(1119,90,3.5),(1121,73,3.7),(1123,59,3.3),(1125,45,3.2),(1127,31,3),(1128,0,3),(1129,-35,1.8),(1128,-60,.4)])}
 def main():
  assert shutil.disk_usage(ROOT).free>25*1024**3;OUT.mkdir(exist_ok=False);acquire()

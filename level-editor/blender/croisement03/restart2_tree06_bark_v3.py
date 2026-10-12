@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[3]
-B = ROOT / 'level-editor/work/croisement03-refinement'
+B = ROOT / 'level-editor/work/active/croisement03'
 OUT = B / 'restart2/tree06-bark-proposal-v3'
 
 

@@ -3,7 +3,7 @@ import argparse,importlib.util,json,shutil,subprocess,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 HERE=Path(__file__).resolve().parent
-BASE=ROOT/'level-editor/work/croisement03-refinement/restart2'
+BASE=ROOT/'level-editor/work/active/croisement03/restart2'
 RUNS=BASE/'final-trio-publication-transaction-v1'
 LIB=ROOT/'level-editor/library';ASSETS=LIB/'3d-assets'
 CORE=ROOT/'level-editor/blender/york/restart44_static_transaction.py'

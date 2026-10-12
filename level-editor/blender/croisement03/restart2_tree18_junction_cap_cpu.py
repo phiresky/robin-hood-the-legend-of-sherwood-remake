@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 import restart2_tree18_root_connectivity as topology
 import restart2_tree18_cpu_wood as sweeps
-B=Path(__file__).resolve().parents[3]/'level-editor/work/croisement03-refinement/restart2'
+B=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement03/restart2'
 
 
 def main():

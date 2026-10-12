@@ -4,7 +4,7 @@ from pathlib import Path
 import bpy,bmesh,numpy as np
 R=Path(__file__).resolve().parents[3];sys.path.insert(0,str(R/'level-editor/refinement'))
 from render_slots import acquire,release
-B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-shoulder-lofts-saved-v1'
+B=R/'level-editor/work/active/croisement03/restart2';O=B/'bank-shoulder-lofts-saved-v1'
 def main():
  global O
  ap=argparse.ArgumentParser();ap.add_argument('--folder',type=Path,default=O);args=ap.parse_args(sys.argv[sys.argv.index('--')+1:]if '--'in sys.argv else []);O=args.folder.resolve();assert not (O/'independent-contact-audit.json').exists()

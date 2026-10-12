@@ -7,7 +7,7 @@ from PIL import Image,ImageDraw
 R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/refinement/blender')]
 from render_views import render_views as render
 from evidence_io import sha,write_json
-B=R/'level-editor/work/croisement03-refinement/restart2';BASE=R/'level-editor/blender/croisement03/restart2_tree02_shared_ridge_joint_v5.py'
+B=R/'level-editor/work/active/croisement03/restart2';BASE=R/'level-editor/blender/croisement03/restart2_tree02_shared_ridge_joint_v5.py'
 def contact(scene_name,views,output,**ignored):
  s=bpy.data.scenes[scene_name];sn=math.sin(math.radians(35));cs=math.cos(math.radians(35));target=Vector((270,-435,(435*sn-170)/cs));points=[o.matrix_world@v.co for o in s.objects if o.type=='MESH' for v in o.data.vertices];chosen={};bounds={}
  for i,label in [(0,'native'),(4,'reverse')]:

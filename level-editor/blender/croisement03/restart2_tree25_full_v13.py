@@ -18,7 +18,7 @@ from render_slots import acquire, release
 from refinement_workspace import prepare, modified
 import foliage_trees
 
-OUT = ROOT / 'level-editor/work/croisement03-refinement'
+OUT = ROOT / 'level-editor/work/active/croisement03'
 ASSET = 'croisement03-tree-25'
 SINE, COSINE = math.sin(math.radians(35)), math.cos(math.radians(35))
 RAY = Vector((0, -COSINE, SINE))

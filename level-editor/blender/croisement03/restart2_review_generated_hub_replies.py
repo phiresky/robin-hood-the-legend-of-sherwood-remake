@@ -7,7 +7,7 @@ import json,hashlib,base64,io
 import numpy as np
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
-B=ROOT/'level-editor/work/croisement03-refinement/restart2/approved-hub-textures-v1'
+B=ROOT/'level-editor/work/active/croisement03/restart2/approved-hub-textures-v1'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def rgba(p):return np.array(Image.open(p).convert('RGBA'))
 for rel in ['croisement03-tree-11/wood-input-v1/packet-v1/experiment','trio-ground/correction-v2/experiment']:

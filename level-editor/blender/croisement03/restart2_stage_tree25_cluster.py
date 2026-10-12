@@ -12,7 +12,7 @@ from asset_index import write_asset_index
 from unify_map_assets import stage
 from hybrid_library import stage_hybrid
 
-RUN = ROOT / 'level-editor/work/croisement03-refinement/restart2'
+RUN = ROOT / 'level-editor/work/active/croisement03/restart2'
 BASE = RUN / 'tree25-cluster-integration-v2'
 
 

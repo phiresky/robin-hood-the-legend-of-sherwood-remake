@@ -17,7 +17,7 @@ from render_slots import acquire,release
 
 
 def main():
-    e=ROOT/'level-editor/work/croisement03-refinement/restart2/texture-batch-v7/croisement03-tree-25/experiment'
+    e=ROOT/'level-editor/work/active/croisement03/restart2/texture-batch-v7/croisement03-tree-25/experiment'
     out=e/'cluster-geometry-v5'; report=json.loads((out/'construction.json').read_text())
     assert not (out/'native-appearance.json').exists()
     reference=np.load(out/'native-samples.npz'); before=reference['rgba']; observed_before=reference['observed']

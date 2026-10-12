@@ -320,7 +320,7 @@ The bridge, log and ferns add previously absent scenery; the firewood replaces
 `croisement03-group-049`, preserving its gameplay and world obstacle coordinates.
 The old payload is retained, with its discoverable descriptor retired.
 
-Evidence is under `level-editor/work/croisement03-refinement/restart2/`:
+Evidence is under `level-editor/work/active/croisement03/restart2/`:
 
 - `publication-five-v1/live-promotion-result.json`: 33 installed-file hash checks,
   199 protected-file checks, and 1,288 unrelated catalog entries preserved.

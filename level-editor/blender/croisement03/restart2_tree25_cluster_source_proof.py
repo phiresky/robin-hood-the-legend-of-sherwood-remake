@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[3]
 
 
 def main():
- run=ROOT/'level-editor/work/croisement03-refinement'
+ run=ROOT/'level-editor/work/active/croisement03'
  revision=sys.argv[1] if len(sys.argv)>1 else 'cluster-geometry-v4'
  assert revision in ('cluster-geometry-v4','cluster-geometry-v5','cluster-geometry-v6')
  out=run/'restart2/texture-batch-v7/croisement03-tree-25/experiment'/revision

@@ -8,7 +8,7 @@ R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(R/'level-editor/refineme
 from render_slots import acquire,release
 from render_views import render_views
 from evidence_io import sha,write_json
-B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-continuous-strata-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+B=R/'level-editor/work/active/croisement03/restart2';O=B/'bank-continuous-strata-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 
 def shape(o):return dict(vertices=[list(v.co) for v in o.data.vertices],faces=[list(f.vertices) for f in o.data.polygons],world=[list(r) for r in o.matrix_world])
 

@@ -3,7 +3,7 @@ from pathlib import Path
 import json,hashlib
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/croisement03-refinement/mission-logtrap-oct12-v1'
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/croisement03/mission-logtrap-oct12-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  out=W/'foreground-qualification-v1';out.mkdir(exist_ok=False);manifest=ROOT/'datadirs/fullgame_gog_hackable/Data/Levels/Croisement03.rhp.d/masks/manifest.json';j=json.loads(manifest.read_text());base=Image.open(W/'source-map-context.png').convert('RGB').resize((300,240),Image.Resampling.NEAREST);source=np.array(Image.open(W/'terminal-aligned.png'));known=source[:,:,3]>=128;tiles=[];rows=[];union=np.zeros((240,300),bool)

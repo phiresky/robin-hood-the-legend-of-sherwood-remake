@@ -2,7 +2,7 @@
 import argparse,json,math,hashlib
 from pathlib import Path
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/active/croisement03';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 def check(folder):
  data=json.loads((folder/'geometry.json').read_text());data['53']=json.loads((B/'restart2/bank-continuous-strata-plan-v1/geometry.json').read_text());triangles=[];owners=[]
  for index in ('52','53','54'):
