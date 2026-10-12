@@ -37,9 +37,11 @@ seam export fix plus asset-local sloped click zones pass all 120 moved/copy
 checks at 0/37/180 degrees. The 90-degree join remains unresolved: best-effort
 export now warns and preserves the map, but all forty traversals still fail. It remains
 unpublished; see the [candidate evidence](map-compilation-evidence.md#unpublished-roof-slab-connection-candidate-2026-10-12).
-The separate southeast-house ground click-band candidate removes its click-zone
-misses and passes 156/160 moved cases. Four 180-degree post-landing stalls remain;
-that candidate is also unpublished. See the
+The published southeast-house ground click-band repair removes its click-zone
+misses and passes 160/160 moved cases. Four apparent stalls were audit errors
+around the native zero-distance stop reservation; runtime behavior is unchanged.
+The full-map upright audit now passes 369/390, with ten helper-required
+rejections and eleven remaining failures. ZIP/render verification remains open. See the
 [ground landing audit](map-compilation-evidence.md#ground-landing-click-band-candidate-2026-10-12).
 See [partition verification](map-compilation-evidence.md#compiled-jump-receiving-face-partitions-2026-10-12).
 

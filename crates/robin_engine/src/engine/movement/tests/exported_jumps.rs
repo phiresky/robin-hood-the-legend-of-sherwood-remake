@@ -41,6 +41,7 @@ struct StartupWalkAudit {
     turning_loss: f32,
     invalid_step: bool,
     finished: bool,
+    zero_distance_stop_finished: bool,
 }
 
 impl StartupWalkAudit {
@@ -48,6 +49,12 @@ impl StartupWalkAudit {
     // reduces travel without extending that animation. Accept only its measured
     // distance loss, never a general near-goal tolerance or a collision shortfall.
     fn observe(&mut self, before: MapPoint, sprite: &crate::sprite::Sprite) {
+        if sprite.last_action == OrderType::TransitionWalkingUprightWaitingUpright
+            && sprite.last_motion_state == Some(crate::sprite::MotionState::Terminated)
+            && sprite.distance_for_animation(OrderType::TransitionWalkingUprightWaitingUpright) == 0
+        {
+            self.zero_distance_stop_finished = true;
+        }
         if self.finished || sprite.last_action != OrderType::TransitionWaitingUprightWalkingUpright
         {
             return;
@@ -76,11 +83,14 @@ impl StartupWalkAudit {
         let delta = goal - start;
         let distance = delta.length();
         let moved = self.raw_distance - self.turning_loss;
+        // End-transition insertion reserves this exact span even for a stop
+        // animation with zero displacement. Require its observed completion.
+        let stop_span = if self.zero_distance_stop_finished { 0.01 } else { 0. };
         if !self.finished
             || self.invalid_step
             || self.turning_loss <= 0.
             || distance <= 0.
-            || self.raw_distance + 0.001 < distance
+            || self.raw_distance + stop_span + 0.001 < distance
             || moved >= distance
         {
             return false;
@@ -156,6 +166,15 @@ fn short_startup_finishes_its_animation_with_only_the_turning_distance_loss() {
             (sprite.position_iface.map_position().x - start.x - expected_distance).abs() < 0.001
         );
         assert_eq!(audit.completed_while_turning(sprite, goal), turn != 0);
+        if turn != 0 {
+            let reserved_stop_goal = MapPoint::new(404.0097, 300.);
+            assert!(!audit.completed_while_turning(sprite, reserved_stop_goal));
+            audit.zero_distance_stop_finished = true;
+            assert!(audit.completed_while_turning(sprite, reserved_stop_goal));
+            assert!(!audit.completed_while_turning(sprite, MapPoint::new(404.02, 300.)));
+            audit.invalid_step = true;
+            assert!(!audit.completed_while_turning(sprite, reserved_stop_goal));
+        }
     }
 }
 
@@ -1035,10 +1054,18 @@ fn dispatch_jump(
         .entities()
         .current_element_for_actor(owner)
         .and_then(|(id, index)| engine.seq().get_element(id, index));
-    if let Some(trajectory) = trajectory {
+    if let Some(mut trajectory) = trajectory {
+        // Collapse stationary animation cycles so the end of the diagnostic
+        // retains the last movement instead of hundreds of idle frames.
+        trajectory.dedup_by(|a, b| {
+            a["position"] == b["position"]
+                && a["action"] == b["action"]
+                && a["selected"] == b["selected"]
+        });
         eprintln!(
-            "failed jump line {index} at {t}: {:?}",
-            &trajectory[..trajectory.len().min(8)]
+            "failed jump line {index} at {t}: first={:?}, final movement={:?}",
+            &trajectory[..trajectory.len().min(8)],
+            &trajectory[trajectory.len().saturating_sub(16)..]
         );
     }
     let half_diagonal = engine.ent(owner).position_iface().get_half_diagonal();

@@ -19,17 +19,24 @@ full-map click miss (`saved-map-exports-rNL3Yn`: 369/390 upright cases pass).
 This export uses the published roof assets, not the separate unpublished
 roof-slab repair. Its copied-placement check passes 152/160; adding tangent
 margins alone does not change that result. Candidate
-`ground-jump-click-band-PEkMbT` adds the edge margin and passes 156/160 native
-click cases across `ground-jump-placements-ZVsUKu`: both independent copies at
-0/37/90 degrees and elevations 0/40 pass every case. At 180 degrees, each copy
-still stalls after the return flight's midpoint sample. The four failures
-report completed startup/turning and a nonzero difference from the authorized
-arrival; no general arrival tolerance was widened to accept them.
+`ground-jump-click-band-PEkMbT` adds the edge margin and passes **160/160** native
+click cases across `ground-jump-placements-ZVsUKu`: two independent copies at
+0/37/90/180 degrees and elevations 0/40. Four initially reported 180-degree
+stalls were audit errors: the native sequence reserves 0.01 units for a
+zero-displacement stop transition. The audit now accepts that exact reservation
+only after observing the stop finish, while retaining measured turning loss,
+collision checks and the 0.001 endpoint check. The focused regression rejects
+an additional shortfall or an invalid movement step. No runtime behavior changes.
 
 `check-ground-jump-placements.mjs` preserves the asset's geometry while isolating
-the tested pair from its other overlays. The final candidate is unpublished;
-its larger band still needs a full-map regression run, the four post-landing
-failures need investigation, and these fixtures are not ZIP/render proof.
+the tested pair from its other overlays. The final full-map regression
+`saved-map-exports-36IIVl` passes 369/390 upright cases, with identical pass/fail
+outcomes to the first band candidate: ten helper-required rejections and eleven
+remaining failures. All eight placement exports and the full map load natively.
+The game build, Rust formatting check and focused startup audit pass.
+`ground-jump-click-band-PEkMbT/publication/report.json` records publication of the
+asset and the Nottingham descriptor pin. Only the ground click polygon changes;
+these checks do not establish ZIP or rendered traversal fidelity.
 
 ## Wychford tower entrance requires an authored landing (2026-10-12)
 
