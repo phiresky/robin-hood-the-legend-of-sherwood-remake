@@ -32,7 +32,7 @@ def main(mode):
     while True:
         while bake.available()<11*1024**3:print('Waiting 11 GiB for remaining archer batch',flush=True);time.sleep(30)
         assert shutil.disk_usage(bake.ROOT).free>=10*1024**3
-        acquire(slots=2)
+        acquire()
         try:
             if bake.available()<10*1024**3:continue
             for state in pending:

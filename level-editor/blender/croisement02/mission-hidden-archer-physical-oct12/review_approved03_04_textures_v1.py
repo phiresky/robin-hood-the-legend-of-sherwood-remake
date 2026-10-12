@@ -25,7 +25,7 @@ if __name__=='__main__':
     while True:
         while available()<11*1024**3:print('Waiting 11 GiB for archer saved material review',flush=True);time.sleep(30)
         assert shutil.disk_usage(BASE).free>=10*1024**3
-        acquire(slots=2)
+        acquire()
         try:
             if available()<10*1024**3:continue
             main(state);break
