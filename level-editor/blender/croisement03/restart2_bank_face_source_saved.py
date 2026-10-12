@@ -32,6 +32,17 @@ def main():
     path=extra_path.parent/(region['id']+'.png');domain=np.array(Image.open(path))>0;assert int(domain.sum())==region['pixels'];perface.append(dict(id=region['id'],owner=region['owner'],proposed=int(domain.sum()),thin_or_boundary_rejected=0,accepted=0,ray_rejected=[]));extra_proof['regions'].append({'path':str(path),'sha256':sha(path)})
     for y,x in zip(*np.nonzero(domain&~old&~broad)):expected[(int(x),int(y))]=(int(region['owner']),len(perface)-1)
     broad|=domain
+  full_source_proof=None;full_source_hits=[]
+  if '--full-source-proposal' in sys.argv:
+   full_path=Path(sys.argv[sys.argv.index('--full-source-proposal')+1]).resolve();full=json.loads((full_path/'receipt.json').read_text())
+   for path,digest in full['pins'].items():assert sha(Path(path))==digest,path
+   domain=np.array(Image.open(full_path/'additional-interior-proposal.png'))>0;native=np.array(Image.open(full_path/'native-foreground.png'))>0;ambiguous=np.array(Image.open(full_path/'manual-ambiguous.png'))>0
+   assert int(domain.sum())==17773 and not np.any(domain&(native|ambiguous|old))
+   old_accepted=json.loads((B/'bank-main-masses-source-v1/projection.json').read_text())['accepted_pixels'];assert not any(domain[y,x]for x,y in old_accepted)
+   perface.append(dict(id='broader-reviewed-stone-interiors',owner=None,proposed=int(domain.sum()),thin_or_boundary_rejected=0,accepted=0,ray_rejected=[]))
+   for y,x in np.argwhere(domain):
+    expected[(int(x),int(y))]=(None,len(perface)-1)
+   broad|=domain;full_source_proof={'path':str(full_path/'receipt.json'),'sha256':sha(full_path/'receipt.json'),'root_review_sha256':sha(full_path/'root-review.json'),'mask_sha256':sha(full_path/'additional-interior-proposal.png'),'samples':17773,'scope':'Private source projection experiment; current receiver is a hypothesis, not final component ownership.'}
   unresolved={};unresolved_receipt=None;unresolved_hits=[]
   if '--unresolved-receivers' in sys.argv:
    up=Path(sys.argv[sys.argv.index('--unresolved-receivers')+1]).resolve();ud=json.loads(up.read_text())
@@ -62,6 +73,9 @@ def main():
     if (x,y)in unresolved:
      row=unresolved[(x,y)];assert first and first[1]=='Candidate bank '+row['new_owner'],(x,y,first)
      unresolved_hits.append({'source_xy':[x,y],'previous_private_receiver':owner,'saved_preview_receiver':first[1],'saved_face':first[2],'source_rgba':source[y,x].tolist(),'owner_status':'unresolved'})
+    elif owner is None:
+     if not first or not first[1].startswith('Candidate bank '):perface[idx]['ray_rejected'].append([x,y,None if first is None else first[1]]);continue
+     full_source_hits.append({'source_xy':[x,y],'saved_preview_receiver':first[1],'saved_face':first[2],'source_rgba':source[y,x].tolist(),'owner_status':'proposed_current_receiver_not_final_owner'})
     elif not first or first[1]!=f'Candidate bank {owner}':perface[idx]['ray_rejected'].append([x,y,None if first is None else first[1]]);continue
     perface[idx]['accepted']+=1;accepted.append([x,y])
    assignments.setdefault((first[1],first[2]),[]).append((x,y))
@@ -83,6 +97,6 @@ def main():
    obj=bpy.context.scene.objects[name];assert [list(obj.matrix_world@v.co)for v in obj.data.vertices]==verts;assert [list(p.vertices)for p in obj.data.polygons]==faces0
   assert sha(model)==digest;assert len(oldhits)==3446
   provenance_path=INPUT/'interface-construction.json';provenance=json.loads(provenance_path.read_text());provenance['inherited_geometry_provenance']={'path':str(provenance_path),'sha256':sha(provenance_path),'reason':'Material-only derivative; saved vertex/face arrays independently asserted identical.'};(OUT/'interface-construction.json').write_text(json.dumps(provenance,indent=2)+'\n')
-  report=dict(status='PRIVATE_SOURCE_PROJECTION_REQUIRES_SAVED_VISUAL_REVIEW',input_model_sha256=digest,model_sha256=sha(OUT/'worker.blend'),source_sha256=sha(sourcepath),protected3446_unchanged_geometry=True,protected_firsthits=oldhits,proposed=2516+(extra['total']if extra_proof else 0),accepted=len(accepted),accepted_pixels=accepted,extra_proposal=extra_proof,retained_projection=retained_proof,unresolved_receiver_evidence=unresolved_receipt,unresolved_receivers=unresolved_hits,thin_or_boundary_rejected=int((proposal&~broad).sum()),faces=perface,limits=['Only directly reviewed broad stone interiors assigned experimentally; thin matches and wrong receivers remain unknown.','Opening is a conservative rejection filter, not independent ownership evidence.','Manual extra interiors remain subject to exact first-hit owner rejection; original5015 samples must survive.','Any explicit unresolved102 receiver list is a color-continuity preview, not an ownership assignment or approval.','No canonical writes or final appearance approval.']);(OUT/'projection.json').write_text(json.dumps(report,indent=2)+'\n');print({k:report[k]for k in ['status','accepted','thin_or_boundary_rejected']})
+  report=dict(status='PRIVATE_SOURCE_PROJECTION_REQUIRES_SAVED_VISUAL_REVIEW',input_model_sha256=digest,model_sha256=sha(OUT/'worker.blend'),source_sha256=sha(sourcepath),protected3446_unchanged_geometry=True,protected_firsthits=oldhits,proposed=2516+(extra['total']if extra_proof else 0)+(17773 if full_source_proof else 0),accepted=len(accepted),accepted_pixels=accepted,extra_proposal=extra_proof,full_source_proposal=full_source_proof,full_source_receiver_hits=full_source_hits,retained_projection=retained_proof,unresolved_receiver_evidence=unresolved_receipt,unresolved_receivers=unresolved_hits,thin_or_boundary_rejected=int((proposal&~broad).sum()),faces=perface,limits=['Only directly reviewed broad stone interiors assigned experimentally; thin matches and wrong receivers remain unknown.','Opening is a conservative rejection filter, not independent ownership evidence.','Manual extra interiors remain subject to exact first-hit owner rejection; original5015 samples must survive.','Any explicit unresolved102 receiver list is a color-continuity preview, not an ownership assignment or approval.','No canonical writes or final appearance approval.']);(OUT/'projection.json').write_text(json.dumps(report,indent=2)+'\n');print({k:report[k]for k in ['status','accepted','thin_or_boundary_rejected']})
  finally:guard.release()
 if __name__=='__main__':main()
