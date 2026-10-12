@@ -1,5 +1,16 @@
 # Runtime changes introduced or extended for map compilation
 
+**2026-10-12 — ordinary passages touching stairs:** the existing level-load
+receiver cache now includes ordinary passages whose endpoints touch normal or
+stair lift surfaces. Previously the blanket lift exclusion left the old plane
+installed after these passages changed sector. Lincoln's unchanged export now
+passes all sixteen stair routes, repairing two receiver mismatches without
+removing connections. This changes only which doors receive the existing
+two-ID cache at load time; the door-crossing callback and per-tick movement code
+are unchanged. No geometry solver, new format field or movement-time query is
+added. A bidirectional callback regression, receiver-binding checks and 46
+door-pass tests pass. Ladder/wall and virtual-room exclusions remain.
+
 **2026-10-12 — retain hidden jump selection at command dispatch:** the host
 previously discarded the selected jump overlay, and group movement repeated a
 topmost-floor query. This made an otherwise authorized jump under an overlapping

@@ -17,6 +17,7 @@ for (const id of ids) {
   else assets.get(id).gameplay = edit.gameplay;
 }
 const output = await fs.mkdtemp("work/map-compile/great-hall-neighbour-placements-");
+console.log(output);
 const results = [],
   rejected = [];
 for (const height of [0, 40])
@@ -67,11 +68,13 @@ for (const height of [0, 40])
     const compile = (d) => compileMap(d, [0, 0, ...d.size], assets, { bestEffort: true });
     const compiled = compile(document);
     assert.equal(compiled.descriptor.asset_geometry.lifts?.length, 2, compiled.warnings.join("\n"));
-    assert.ok(compiled.descriptor.asset_geometry.lifts.every((l) => l.physical_navigation));
+    assert.ok(compiled.descriptor.asset_geometry.lifts.every((l) => !l.physical_navigation));
+    assert.ok(compiled.descriptor.asset_geometry.motion_data.graph_bytes.length > 0);
     const file = `great-hall-${height}-${rotation}.level.json`;
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
     results.push({ file, map: file, warnings: compiled.warnings });
+    console.log(`${file}: prepared navigation exported`);
     for (const group of document.groups.filter((g) => !g.id.endsWith("/lincoln-great-hall")))
       for (const kind of ["missing", "raised"]) {
         const changed = structuredClone(document);

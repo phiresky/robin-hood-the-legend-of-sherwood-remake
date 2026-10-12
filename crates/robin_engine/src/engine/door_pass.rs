@@ -995,7 +995,14 @@ impl EngineInner {
                     let sector = &self.world.fast_grid.level.sectors
                         [usize::from(sector.expect("bound door sector"))];
                     !sector.sector_type.is_motion()
-                        || sector.sector_type.is_lift()
+                        || (sector.sector_type.is_lift()
+                            && !matches!(
+                                sector.lift_type,
+                                Some(
+                                    crate::sector::LiftType::Normal
+                                        | crate::sector::LiftType::Stairs
+                                )
+                            ))
                         || sector.sector_type.is_building()
                 })
             {

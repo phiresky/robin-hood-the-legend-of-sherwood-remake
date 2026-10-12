@@ -45,9 +45,10 @@ two hidden selections. In-game actor/depth compositing remains unverified.
 See [the archive evidence](map-compilation-evidence.md#published-keep-rendered-archive-2026-10-12).
 
 Fresh Lincoln passes native construction, 182 ordinary route samples and all
-100 jump-click probes. Stair gate discovery passes 14/16 routes; the two
-receiver mismatches involve the great hall stair's authored and generated
-connections. See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-checks-2026-10-12).
+100 jump-click probes. Stair gate discovery now passes all 16 routes after
+including ordinary passages touching stairs in the existing load-time receiver
+cache. All authored connections remain. No new per-tick geometry work is added.
+See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-checks-2026-10-12).
 
 **York jump checks (2026-10-12):** the current full-map audit has 696 successful
 traversals, eleven occluded lower-click cases and thirteen failures out of 720.

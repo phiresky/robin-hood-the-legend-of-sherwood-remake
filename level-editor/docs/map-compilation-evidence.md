@@ -236,11 +236,29 @@ passes native construction, 182 sampled ordinary routes and all 100 ordinary
 jump-click probes. Complete-sprite stair gate discovery passes fourteen of
 sixteen directed routes. The two failures connect runtime entrances 38/56 at
 the great hall stair: actor receiver 542 differs from queried receiver 583
-at the lower inside point, and vice versa on the return. Generated ordinary
-passages coexist with the authored lift entrances at this stair. Whether the
-extra passages are needed, or whether their endpoints/bindings need correction,
-remains under investigation. No runtime change or rendered-archive proof is
-implied by these checks.
+at the lower inside point, and vice versa on the return. The initial suspicion
+of compiler-generated duplicate passages was incorrect: both ordinary passages
+are asset-authored connections alongside the lift entrances. Diagnostic
+`lincoln-stair-duplicate-diagnostic-hbfnh92i` disables them and passes twelve
+routes while skipping four; it is not an accepted fix and is not published.
+
+The actual omission is in load-time receiver binding: it excluded ordinary
+passages whenever either side was a lift, including walkable stairs. Extending
+the existing endpoint cache to normal/stair surfaces repairs both routes with
+the unchanged export and all connections retained: sixteen routes pass, none
+are skipped. Ladder/wall and virtual-room exclusions remain. The existing
+door-crossing callback installs the cached destination receiver; there is no
+new tick-time query or geometry solver. A bidirectional stair-passage regression,
+the existing receiver-binding checks and all 46 door-pass tests pass. Rendered
+actor verification of this hall remains separate.
+
+The regular compiled-navigation suite passes 37 tests (54 external-fixture
+tests ignored), and the game binary builds. The neighbour-placement checker
+now asserts prepared graph data and absence of the removed physical-navigation
+payload. Its first fresh two-copy zero-rotation export is independently checked
+as `great-hall-prepared-subset-tso0qwbc`; all twelve stair routes pass. The full
+rotation/elevation and missing-neighbour batch `great-hall-neighbour-placements-gzhML3`
+is still running; the subset does not certify that complete matrix.
 
 ### Keep movement-clearance recovery (2026-10-12)
 

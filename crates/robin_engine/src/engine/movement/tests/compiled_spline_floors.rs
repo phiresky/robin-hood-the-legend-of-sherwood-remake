@@ -57,6 +57,62 @@ fn compiled_ordinary_passage_missing_receivers_are_rejected_at_load() {
 }
 
 #[test]
+fn compiled_ordinary_stair_passage_transfers_prebound_receivers_both_ways() {
+    let mut descriptor: serde_json::Value = serde_json::from_slice(include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/asset-lift.level.json"
+    )))
+    .unwrap();
+    let mut passage = descriptor["asset_geometry"]["lifts"][0]["doors"][0].clone();
+    passage["door_type"] = serde_json::json!(0);
+    passage["world_endpoints"] = serde_json::json!({
+        "outside": [380., 350., 0.],
+        "middle": [390., 350., 0.],
+        "inside": [397., 352., 35.],
+    });
+    descriptor["asset_geometry"]["doors"] = serde_json::json!([passage]);
+    let (mut engine, mut assets) = compiled_walkway(&serde_json::to_vec(&descriptor).unwrap());
+    let door = engine.script_domains.interactables.doors[0].clone();
+    let pair = assets.navigation.passage_receivers[0].expect("stair passage receivers");
+    assert_ne!(pair[0], pair[1]);
+    assert!(pair[1].is_some());
+    let sector = crate::position_interface::SectorHandle::from_number(door.sector_out)
+        .with_arena_index(door.sector_out_index.unwrap());
+    let owner = walking_pc(
+        &mut engine,
+        &mut assets,
+        door.point_out,
+        door.layer_out,
+        sector,
+    );
+    engine.set_obstacle_and_material(&assets, owner, pair[0]);
+    let sim = crate::sim_rng::test_context();
+    for direct in [true, false] {
+        let point = if direct {
+            door.point_in
+        } else {
+            door.point_out
+        };
+        engine
+            .ent_mut(owner)
+            .element_data_mut()
+            .sprite
+            .position_iface
+            .set_map_position(point);
+        engine.execute_pass_door(
+            TickCtx::new(&sim, &assets),
+            owner,
+            crate::gate::DoorIndex::new(0).unwrap(),
+            direct,
+        );
+        assert_eq!(
+            engine.ent(owner).position_iface().get_obstacle(),
+            pair[usize::from(direct)]
+        );
+    }
+}
+
+#[test]
 fn compiled_zero_height_passages_bind_the_implicit_ground_plane() {
     let (_, assets) = compiled_walkway(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
