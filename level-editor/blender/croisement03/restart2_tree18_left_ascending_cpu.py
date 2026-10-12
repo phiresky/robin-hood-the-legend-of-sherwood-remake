@@ -15,11 +15,11 @@ def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
 def main():
-    source=B/'tree18-root-connectivity-cpu-v1/geometry.json';original=json.loads(source.read_text());out=B/'tree18-five-track-cpu-v1';assert not out.exists()
+    source=B/'tree18-root-connectivity-cpu-v1/geometry.json';original=json.loads(source.read_text());out=B/'tree18-five-track-cpu-v2';assert not out.exists()
     world_y=float(np.median([v[1]for p in original['parts']for v in p['vertices']]))
     # Broad strip follows visible ascending bark. Upper leaf crossings are
     # explicitly inferred continuation, never accepted exposed bark pixels.
-    samples=[(413,432,390,'visible_ascending_bark_envelope'),(405,425,374,'visible_ascending_bark_envelope'),(403,418,358,'bark_with_leaf_crossings'),(398,416,344,'bark_with_leaf_crossings'),(397,411,329,'inferred_leaf_obscured_continuation')]
+    samples=[(419,436,390,'visible_ascending_bark_envelope'),(414,429,374,'visible_ascending_bark_envelope'),(413,427,358,'bark_with_leaf_crossings'),(408,423,344,'bark_with_leaf_crossings'),(405,419,329,'inferred_leaf_obscured_continuation')]
     sections=[]
     for left,right,y,role in samples:
         x=(left+right)/2;sections.append({'endpoints_source_xy':[[left,y],[right,y]],'center_world_hypothesis':[x,world_y,(-world_y*sweeps.S-y)/sweeps.C],'projected_width_pixels':right-left,'source_role':role})

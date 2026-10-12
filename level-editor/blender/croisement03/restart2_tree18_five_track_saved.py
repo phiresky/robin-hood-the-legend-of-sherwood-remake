@@ -13,11 +13,12 @@ B=base.B
 
 
 def main():
-    source=B/'tree18-united-wood-saved-v1/worker.blend';cpu=B/'tree18-five-track-cpu-v1/geometry.json';out=B/'tree18-five-track-saved-v1'
+    source=B/'tree18-united-wood-saved-v1/worker.blend';cpu=B/'tree18-five-track-cpu-v2/geometry.json';out=B/'tree18-five-track-saved-v1'
+    sourceguard=cpu.parent/'known-stone-source-check.json';assert json.loads(sourceguard.read_text())['status']=='PASS_NO_KNOWN_STONE_OVERLAP'
     recipe=json.loads(cpu.read_text());part=next(p for p in recipe['parts']if p['track']=='left_ascending');assert len(recipe['parts'])==5
     base.guard.resources();base.guard.acquire(slots=2)
     try:
-        base.guard.resources();assert not out.exists();pins={str(p):base.sha(p)for p in [source,cpu,Path(__file__)]}
+        base.guard.resources();assert not out.exists();pins={str(p):base.sha(p)for p in [source,cpu,sourceguard,Path(__file__)]}
         bpy.ops.wm.open_mainfile(filepath=str(source));scene=bpy.context.scene;target=scene.objects['Provisional Tree18 united wood'];before=base.bvh(target)
         m=bpy.data.meshes.new('Missing ascending left branch');m.from_pydata(part['vertices'],[],part['faces']);m.update();branch=bpy.data.objects.new('Missing ascending left branch',m);scene.collection.objects.link(branch);addition=base.bvh(branch)
         all_vertices=np.array([list(target.matrix_world@v.co)for v in target.data.vertices]+part['vertices']);projected=np.stack((all_vertices[:,0],-all_vertices[:,1]*base.S-all_vertices[:,2]*base.C),axis=1);lo=np.floor(projected.min(0)).astype(int);hi=np.ceil(projected.max(0)).astype(int)
