@@ -4,7 +4,7 @@ from pathlib import Path
 HERE=Path(__file__).resolve().parent
 sys.path[:0]=[str(HERE),str(HERE.parents[2]/'refinement')]
 from render_slots import acquire,release
-ALLOWED={'joined02_source_roles_v4_all_hits.py','joined02_source_roles_v2.py','joined02_source_roles_v3_all_receivers.py','support04_sweep_v3.py','support04_missing_routes_v1.py'}
+ALLOWED={'support04_sweep_v4.py','joined02_source_roles_v4_all_hits.py','joined02_source_roles_v2.py','joined02_source_roles_v3_all_receivers.py','support04_sweep_v3.py','support04_missing_routes_v1.py'}
 if __name__=='__main__':
     name=sys.argv[1];assert name in ALLOWED
     def available():return int(next(x.split()[1]for x in Path('/proc/meminfo').read_text().splitlines()if x.startswith('MemAvailable:')))*1024
