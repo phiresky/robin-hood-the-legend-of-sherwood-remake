@@ -40,6 +40,13 @@ pass; fourteen other directions have no conservative supported probe and remain
 unverified. These are traversal findings, not a new rendered ZIP certification.
 See [the fresh checks](map-compilation-evidence.md#fresh-derby-and-leicester-traversal-checks-2026-10-12).
 
+**Current Croisement checks (2026-10-12):** all three current scene exports load
+natively and pass 16/6/24 ordinary route samples. Croisement01 passes all 130
+jump probes; Croisement02 covers all 40 with the appropriate helper posture.
+Croisement03 passes 98/100, with two landing-animation receiver mismatches still
+open. These exports include concurrent local scene edits and do not establish
+rendered ZIP fidelity. See [the helper and landing trace](map-compilation-evidence.md#croisement-helper-threshold-and-landing-trace-2026-10-12).
+
 The published restoration of four asset-local keep movement contours improves Leicester
 to **226/230** offset jump clicks with no regressions. All 46 interior directions
 now have probes: 45 pass ordinary selection and one passes hidden selection.

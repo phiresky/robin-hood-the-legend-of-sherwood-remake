@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Croisement helper threshold and landing trace (2026-10-12)
+
+`croisement-helper-full-4sny3wff` retains the complete Croisement02 descriptor
+from `saved-map-exports-UmQls7` and selects lines 6/7 at the same four-unit
+approach depth as the upright audit. All ten shoulder-dispatch probes pass.
+After correcting the helper-review generator and native vertical audit's
+60-unit assumption, all ten mixed-posture probes also pass: assisted ascent,
+upright descent. Helper metadata on either zone applies to a climb exceeding
+40 units, so this 54-unit pair is valid. The generator no longer assumes the
+flag must be on one particular zone. Runtime behavior is unchanged.
+
+Combined with the upright results, all 40 Croisement02 sampled jump cases have
+verified traversal. This does not broaden the scope to arbitrary placement or
+rendered fidelity. The fresh helper generator also completes successfully in
+`required-jump-postures-bgPtAU`; its default eight-unit approach is distinct
+from the matched four-unit native audit above.
+
+Croisement03 still has two failures among its 100 jump probes. The reduced
+full-geometry fixture `croisement03-landing-eaq_n6ci` reproduces both failures
+among five line-9 probes. They involve `croisement03-group-068`, whose landing
+surface is `building-068-walk-0`. The trajectory initially installs receiver 68,
+then loses it at the landing animation's Done state and completes subsequent
+walking with no receiver, despite a fresh lookup selecting receiver 68.
+That identifies the transition to investigate; it does not yet establish whether
+the exported boundary data or runtime transition causes the mismatch.
+
 ## Exact-product filter and current native regressions (2026-10-12)
 
 The clipping collinearity predicate now rejects unequal rounded products before

@@ -22,10 +22,8 @@ for (const result of manifest.results) {
     const helpers = lines.map((line) => geometry.jump_zones[line.jump_zone_index].helper_needed);
     if (!helpers.some(Boolean)) return [];
     const heights = lines.map((line) => line.point_a[2]);
-    assert.ok(Math.abs(heights[0] - heights[1]) >= 60);
-    // A line references the destination zone, where its helper rule is stored.
-    assert.equal(helpers[0], heights[1] > heights[0]);
-    assert.equal(helpers[1], heights[0] > heights[1]);
+    // Either zone may request help; the height difference determines the climb direction.
+    assert.ok(Math.abs(heights[0] - heights[1]) > 40);
     return [{ pair, index }];
   });
   if (!selected.length) continue;

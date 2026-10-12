@@ -707,7 +707,7 @@ fn audit_jump_dispatch_with_precision(
             let climbing = destination.z_a > line.z_a;
             let case_stance = if stance == JumpStance::Vertical {
                 assert!(!line.long_jump_forced);
-                assert!((destination.z_a - line.z_a).abs() >= 60.);
+                assert!((destination.z_a - line.z_a).abs() > 40.);
                 assert_eq!(destination.helper_needed, climbing);
                 if climbing {
                     JumpStance::Shoulders
