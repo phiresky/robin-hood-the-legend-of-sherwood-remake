@@ -1162,6 +1162,18 @@ clearance requirement, so activation cannot make the candidate traversable.
 clearance, mesh edges and rotated/raised placement need repair and verification;
 construction and retained door counts do not establish a usable drawbridge.
 
+The blocking cut belongs to `lincoln-castle-hill-inner-bailey-plateau`, whose
+top-level exclusion extends across the deck approaches. Candidate
+`lincoln-plateau-exclusion-ibACfJ` clips that exclusion to its own floor and
+restores three open-state round trips. Candidate `lincoln-plateau-exclusion-QgNhjG`
+instead incorporates the exclusion into the plateau walking outline, retaining
+its walkable domain to within 0.000002650 square units in an asset-local Boolean
+comparison. Export `saved-map-exports-RZGaRh` passes all six open round trips,
+six closed checks and six reset checks (1.38 seconds), plus 186 ordinary route
+samples, sixteen stair clicks and 100 jump traversals. This remains unpublished:
+player selection, alternative-route bypass, moved placements and deck mesh gaps
+are not cleared by these prepared-passage results. No engine behavior changed.
+
 Fresh export `saved-map-exports-jjSJNf` compiles in approximately 24 seconds and
 passes 182 ordinary route samples, all sixteen stair player-click routes and
 100/100 actual jump traversals. Native test times are 1.50, 2.31 and 1.76 seconds,

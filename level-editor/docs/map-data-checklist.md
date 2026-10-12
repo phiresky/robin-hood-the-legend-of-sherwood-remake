@@ -118,9 +118,10 @@ See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-c
 Lincoln's passing movement samples do not cover six omitted drawbridge passages
 or the omitted south-wall step. A staged drawbridge definition restores the two
 deck floors and all six passage records, and constructs natively. It remains
-unpublished: all six open-state actor round trips fail because their compiled
-clearance requirements allow no state. Bank contacts, mesh edges and
-rotated/raised placement also need verification.
+unpublished. Incorporating a neighbouring plateau exclusion into its own walking
+outline restores all six open-state actor round trips, with closed/reset checks
+and wider movement regressions passing. Player selection, bypass prevention,
+bank contacts, mesh edges and rotated/raised placement still need verification.
 
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and
