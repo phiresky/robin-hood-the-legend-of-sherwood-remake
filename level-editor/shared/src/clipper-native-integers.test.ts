@@ -54,6 +54,17 @@ test("wide coordinate deltas retain one-unit deviations from collinearity", () =
   }
 });
 
+test("rounded equal products still distinguish a one-unit determinant", () => {
+  for (const size of [2 ** 27, 2 ** 40, 2 ** 50]) {
+    const a = { X: 0, Y: 0 };
+    const b = { X: size, Y: size + 1 };
+    const c = { X: 2 * size + 1, Y: 2 * size + 3 };
+    assert.equal((a.Y - b.Y) * (b.X - c.X), (a.X - b.X) * (b.Y - c.Y));
+    assert.equal(predicates.SlopesEqual4(a, b, c, true), false);
+    assert.equal(predicates.SlopesEqual4(c, b, a, true), false);
+  }
+});
+
 test("small-range collinearity retains the ordinary numeric path", () => {
   for (const deviation of [-1, 0, 1]) {
     const a = { X: 1, Y: 2 },

@@ -166,7 +166,7 @@ overrides:
   sharp: 0.35.4
 
 patchedDependencies:
-  clipper-lib@6.4.2: 66de99fee8f5a019f7aa626be0129c38e44602e2b8f1ba621f91972beb535e4a
+  clipper-lib@6.4.2: 445514cd1884c4c93382b499564ca01fbec92a4f1eadb29ea81a280208ae26bb
 
 importers:
 
@@ -244,7 +244,7 @@ importers:
         version: link:../shared
       clipper-lib:
         specifier: 6.4.2
-        version: 6.4.2(patch_hash=66de99fee8f5a019f7aa626be0129c38e44602e2b8f1ba621f91972beb535e4a)
+        version: 6.4.2(patch_hash=445514cd1884c4c93382b499564ca01fbec92a4f1eadb29ea81a280208ae26bb)
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -281,7 +281,7 @@ importers:
     dependencies:
       clipper-lib:
         specifier: 6.4.2
-        version: 6.4.2(patch_hash=66de99fee8f5a019f7aa626be0129c38e44602e2b8f1ba621f91972beb535e4a)
+        version: 6.4.2(patch_hash=445514cd1884c4c93382b499564ca01fbec92a4f1eadb29ea81a280208ae26bb)
       earcut:
         specifier: 3.2.3
         version: 3.2.3
@@ -2556,7 +2556,7 @@ snapshots:
 
   caniuse-lite@1.0.30001809: {}
 
-  clipper-lib@6.4.2(patch_hash=66de99fee8f5a019f7aa626be0129c38e44602e2b8f1ba621f91972beb535e4a): {}
+  clipper-lib@6.4.2(patch_hash=445514cd1884c4c93382b499564ca01fbec92a4f1eadb29ea81a280208ae26bb): {}
 
   convert-source-map@2.0.0: {}
 

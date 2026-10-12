@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Exact-product filter and current native regressions (2026-10-12)
+
+The clipping collinearity predicate now rejects unequal rounded products before
+converting them to integers. Equal products within the safe integer range are
+already exact; equal rounded products outside that range still use `BigInt`.
+Tests cover a determinant of one whose two large floating-point products compare
+equal, so the filter cannot replace that exact comparison with rounded equality.
+All 290 focused compiler tests, app typechecking, scoped lint/format checks and
+the production editor build pass. No runtime engine code changes.
+
+`wychford-cpu-profile-ppz81c53/filtered-integer-terrain-review.json` records
+41.257 seconds with serialized terrain output identical to the original baseline.
+The preceding integer-only measurement was 50.175 seconds. These isolated runs
+under concurrent workloads do not establish a whole-export speedup. An initial
+measurement script failed while reading a nonexistent result count; the corrected
+run explicitly asserts the complete serialized output equality.
+
+The preceding full Wychford export, `saved-map-exports-ab3hoH`, passes native
+construction: 87 areas, 15,581 sight obstacles, 31 doors, 64,638 grid blocks and
+36,994 elevation boundaries. Its 98 sampled ordinary routes all pass, with
+0.49 seconds inside pathfinding. This is neither a per-tick benchmark nor a
+complete traversal audit.
+
+Fresh current-scene exports `saved-map-exports-UmQls7` compile Croisement01/02/03
+in 107.633/90.238/33.803 seconds respectively. These were generated before the
+product filter. All three load natively and pass 16/6/24 ordinary route samples.
+The upright jump audit passes 263/270 cases: five Croisement02 line-7 probes
+reject the actor posture; two Croisement03 line-9 probes report receiving-surface
+mismatches near the landing. Those findings remain open, and scene files contain
+concurrent local authoring edits. The generic helper-review generator also
+rejects this scene's 54-unit helper pair under its 60-unit fixture assumption;
+that generator failure is not evidence of a broken runtime flight.
+
 ## Corrected Wychford export completion (2026-10-12)
 
 Fresh `saved-map-exports-ab3hoH` completes compilation in 825.054 seconds and
