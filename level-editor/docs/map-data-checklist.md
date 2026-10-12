@@ -43,6 +43,13 @@ around the native zero-distance stop reservation; runtime behavior is unchanged.
 The full-map upright audit now passes 369/390, with ten helper-required
 rejections and eleven remaining failures. ZIP/render verification remains open. See the
 [ground landing audit](map-compilation-evidence.md#ground-landing-click-band-candidate-2026-10-12).
+The combined ground/roof candidate now loads natively and passes 375/390 ordinary
+clicks. Its remaining five covered-roof samples pass hidden-selection traversal;
+the ten helper-required samples have a passing posture-aware fixture that isolates
+their jump overlays. The deeper endpoint-click audit passes 356/390 and retains
+34 failures for investigation. The roof assets remain unpublished while the
+90-degree connection is unresolved. See the
+[combined candidate evidence](map-compilation-evidence.md#combined-nottingham-candidate-and-endpoint-clicks-2026-10-12).
 Five of those ordinary-click failures hit an overlapping higher roof. Hidden
 selection finds the intended jump in all five cases. Retaining that selection
 through command dispatch fixes all five complete walk-jump-walk routes; ordinary

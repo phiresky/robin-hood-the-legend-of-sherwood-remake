@@ -10,11 +10,12 @@ enum JumpDispatch {
     Approach,
     Click,
     HiddenClick,
+    EndpointClick,
 }
 
 impl JumpDispatch {
     fn is_click(self) -> bool {
-        matches!(self, Self::Click | Self::HiddenClick)
+        matches!(self, Self::Click | Self::HiddenClick | Self::EndpointClick)
     }
 }
 
@@ -453,6 +454,12 @@ fn exported_hidden_jumps_resolve_clicks_and_complete_the_route() {
 }
 
 #[test]
+#[ignore = "requires exported jump receivers and ROBIN_CLIMB_RHS"]
+fn exported_jump_endpoint_clicks_select_routes_and_complete_arrivals() {
+    audit_jump_dispatch(JumpDispatch::EndpointClick, JumpStance::Upright);
+}
+
+#[test]
 #[ignore = "requires exported long-jump pairs and ROBIN_CLIMB_RHS"]
 fn exported_jumps_complete_sword_dispatch_and_preserve_combat() {
     audit_jump_dispatch(JumpDispatch::Isolated, JumpStance::Sword);
@@ -511,7 +518,7 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
         assert!(approach_depth.is_finite() && approach_depth > 0.);
         // Click inside the exported landing band. Its outer edge rounds to the
         // native integer grid; the full-depth movement goal can lie outside it.
-        let approach_depth = if mode.is_click() {
+        let approach_depth = if matches!(mode, JumpDispatch::Click | JumpDispatch::HiddenClick) {
             approach_depth / 2.
         } else {
             approach_depth
@@ -543,7 +550,7 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
             } else {
                 stance
             };
-            for t in if mode.is_click() {
+            for t in if matches!(mode, JumpDispatch::Click | JumpDispatch::HiddenClick) {
                 [0.05, 0.25, 0.5, 0.75, 0.95]
             } else {
                 [0., 0.25, 0.5, 0.75, 1.]
@@ -654,6 +661,7 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
     let report = serde_json::json!({
         "stance": match stance { JumpStance::Sword => "sword", JumpStance::Shoulders => "shoulders", JumpStance::Upright => "upright", JumpStance::Vertical => "assisted-ascent-upright-descent" },
         "scope": match mode {
+            JumpDispatch::EndpointClick => "endpoint-player-click-resolution-and-full-depth-arrival-not-rendering",
             JumpDispatch::HiddenClick => "hidden-player-click-resolution-and-walk-jump-walk-not-rendering",
             JumpDispatch::Click => "player-click-resolution-and-walk-jump-walk-not-rendering",
             JumpDispatch::Approach => "walk-jump-walk-sequence-not-click-authorization-or-rendering",
@@ -663,7 +671,9 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
         "traversal_cases": traversals, "occlusion_cases": occlusions, "results": results,
     });
     let path = directory.join(
-        if mode == JumpDispatch::HiddenClick {
+        if mode == JumpDispatch::EndpointClick {
+            "actor-jump-endpoint-click-report.json"
+        } else if mode == JumpDispatch::HiddenClick {
             "actor-jump-hidden-click-report.json"
         } else if stance == JumpStance::Vertical && mode == JumpDispatch::Click {
             "actor-jump-vertical-click-report.json"

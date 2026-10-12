@@ -4,6 +4,40 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Combined Nottingham candidate and endpoint clicks (2026-10-12)
+
+`saved-map-exports-sIO9tO` combines the published ground click band with staged
+`roof-jump-zone-planes-vyKK7C`. All three staged descriptor/model guards match
+the current library. The saved scene compiles in about 40 seconds and loads
+natively. Ordinary click traversal passes **375/390**: the only rejections are
+ten helper-required samples (lines 31/53) and five covered-roof samples (line 62).
+All five covered samples pass hidden-selection command traversal. The
+`required-jump-postures-jl5bAi` fixture passes all 20 assisted-ascent/upright-descent
+audit; it preserves full physical geometry but isolates the two helper pairs
+from unrelated jump overlays. These combined checks do not constitute a rendered,
+all-overlay or all-placement parity certificate. The roof candidate remains
+unpublished because its 90-degree assembly still lacks a working connection.
+
+The new endpoint-click audit uses t=0/0.25/0.5/0.75/1 and the full 8-unit
+approach depth, retaining click authorization and native route selection. On
+the published-only export `saved-map-exports-36IIVl` it passes 346/390. On the
+combined candidate it passes **356/390**: sixteen source probes cannot fit the
+actor, eight elevated destination probes have no receiver, five require a helper,
+and five hit the covering roof. Those failures remain visible for investigation.
+This broader audit does not replace the interior-click measurement.
+
+It resolves the suspected line-72 receiver defect without a geometry/runtime
+change. The forced-line approach test sends the actor outside that line's
+receiving click polygon and retains receiver 584 where the floor query returns
+582. The same five full-depth goals through actual click selection all choose
+neighbouring line 70 and finish on the correct receiver. At the first endpoint,
+the requested goal is approximately `[1458.6848,609.8912]`, inside jump zone 51
+and outside zone 52. This verifies the exported partition's routing role; it
+does not erase the forced-line audit result or establish arbitrary endpoint
+approaches are physically supported.
+The game build and Rust formatting check pass; this change adds audit coverage
+only, with no production engine or compiler modification.
+
 ## Ground landing click-band candidate (2026-10-12)
 
 Nottingham line 24's t=0.95 landing `[2154.9255,1980.4553]` lies on its ground
