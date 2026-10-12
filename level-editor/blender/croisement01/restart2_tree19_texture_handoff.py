@@ -12,7 +12,7 @@ def main(kind):
     r=ROOT/'level-editor/work/active/croisement01/restart2'
     asset,excluded={'tree19':('croisement01-tree-19',1927)}[kind]
     case=r/('approved-'+kind+'-fill-v1')/asset
-    base=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches'
+    base=ROOT/'level-editor/work/active/croisement02/restart3-review-batches'
     user=base/'batch-v10/user-approval.json';gallery=base/'batch-v10/evidence.json'
     assert sha(user)=='534d552590823cbb5221e1ff52a082657360eb16f80ff5c42acfdb4980a2e3e8'
     approval=read(user);assert sha(gallery)==approval['evidence_sha256']

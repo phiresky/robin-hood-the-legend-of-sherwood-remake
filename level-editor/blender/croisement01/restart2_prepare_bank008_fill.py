@@ -9,7 +9,7 @@ def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main():
  asset='croisement01-tree01-bank008-joint';derivation=R/'bank008-approved-receiver-v2/derivation-proof.json';d=json.loads(derivation.read_text());w=derivation.parent/'assets'/asset
  card=R/'ready-tree01-wood-bank-geometry-metadata-v1.json';item=json.loads(card.read_text())['items'][0]
- approval=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/batch-v12/user-approval.json';decision=json.loads(approval.read_text());member=next(m for c in decision['cards'] for m in c['members'] if m['asset_id']=='croisement01-tree-01')
+ approval=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/batch-v12/user-approval.json';decision=json.loads(approval.read_text());member=next(m for c in decision['cards'] for m in c['members'] if m['asset_id']=='croisement01-tree-01')
  assert decision['status']=='approved' and member['scope']=='geometry'
  assert member['model_sha256']==item['model_sha256']==d['parent_model_sha256']
  assert member['review_revision']==item['review_revision']

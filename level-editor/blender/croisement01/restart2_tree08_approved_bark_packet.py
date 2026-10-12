@@ -9,7 +9,7 @@ from refinement_review import render_review
 R=ROOT/'level-editor/work/active/croisement01/restart2'
 MODEL=R/'tree08-wood-prototype-v23-smooth-join/model.blend'
 OUT=R/'approved-tree08-bark-fill-v3/croisement01-tree-08'
-APPROVAL=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/three-tree-geometry-oct11-v1/user-approval.json'
+APPROVAL=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/three-tree-geometry-oct11-v1/user-approval.json'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def write(p,x):p.write_text(json.dumps(x,indent=2)+'\n')
 assert sha(MODEL)=='b0c061321400d466b28d41cd90d45a30b86c11a25aaa904bc54f3b7d97e50242'

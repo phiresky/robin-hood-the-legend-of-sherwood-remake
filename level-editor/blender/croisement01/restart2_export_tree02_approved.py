@@ -13,7 +13,7 @@ from review_evidence import sha
 
 R = ROOT/'level-editor/work/active/croisement01/restart2'
 asset = 'croisement01-tree-02'
-receipt = ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/next-tree02-channels-mounds-v1/user-approval.json'
+receipt = ROOT/'level-editor/work/active/croisement02/restart3-review-batches/next-tree02-channels-mounds-v1/user-approval.json'
 approval = json.loads(receipt.read_text())
 assert approval['status'] == 'USER_APPROVED'
 decision = next(d for d in approval['decisions'] if d['asset_id'] == asset)

@@ -11,7 +11,7 @@ def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main():
     r=ROOT/'level-editor/work/active/croisement01/restart2'
     case=r/'approved-stump67-wood-fill-v1/croisement01-east-ivy-stump';asset='croisement01-east-ivy-stump'
-    base=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches'
+    base=ROOT/'level-editor/work/active/croisement02/restart3-review-batches'
     user=base/'batch-v7/user-approval.json';adapter=base/'adapters-v7/stump67-texture.json';gallery=base/'batch-v7/evidence.json'
     assert sha(user)=='262e46f66799913d51cd0e34404cb58333772f6f11ea6897f57bc828d5f5a13c'
     approval=read(user);assert sha(gallery)==approval['evidence_sha256']

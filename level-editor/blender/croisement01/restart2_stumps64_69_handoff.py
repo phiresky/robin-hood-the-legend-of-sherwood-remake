@@ -12,7 +12,7 @@ def main(kind):
     r=ROOT/'level-editor/work/active/croisement01/restart2'
     asset,excluded={'stump64':('croisement01-southwest-broken-stump',1424),'stump69':('croisement01-central-ivy-stump',1106)}[kind]
     case=r/('approved-'+kind+'-wood-fill-v1')/asset
-    base=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches'
+    base=ROOT/'level-editor/work/active/croisement02/restart3-review-batches'
     user=base/'batch-v8/user-approval.json';gallery=base/'batch-v8/evidence.json'
     assert sha(user)=='d68ce43c77a2a6325c642e452eb135389c253a59e83de3e937928d0c12c7c79e'
     approval=read(user);assert sha(gallery)==approval['evidence_sha256']

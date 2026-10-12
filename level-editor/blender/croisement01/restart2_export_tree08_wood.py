@@ -9,13 +9,13 @@ from export_editor import export_asset_library
 from review_evidence import sha
 R=ROOT/'level-editor/work/active/croisement01/restart2'
 asset='croisement01-tree-08'
-receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json'
+receipt=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json'
 assert sha(receipt)=='d435a76b08eb3ac616f1ae2ffcdf19a7875969e515dd01f65de1871ca886ef1d'
 approval=json.loads(receipt.read_text());assert approval['status']=='APPROVED'
 decision=next(d for d in approval['decisions'] if d['asset_id']==asset)
 assert decision['decision']=='approved' and decision['scope']=='texture'
 model=Path(decision['model']);assert sha(model)==decision['model_sha256']=='01dedc44df9d06962a76b6bbf6d4fc96715f219ee0af7eb782ba22677892767a'
-geometry_receipt=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/three-tree-geometry-oct11-v1/user-approval.json'
+geometry_receipt=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/three-tree-geometry-oct11-v1/user-approval.json'
 assert sha(geometry_receipt)=='a30e6aa6559e71347d7e1ee4b37a51defa2d4d880504ba7eeb334feafcef7d1e'
 def geometry(o):
  return hashlib.sha256(json.dumps(dict(matrix=[list(r) for r in o.matrix_world],points=[list(v.co) for v in o.data.vertices],faces=[list(f.vertices) for f in o.data.polygons]),separators=(',',':')).encode()).hexdigest()

@@ -6,8 +6,8 @@ sys.path.insert(0,str(R/'level-editor/refinement'))
 check_generator=R/'level-editor/refinement/asset_index.py'
 assert hashlib.sha256(check_generator.read_bytes()).hexdigest()=='bf2860d6dcb9853c94850dac62a3181bbb692479183bbc570a9898cc51be5262'
 from asset_index import write_asset_index, validate_asset_index
-CORE=R/'level-editor/work/active/croisement02/restart25-approved-appearance-delta-v1/derivatives-v3/transaction.py'
-assert hashlib.sha256(CORE.read_bytes()).hexdigest()=='1b79d5020ec58855514800d8d48b6196eefefedb19ea2ac0937245d8e609787f'
+CORE=R/'level-editor/work/active/croisement02/shared-publication-core-operational-v1/transaction.py'
+assert hashlib.sha256(CORE.read_bytes()).hexdigest()=='bd7f16cc69ada60aff2f4bffb16a6f289484a59dc343284603a0c9a153e5092d'
 spec=importlib.util.spec_from_file_location('publication_core',CORE); core=importlib.util.module_from_spec(spec); spec.loader.exec_module(core)
 IDS={'croisement01-tree-02','croisement01-group-005'}
 def pin(p): return {'path':str(p.relative_to(R)), 'sha256':core.sha(p),'bytes':p.stat().st_size}

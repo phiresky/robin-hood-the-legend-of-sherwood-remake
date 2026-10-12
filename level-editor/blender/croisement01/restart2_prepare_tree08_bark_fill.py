@@ -7,7 +7,7 @@ sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(Path(__file__).parent)]
 from prepare_texture_packet import prepare
 from restart2_texture_references import REFERENCES
 R=ROOT/'level-editor/work/active/croisement01/restart2';W=R/'approved-tree08-bark-fill-v3/croisement01-tree-08'
-A=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/three-tree-geometry-oct11-v1/user-approval.json'
+A=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/three-tree-geometry-oct11-v1/user-approval.json'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def write(p,x):p.write_text(json.dumps(x,indent=2)+'\n')
 def main():
