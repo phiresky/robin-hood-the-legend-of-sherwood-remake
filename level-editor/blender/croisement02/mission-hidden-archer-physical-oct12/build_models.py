@@ -12,6 +12,8 @@ import qualify as q
 from render_slots import acquire,release
 S,C=math.sin(math.radians(35)),math.cos(math.radians(35));RAY=Vector((0,-C,S))
 DEST=q.OUT/'geometry-v2-rounded02'
+PROFILES={2}
+CLEARANCE={}
 def guard():
  assert shutil.disk_usage(q.ROOT).free>=10*1024**3+8*1024**2
  assert sum(p.stat().st_size for p in DEST.rglob('*')if p.is_file())<160*1024**2
@@ -34,10 +36,18 @@ def make(row,n,phase,f,anchor):
   around=[(x-1,y-1),(x,y-1),(x,y),(x-1,y)];occupied=[p in pixels for p in around];split=sum(occupied)==2 and occupied[0]==occupied[2]
   key=(x,y,back,owner if split else None)
   if key not in lookup:
-   u=(x-xlo)/(xhi-xlo);wy=anchor['world_y_left']*(1-u)+anchor['world_y_right']*u+anchor['depth_bulge']*math.sin(math.pi*u);z=(-y-wy*S)/C;p=Vector((x,wy,z))-RAY*(anchor['thickness'] if back else 0);lookup[key]=len(vertices);vertices.append(tuple(p))
+   u=(x-xlo)/(xhi-xlo);wy=anchor['world_y_left']*(1-u)+anchor['world_y_right']*u+anchor['depth_bulge']*math.sin(math.pi*u);z=(-y-wy*S)/C;p=Vector((x,wy,z))-RAY*(anchor['thickness'] if back else 0)
+   field=CLEARANCE.get(str(n))
+   if field:
+    bx,by,bxx,byy=field['box']
+    if bx<=x<=bxx and by<=y<=byy:p+=RAY*field['camera_ray_advance'][y-by][x-bx]
+   lookup[key]=len(vertices);vertices.append(tuple(p))
   return lookup[key]
  for (x,y),unknown in pixels.items():
-  corners=[(x,y),(x+1,y),(x+1,y+1),(x,y+1)];front=[vertex(*p,False,(x,y))for p in corners];back=[vertex(*p,True,(x,y))for p in corners];faces.extend([tuple(front[::-1]),tuple(back)]);mats.extend([2 if unknown else 0,1])
+  corners=[(x,y),(x+1,y),(x+1,y+1),(x,y+1)];front=[vertex(*p,False,(x,y))for p in corners];back=[vertex(*p,True,(x,y))for p in corners];
+  if str(n) in CLEARANCE:
+   faces.extend([(front[0],front[2],front[1]),(front[0],front[3],front[2]),(back[0],back[1],back[2]),(back[0],back[2],back[3])]);mats.extend([2 if unknown else 0,2 if unknown else 0,1,1])
+  else:faces.extend([tuple(front[::-1]),tuple(back)]);mats.extend([2 if unknown else 0,1])
   for k,(dx,dy) in enumerate([(0,-1),(1,0),(0,1),(-1,0)]):
    if (x+dx,y+dy)not in pixels:faces.append((front[k],front[(k+1)%4],back[(k+1)%4],back[k]));mats.append(1)
  mesh=bpy.data.meshes.new(f'Screen{n:02}-{phase}');mesh.from_pydata(vertices,[],faces);mesh.update();o=bpy.data.objects.new(mesh.name,mesh);bpy.context.collection.objects.link(o)
@@ -88,7 +98,7 @@ def render(obj,folder):
 def main():
  assert not DEST.exists();DEST.mkdir();guard();rows=json.loads((q.OUT/'qualification.json').read_text())['rows'];anchors=json.loads((q.OUT/'depth-proposal-v1.json').read_text());summary=[]
  for n,row in enumerate(rows,1):
-  if n!=2:continue
+  if n not in PROFILES:continue
   guard();bpy.ops.wm.read_factory_settings(use_empty=True);folder=DEST/f'profile-{n:02}';folder.mkdir();frames=row['art']['states']['initial']['frames']+row['art']['states']['transition']['frames'];records=[]
   for phase,f in zip(['initial','transition-0','transition-1','applied'],frames):
    obj,record=make(row,n,phase,f,anchors[str(n)]);obj.hide_render=phase!='initial';obj.hide_viewport=phase!='initial';records.append(record)
