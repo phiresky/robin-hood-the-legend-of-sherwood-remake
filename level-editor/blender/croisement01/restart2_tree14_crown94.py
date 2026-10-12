@@ -1,4 +1,4 @@
-"""Private source-constrained crown volume diagnostic; ownership remains provisional."""
+"""Private crown geometry from exact isolated native animation artwork."""
 import json
 import shutil
 import sys
@@ -24,12 +24,14 @@ assert shutil.disk_usage(ROOT).free > 10*1024**3 + 512*1024**2
 assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines()
                 if x.startswith('MemAvailable:')))*1024 > 6*1024**3
 base = ROOT/'level-editor/work/croisement01-refinement/restart2'
-wood = base/'tree14-wood-v13-projected/assets/croisement01-tree-14'
-out = base/'tree14-crown94-geometry-v5'
+wood = base/'tree14-wood-v16-projected/assets/croisement01-tree-14'
+out = base/'tree14-crown94-geometry-v6'
 assert not out.exists()
 out.mkdir()
 model = wood/'model.blend'
-assert sha(model) == 'e8ddfe0bf595657b65ba982b3e0967434cb1bbf223f3c591fb623082f4f3cf2b'
+wood_phase = json.loads((wood.parents[1]/'phase-modified.json').read_text())
+assert wood_phase['phase'] == 'modified'
+assert sha(model) == wood_phase['model_sha256']
 bpy.ops.wm.open_mainfile(filepath=str(model))
 config = json.loads((wood/'workspace.json').read_text())
 scene = bpy.data.scenes[config['scene_name']]
@@ -39,25 +41,16 @@ protected = {o.name: foliage.geometry_hash(o) for o in wood_objects}
 # Seeds follow visible source clusters, not another tree's layout.
 foliage.CONFIG[94] = dict(mask=94, ground=412., canopy_bottom=343,
     seeds=[(780,90),(825,130),(884,155),(725,165),(795,205),(915,215),(720,235),(850,285)])
-evidence = foliage.source_packet(wood,94,out/'source-lobes')
-wood_domain=base/'tree14-source-restoration-proposal-v1/wood-domain.png'
-protected_bark=np.asarray(Image.open(wood_domain).convert('L'))>0
-leaf_domain=base/'tree14-source-restoration-proposal-v1/crown94-excluding-reviewed-wood-domains.png'
-leaf_alpha=np.asarray(Image.open(leaf_domain).convert('L'))>0
+source_packet = base/'tree14-native-crown-animation-source-v2/source-partition.json'
+evidence = json.loads(source_packet.read_text())
+assert evidence['native_animation'] == 1 and evidence['native_frame'] == 0
+assert evidence['canopy_pixels'] == 16719
 for lobe in evidence['lobes']:
-    left,top,right,bottom=lobe['bbox_source']
     for field in ('source','unknown'):
-        path=Path(lobe[field]);rgba=np.asarray(Image.open(path).convert('RGBA')).copy()
-        rgba[:,:,3]*=leaf_alpha[top-43:bottom-43,left-649:right-649]
-        Image.fromarray(rgba).save(path);lobe[field+'_sha256']=sha(path)
-    lobe['native_pixels']=int(np.count_nonzero(np.asarray(Image.open(lobe['source']))[:,:,3]))
-evidence['protected_observed_wood_domain_sha256']=sha(wood_domain)
-evidence['protected_observed_wood_pixels']=int(protected_bark.sum())
-evidence['corrected_leaf_domain_sha256']=sha(leaf_domain)
-evidence['canopy_pixels']=int(leaf_alpha.sum())
-evidence['source_confirmed_foreign_wood_masks']=[9,11,12,15,16]
-evidence['ownership_correction']='Observed native14 branch bark excluded from physical leaf alpha, not synthesized or flattened onto canopy.'
-(out/'source-lobes/source-partition-corrected.json').write_text(json.dumps(evidence,indent=2)+'\n')
+        assert sha(Path(lobe[field])) == lobe[field+'_sha256']
+for frame in evidence['frame_records']:
+    assert sha(ROOT/frame['path']) == frame['sha256']
+(out/'source-partition.json').write_text(json.dumps(evidence,indent=2)+'\n')
 for lobe in evidence['lobes']:
     lobe['depth_radius'] = 210.
 mesh = bpy.data.meshes.new('Crown94 provisional volume')
@@ -66,7 +59,7 @@ bpy.data.collections[config['collection_name']].objects.link(crown)
 crown['asset_group'] = config['asset_id']
 crown['source_node'] = 'foliage-tree14-crown94'
 crown['projection_component'] = 'crown'
-crown['ownership_status'] = 'PROVISIONAL mixed foliage and branch source, requires joint first-hit classification'
+crown['ownership_status'] = 'Exact native frame-0 leaf RGBA; inferred geometry requires joint first-hit review'
 report = foliage.refine_crown(crown,94,evidence)
 # Put the paired patches on one rounded envelope. Giving each small patch the
 # whole crown's depth makes elongated tubes instead of a coherent leaf volume.
@@ -176,7 +169,8 @@ manifest=out/'views.json';manifest.write_text(json.dumps(packet,indent=2)+'\n')
 report.update(status='DIAGNOSTIC_NOT_READY_FOR_APPROVAL',model_sha256=sha(saved),
     wood_model_sha256=sha(model),wood_geometry_unchanged=True,extent_xyz=extent,
     limitations=['Crown94 association remains a joint source review hypothesis.',
-      'Mixed native branches within leaf mask need actual first-hit ownership classification.',
+      'Native leaf first-hit coverage and its association with retained wood need joint review.',
+      'Fourteen-frame motion is preserved as source evidence but not integrated in this geometry diagnostic.',
       'Reverse and transverse neutral coverage and depth are inferred, not generated textures.'],
     texture_synthesis=False)
 (out/'checkpoint.json').write_text(json.dumps(report,indent=2)+'\n')
