@@ -138,6 +138,17 @@ Its concave projected floor has no prepared actor-sized approach at that angle.
 This separates the collision-opening issue from the remaining clearance issue;
 the stage remains unpublished and does not certify the asset's visible mesh.
 
+The optional `--convex` authoring diagnostic tests whether concavity alone
+prevents preparation. Stage `sherwood-stair-clearance-iaRE9g`, exported as
+`asset-jump-exports-MKI5nd`, still passes only 12/16 routes. Its convex footprint
+has area 156.682 square world units, versus 152.877 for the preceding union and
+108.944 for the published floor. Both the full `[6,3]` and inset `[5,2]` actor
+footprint erosions are empty on this unrounded world contour. Rounding alone
+therefore does not explain the unavailable approach. This rejected diagnostic
+does not justify publishing extra collision clearance; short-stair support
+across the adjacent landings and the asset's known mesh discrepancies remain
+to be reconciled.
+
 ## Non-reversed projection clearance (2026-10-12)
 
 Pre-normalization clearance was restricted to folded projections. A simple

@@ -54,6 +54,19 @@ const regions = clipping.union([surface.polygon], [clearance]);
 assert.equal(regions.length, 1);
 assert.equal(regions[0].length, 1);
 surface.polygon = regions[0][0].slice(0, -1);
+if (process.argv.includes("--convex")) {
+  const points = surface.polygon.toSorted((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const turn = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const half = (points) => {
+    const result = [];
+    for (const point of points) {
+      while (result.length > 1 && turn(result.at(-2), result.at(-1), point) <= 0) result.pop();
+      result.push(point);
+    }
+    return result.slice(0, -1);
+  };
+  surface.polygon = [...half(points), ...half(points.toReversed())];
+}
 surface.height = surface.polygon.map(([x, y]) => a * x + b * y + c);
 // The authored stair opening must cover its revised walkable footprint too.
 // This clearance is owner-local and cannot remove another asset's collision.
@@ -86,6 +99,7 @@ await fs.writeFile(
   JSON.stringify({
     scope: "staged-local-movement-clearance-not-traversal-or-render-proof",
     source,
+    convexDiagnostic: process.argv.includes("--convex"),
     before,
     after: surface,
   }),
