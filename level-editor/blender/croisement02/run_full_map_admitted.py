@@ -17,8 +17,8 @@ POOL = ROOT / 'level-editor/work/lincoln-refinement/render-slots'
 ACTIVE_SLOTS = 2
 BASE = ROOT / 'level-editor/work/croisement02-refinement/native-effect-production-oct12-v1'
 RUNNERS = {
-    'serial1': ('full-map-serial1-v2', '24b1b3b523a312ce1786d58937edd3051c92ef7bef7ca5bfb0c25760aefacb8d'),
-    'baseline8': ('full-map-baseline8-v2', '5546f3643dd1593c4a64104ea26edea99aca0212f84441c33545e482336c7e18'),
+    'serial1': ('full-map-serial1-v4', '14b39592c733a21d1b5b598342540c8c78228fc3ad26faad44dca83b66c46a43'),
+    'baseline8': ('full-map-baseline8-v4', '14946b65099eab90d9189af4447a89effb452bd99ac8fda5e30a0c7a13ca2e0f'),
 }
 
 
