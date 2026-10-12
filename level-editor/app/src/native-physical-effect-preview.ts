@@ -88,7 +88,33 @@ export class NativePhysicalEffectPreview {
         if (!bound) return draw;
         const root = bound.object;
         const expected = this.native.elements.find((e) => e.id === draw.element.id)!;
-        if (draw.element.active && nativePresentationFrame(expected, bound.tick()) !== draw.frame)
+        if (
+          !Number.isSafeInteger(draw.sourceTick) ||
+          draw.sourceTick! < 0 ||
+          typeof draw.sourceActive !== "boolean"
+        )
+          throw new Error("Physical effect snapshot lacks authoritative source timing");
+        const duration = expected.frames.reduce((sum, f) => sum + f.delay + 1, 0);
+        let expectedTick = draw.sourceTick! % duration;
+        if (!draw.sourceActive && expected.initial_frame) {
+          const initial = expected.initial_frame;
+          const index = expected.frames.findIndex(
+            (f) =>
+              f.path === initial.path &&
+              f.sha256 === initial.sha256 &&
+              JSON.stringify(f.offset) === JSON.stringify(initial.offset),
+          );
+          if (index < 0) throw new Error("Physical effect has no bound stationary frame");
+          expectedTick = expected.frames.slice(0, index).reduce((sum, f) => sum + f.delay + 1, 0);
+        }
+        const sampledFrame = expected.frames[nativePresentationFrame(expected, expectedTick)];
+        const shownFrame = draw.element.frames[draw.frame];
+        if (
+          draw.element.active &&
+          (bound.tick() !== expectedTick ||
+            sampledFrame?.sha256 !== shownFrame?.sha256 ||
+            sampledFrame?.path !== shownFrame?.path)
+        )
           throw new Error("Physical effect pose and native frame differ");
         if (expected.frames.some((f) => f.shadow_key))
           throw new Error("Physical effect destination keying requires a separate proof");

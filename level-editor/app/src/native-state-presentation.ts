@@ -31,6 +31,9 @@ export interface NativeLoopDrawSnapshot {
   draws: {
     element: NativePresentationElement;
     frame: number;
+    /** Present on production snapshots; retained separately from stationary initial artwork. */
+    sourceTick?: number;
+    sourceActive?: boolean;
     pixels: NativePixels;
     x: number;
     y: number;
@@ -627,10 +630,8 @@ export class NativeStatePresentation {
         !active && original.initial_frame
           ? { ...original, active: true, frames: [original.initial_frame], loop: false }
           : { ...original, active };
-      const frame = nativePresentationFrame(
-        element,
-        Math.max(0, this.currentTick + (this.offsets.get(element.id) ?? 0)),
-      );
+      const sourceTick = Math.max(0, this.currentTick + (this.offsets.get(element.id) ?? 0));
+      const frame = nativePresentationFrame(element, sourceTick);
       if (frame < 0) {
         if (element.active && element.frames.length === 0) orderOnly.push(element);
         continue;
@@ -639,6 +640,8 @@ export class NativeStatePresentation {
       draws.push({
         element,
         frame,
+        sourceTick,
+        sourceActive: active,
         pixels: this.images.get(image.path)!,
         x: element.display_position[0] + image.offset[0] - contract.origin[0],
         y: element.display_position[1] + image.offset[1] - contract.origin[1],

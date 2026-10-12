@@ -176,13 +176,19 @@ test("physical substitution rejects stale source identity and unsampled native p
     revision: 1,
     origin: [0, 0],
     background: pixels,
-    draws: [{ element, frame: 1, pixels, x: 0, y: 0 }],
+    draws: [{ element, frame: 1, sourceTick: 0, sourceActive: true, pixels, x: 0, y: 0 }],
   } as import("./native-state-presentation.ts").NativeLoopDrawSnapshot;
   assert.throws(
     () => preview.sample({} as THREE.WebGLRenderer, snapshot),
     /pose and native frame differ/,
   );
   snapshot.draws[0]!.frame = 0;
+  snapshot.draws[0]!.sourceTick = 1;
+  assert.throws(
+    () => preview.sample({} as THREE.WebGLRenderer, snapshot),
+    /pose and native frame differ/,
+  );
+  snapshot.draws[0]!.sourceTick = 0;
   snapshot.draws[0]!.element = {
     ...snapshot.draws[0]!.element,
     source: { ...snapshot.draws[0]!.element.source, sha256: "b".repeat(64) },
