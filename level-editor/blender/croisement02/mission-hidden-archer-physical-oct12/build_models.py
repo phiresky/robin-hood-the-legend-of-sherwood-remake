@@ -83,12 +83,12 @@ def make(row,n,phase,f,anchor):
  assert not miss and not extra and not uvbad and not record['boundary_or_nonmanifold_edges'],record
  return o,record
 
-def render(obj,folder):
+def render(obj,folder,modes=('textured','solid')):
  scene=bpy.context.scene;points=np.array([obj.matrix_world@v.co for v in obj.data.vertices]);lo,hi=points.min(0),points.max(0);center=Vector((lo+hi)/2);extent=float(np.linalg.norm(hi-lo));cam=bpy.data.objects.new('Original-camera-first',bpy.data.cameras.new('Orthographic review'));scene.collection.objects.link(cam);scene.camera=cam;cam.data.type='ORTHO';cam.data.ortho_scale=extent*1.12;cam.data.clip_end=10000
  scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.use_denoising=False;scene.render.threads_mode='FIXED';scene.render.threads=2;scene.render.resolution_x=scene.render.resolution_y=256;scene.render.resolution_percentage=100;scene.render.image_settings.file_format='PNG';scene.world=bpy.data.worlds.new('Neutral');scene.world.use_nodes=True;scene.world.node_tree.nodes['Background'].inputs[0].default_value=(.24,.24,.24,1);scene.world.node_tree.nodes['Background'].inputs[1].default_value=.8;scene.view_settings.view_transform='Standard'
  solid=bpy.data.materials.new('Solid inspection');solid.use_nodes=True;solid.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value=(.46,.5,.43,1)
  light=bpy.data.objects.new('Review light',bpy.data.lights.new('Review light','AREA'));scene.collection.objects.link(light);light.location=center+Vector((100,-200,300));light.data.energy=120000;light.data.shape='DISK';light.data.size=150;light.rotation_euler=(center-light.location).to_track_quat('-Z','Y').to_euler()
- for mode in ['textured','solid']:
+ for mode in modes:
   scene.view_layers[0].material_override=solid if mode=='solid' else None;sheet=Image.new('RGB',(1024,552),(28,28,28));draw=ImageDraw.Draw(sheet)
   for i in range(8):
    guard();angle=i*math.pi/4;direction=Vector((C*math.sin(angle),-C*math.cos(angle),S));cam.location=center+direction*4000;cam.rotation_euler=(center-cam.location).to_track_quat('-Z','Y').to_euler();p=folder/f'{mode}-{i}.png';scene.render.filepath=str(p);bpy.ops.render.render(write_still=True);im=Image.open(p).convert('RGB');sheet.paste(im,((i%4)*256,(i//4)*276+20));draw.text(((i%4)*256+4,(i//4)*276+3),'Original camera'if i==0 else f'View {i+1}',fill='white')
