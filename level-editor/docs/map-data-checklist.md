@@ -145,6 +145,16 @@ the diagnostic endpoint replacement also confirms anchor penetration up to
 14.096 units despite successful arrival; that replacement remains unpublished.
 See [roof-face and trace evidence](map-compilation-evidence.md#york-missing-roof-faces-and-observed-flight-contact-2026-10-12).
 
+The published central-south roofs now pass **288/288 interior-click routes**
+across four rotations, two elevations and two copies with unchanged endpoints.
+Offset probes remain 112/160: 32 requested landing points lack receivers and
+16 clicks miss the jump overlay. The 37-degree/raised browser archive reopens
+and rebakes identically, loads without base-game data or mission content, and
+passes all 36 sampled archived routes. Its compiled geometry matches the
+isolated placement except for warnings about other disconnected connections.
+Rendered character contact and the offset-coverage limits remain open.
+See [central-roof archive evidence](map-compilation-evidence.md#published-central-roofs-and-archive-verification).
+
 The published west-lane roof correction passes all **72 interior-click traversals**
 across nine angles, two elevations and two copies. It restores the mesh-supported
 roof outline and moves the takeoff inward. All 18 exports construct natively;

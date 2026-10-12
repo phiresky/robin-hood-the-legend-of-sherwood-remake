@@ -150,6 +150,36 @@ extracted from that exact ZIP passes all 36 sampled routes using the appropriate
 mode: 18 normal (`interior-jump-clicks-Vzej6D`) and 18 hidden-only
 (`interior-jump-clicks-a8AhUT`). The mode-review reports retain separate outcomes.
 
+### Published central roofs and archive verification
+
+Rechecking the missing-face publication with the corrected native movement
+audit retains 112/160 perpendicular-offset successes in
+`central-roofs-current-audit-r9oj5yp8`. The 48 failures comprise 32 requested
+landing points without receivers and 16 clicks missing the jump overlay.
+Independent interior-click probes `interior-jump-clicks-zX6jIx` pass **288/288**
+with normal selection across four rotations, two elevations and two copies.
+The same inputs in hidden mode (`interior-jump-clicks-5JQtZi`) all fail; hidden
+selection is not the missing behavior for this connection. No diagnostic
+endpoint replacement or further asset edit is used for these results.
+
+The complete published assets are rendered in `render-connection-library-amo5Ty`
+at 37 degrees and elevation 40, with two independent copies. Browser bake,
+ZIP reopening and rebaking reproduce editor data, gameplay, warnings, color and
+16-bit depth exactly. The 2500-by-2500 archive `york-central-roofs-rendered.zip`
+is 14,445,241 bytes, SHA-256
+`7572ed3828130657c56fb2a783d9af460fe6b187549b7f3240549e554e8e00b5`.
+Its compiled geometry matches the isolated `connected-jump-placements-73VZgl`
+37-degree/elevation-40 export except for warnings: complete definitions retain
+other authored endpoints whose neighbours are absent from this small scene.
+
+Native empty-base archive loading passes with 31 sight obstacles, four door
+projections, 12,320 grid blocks, no masks, no appearance controls and no mission
+content. All **36 native interior-click routes** sampled from the descriptor
+extracted from this ZIP pass (`interior-jump-clicks-DljRHq`). The baked color
+image was inspected; this does not establish rendered character contact or
+sprite depth compositing. The offset-coverage failures and previously measured
+airborne anchor/solid contacts remain recorded, not excused by these routes.
+
 ## Supported integer jump-span search (2026-10-12)
 
 `refinement/review-jump-supported-spans.mjs` generates diagnostic replacements
