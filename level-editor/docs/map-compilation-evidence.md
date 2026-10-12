@@ -29,8 +29,11 @@ gameplay checks, not rendered appearance certification.
 
 All 237 compiler/export tests and 33 flight/clearance tests pass, including thin
 obstacles and legitimate in-area ground transitions. Type checking, targeted
-lint and formatting pass. A fresh Nottingham regression export is underway;
-the earlier 23 full-map click failures are not declared resolved by this fixture.
+lint and formatting pass. Fresh Nottingham `saved-map-exports-9oPIj0` passes
+native construction (2.14 seconds). Its complete descriptor and all 390 click
+results are exactly equal to `saved-map-exports-8vyhcY`: 367 pass and the same
+23 fail. This confirms no change to that map's existing routes; those failures
+remain separate work.
 
 ## Elevated passage export validation (2026-10-12)
 
