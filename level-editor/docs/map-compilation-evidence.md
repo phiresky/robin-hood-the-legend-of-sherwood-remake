@@ -2314,6 +2314,30 @@ The baked color image was inspected; this angle hides much of the walkway and
 does not establish actor compositing or full body clearance. Those checks and the
 provisional floor texture remain outstanding; no candidate is published yet.
 
+The next clearance audit sweeps the native 6×3 half-footprint along each outdoor
+approach, with a 40-unit height envelope corresponding to standing visibility
+geometry. It clips mesh triangles against the entire convex sweep and checks
+whether its starting center lies inside a closed shell; corner rays alone would
+miss a small face enclosed by the footprint. This check is specifically against
+the turret and is not a substitute for animated character or flight-support tests.
+The earlier 36.009-unit opening fails all eight lower approaches despite passing
+the centerline and native route checks: both wall lintels intersect the envelope.
+
+`turret-opening-vqNULj` raises the asset-local opening to 42 units above the floor,
+retaining a lintel below the roof. Its model SHA-256 is
+`ff37530bb598dbe7961de3a5570e897f964ae25fc375594c860b2577d2ef8d78`.
+Combined stage `turret-gameplay-PRkunA` retains zero occupancy discrepancies in
+420,810 probes, including 58,926 doorway-interior probes. Its
+`step-passage-assembly-o07dH8` fixture passes the swept-envelope and centerline
+checks at every tested rotation/elevation, all 32 missing/raised-landing
+rejections and all 32 native player-click routes (3.40 seconds).
+
+The preceding rendered archive proves the older bundle's packaging, not the
+new lintel geometry. The taller candidate still needs its updated rendered
+archive and derived library models before installation. Remaining floor-texture
+and animated-contact limitations should stay explicit draft warnings, consistent
+with best-effort map export, rather than preventing installation indefinitely.
+
 Neutral front/rear geometry renders show the new through-opening and floor. They
 are geometry inspections, not textured scene or animated-character verification.
 The new floor uses a provisional texel from the owning wall's cap because the

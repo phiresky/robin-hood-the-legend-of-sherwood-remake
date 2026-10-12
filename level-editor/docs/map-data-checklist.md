@@ -171,8 +171,12 @@ all 32 native stair traversals. The combined two-copy bundle at 37 degrees and
 40 units elevation now passes rendered export/reopen/rebake, native archive loading
 without base data and all four archived stair directions. The browser test also
 caught and resolved an incorrect GLB scene name in the authoring tools. The assets
-remain unpublished: floor texturing, full actor clearance and animated contact
-remain open.
+remain unpublished. A subsequent swept-footprint check found that the opening's
+lintel intersected a 40-unit standing-height envelope at all eight lower
+approaches. Raising the opening to 42 units resolves those crossings and retains
+all 32 native routes. That taller candidate needs its updated rendered archive
+and derived library models before installation. Floor texturing and animated
+contact remain explicit draft limitations, not proof of full parity.
 
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and

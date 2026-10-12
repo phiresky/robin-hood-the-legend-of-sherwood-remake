@@ -8,6 +8,48 @@ import { meshCappedVolumes } from "../pipeline/src/mesh-capped-volumes.ts";
 import { partMatrix } from "../shared/src/level3d.ts";
 import { gltfToScene, sceneToGame, applyAffineMatrix } from "../shared/src/geometry.ts";
 import { gameToScene } from "../shared/src/scene.ts";
+import { NAVIGATION_HALF_DIAGONAL } from "../shared/src/navigation-footprint.ts";
+import { footprintBoundaryHull } from "../shared/src/supported-footprint-centers.ts";
+
+// Clip a triangle against the entire swept footprint prism, rather than only
+// casting corner rays that can miss a narrow face enclosed by the footprint.
+function prismIntersection(triangle, boundary, bottom, top) {
+  const planes = [
+    [0, 0, 1, -bottom],
+    [0, 0, -1, top],
+  ];
+  for (const [i, a] of boundary.entries()) {
+    const b = boundary[(i + 1) % boundary.length];
+    const dx = b[0] - a[0],
+      dy = b[1] - a[1];
+    planes.push([-dy, dx, 0, dy * a[0] - dx * a[1]]);
+  }
+  let polygon = triangle;
+  for (const [a, b, c, d] of planes) {
+    const output = [];
+    for (const [i, p] of polygon.entries()) {
+      const q = polygon[(i + 1) % polygon.length];
+      const dp = a * p[0] + b * p[1] + c * p[2] + d;
+      const dq = a * q[0] + b * q[1] + c * q[2] + d;
+      if (dp >= 0) output.push(p);
+      if (dp >= 0 !== dq >= 0) {
+        const t = dp / (dp - dq);
+        output.push(p.map((v, axis) => v + t * (q[axis] - v)));
+      }
+    }
+    polygon = output;
+  }
+  return (
+    polygon.length >= 3 &&
+    polygon
+      .slice(1, -1)
+      .some(
+        (p, i) =>
+          Math.hypot(...cross(subtract(p, polygon[0]), subtract(polygon[i + 2], polygon[0]))) >
+          1e-8,
+      )
+  );
+}
 
 const subtract = (a, b) => a.map((v, i) => v - b[i]);
 const dot = (a, b) => a.reduce((sum, v, i) => sum + v * b[i], 0);
@@ -42,6 +84,48 @@ assert.equal(intersection([-1, 0, 0], [1, 0, 0], triangle), 0.5);
 assert.equal(intersection([-1, 0, 0], [1, 0, 0], triangle.toReversed()), 0.5);
 assert.equal(intersection([-1, 5, 0], [1, 5, 0], triangle), undefined);
 assert.equal(intersection([1, -1, 0], [1, 1, 0], triangle), undefined);
+const square = [
+  [-1, -1],
+  [1, -1],
+  [1, 1],
+  [-1, 1],
+];
+assert.ok(
+  prismIntersection(
+    [
+      [0, 0, 1],
+      [0.1, 0, 1],
+      [0, 0.1, 1],
+    ],
+    square,
+    0,
+    2,
+  ),
+);
+assert.ok(
+  !prismIntersection(
+    [
+      [0, 0, 3],
+      [0.1, 0, 3],
+      [0, 0.1, 3],
+    ],
+    square,
+    0,
+    2,
+  ),
+);
+assert.ok(
+  !prismIntersection(
+    [
+      [2, 0, 1],
+      [3, 0, 1],
+      [2, 1, 1],
+    ],
+    square,
+    0,
+    2,
+  ),
+);
 
 const [directory, stage, modelStage, stepModelStage] = process.argv.slice(2);
 assert.ok(directory && stage, "Supply isolated stair exports and their authoring stage");
@@ -161,7 +245,30 @@ for (const { file } of manifest.results) {
     const start = [door.point_out[0], door.point_out[1] + z, z + 1];
     const end = [door.point_mid[0], door.point_mid[1] + z, z + 1];
     const hits = [];
-    for (const mesh of meshes)
+    const doorwayHits = [];
+    const [halfX, halfY] = NAVIGATION_HALF_DIAGONAL;
+    const boundary = footprintBoundaryHull(
+      [start, end].flatMap(([x, y]) => [
+        [x - halfX, y - halfY],
+        [x + halfX, y - halfY],
+        [x + halfX, y + halfY],
+        [x - halfX, y + halfY],
+      ]),
+    );
+    for (const mesh of meshes) {
+      if (mesh.asset === modelCandidate?.config.asset) {
+        const point = [start[0], start[1], z + 20];
+        const bottom =
+          Math.min(...mesh.triangles.flatMap((triangle) => triangle.map((p) => p[2]))) - 1;
+        const ray = [point[0], point[1], bottom];
+        const crossings = mesh.triangles
+          .map((triangle) => intersection(ray, point, triangle))
+          .filter((t) => t !== undefined)
+          .sort((a, b) => a - b)
+          .filter((t, i, values) => i === 0 || Math.abs(t - values[i - 1]) > 1e-7);
+        if (crossings.length % 2)
+          doorwayHits.push({ asset: mesh.asset, object: mesh.object, enclosedStart: point });
+      }
       for (const [triangle, points] of mesh.triangles.entries()) {
         const t = intersection(start, end, points);
         if (t !== undefined)
@@ -172,8 +279,14 @@ for (const { file } of manifest.results) {
             t,
             point: start.map((v, axis) => v + (end[axis] - v) * t),
           });
+        if (
+          mesh.asset === modelCandidate?.config.asset &&
+          prismIntersection(points, boundary, z + 0.1, z + 40)
+        )
+          doorwayHits.push({ asset: mesh.asset, object: mesh.object, triangle });
       }
-    results.push({ file, door: index, start, end, hits });
+    }
+    results.push({ file, door: index, start, end, hits, doorwayHits });
   }
 }
 const report = {
@@ -185,6 +298,18 @@ const report = {
   clear: results.every((result) => result.hits.length === 0),
   approaches: results.length,
   crossingApproaches: results.filter((result) => result.hits.length > 0).length,
+  ...(modelCandidate
+    ? {
+        doorwayEnvelope: {
+          half: NAVIGATION_HALF_DIAGONAL,
+          height: 40,
+          scope:
+            "turret-only-swept-native-footprint-and-standing-visibility-height-not-sprite-animation",
+          clear: results.every((result) => result.doorwayHits.length === 0),
+          crossingApproaches: results.filter((result) => result.doorwayHits.length > 0).length,
+        },
+      }
+    : {}),
   results,
 };
 await fs.writeFile(
@@ -192,4 +317,4 @@ await fs.writeFile(
   JSON.stringify(report),
 );
 console.log(JSON.stringify({ ...report, results: undefined }));
-if (!report.clear) process.exitCode = 1;
+if (!report.clear || report.doorwayEnvelope?.clear === false) process.exitCode = 1;
