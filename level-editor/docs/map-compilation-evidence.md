@@ -226,6 +226,25 @@ from the archive without a base datadir. This verifies packaging and native
 construction; native GPU compositing and rendered character contact remain
 separate checks.
 
+## Receiving polygon preparation reuse (2026-10-12)
+
+The compiler now quantizes each candidate receiving polygon once per movement
+group, reusing it across normalized floor comparisons. Exact polygon XOR matching
+and candidate order are unchanged. This removes repeated preparation from export;
+it adds no runtime work and does not simplify or discard geometry.
+
+`saved-map-exports-W3Ijj4/nottingham.level.json` is identical to the complete
+`saved-map-exports-mog5ON` descriptor. The focused compilation, packaging and wall
+suites report 247 passes and five stored-fixture mismatches. All five reproduce
+without this optimization: the ordinary multi-plane fixture and four wall fixtures
+(routing/sight, cropped masks, materials and automatic curved lighting). Logs are
+`receiver-cache-tests.log`, `receiver-cache-baseline-tests.log` and
+`receiver-cache-baseline-multiplane.log` under `work/map-compile`.
+
+No whole-map speedup is claimed yet. Fresh Wychford baseline
+`saved-map-exports-PgbVhn` was started before the change; its completed profile
+and a matching optimized export are needed to measure the effect on that scene.
+
 ## Supported integer jump-span search (2026-10-12)
 
 `refinement/review-jump-supported-spans.mjs` generates diagnostic replacements

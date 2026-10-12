@@ -1744,6 +1744,10 @@ function compileAssetGameplayAttempt(
           normalizeGeneratedMotion([region], `Movement layer ${layer}`, warnings),
         );
     const preciseHoles = indexPreciseBlockers(merged.flatMap((candidate) => candidate.slice(1)));
+    const roundedReceivers = merged.map((candidate) => ({
+      candidate,
+      rounded: quantizeGeneratedMotionPolygon(candidate, quantize, "Receiving boundary", []),
+    }));
     let blockedCoverage: MultiPolygon | undefined;
     for (const poly of normalized) {
       if (wallCuts.length && narrowMovementRing(poly[0]!)) {
@@ -1760,15 +1764,11 @@ function compileAssetGameplayAttempt(
       );
       if (!quantized) continue;
       const boundary = ring(quantized[0]!, `Merged movement boundary on layer ${layer}`);
-      const receivingCandidates = merged.filter((candidate) => {
-        const rounded = quantizeGeneratedMotionPolygon(
-          candidate,
-          quantize,
-          "Receiving boundary",
-          [],
-        );
-        return rounded && polygonClipping.xor([rounded[0]!], [boundary]).length === 0;
-      });
+      const receivingCandidates = roundedReceivers
+        .filter(
+          ({ rounded }) => rounded && polygonClipping.xor([rounded[0]!], [boundary]).length === 0,
+        )
+        .map(({ candidate }) => candidate);
       const blockers = quantized
         .slice(1)
         .map((r) => ring(r, `Merged movement hole on layer ${layer}`));
