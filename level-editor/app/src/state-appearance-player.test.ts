@@ -296,3 +296,143 @@ test("external sampling wraps long-lived ticks without owning play, pause, seek 
   assert.equal(player.tick, before);
   player.dispose();
 });
+
+test("loaded GLTF cubic splines retain tangent units and quaternion normalization on the tick clock", async () => {
+  const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
+  const specs = [
+    {
+      path: "translation",
+      type: "VEC3",
+      a: [1, 2, 3],
+      b: [5, 6, 7],
+      out: [20, -10, 5],
+      into: [-5, 15, 10],
+    },
+    {
+      path: "rotation",
+      type: "VEC4",
+      a: [0, 0, 0, 1],
+      b: [0, 0, 1, 0],
+      out: [0, 0, 3, 0],
+      into: [0, 0, 0, -2],
+    },
+    {
+      path: "scale",
+      type: "VEC3",
+      a: [1, 1, 1],
+      b: [2, 3, 4],
+      out: [5, 10, 15],
+      into: [-5, -10, -15],
+    },
+  ];
+  const chunks = [
+    new Float32Array([0, 4 / 25]),
+    ...specs.map(
+      (s) =>
+        new Float32Array([
+          ...s.a.map(() => 0),
+          ...s.a,
+          ...s.out,
+          ...s.into,
+          ...s.b,
+          ...s.b.map(() => 0),
+        ]),
+    ),
+  ].map((a) => Buffer.from(a.buffer));
+  const binary = Buffer.concat(chunks);
+  let offset = 0;
+  const bufferViews = chunks.map((chunk) => {
+    const view = { buffer: 0, byteOffset: offset, byteLength: chunk.length };
+    offset += chunk.length;
+    return view;
+  });
+  const gltf = {
+    asset: { version: "2.0" },
+    buffers: [{ byteLength: binary.length }],
+    bufferViews,
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 2, type: "SCALAR", min: [0], max: [4 / 25] },
+      ...specs.map((s, i) => ({ bufferView: i + 1, componentType: 5126, count: 6, type: s.type })),
+    ],
+    nodes: [{ name: "moving" }],
+    scenes: [{ nodes: [0] }],
+    scene: 0,
+    animations: [
+      {
+        name: "spline",
+        samplers: specs.map((_, i) => ({ input: 0, output: i + 1, interpolation: "CUBICSPLINE" })),
+        channels: specs.map((s, i) => ({ sampler: i, target: { node: 0, path: s.path } })),
+      },
+    ],
+  };
+  const json = Buffer.from(JSON.stringify(gltf));
+  const padded = Buffer.concat([json, Buffer.alloc((4 - (json.length % 4)) % 4, 0x20)]);
+  const header = Buffer.alloc(20);
+  header.writeUInt32LE(0x46546c67);
+  header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(28 + padded.length + binary.length, 8);
+  header.writeUInt32LE(padded.length, 12);
+  header.writeUInt32LE(0x4e4f534a, 16);
+  const binHeader = Buffer.alloc(8);
+  binHeader.writeUInt32LE(binary.length);
+  binHeader.writeUInt32LE(0x004e4942, 4);
+  const bytes = Buffer.concat([header, padded, binHeader, binary]);
+  const loaded = await new GLTFLoader().parseAsync(
+    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    "",
+  );
+  const originals = loaded.animations[0]!.tracks.map((t) => ({
+    times: Array.from(t.times),
+    values: Array.from(t.values),
+  }));
+  const template = captureStateAppearance(loaded.scene, loaded.animations);
+  const player = new StateAppearancePlayer(template);
+  player.select("spline", { mode: "clamp", terminalTick: 4 });
+  for (const tick of [0, 1, 2, 3, 4, 1]) {
+    player.seek(tick);
+    const u = tick / 4,
+      h00 = 2 * u ** 3 - 3 * u ** 2 + 1,
+      h10 = u ** 3 - 2 * u ** 2 + u;
+    const h01 = -2 * u ** 3 + 3 * u ** 2,
+      h11 = u ** 3 - u ** 2;
+    const node = player.content.children[0]!;
+    for (const [i, actual] of [
+      node.position.toArray(),
+      node.quaternion.toArray(),
+      node.scale.toArray(),
+    ].entries()) {
+      const s = specs[i]!;
+      let expected = s.a.map(
+        (a, j) =>
+          h00 * a + h10 * (4 / 25) * s.out[j]! + h01 * s.b[j]! + h11 * (4 / 25) * s.into[j]!,
+      );
+      if (i === 1) {
+        const length = Math.hypot(...expected);
+        expected = expected.map((v) => v / length);
+      }
+      actual.forEach((v, j) =>
+        assert.ok(
+          Math.abs(v - expected[j]!) < 1e-6,
+          `${s.path} tick${tick}: ${actual} != ${expected}`,
+        ),
+      );
+    }
+  }
+  assert.deepEqual(
+    loaded.animations[0]!.tracks.map((t) => ({
+      times: Array.from(t.times),
+      values: Array.from(t.values),
+    })),
+    originals,
+  );
+  assert.deepEqual(loaded.scene.children[0]!.position.toArray(), [0, 0, 0]);
+  const independent = new StateAppearancePlayer(template);
+  independent.select("spline", { mode: "clamp", terminalTick: 4 });
+  independent.seek(2);
+  assert.notEqual(
+    independent.content.children[0]!.position.x,
+    player.content.children[0]!.position.x,
+  );
+  independent.dispose();
+  player.dispose();
+});

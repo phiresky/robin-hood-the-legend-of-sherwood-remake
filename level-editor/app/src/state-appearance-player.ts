@@ -98,7 +98,13 @@ export function captureStateAppearance(
       track.times = new Float32Array(ticks);
       if (Array.from(track.values).some((value) => !Number.isFinite(value)))
         throw new Error(`Animation values are not finite: ${original.name}`);
-      const size = track.getValueSize();
+      const cubicSpline =
+        (
+          track as THREE.KeyframeTrack & {
+            createInterpolant: { isInterpolantFactoryMethodGLTFCubicSpline?: boolean };
+          }
+        ).createInterpolant.isInterpolantFactoryMethodGLTFCubicSpline === true;
+      const size = track.getValueSize() / (cubicSpline ? 3 : 1);
       const expected =
         parsed.propertyName === "quaternion"
           ? 4
@@ -107,6 +113,17 @@ export function captureStateAppearance(
             : 3;
       if (!expected || size !== expected)
         throw new Error(`Animation value size differs from its target: ${original.name}`);
+      if (cubicSpline) {
+        // GLTF stores incoming/value/outgoing triples. Derivatives are per second;
+        // the integer-tick timeline needs derivatives per tick, preserving the curve.
+        for (let key = 0; key < track.times.length; key++) {
+          const offset = key * size * 3;
+          for (let component = 0; component < size; component++) {
+            track.values[offset + component]! /= HZ;
+            track.values[offset + 2 * size + component]! /= HZ;
+          }
+        }
+      }
       return { sourceNode, childPath, property: parsed.propertyName, track };
     });
     return { name: clip.name, tracks };
