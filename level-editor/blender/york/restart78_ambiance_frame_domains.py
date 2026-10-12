@@ -1,4 +1,4 @@
-"""Compare source frame dimensions and alpha domains before sharing effect geometry."""
+"""Compare source frame dimensions and encoded PNG alpha before sharing UV rectangles."""
 from pathlib import Path
 import hashlib
 import json
@@ -49,7 +49,7 @@ def main():
                 groups.append(frames[0])
                 continue
             groups.append(dict(bank=bank, ambiance=variant, frames=len(frames), changed_dimensions=sum(not r['dimensions_equal'] for r in frames), changed_alpha=sum(not r['alpha_equal'] for r in frames), changed_aligned_alpha=sum(not r['aligned_alpha_equal'] for r in frames), changed_rgba=sum(not r['rgba_equal'] for r in frames)))
-    report = dict(status='SOURCE_DOMAIN_COMPARISON_NOT_GEOMETRY_APPROVAL', summary=groups, frames=rows, source_manifests=pins, implications=['Different dimensions require per-ambiance UV/source rectangles.', 'Different alpha domains require per-ambiance silhouette review even when dimensions match.', 'Identical source pixels do not certify mission or gameplay integration.'])
+    report = dict(status='SOURCE_DOMAIN_COMPARISON_NOT_GEOMETRY_APPROVAL', summary=groups, frames=rows, source_manifests=pins, implications=['Different dimensions require per-ambiance UV/source rectangles.', 'Encoded PNG alpha is not decoded native transparency: color-key pixels may remain opaque. Decode source keys before silhouette conclusions.', 'Identical source pixels do not certify mission or gameplay integration.'])
     (OUT / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps(groups, indent=2))
 
