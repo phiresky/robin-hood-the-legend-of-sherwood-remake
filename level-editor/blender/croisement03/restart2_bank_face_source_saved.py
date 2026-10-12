@@ -32,6 +32,18 @@ def main():
     path=extra_path.parent/(region['id']+'.png');domain=np.array(Image.open(path))>0;assert int(domain.sum())==region['pixels'];perface.append(dict(id=region['id'],owner=region['owner'],proposed=int(domain.sum()),thin_or_boundary_rejected=0,accepted=0,ray_rejected=[]));extra_proof['regions'].append({'path':str(path),'sha256':sha(path)})
     for y,x in zip(*np.nonzero(domain&~old&~broad)):expected[(int(x),int(y))]=(int(region['owner']),len(perface)-1)
     broad|=domain
+  unresolved={};unresolved_receipt=None;unresolved_hits=[]
+  if '--unresolved-receivers' in sys.argv:
+   up=Path(sys.argv[sys.argv.index('--unresolved-receivers')+1]).resolve();ud=json.loads(up.read_text())
+   for name,digest in ud['pins'].items():assert sha(Path(name))==digest,name
+   unresolved={tuple(r['source_xy']):r for r in ud['failures']};assert len(unresolved)==102
+   for xy,row in unresolved.items():
+    assert row['expected_owner']=='53' and row['new_owner']=='52' and row['result']=='different_bank_owner'
+    assert not old[xy[1],xy[0]] and xy in expected
+   construction=json.loads((INPUT/'interface-construction.json').read_text())
+   assert ud['pins'][construction['geometry_plan']]==construction['geometry_plan_sha256']
+   revised=construction['private_revised53'];assert ud['pins'][revised['path']]==revised['sha256']
+   unresolved_receipt={'path':str(up),'sha256':sha(up),'status':'Private source-continuity experiment only; all102 receiver identities remain unresolved.'}
   rows=[];geometry={}
   for obj in scene.objects:
    if obj.type!='MESH':continue
@@ -47,7 +59,10 @@ def main():
     assert first and first[1].startswith('Candidate bank '),(x,y,first);oldhits.append([x,y,first[1],first[2]])
    else:
     owner,idx=expected[(x,y)]
-    if not first or first[1]!=f'Candidate bank {owner}':perface[idx]['ray_rejected'].append([x,y,None if first is None else first[1]]);continue
+    if (x,y)in unresolved:
+     row=unresolved[(x,y)];assert first and first[1]=='Candidate bank '+row['new_owner'],(x,y,first)
+     unresolved_hits.append({'source_xy':[x,y],'previous_private_receiver':owner,'saved_preview_receiver':first[1],'saved_face':first[2],'source_rgba':source[y,x].tolist(),'owner_status':'unresolved'})
+    elif not first or first[1]!=f'Candidate bank {owner}':perface[idx]['ray_rejected'].append([x,y,None if first is None else first[1]]);continue
     perface[idx]['accepted']+=1;accepted.append([x,y])
    assignments.setdefault((first[1],first[2]),[]).append((x,y))
   for (name,face),pixels in assignments.items():
@@ -56,6 +71,7 @@ def main():
    path=OUT/f'{name.replace(" ","-")}-face-{face}.png';Image.fromarray(rgba).save(path);im=bpy.data.images.load(str(path));im.pack();mat=bpy.data.materials.new(f'Private reviewed stone {name}/{face}');mat.use_nodes=True;nodes=mat.node_tree.nodes;nodes.clear();tex=nodes.new('ShaderNodeTexImage');tex.image=im;tex.interpolation='Closest';tex.extension='CLIP';em=nodes.new('ShaderNodeEmission');gray=nodes.new('ShaderNodeBsdfPrincipled');gray.inputs['Base Color'].default_value=(.25,.25,.25,1);mix=nodes.new('ShaderNodeMixShader');out=nodes.new('ShaderNodeOutputMaterial');links=mat.node_tree.links;links.new(tex.outputs['Color'],em.inputs['Color']);links.new(tex.outputs['Alpha'],mix.inputs[0]);links.new(gray.outputs[0],mix.inputs[1]);links.new(em.outputs[0],mix.inputs[2]);links.new(mix.outputs[0],out.inputs['Surface']);obj.data.materials.append(mat);obj.data.polygons[face].material_index=len(obj.data.materials)-1;uv=obj.data.uv_layers.active or obj.data.uv_layers.new(name="Native stone coordinates")
    for li in obj.data.polygons[face].loop_indices:
     v=obj.matrix_world@obj.data.vertices[obj.data.loops[li].vertex_index].co;uv.data[li].uv=((v.x-l)/(r-l),1-(-v.y*base.S-v.z*base.C-t)/(b-t))
+  assert len(unresolved_hits)==len(unresolved)
   retained_proof=None
   if '--retained-projection' in sys.argv:
    prior_path=Path(sys.argv[sys.argv.index('--retained-projection')+1]).resolve();prior=json.loads(prior_path.read_text());missing={tuple(p)for p in prior['accepted_pixels']}-{tuple(p)for p in accepted};retained_proof={'path':str(prior_path),'sha256':sha(prior_path),'samples':len(prior['accepted_pixels']),'missing':sorted(missing)};assert not missing,('Previously assigned exact-source interiors lost',retained_proof)
@@ -67,6 +83,6 @@ def main():
    obj=bpy.context.scene.objects[name];assert [list(obj.matrix_world@v.co)for v in obj.data.vertices]==verts;assert [list(p.vertices)for p in obj.data.polygons]==faces0
   assert sha(model)==digest;assert len(oldhits)==3446
   provenance_path=INPUT/'interface-construction.json';provenance=json.loads(provenance_path.read_text());provenance['inherited_geometry_provenance']={'path':str(provenance_path),'sha256':sha(provenance_path),'reason':'Material-only derivative; saved vertex/face arrays independently asserted identical.'};(OUT/'interface-construction.json').write_text(json.dumps(provenance,indent=2)+'\n')
-  report=dict(status='PRIVATE_SOURCE_PROJECTION_REQUIRES_SAVED_VISUAL_REVIEW',input_model_sha256=digest,model_sha256=sha(OUT/'worker.blend'),source_sha256=sha(sourcepath),protected3446_unchanged_geometry=True,protected_firsthits=oldhits,proposed=2516+(extra['total']if extra_proof else 0),accepted=len(accepted),accepted_pixels=accepted,extra_proposal=extra_proof,retained_projection=retained_proof,thin_or_boundary_rejected=int((proposal&~broad).sum()),faces=perface,limits=['Only directly reviewed broad stone interiors assigned experimentally; thin matches and wrong receivers remain unknown.','Opening is a conservative rejection filter, not independent ownership evidence.','Manual extra interiors remain subject to exact first-hit owner rejection; original5015 samples must survive.','No canonical writes or final appearance approval.']);(OUT/'projection.json').write_text(json.dumps(report,indent=2)+'\n');print({k:report[k]for k in ['status','accepted','thin_or_boundary_rejected']})
+  report=dict(status='PRIVATE_SOURCE_PROJECTION_REQUIRES_SAVED_VISUAL_REVIEW',input_model_sha256=digest,model_sha256=sha(OUT/'worker.blend'),source_sha256=sha(sourcepath),protected3446_unchanged_geometry=True,protected_firsthits=oldhits,proposed=2516+(extra['total']if extra_proof else 0),accepted=len(accepted),accepted_pixels=accepted,extra_proposal=extra_proof,retained_projection=retained_proof,unresolved_receiver_evidence=unresolved_receipt,unresolved_receivers=unresolved_hits,thin_or_boundary_rejected=int((proposal&~broad).sum()),faces=perface,limits=['Only directly reviewed broad stone interiors assigned experimentally; thin matches and wrong receivers remain unknown.','Opening is a conservative rejection filter, not independent ownership evidence.','Manual extra interiors remain subject to exact first-hit owner rejection; original5015 samples must survive.','Any explicit unresolved102 receiver list is a color-continuity preview, not an ownership assignment or approval.','No canonical writes or final appearance approval.']);(OUT/'projection.json').write_text(json.dumps(report,indent=2)+'\n');print({k:report[k]for k in ['status','accepted','thin_or_boundary_rejected']})
  finally:guard.release()
 if __name__=='__main__':main()
