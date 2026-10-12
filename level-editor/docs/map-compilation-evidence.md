@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Fresh Nottingham boundary-fix regression checks (2026-10-12)
+
+`saved-map-exports-Ia6xrD` compiles the published Nottingham scene with the
+boundary corrections in `b87530567` in about 37 seconds. Native construction
+passes, as do all 184 ordinary initial-state route samples. The upright click
+sweep retains 355 successful traversals and 25 failures. A case-by-case
+comparison with `saved-map-exports-HsTUwy` finds no changed pass/fail outcomes.
+The updated loader also retains that same outcome on the previous export.
+
+The full browser fixture reports a successful Nottingham editor ZIP round trip:
+2304 by 3520 pixels, 694 sight obstacles, 57,942,452 ZIP bytes, matching reopened
+gameplay and rendered color/depth. This run uses the boundary-fix compiler after
+its development-server reloads; it is not proof for the earlier compiler.
+Archive transfer from Chromium is still pending, so native loading of that ZIP
+has not yet been verified. An attempted native check before transfer finished
+failed because the archive file did not yet exist; that is not a map-load result.
+
+The fresh ten-map export batch `saved-map-exports-MqNblp` is still processing
+Wychford. It is not completed evidence for any map in that batch.
+
 ## Receiver coverage at compiled floor boundaries (2026-10-12)
 
 The upper-red-house landing failure below comes from thin uncovered strips
