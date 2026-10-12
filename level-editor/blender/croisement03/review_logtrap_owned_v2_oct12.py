@@ -4,7 +4,7 @@ import sys,json,hashlib,math,shutil,os,time
 ROOT=Path(__file__).resolve().parents[3]
 sys.path[:0]=[str(Path(__file__).parent),str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/blender/croisement02')]
 import bpy,bmesh
-from mathutils import Vector
+from mathutils import Vector,Euler
 from PIL import Image
 from render_slots import acquire,release
 from scenery_geometry import Mesh
@@ -54,6 +54,9 @@ def main():
   for i in range(8):
    a=-math.pi/2+i*math.pi/4;direction=Vector((math.cos(a)*COS,math.sin(a)*COS,SIN));position=center+direction*3000;views.append({'location':list(position),'rotation':list((center-position).to_track_quat('-Z','Y').to_euler()),'ortho_scale':scale,'original_direction':i==0})
   views=json.loads((OUT/'owned-candidate-v1/handoff.json').read_text())['views'];scale=views[0]['ortho_scale'];scene.camera.location=views[0]['location'];scene.camera.rotation_euler=views[0]['rotation']
+  framefit=[]
+  for view in views:
+   q=Euler(view['rotation']).to_quaternion();right=q@Vector((1,0,0));up=q@Vector((0,1,0));location=Vector(view['location']);fraction=max(max(abs((p-location).dot(right)),abs((p-location).dot(up)))/(scale/2) for p in pts);assert fraction<=1.00001,fraction;framefit.append(fraction)
   scene.camera.data.ortho_scale=scale;scene.render.resolution_x=384;scene.render.resolution_y=384;scene.render.threads_mode='FIXED';scene.render.threads=2;scene.cycles.samples=8;bpy.ops.wm.save_as_mainfile(filepath=str(destination/'worker.blend'));modelsha=sha(destination/'worker.blend');bpy.ops.wm.open_mainfile(filepath=str(destination/'worker.blend'));scene=bpy.context.scene;objects={name:[o for o in scene.objects if o.get('state_endpoint')==name] for name in objects};gray=bpy.data.materials['Unknown hidden wood — geometry only'];receipt['status']='saved model reopened; rendering';save()
   for state,group in objects.items():
    for other,items in objects.items():
@@ -71,7 +74,7 @@ def main():
      im=Image.open(destination/f'{state}-{mode}-{i}.png');sheet.paste(im,(i%4*384,i//4*384),im)
     sheet.save(destination/f'{state}-{mode}-eight.png')
   assert sha(source)==receipt['source_worker_sha256'];assert sha(destination/'worker.blend')==modelsha
-  (destination/'handoff.json').write_text(json.dumps({'status':'saved eight-view review required, unapproved endpoint geometry','model_sha256':modelsha,'source_worker_sha256':receipt['source_worker_sha256'],'views':views,'ownership':reports,'inferred_terminal_support':contact,'terminal_contact_fit_sha256':sha(contactfile),'initial_mask_fit_sha256':sha(fitfile),'initial_support':support,'scope':['Own-source initial and terminal endpoints only.','No animated correspondence or terrain contact claim.','Initial inferred support and terminal smaller debris require visual review.']},indent=2)+'\n');receipt['status']='rendered, self-review pending';save()
+  (destination/'handoff.json').write_text(json.dumps({'status':'saved eight-view review required, unapproved endpoint geometry','model_sha256':modelsha,'source_worker_sha256':receipt['source_worker_sha256'],'views':views,'whole_model_frame_fractions':framefit,'ownership':reports,'inferred_terminal_support':contact,'terminal_contact_fit_sha256':sha(contactfile),'initial_mask_fit_sha256':sha(fitfile),'initial_support':support,'scope':['Own-source initial and terminal endpoints only.','No animated correspondence or terrain contact claim.','Initial inferred support and terminal smaller debris require visual review.']},indent=2)+'\n');receipt['status']='rendered, self-review pending';save()
  except BaseException as exc:
   receipt['status']='failed';receipt['error']=repr(exc);save();raise
  finally:release()
