@@ -46,6 +46,10 @@ for (const rotation of [0, 37, 90, 180]) {
     const compiled = compileMap(document, bounds, assets, {
       bestEffort: true,
     });
+    assert.ok(
+      compiled.descriptor.asset_geometry?.jump_line_pairs?.length > 0,
+      `Roof traversal fixture ${rotation}/${height} exported no jump connections`,
+    );
     const file = `roofs-${rotation}-${height}.level.json`;
     let descriptor = compiled.descriptor;
     if (zipRoundtrip) {

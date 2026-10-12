@@ -4,6 +4,38 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Compiled jump receiving-face partitions (2026-10-12)
+
+`partition-jump-receivers.ts` now derives jump partitions from placed receiving
+faces during export. It splits paired lines and clips their destination click
+zones together, preserving native helper flags and fresh zone references.
+Coplanar pieces do not force splits. Ambiguous overlapping planes, uncovered
+gaps and partitions that collapse on the integer grid retain the authored
+connection with a warning; they remain unresolved authoring/geometry findings.
+This adds no engine code, map-format field or per-tick work.
+
+Fresh Nottingham `saved-map-exports-8vyhcY` compiles in about 34 seconds and
+matches diagnostic `derived-jump-partitions-GauVEG` except warning text. It
+passes native construction and 367/390 click cases. All 20 cases on the split
+roof connection pass; all 370 cases on other connections retain their previous
+outcomes. Twenty-three failures remain. York's previously published descriptor
+is unchanged by the partitioner (`derived-jump-partitions-k2vFS2`), with fourteen
+ambiguous receiving-plane warnings. This is not a fresh York scene export.
+
+All 239 compiler, export and focused partition tests pass, as do type checking,
+lint and formatting. Focused tests include eight rotated/elevated configurations,
+input immutability, helper flags, coplanar faces, gaps and subpixel collapse.
+These geometry tests do not replace native traversal at arbitrary placements.
+
+The wider copied-roof fixture produced zero jump pairs in every placement
+(`prepared-roof-placements-7WM75Y`). Its ZIP reopening checks completed, but its
+native click audit correctly fails for having no traversals. Generated flight
+or walking clearance rejects the connections before the partition stage. This
+is an unresolved regression finding, not eight successful traversal fixtures.
+`check-roof-jump-placements.mjs` now explicitly rejects zero-pair exports so that
+future packaging checks cannot be mistaken for successful roof connections.
+The previously verified Nottingham browser ZIP predates this partition change.
+
 ## Roof-ridge landing span diagnostic (2026-10-12)
 
 The two remaining Nottingham receiver mismatches on line 70 are genuine:

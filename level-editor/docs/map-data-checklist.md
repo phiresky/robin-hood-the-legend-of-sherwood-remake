@@ -11,6 +11,14 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**Jump partitioning (2026-10-12):** export now splits roof-crossing jump spans
+and their clickable landing zones by receiving face. Fresh Nottingham passes
+367/390 click cases: all 20 cases for the split connection pass, while the
+other 370 outcomes are unchanged. Twenty-three failures remain. All 239
+compiler/export tests pass. A wider copied-roof fixture currently generates no
+jumps and fails native verification; this is an open issue, not parity evidence.
+See [partition verification](map-compilation-evidence.md#compiled-jump-receiving-face-partitions-2026-10-12).
+
 **Boundary repair under validation (2026-10-12):** static export/load corrections
 bring the upper-red-house eight-placement jump fixture from 50/80 to 70/80,
 resolving all twenty receiver-loss cases. Ten rotated click-selection failures

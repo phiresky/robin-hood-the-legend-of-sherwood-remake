@@ -47,6 +47,7 @@ import {
   type JumpReceivingSurface,
 } from "./jump-clearance.ts";
 import { auditCompiledJump } from "./audit-compiled-jump.ts";
+import { partitionJumpReceivers } from "./partition-jump-receivers.ts";
 import { createJumpWalkingClearance, type JumpWalkArea } from "./jump-walking-clearance.ts";
 import {
   generateJumpLedges,
@@ -2739,6 +2740,8 @@ function compileAssetGameplayAttempt(
     }
     auditContacts = undefined;
   }
+  const partitionedJumps = partitionJumpReceivers(compiledJumpPairs, compiledJumpZones, sight);
+  warnings.push(...partitionedJumps.warnings);
   // Runtime construction order is motion, materials, projection planes, then buildings.
   // Motion adds an out-of-map sector; each door also consumes a constructor slot.
   // Physical endpoints reach the runtime unchanged. Rounding before binding
@@ -3100,7 +3103,10 @@ function compileAssetGameplayAttempt(
     motion_data: { layers, graph_bytes: graphBytes },
     ...(masks.length ? { masks } : {}),
     ...(compiledJumpZones.length
-      ? { jump_zones: compiledJumpZones, jump_line_pairs: compiledJumpPairs }
+      ? {
+          jump_zones: partitionedJumps.zones,
+          jump_line_pairs: partitionedJumps.pairs.map(({ pair }) => pair),
+        }
       : {}),
     ...(lights.length
       ? {
