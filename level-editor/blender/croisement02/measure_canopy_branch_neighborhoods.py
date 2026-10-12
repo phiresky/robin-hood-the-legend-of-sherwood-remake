@@ -1,6 +1,6 @@
 """Measure fixed upper-wood neighborhoods against every saved crown pose."""
 from pathlib import Path
-import json,struct,hashlib
+import json,struct,hashlib,argparse
 import numpy as np
 from scipy.spatial import cKDTree
 from audit_canopy_static_clearance import primitives
@@ -12,7 +12,7 @@ def triangle_distance(point,tri):
  return np.sqrt(np.maximum(best,0))
 
 def main():
- R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';src=B/'restart99-canopy00-combined-v1/report.json';O=B/'canopy00-branch-neighborhoods-oct12-v1';O.mkdir(exist_ok=False);bundle=json.loads(src.read_text());results=[]
+ parser=argparse.ArgumentParser();parser.add_argument('--group',type=int,default=0);args=parser.parse_args();R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';src=B/(f'canopy{args.group:02}-complete-installed-oct12-v1/report.json'if args.group in [3,4]else f'restart99-canopy{args.group:02}-combined-v1/report.json');O=B/f'canopy{args.group:02}-branch-neighborhoods-oct12-v1';O.mkdir(exist_ok=False);bundle=json.loads(src.read_text());results=[]
  for member in bundle['assets']:
   path=Path(member['source_model']['path']);raw=path.read_bytes();assert hashlib.sha256(raw).hexdigest()==member['source_model']['sha256'];n=struct.unpack_from('<I',raw,12)[0];doc=json.loads(raw[20:20+n]);data=raw[28+n:]
   def read(i):
@@ -39,5 +39,5 @@ def main():
   for radius in [4,8,16,24,32]:
    baseline=d[0]<=radius;summary.append({'radius':radius,'baseline_covered':int(baseline.sum()),'covered_each_phase':(d<=radius).sum(1).tolist(),'baseline_probes_leaving_radius_any_phase':int(np.any(d[:,baseline]>radius,axis=0).sum())})
   near=d[0]<=24;result={'asset':member['asset_id'],'model_pin':member['source_model'],'probe_rule':'Highest fixedwood vertex in each8x8worldXZcell, restricted to upper35%of fixedwood height. These are upper-branch surface neighborhood probes, not inferred welded leaf-card junctions.','probe_count':len(probes),'upper_wood_y_cutoff':float(cutoff),'probes_yup':probes.tolist(),'nearest_crown_triangle_distance_by_phase':d.tolist(),'radius_coverage':summary,'baseline_near24_probe_count':int(near.sum()),'max_distance_increase_for_baseline_near24':float((d[:,near]-d[0,near]).max())if near.any()else None,'max_distance_any_pose_for_baseline_near24':float(d[:,near].max())if near.any()else None,'max_crown_vertex_motion':max_motion};results.append(result);print(member['asset_id'],len(probes),result['max_distance_increase_for_baseline_near24'],summary,flush=True)
- report={'status':'MEASURED_STATIC_BASELINE_NEIGHBORHOODS_ALL14POSES','source':{'path':str(src),'sha256':hashlib.sha256(src.read_bytes()).hexdigest()},'assets':results,'limits':['Actual point-to-triangle geometric distances; texture alpha and hidden twig continuity are not inferred from leaf cards.','Fixed thresholds report coverage changes, not automatically pass/fail botanical attachment. Assess motion-relative differences with saved diagnostic views.','Only canopy00trees43/45/46. Upperwood sample is explicit, not a claim of exhaustive anatomical branch-tip detection.']};(O/'report.json').write_text(json.dumps(report,indent=2)+'\n');print('sha',hashlib.sha256((O/'report.json').read_bytes()).hexdigest())
+ report={'status':'MEASURED_STATIC_BASELINE_NEIGHBORHOODS_ALL14POSES','source':{'path':str(src),'sha256':hashlib.sha256(src.read_bytes()).hexdigest()},'assets':results,'limits':['Actual point-to-triangle geometric distances; texture alpha and hidden twig continuity are not inferred from leaf cards.','Fixed thresholds report coverage changes, not automatically pass/fail botanical attachment. Assess motion-relative differences with saved diagnostic views.',f'Only canopy{args.group:02}. Upperwood sample is explicit, not a claim of exhaustive anatomical branch-tip detection.']};(O/'report.json').write_text(json.dumps(report,indent=2)+'\n');print('sha',hashlib.sha256((O/'report.json').read_bytes()).hexdigest())
 if __name__=='__main__':main()
