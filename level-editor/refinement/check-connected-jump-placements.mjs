@@ -11,6 +11,8 @@ import { compileMap } from "../app/src/map-compile.ts";
 
 const diagnosticPrecision = process.argv.includes("--diagnostic-precision");
 const includeInternal = process.argv.includes("--include-internal");
+const internalPair = process.argv.includes("--internal-pair");
+assert.ok(!internalPair || (!includeInternal && !diagnosticPrecision));
 assert.ok(
   !includeInternal || !diagnosticPrecision,
   "Precision diagnostic only supports isolated external pairs",
@@ -41,6 +43,7 @@ const [map, pair, assetList, stage] = process.argv
     (argument) =>
       argument !== "--diagnostic-precision" &&
       argument !== "--include-internal" &&
+      argument !== "--internal-pair" &&
       !argument.startsWith("--rotations=") &&
       !argument.startsWith("--terrain-offset="),
   );
@@ -49,6 +52,7 @@ assert.ok(
   "Supply map, pair prefix, comma-separated asset IDs and optional stage",
 );
 const ids = assetList.split(",");
+assert.ok(!internalPair || ids.length === 1, "An internal pair belongs to one asset");
 const saved = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", saved.assetSources, saved.sceneAssets);
 const edits = stage ? JSON.parse(await fs.readFile(`${stage}/edits.json`)) : [];
@@ -61,11 +65,14 @@ for (const edit of edits) {
 }
 for (const id of ids) {
   const gameplay = assets.get(id).gameplay;
-  if (!includeInternal) gameplay.jumpPairs = [];
-  gameplay.jumpSegments = (gameplay.jumpSegments ?? []).filter((segment) =>
-    [pair + "-side-0", pair + "-side-1"].includes(segment.id),
+  if (internalPair) {
+    gameplay.jumpPairs = gameplay.jumpPairs.filter((entry) => entry.id === pair);
+    assert.equal(gameplay.jumpPairs.length, 1, `${id}: expected one internal pair`);
+  } else if (!includeInternal) gameplay.jumpPairs = [];
+  gameplay.jumpSegments = (gameplay.jumpSegments ?? []).filter(
+    (segment) => !internalPair && [pair + "-side-0", pair + "-side-1"].includes(segment.id),
   );
-  assert.equal(gameplay.jumpSegments.length, 1, `${id}: expected one connection endpoint`);
+  assert.equal(gameplay.jumpSegments.length, internalPair ? 0 : 1, `${id}: connection endpoints`);
   const zones = new Set(gameplay.jumpSegments.map((segment) => segment.edge.zone));
   for (const pair of gameplay.jumpPairs ?? []) for (const edge of pair.edges) zones.add(edge.zone);
   gameplay.jumpZones = gameplay.jumpZones.filter((zone) => zones.has(zone.id));
@@ -105,6 +112,7 @@ const save = (complete) =>
       stage,
       terrainOffset,
       includeInternal,
+      internalPair,
       results,
     }),
   );

@@ -75,10 +75,14 @@ solver is needed. Mesh contact and in-game actor/depth compositing remain open;
 earlier authoring experiments stay unpublished.
 See [the investigation](map-compilation-evidence.md#sherwood-stair-clearance-investigation-2026-10-12).
 
-**York jump checks (2026-10-12):** the latest full-map audit has 704 successful
-traversals, eleven occluded lower-click cases and five failures out of 720.
-The remaining failures are line 5's outside-zone clicks. All ten selected interior-click
-directions pass, but that does not clear wider click coverage or all placements.
+**York jump checks (2026-10-12):** the latest full-map audit passes all **720
+checks: 709 traversals and eleven occluded lower-click cases**. The gable house's
+roof selection region now follows its existing walkable surface. The published
+asset passes 160/160 offset clicks at four rotations, two elevations and two
+copies (previously 80/160). Replaying the same 456 interior clicks before and
+after gives 12 improvements, zero regressions and 72 unresolved failures.
+Stock placement success does not clear wider click coverage or all placements.
+See [selection-region evidence](map-compilation-evidence.md#gable-roof-selection-region-publication).
 See [interior-click evidence](map-compilation-evidence.md#york-interior-jump-clicks-2026-10-12).
 
 A fresh export exposed a receiving-plane error in joined-stair preparation:

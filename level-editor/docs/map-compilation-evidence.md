@@ -83,6 +83,39 @@ zone. Earlier reports are retained alongside as
 remain unpublished; their earlier 432/432 interior checks and flight clearance
 do not replace moved-asset and all-connection validation.
 
+### Gable roof selection-region publication
+
+The five remaining full-York failures clicked a supported part of the gable
+roof outside its authored selection region. Stage `jump-zone-surface-ngSMNF`
+uses the existing `building-758-walk-0` outline and heights for `jump-zone-80`
+on `york-castle-west-lane-gable-house`. It changes no jump endpoints, physical
+surfaces or runtime behavior. The generic staging helper requires a hole-free
+surface and verifies that the existing zone anchor belongs to it.
+
+The placement checker now also accepts one asset's internal pair, preserving
+its physical geometry and making independent copies. For internal pair 69,
+baseline `connected-jump-placements-a1puCM` passes 80/160 offset clicks; staged
+`connected-jump-placements-a9UAMH` passes **160/160**, with 80 improvements and
+zero regressions across four rotations and two elevations.
+
+Independent interior probes pass 252/288 for both versions
+(`interior-jump-clicks-fCWtc8` and `interior-jump-clicks-B8YWRc`), but only 120
+input cases coincide. `refinement/combine-jump-click-probes.mjs` therefore
+replays the union of both probe sets against both descriptors, requiring
+unchanged line identities and endpoints. `combined-jump-clicks-Ux4HY6` has
+456 identical cases: baseline passes 372 and candidate 384, with **12
+improvements and zero regressions**. The remaining 72 failures are not cleared
+by the offset result; projected/occluded click selection needs further review.
+
+Full export `saved-map-exports-Etu7BT` finishes in 255.925 seconds. Comparing
+with `saved-map-exports-Hvo6ax`, the entire descriptor is identical except for
+selection polygon 12. Native jump checks pass **720/720: 709 traversals and
+eleven expected occlusion checks**. Unchanged geometry retains the preceding
+construction, stair and ordinary-route evidence. The authoring CLI publishes
+the asset and updates York's scene pin; the published gameplay and descriptor
+hash match the tested stage exactly. Rendered archive traversal and broader
+placement parity remain separate requirements.
+
 ## Supported integer jump-span search (2026-10-12)
 
 `refinement/review-jump-supported-spans.mjs` generates diagnostic replacements
