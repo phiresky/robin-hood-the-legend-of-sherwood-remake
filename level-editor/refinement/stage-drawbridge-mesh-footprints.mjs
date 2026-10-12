@@ -2,18 +2,25 @@
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { loadSceneModel } from "../pipeline/src/scene-assets.ts";
 import { maskRecoveryMesh } from "../pipeline/src/mask-recovery-mesh.ts";
 import { sceneToGame, gltfToScene } from "../shared/src/geometry.ts";
+import { signedPolygonArea } from "../shared/src/geometry.ts";
 import { fixedPolygonBoolean } from "../shared/src/fixed-polygon-boolean.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
-const [stage] = process.argv.slice(2);
+const [stage, mode] = process.argv.slice(2);
 assert.ok(stage, "Supply staged drawbridge and plateau edits");
+assert.ok(mode === undefined || mode === "--plateau", "Unknown footprint review mode");
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`));
-const edit = edits.find((entry) => entry.asset === "lincoln-south-gate-drawbridge");
+const id =
+  mode === "--plateau"
+    ? "lincoln-castle-hill-inner-bailey-plateau"
+    : "lincoln-south-gate-drawbridge";
+const edit = edits.find((entry) => entry.asset === id);
 assert.ok(edit);
-const root = "3d-assets/lincoln/lincoln-south-gate-drawbridge";
+const root = `3d-assets/lincoln/${id}`;
 const bytes = await fs.readFile(`library/${root}/asset.json`);
 assert.equal(createHash("sha256").update(bytes).digest("hex"), edit.descriptorSha256);
 const descriptor = JSON.parse(bytes);
@@ -27,7 +34,14 @@ const model = await loadSceneModel("library", {
   resources: descriptor.resources ?? [],
 });
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
+// Dense carved terrain contains nearly coincident tessellation edges. A local
+// authoring grid below one thousandth of a game unit removes that mesh noise.
+const clippingScale = mode === "--plateau" ? 1024 : 1048576;
+const polygonClipping = createRequire(new URL("../shared/package.json", import.meta.url))(
+  "polygon-clipping",
+);
 const changes = [];
+const replacements = [];
 for (const surface of edit.gameplay.surfaces) {
   const height = surface.height[0];
   assert.ok(surface.height.every((z) => z === height));
@@ -39,32 +53,69 @@ for (const surface of edit.gameplay.surfaces) {
   );
   assert.ok(top.length);
   const projected = top.map((triangle) => [triangle.map(([x, y]) => [x, y])]);
-  const mesh = fixedPolygonBoolean(
-    "union",
-    [projected[0]],
-    projected.slice(1).map((polygon) => [polygon]),
-  );
+  let batches = projected.map((polygon) => [polygon]);
+  while (batches.length > 1) {
+    console.log(`${surface.id}: union ${batches.length} mesh pieces`);
+    const next = [];
+    for (let index = 0; index < batches.length; index += 32) {
+      next.push(
+        mode === "--plateau"
+          ? polygonClipping.union(...batches.slice(index, index + 32))
+          : fixedPolygonBoolean(
+              "union",
+              batches[index],
+              batches.slice(index + 1, index + 32),
+              clippingScale,
+            ),
+      );
+    }
+    batches = next;
+  }
+  const mesh = batches[0];
   const clipped = fixedPolygonBoolean(
     "intersection",
     [[surface.polygon, ...(surface.holes ?? [])]],
     [mesh],
+    clippingScale,
   );
-  assert.equal(clipped.length, 1, `${surface.id}: review split deck before proceeding`);
-  const [outer, ...holes] = clipped[0];
-  changes.push({ surface: surface.id, before: surface.polygon, after: outer, holes });
-  surface.polygon = outer.slice(0, -1);
-  surface.holes = holes.map((hole) => hole.slice(0, -1));
-  surface.height = surface.polygon.map(() => height);
-  surface.navigationJoins = surface.polygon.map(([x, y], index) => [
-    [x, y, height],
-    [...surface.polygon[(index + 1) % surface.polygon.length], height],
-  ]);
+  assert.ok(clipped.length, "The selected walking surface disappeared");
+  if (mode !== "--plateau") assert.equal(clipped.length, 1, "Deck unexpectedly split");
+  console.log(
+    `${surface.id}: ${JSON.stringify(clipped.map(([outer]) => ({ area: Math.abs(signedPolygonArea(outer)), points: outer.length })))}`,
+  );
+  for (const [piece, [outer, ...holes]] of clipped.entries()) {
+    const replacement = structuredClone(surface);
+    replacement.id = piece === 0 ? surface.id : `${surface.id}-mesh-piece-${piece}`;
+    changes.push({ surface: surface.id, before: surface.polygon, after: outer, holes });
+    replacement.polygon = outer.slice(0, -1);
+    replacement.holes = holes.map((hole) => hole.slice(0, -1));
+    replacement.height = replacement.polygon.map(() => height);
+    if (clipped.length > 1) {
+      delete replacement.preserveMovementBoundary;
+      const volume = edit.gameplay.volumes.find(
+        (volume) => volume.id === replacement.projectionVolume,
+      );
+      assert.ok(volume && !volume.shape.material_indices?.length);
+      delete replacement.projectionVolume;
+      replacement.projectionMaterials = {
+        defaultMaterial: volume.shape.default_material,
+        regions: [],
+      };
+    }
+    if (replacement.navigationJoins)
+      replacement.navigationJoins = replacement.polygon.map(([x, y], index) => [
+        [x, y, height],
+        [...replacement.polygon[(index + 1) % replacement.polygon.length], height],
+      ]);
+    replacements.push(replacement);
+  }
 }
+edit.gameplay.surfaces = replacements;
 validateAssetGameplay(edit.gameplay, descriptor);
 const output = await fs.mkdtemp("work/needs-review/map-compile/drawbridge-mesh-footprints-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(
   `${output}/mesh-footprints.json`,
-  JSON.stringify({ stage, published: false, changes }),
+  JSON.stringify({ stage, mode, clippingScale, published: false, changes }),
 );
 console.log(output);

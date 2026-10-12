@@ -123,8 +123,27 @@ and six probes whose interpolated mesh height is within 0.5 units although their
 triangle vertices are not all near the floor plane. `plateau-support.png` was
 inspected; large discrepancies cluster near the west end. The review now records
 `nearestMeshHeightError` so a non-flat mesh is not mistaken for absent geometry.
-Correcting this area requires authored slopes/contact review, not indiscriminate
-deletion of every near-plane failure. The published plateau is unchanged.
+Further inspection finds 28 of the 44 interior failures on faces whose projected
+area is below one percent of their horizontal area. Asset authoring notes identify
+the front band as carved cliff geometry exposing neighbouring wall/rock artwork.
+These faces must not be automatically promoted to walking ramps. A supported-top
+candidate must retain legitimate authored contacts and undergo native regression
+checks. The published plateau is unchanged.
+
+`drawbridge-mesh-footprints-IXa2n5` is a follow-up supported-top candidate. The
+plateau top separates into three regions of approximately 547,608, 4,458 and
+8,578 square game units; none is discarded. Independent receiving surfaces keep
+these disconnected regions from sharing one projection-volume binding. The
+authoring tool unions dense mesh faces in batches, then clips on a 1/1024-unit
+local grid. No runtime processing or published asset changes are involved.
+
+All eight `lincoln-drawbridge-placements-BAPjLh` exports retain twelve passages.
+The full-scene `saved-map-exports-7Eod57` passes 192 ordinary route samples,
+sixteen stair-click routes and the native jump-click audit. The moved-bridge
+control audit passes in 45.40 seconds, retaining all 576 open/closed/reset player
+clicks, 576 gate-search checks and prepared traversal/denial checks. Detailed
+revised mesh contact review and rendered archive checks remain pending for this
+candidate; audit duration is not a per-tick performance measurement.
 
 The follow-up `lincoln-drawbridge-disconnections-QrZQte` removes or raises the
 plateau in only the first copy across the same eight placements. All sixteen
