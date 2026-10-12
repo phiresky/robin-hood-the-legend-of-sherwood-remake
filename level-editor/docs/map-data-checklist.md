@@ -11,13 +11,16 @@ Connections and runtime indices are rebuilt after placement, rotation and copyin
 the saved scenes. Twenty-one unused assets lack definitions. This checks library
 definition presence and index hashes, not scene pins or gameplay completeness.
 
-**Current Wychford blocker (2026-10-12):** the fresh baseline fails during final
-stair-clearance preparation after roughly 52 minutes. Convex-region duplicate
-comparison no longer uses the failing polygon sweep, but a complete fresh export
-has not yet verified that correction. See [the failure and profiling scope](map-compilation-evidence.md#fresh-wychford-final-clearance-failure-2026-10-12).
+**Current Wychford export (2026-10-12):** `saved-map-exports-ab3hoH` completes
+in 825 seconds, including final stair-clearance preparation. This verifies the
+convex-region duplicate-comparison correction against a complete fresh export;
+the earlier baseline failed after roughly 52 minutes. Native construction and
+traversal of this fresh result remain pending. The church-side-tower connection
+is still omitted because its outside endpoint has no matching-height support.
+See [the completed export](map-compilation-evidence.md#corrected-wychford-export-completion-2026-10-12).
 An exact-integer clipping patch reduces one measured terrain-generation run
 from 183 to 50 seconds with identical output; 289 focused tests and the editor
-build pass. Full export timing and completion remain pending. See
+build pass. Export performance still needs improvement. See
 [the clipping profile](map-compilation-evidence.md#exact-integer-terrain-clipping-profile-2026-10-12).
 
 This file also retains historical investigations. Results that depended on the

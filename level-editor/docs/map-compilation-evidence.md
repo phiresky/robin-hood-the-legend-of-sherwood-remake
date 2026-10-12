@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Corrected Wychford export completion (2026-10-12)
+
+Fresh `saved-map-exports-ab3hoH` completes compilation in 825.054 seconds and
+writes its descriptor in 0.371 seconds. The manifest is complete, so the
+convex-support deduplication correction now has full-export evidence, including
+the formerly failing final stair-clearance stage. This result includes the
+exact-integer clipping patch and receiving-polygon cache. It does not establish
+native traversal or rendered ZIP fidelity; those require separate checks.
+
+The export retains 1,460 warnings, including draft-definition notices and the
+unsupported church-side-tower connection. Its outside endpoint is at height
+134.101 while the containing ground evaluates to 88.325; best-effort export
+omits the traversal and retains independent asset geometry. Successful export
+does not certify this disconnected placement as traversable.
+
+The completed `wychford-cpu-profile-ppz81c53/patched-compiler.cpuprofile` records
+117.42 seconds of self time in exact collinearity and 109.64 seconds in clipping
+point-in-polygon tests. Export remains expensive despite successful completion.
+These are offline compiler costs, not per-tick runtime work.
+
 ## Nottingham exhaustive archive GPU check (2026-10-12)
 
 The full archive in `nottingham-rendered-library-ai1yht_r` passes the native
