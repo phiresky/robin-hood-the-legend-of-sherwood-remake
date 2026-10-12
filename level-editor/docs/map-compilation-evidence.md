@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Sherwood stair clearance investigation (2026-10-12)
+
+Fresh published export `saved-map-exports-pxNvRF` passes 50 ordinary route
+samples and ten jump-click traversals, but both oak-platform stair directions
+stall inside the narrow movement contour. Published isolated placement export
+`asset-jump-exports-apDBRt` passes 12/16 stair routes: both directions fail at
+zero rotation, at elevations zero and forty. This supersedes older traversal
+claims for this asset under the current prepared-graph implementation.
+
+One-time authoring stage `sherwood-stair-clearance-XiYX9l` maps the imported
+movement outline onto the asset's current stair plane. Full-scene export
+`saved-map-exports-ehWqeK` then passes both stairs, 50 ordinary routes and all
+ten jump clicks. However, `asset-jump-exports-XdiJr0` still passes only 12/16
+stairs: the failure moves to 180 degrees at both elevations. The replacement
+outline also excludes the upper middle contact, so these improvements are not
+publication evidence.
+
+`refinement/stage-sherwood-stair-clearance.mjs` now stages the union of that
+clearance with the existing contact-supporting contour. Stage
+`sherwood-stair-clearance-Z1OzGh`, exported as `asset-jump-exports-d4oCdv`,
+removes the missing-support warnings but exposes permanent movement collision
+at the lower entrance in all eight placements. Its traversal audit rejects the
+fixture because all sixteen directions are forbidden; this is not a passing
+result. Neither experiment is published. The next task is reconciling local
+stair clearance, contact support and collision ownership, followed by repeated
+placement and rendered checks. No engine code changes were made.
+
 ## Non-reversed projection clearance (2026-10-12)
 
 Pre-normalization clearance was restricted to folded projections. A simple

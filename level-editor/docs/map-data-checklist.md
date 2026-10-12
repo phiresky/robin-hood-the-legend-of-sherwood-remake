@@ -50,6 +50,13 @@ including ordinary passages touching stairs in the existing load-time receiver
 cache. All authored connections remain. No new per-tick geometry work is added.
 See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-checks-2026-10-12).
 
+**Sherwood stair gap (2026-10-12):** fresh published data passes 50 ordinary
+routes and ten jump clicks, but both oak-platform stair directions fail. The
+isolated placement sweep passes 12/16 stairs. A staged clearance change fixes
+the saved orientation but regresses 180-degree placements; retaining existing
+contacts instead exposes lower-entrance collision. Neither stage is published.
+See [the investigation](map-compilation-evidence.md#sherwood-stair-clearance-investigation-2026-10-12).
+
 **York jump checks (2026-10-12):** the current full-map audit has 696 successful
 traversals, eleven occluded lower-click cases and thirteen failures out of 720.
 The remaining failures are lines 5, 57 and 65. All ten selected interior-click
