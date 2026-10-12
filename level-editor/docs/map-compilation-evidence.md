@@ -51,6 +51,20 @@ general solution: both passage directions, state checks and authoring semantics
 need a bounded export-time construction. The diagnostic does not alter assets
 or engine code. The full height/rotation generator continues independently.
 
+Forced-route coverage distinguishes the remaining approach gap: the original
+four-angle diagnostic passes 32/48 explicitly selected entrance/exit pairs,
+while moving only midpoints passes 40/48. Both retain eight stalls at 180
+degrees, where ordinary passages have not received the stair approach
+preparation applied to lift-owned doors. Diagnostic
+`hall-ordinary-approach-diagnostic-83UT2L` includes those ordinary doors during
+existing approach preparation and reconstructs their world endpoints. Combined
+with the midpoint experiment it passes **48/48 forced routes and 48/48 player
+clicks**, without an engine change. The reusable diagnostic recipe
+`refinement/check-ordinary-stair-approaches.mjs` reproduces the four tested
+descriptors exactly in `hall-ordinary-approach-diagnostic-hw0QI4`.
+This is not production integration: generic midpoint constraints, state
+recomputation and raised-placement verification remain required.
+
 ## Sherwood stair clearance investigation (2026-10-12)
 
 Fresh published export `saved-map-exports-pxNvRF` passes 50 ordinary route

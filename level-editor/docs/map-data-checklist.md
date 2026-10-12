@@ -56,6 +56,10 @@ native geometry validation, with two receiver-transition failures among twelve r
 Player clicks pass 44/48 routes; 180-degree alternate routes work. Moving ordinary
 midpoints onto inside endpoints in an unpublished diagnostic passes 48/48,
 isolating a receiving-edge timing problem that still needs a general export fix.
+Including ordinary doors in the existing stair approach preparation also clears
+the forced-route stalls: the combined unpublished diagnostic passes all 48
+forced routes and 48 player clicks. Production integration and raised placements
+remain unverified.
 See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-checks-2026-10-12).
 
 **Sherwood stair gap (2026-10-12):** fresh published data passes 50 ordinary
