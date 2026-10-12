@@ -75,9 +75,9 @@ solver is needed. Mesh contact and in-game actor/depth compositing remain open;
 earlier authoring experiments stay unpublished.
 See [the investigation](map-compilation-evidence.md#sherwood-stair-clearance-investigation-2026-10-12).
 
-**York jump checks (2026-10-12):** the last completed full-map audit has 696 successful
-traversals, eleven occluded lower-click cases and thirteen failures out of 720.
-The remaining failures are lines 5, 57 and 65. All ten selected interior-click
+**York jump checks (2026-10-12):** the latest full-map audit has 701 successful
+traversals, eleven occluded lower-click cases and eight failures out of 720.
+The remaining failures are lines 5 and 65. All ten selected interior-click
 directions pass, but that does not clear wider click coverage or all placements.
 See [interior-click evidence](map-compilation-evidence.md#york-interior-jump-clicks-2026-10-12).
 
@@ -122,10 +122,21 @@ verify. Movement success alone does not clear those findings. Flight clearance,
 production integration and regression checks on all connections remain open.
 See [the search evidence](map-compilation-evidence.md#supported-integer-jump-span-search-2026-10-12).
 
+The central-south houses now include their missing opposite roof faces, derived
+from asset-local geometry and published with updated York scene pins. All 84 mesh
+samples have support, with height differences below 0.087 units. Export
+`saved-map-exports-Hvo6ax` passes native construction, all 130 stair routes and
+288 ordinary routes. Its jump checks improve five cases with zero regressions.
+Repositioned pair checks improve from 68/160 to **112/160**, with 44 improvements
+and zero regressions. Arbitrary placement remains incomplete. A native trace of
+the diagnostic endpoint replacement also confirms anchor penetration up to
+14.096 units despite successful arrival; that replacement remains unpublished.
+See [roof-face and trace evidence](map-compilation-evidence.md#york-missing-roof-faces-and-observed-flight-contact-2026-10-12).
+
 The published west-lane roof correction passes all **72 interior-click traversals**
 across nine angles, two elevations and two copies. It restores the mesh-supported
 roof outline and moves the takeoff inward. All 18 exports construct natively;
-56/360 perpendicular-offset probes still fail. Full York now has **13/720 failing
+56/360 perpendicular-offset probes still fail. That earlier full York audit had **13/720 failing
 offset probes**, down from 28, with no regressions: the compiler clearance fix
 repairs ten golden-house probes and this roof correction repairs five west-lane
 probes. All ten selected full-map interior clicks pass. Rendered traversal and

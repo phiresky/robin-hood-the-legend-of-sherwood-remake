@@ -6,7 +6,7 @@ import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
 const mode = process.argv[2] ?? "support";
-assert.ok(["support", "edges", "both", "inset"].includes(mode));
+assert.ok(["support", "edges", "both", "inset", "faces"].includes(mode));
 const scene = await readStoredMap("library/scenes/york.rhlos-map.json", "library");
 const assets = await pinnedDescriptors("library", scene.assetSources, scene.sceneAssets);
 const edits = [];
@@ -32,7 +32,7 @@ for (const [name, surfaceId, segmentId] of [
     roof.polygon = footprint.map(([x, y]) => [x, y]);
     roof.height = roof.polygon.map((point) => planeHeight(plane, point));
   }
-  if (mode !== "support") {
+  if (mode !== "support" && mode !== "faces") {
     if (mode === "inset") {
       const center = [0, 1].map((axis) =>
         footprint.reduce((sum, point) => sum + point[axis] / footprint.length, 0),
@@ -45,6 +45,32 @@ for (const [name, surfaceId, segmentId] of [
     }
     for (const point of [edge.a, edge.b]) point[2] = planeHeight(plane, point);
   }
+  if (mode === "faces") {
+    const node = name === "red" ? "building-322" : "building-330";
+    const volume = asset.parts.find((part) => part.node === node)?.obstacle_local_game;
+    assert.ok(volume && !gameplay.surfaces.some((surface) => surface.node === node));
+    const vertices = volume.points.map((point) => [point.x, point.y, point.z_top]);
+    const anchors = vertices.slice(0, 3);
+    const plane = heightPlane(anchors);
+    const footprint = vertices.map(([x, y]) => [x, y, planeHeight(plane, [x, y])]);
+    gameplay.surfaces.push({
+      id: `${node}-walk-0`,
+      node,
+      navigationRegion: roof.navigationRegion,
+      polygon: footprint.map(([x, y]) => [x, y]),
+      height: footprint.map((point) => point[2]),
+      holes: [],
+      preserveMovementPrecision: true,
+      projectionMaterials: {
+        defaultMaterial: volume.default_material,
+        regions: [],
+        planePoints: anchors,
+        footprint,
+        priority: -Number(node.slice("building-".length)),
+        priorityHeight: Math.max(...footprint.map((point) => point[2])),
+      },
+    });
+  }
   validateAssetGameplay(gameplay, asset);
   edits.push({
     asset: id,
@@ -52,7 +78,7 @@ for (const [name, surfaceId, segmentId] of [
     modelSha256: source.model_sha256,
     gameplay,
   });
-  reviews.push({ source, before, after: { roof, edge } });
+  reviews.push({ source, before, after: { roof, edge, surfaces: gameplay.surfaces } });
 }
 const output = await fs.mkdtemp("work/map-compile/york-central-south-roofs-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));

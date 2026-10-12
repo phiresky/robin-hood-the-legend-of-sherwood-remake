@@ -4,6 +4,43 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## York missing roof faces and observed flight contact (2026-10-12)
+
+Stage `york-central-south-roofs-2WImX0` adds the missing opposite roof surfaces
+to the central-south red and rear timber houses from their asset-local volumes.
+It restores each primary roof's physical footprint without moving jump endpoints.
+The added faces have 42/42 mesh-supported samples each, with maximum height
+differences of 0.086769 and 0.018869 units. The authoring publication report
+confirms both assets were applied and the York scene descriptor pins updated.
+
+Placement export `connected-jump-placements-73VZgl` passes 112/160 offset clicks
+across four rotations, two elevations and two copies, compared with 68/160 in
+`connected-jump-placements-qTlnO4`: 44 improvements and zero regressions.
+Full export `saved-map-exports-Hvo6ax` constructs 162 areas, 1,236 sight obstacles,
+254 doors, 72 jump pairs, 269,206 grid blocks and 332 elevation boundaries.
+All 130 stair routes and 288 ordinary route samples pass. Comparing the same 720
+jump cases with `saved-map-exports-Q7aNRO` gives five improvements and zero
+regressions: 701 traversals, eleven occlusion checks, and eight failures on lines
+5 and 65. These results do not certify arbitrary placement or rendered traversal.
+
+`refinement/check-observed-jump-solids.mjs` compares recorded native airborne
+anchors with initial static solids. It requires successful traces and rejects
+maps with movement transitions whose states are absent from those traces.
+In `jump-flight-trace-3d3ypyi9`, a diagnostic replacement passes 10/10 clicks but
+has 46 contact records in 172 airborne samples, reaching 14.095685 units below
+solid caps. This is anchor penetration, not a rendered sprite-volume measurement.
+The replacement is not integrated into compilation or published assets.
+With the newly added roof faces and unchanged endpoints, the zero-degree fixture
+`jump-roof-faces-trace-1vk12tl_` passes 20/20 clicks; its 260 airborne samples
+have four contacts with maximum penetration 1.757610 units. That residual is open.
+
+The diagnostic search now supports bounded clearance filtering and groups contact
+evidence by receiver and flight family. Neither 128 reviewed supported candidates
+in `supported-jump-spans-C1xOyD` nor 64 with the added faces in
+`supported-jump-spans-Mo1GIZ` produced a flight-clear candidate. This bounded
+search does not prove that no valid connection exists. Best-effort export warnings
+remain available; no new runtime solver is involved.
+
 ## Supported integer jump-span search (2026-10-12)
 
 `refinement/review-jump-supported-spans.mjs` generates diagnostic replacements

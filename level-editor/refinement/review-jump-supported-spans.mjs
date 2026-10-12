@@ -18,13 +18,22 @@ const clipping = createRequire(new URL("../shared/package.json", import.meta.url
 );
 
 const args = process.argv.slice(2);
-const checkFlight = args.includes("--flight-clearance");
+const requireClearFlight = args.includes("--require-clear-flight");
+const checkFlight = args.includes("--flight-clearance") || requireClearFlight;
+const maximumArguments = args.filter((argument) => argument.startsWith("--max-reviewed="));
+assert.ok(maximumArguments.length <= 1);
+const maximumReviewed = maximumArguments.length ? Number(maximumArguments[0].slice(15)) : 256;
+assert.ok(Number.isInteger(maximumReviewed) && maximumReviewed > 0 && maximumReviewed <= 5000);
 const limitArguments = args.filter((argument) => argument.startsWith("--limit="));
 assert.ok(limitArguments.length <= 1);
 const limit = limitArguments.length ? Number(limitArguments[0].slice(8)) : 24;
 assert.ok(Number.isInteger(limit) && limit >= 1 && limit <= 24);
 const [file, pairArgument = "0"] = args.filter(
-  (argument) => !argument.startsWith("--limit=") && argument !== "--flight-clearance",
+  (argument) =>
+    !argument.startsWith("--limit=") &&
+    !argument.startsWith("--max-reviewed=") &&
+    argument !== "--flight-clearance" &&
+    argument !== "--require-clear-flight",
 );
 assert.ok(file, "Supply an exported descriptor and optional jump pair index");
 const pairIndex = Number(pairArgument);
@@ -161,7 +170,7 @@ for (const candidate of candidates) {
   )
     continue;
   supported.push(candidate);
-  if (supported.length === limit) break;
+  if (supported.length === (requireClearFlight ? maximumReviewed : limit)) break;
 }
 let flightContacts = new Map();
 const flightObstacles = jumpFlightObstacles(geometry);
@@ -179,9 +188,9 @@ const flightClearance = checkFlight
           },
         ]),
       ),
-      ({ obstacle, range, reverse, points, paddingAxes }) => {
+      ({ obstacle, range, reverse, points, paddingAxes, flightOrders, planeBounds }) => {
         const receiver = flightObstacles.indexOf(obstacle);
-        const key = `${receiver}/${reverse}`,
+        const key = `${receiver}/${reverse}/${flightOrders ?? "path"}`,
           previous = flightContacts.get(key);
         if (previous) {
           previous.count++;
@@ -191,15 +200,37 @@ const flightClearance = checkFlight
           flightContacts.set(key, {
             receiver,
             reverse,
+            flightOrders,
             count: 1,
             parameterBounds: [...range],
-            sample: { range, points, paddingAxes },
+            sample: { range, points, paddingAxes, planeBounds },
           });
       },
     )
   : undefined;
 const output = await fs.mkdtemp("work/map-compile/supported-jump-spans-");
 const results = [];
+const rejected = [];
+const report = (complete) =>
+  fs.writeFile(
+    `${output}/diagnostics.json`,
+    JSON.stringify({
+      complete,
+      scope: "static-geometry-only-not-gameplay-parity",
+      source: file,
+      pairIndex,
+      checkFlight,
+      requireClearFlight,
+      maximumReviewed,
+      candidates: candidates.length,
+      supportedCandidates: supported.length,
+      pointCounts: sides.map((points) => points.size),
+      results,
+      rejected,
+    }),
+  );
+console.log(output);
+await report(false);
 for (const [index, candidate] of supported.entries()) {
   const document = structuredClone(descriptor);
   document.asset_geometry.jump_zones = zones;
@@ -219,11 +250,19 @@ for (const [index, candidate] of supported.entries()) {
     },
   ];
   const name = `candidate-${index}.level.json`;
-  await fs.writeFile(`${output}/${name}`, JSON.stringify(document));
   flightContacts = new Map();
   const flightIssues = flightClearance
     ? auditCompiledJump(document.asset_geometry.jump_line_pairs[0], flightClearance)
     : undefined;
+  if (requireClearFlight && flightIssues.length) {
+    rejected.push({ index, score: candidate.score, flightIssues });
+    if (rejected.length % 16 === 0) {
+      await report(false);
+      console.log(`Reviewed ${index + 1}/${supported.length}; ${results.length} clear candidates`);
+    }
+    continue;
+  }
+  await fs.writeFile(`${output}/${name}`, JSON.stringify(document));
   results.push({
     file: name,
     score: candidate.score,
@@ -231,20 +270,19 @@ for (const [index, candidate] of supported.entries()) {
     flightIssues,
     flightContacts: checkFlight ? [...flightContacts.values()] : undefined,
   });
+  if (results.length === limit) break;
 }
-assert.ok(results.length, "No representable integer span candidates near this connection");
-await fs.writeFile(
-  `${output}/diagnostics.json`,
+await report(results.length > 0);
+assert.ok(
+  results.length,
+  requireClearFlight
+    ? `No flight-clear candidate among ${rejected.length} reviewed supported spans; see ${output}/diagnostics.json`
+    : "No representable integer span candidates near this connection",
+);
+console.log(
   JSON.stringify({
-    complete: true,
-    scope: "static-geometry-only-not-gameplay-parity",
-    source: file,
-    pairIndex,
-    checkFlight,
     candidates: candidates.length,
-    pointCounts: sides.map((points) => points.size),
-    results,
+    reviewed: results.length + rejected.length,
+    clear: checkFlight ? results.filter((r) => !r.flightIssues.length).length : undefined,
   }),
 );
-console.log(output);
-console.log(JSON.stringify({ candidates: candidates.length, reviewed: results.length }));
