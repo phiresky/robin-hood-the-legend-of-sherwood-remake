@@ -7,7 +7,7 @@ import bpy, bmesh
 from mathutils import Matrix, Vector
 
 ROOT=Path(__file__).resolve().parents[2]
-W=ROOT/'level-editor/work/derby-refinement/round-2/assets/derby-great-keep'
+W=ROOT/'level-editor/work/needs-review/derby-refinement/round-2/assets/derby-great-keep'
 N=W/'component-followups/north'
 OUT=N/'pixel-trace-v4'
 S=math.sin(math.radians(35)); C=math.cos(math.radians(35))

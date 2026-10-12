@@ -84,7 +84,7 @@ for (const { id, group, asset, place } of instances.filter((entry) => entry.id =
       });
     }
 assert.ok(results.length, "No matching placed lifts");
-const output = await fs.mkdtemp("work/map-compile/lift-support-audit-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/lift-support-audit-");
 await fs.writeFile(
   `${output}/report.json`,
   JSON.stringify(

@@ -120,7 +120,7 @@ gameplay.movementClearances.push({
   holes: [],
 });
 validateAssetGameplay(gameplay, descriptor);
-const output = await fs.mkdtemp("work/map-compile/upper-west-mesh-floor-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/upper-west-mesh-floor-");
 await fs.writeFile(
   `${output}/edits.json`,
   JSON.stringify([{ asset, descriptorSha256: entry.descriptor_sha256, gameplay }]),

@@ -74,7 +74,7 @@ gameplay.movementClearances = [
 ];
 validateAssetGameplay(gameplay, descriptor);
 edits.push({ asset, descriptorSha256: entry.descriptor_sha256, gameplay });
-const output = await fs.mkdtemp("work/map-compile/church-terrace-floor-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/church-terrace-floor-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(
   `${output}/review.json`,

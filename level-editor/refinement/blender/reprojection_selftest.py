@@ -12,7 +12,7 @@ script = Path(__file__).with_name("reproject_map.py")
 spec = importlib.util.spec_from_file_location("reproject_map", script)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-output = script.resolve().parents[2] / "work/reprojection-selftest"
+output = script.resolve().parents[2] / "work/needs-review/reprojection-selftest"
 output.mkdir(parents=True, exist_ok=True)
 collection = bpy.data.collections.new("Test Working")
 bpy.context.scene.collection.children.link(collection)

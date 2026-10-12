@@ -116,7 +116,7 @@ for (const [flight, corners] of [
 gameplay.draft.issues.push(
   "Joined garden stair contact requires mesh, moved-assembly and rendered review before publication.",
 );
-const output = await fs.mkdtemp("work/map-compile/york-garden-joined-seam-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-garden-joined-seam-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/review.json`, JSON.stringify({ ...review, stage }));
 console.log(JSON.stringify({ output, seam }));

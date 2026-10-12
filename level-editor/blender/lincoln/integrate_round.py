@@ -4,9 +4,9 @@ Run from the repository root:
 
     blender --background --threads 2 --python-exit-code 1 \
       --python level-editor/blender/lincoln/integrate_round.py -- \
-      --source level-editor/work/lincoln-refinement/grouped/lincoln-grouped-v1.blend \
-      --progress level-editor/work/lincoln-refinement/scratch/coordinator/gallery-progress.json \
-      --output level-editor/work/lincoln-refinement/integrated/lincoln-integrated-r1.blend
+      --source level-editor/work/needs-review/lincoln-refinement/grouped/lincoln-grouped-v1.blend \
+      --progress level-editor/work/needs-review/lincoln-refinement/scratch/coordinator/gallery-progress.json \
+      --output level-editor/work/needs-review/lincoln-refinement/integrated/lincoln-integrated-r1.blend
 
 Only packets that the collector validated as ready-for-user are imported, and only
 when their current model hash still matches the collector evidence. Every other asset

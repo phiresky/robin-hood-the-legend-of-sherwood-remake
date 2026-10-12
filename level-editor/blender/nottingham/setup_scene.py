@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/nottingham-refinement'
+OUT = ROOT / 'level-editor/work/needs-review/nottingham-refinement'
 
 
 def digest(path):

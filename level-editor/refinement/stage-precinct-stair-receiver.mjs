@@ -45,7 +45,7 @@ for (const [x, y] of [
 }
 surface.preserveMovementPrecision = true;
 edits.push({ asset: entry.id, descriptorSha256: entry.descriptor_sha256, gameplay });
-const output = await fs.mkdtemp("work/map-compile/precinct-stair-receiver-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/precinct-stair-receiver-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(
   `${output}/review.json`,

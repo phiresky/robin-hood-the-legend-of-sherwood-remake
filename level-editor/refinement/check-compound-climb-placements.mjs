@@ -6,7 +6,7 @@ import { parseLevel3D, parseProjectionAssetDescriptor } from "../shared/src/vali
 import nearEdgeOnStair from "../shared/test-fixtures/near-edge-on-placed-stair.json" with { type: "json" };
 
 // Synthetic editor documents exercise reusable joined assets, without level input.
-const output = await fs.mkdtemp("work/map-compile/compound-climb-placements-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/compound-climb-placements-");
 const results = [];
 for (const type of [2, 3]) {
   for (const height of [0, 40]) {

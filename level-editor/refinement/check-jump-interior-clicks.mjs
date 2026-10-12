@@ -20,7 +20,7 @@ const selected = indices?.split(",").map(Number);
 assert.ok(!selected || selected.every((index) => Number.isInteger(index) && index >= 0));
 const manifest = JSON.parse(await fs.readFile(path.join(directory, "diagnostics.json")));
 assert.equal(manifest.complete, true);
-const output = await fs.mkdtemp("work/map-compile/interior-jump-clicks-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/interior-jump-clicks-");
 const results = [],
   unavailable = [];
 for (const entry of manifest.results) {

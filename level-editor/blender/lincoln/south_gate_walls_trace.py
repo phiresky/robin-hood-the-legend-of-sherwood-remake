@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from south_gate_walls_geometry import polyline_length, point_at  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
-R = ROOT / 'level-editor/work/lincoln-refinement'
+R = ROOT / 'level-editor/work/needs-review/lincoln-refinement'
 SOURCE = R / 'source-states/covered.png'
 ASSETS = R / os.environ.get('SOUTH_GATE_ROUND', 'round-1') / 'assets'
 

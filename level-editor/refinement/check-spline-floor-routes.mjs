@@ -10,7 +10,7 @@ import { compileMap, packageCompiledMap } from "../app/src/map-compile.ts";
 const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", import.meta.url))(
   "fflate",
 );
-const output = await fs.mkdtemp("work/map-compile/spline-mask-floor-routes-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/spline-mask-floor-routes-");
 console.log(output);
 const results = [];
 const report = (complete) =>

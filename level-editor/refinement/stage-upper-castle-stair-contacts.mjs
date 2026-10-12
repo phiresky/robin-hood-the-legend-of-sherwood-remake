@@ -143,7 +143,7 @@ const contacts = upperCastle
               edges: [[3, 0]],
             },
           ];
-const output = await fs.mkdtemp("work/map-compile/upper-castle-stair-contacts-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/upper-castle-stair-contacts-");
 const changes = [];
 function meshHeight(p, [a, b, c]) {
   const det = (b[1] - c[1]) * (a[0] - c[0]) + (c[0] - b[0]) * (a[1] - c[1]);

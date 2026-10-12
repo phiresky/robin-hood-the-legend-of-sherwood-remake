@@ -4,7 +4,7 @@ Run from the repository root after `publish_stage.py` (never promotes anything):
 
     blender --background --threads 2 --python-exit-code 1 \
       --python level-editor/blender/lincoln/publish_export.py -- \
-      --stage level-editor/work/lincoln-refinement/publication-N/stage-vM \
+      --stage level-editor/work/needs-review/lincoln-refinement/publication-N/stage-vM \
       --tooling <frozen tooling snapshot directory> \
       --progress <collector gallery-progress.json> \
       --level datadirs/fullgame_gog_hackable/Data/Levels/Lincoln.rhp.json

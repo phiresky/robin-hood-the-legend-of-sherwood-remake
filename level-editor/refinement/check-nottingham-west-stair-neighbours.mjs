@@ -16,7 +16,7 @@ for (const id of ids) {
   if (mode === "--published") assert.deepEqual(assets.get(id).gameplay, edit.gameplay);
   else assets.get(id).gameplay = edit.gameplay;
 }
-const output = await fs.mkdtemp("work/map-compile/nottingham-west-stair-neighbour-placements-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/nottingham-west-stair-neighbour-placements-");
 const results = [],
   rejected = [];
 for (const height of [0, 40])

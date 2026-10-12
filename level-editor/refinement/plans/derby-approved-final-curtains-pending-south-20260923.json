@@ -1,6 +1,6 @@
 {
-  "baseline": "level-editor/work/derby-refinement/round-2/publication-10-final-curtains/worker.blend",
-  "output": "level-editor/work/derby-refinement/round-2/publication-11-south-curtain",
+  "baseline": "level-editor/work/needs-review/derby-refinement/round-2/publication-10-final-curtains/worker.blend",
+  "output": "level-editor/work/needs-review/derby-refinement/round-2/publication-11-south-curtain",
   "map_name": "Derby",
   "scene_name": "Derby Refinement",
   "collection_name": "Derby Working",
@@ -17,9 +17,9 @@
         "Lower Bailey West Curtain South Wall Walk / West battlement wall.001",
         "Lower Bailey West Curtain South Wall Walk / South battlement wall.001"
       ],
-      "blend_path": "level-editor/work/derby-refinement/round-2/sunburst-lower-west-south-v13-approved-20260923-retry/baked-scoped/worker.blend",
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-lower-west-south-v13-approved-20260923-retry/baked-scoped/worker.blend",
       "blend_sha256": "029c51d2f68253dc523d4538ead8bd50a7c1fef100f42a76b5b2f4a2680e7671",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-lower-west-south-v13-approved-20260923-retry/views.json"
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-lower-west-south-v13-approved-20260923-retry/views.json"
     }
   ]
 }

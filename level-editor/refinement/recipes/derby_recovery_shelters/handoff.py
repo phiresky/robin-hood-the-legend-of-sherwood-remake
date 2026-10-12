@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image
-root=Path.cwd()/'level-editor/work/derby-refinement/round-2/recovery-shelters-20260923'
+root=Path.cwd()/'level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 imports=[];reports={}
 for asset in ['derby-east-wall-landing','derby-lower-northwest-cottage-barrel','derby-east-courtyard-south-shelter']:

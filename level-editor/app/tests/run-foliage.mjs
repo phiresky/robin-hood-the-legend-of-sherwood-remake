@@ -4,7 +4,7 @@ import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromeEndpoint, socketOpen, evaluate } from "./cdp.mjs";
 const output = resolve(
-  process.env.FOLIAGE_OUTPUT ?? "work/leicester-refinement/editor-audit/foliage/browser",
+  process.env.FOLIAGE_OUTPUT ?? "work/needs-review/leicester-refinement/editor-audit/foliage/browser",
 );
 await mkdir(output, { recursive: true });
 const profile = await mkdtemp("/tmp/foliage-check-");

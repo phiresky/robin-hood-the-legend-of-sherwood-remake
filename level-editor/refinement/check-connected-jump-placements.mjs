@@ -100,7 +100,7 @@ const source = {
   assetSources: saved.assetSources.filter((entry) => ids.includes(entry.id)),
   sceneAssets: [],
 };
-const output = await fs.mkdtemp("work/map-compile/connected-jump-placements-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/connected-jump-placements-");
 console.log(output);
 const results = [];
 const save = (complete) =>

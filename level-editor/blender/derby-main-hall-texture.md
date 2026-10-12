@@ -32,7 +32,7 @@ mask PNGs and manifest. Refresh derivatives and run the full publication audit
 as described in [the interior repair notes](derby-interiors.md), then apply the
 publication. The publisher supports a selected subset of the four Derby rooms.
 
-Local evidence: `work/derby-main-hall-texture/`. `states-v7/integration.json`
+Local evidence: `work/needs-review/derby-main-hall-texture/`. `states-v7/integration.json`
 records input/output hashes, 295,894 source-projected texels, inferred fills,
 and zero remaining used neutral texels in the repaired materials.
 

@@ -485,7 +485,7 @@ suites report 247 passes and five stored-fixture mismatches. All five reproduce
 without this optimization: the ordinary multi-plane fixture and four wall fixtures
 (routing/sight, cropped masks, materials and automatic curved lighting). Logs are
 `receiver-cache-tests.log`, `receiver-cache-baseline-tests.log` and
-`receiver-cache-baseline-multiplane.log` under `work/map-compile`.
+`receiver-cache-baseline-multiplane.log` under `work/needs-review/map-compile`.
 
 No whole-map speedup is claimed yet. Fresh Wychford baseline
 `saved-map-exports-PgbVhn` was started before the change; its completed profile
@@ -2062,7 +2062,7 @@ unmodified pairs retain exactly the same pass/fail outcomes. Overall it passes
 the additional pair, not additional original routes.
 
 This is a diagnostic mutation, not a published asset or compiler fix. The
-reproduction is `work/map-compile/probe-jump-receiver-split.mjs`, using ratio
+reproduction is `work/needs-review/map-compile/probe-jump-receiver-split.mjs`, using ratio
 `0.5655976673` and `--zones`. A production fix must derive the partitions from
 placed receiving geometry, keep paired endpoints and clickable regions aligned
 after integer rounding, and handle copied/rotated assets, coplanar triangles,
@@ -2536,7 +2536,7 @@ retain their separately compiled collision states. A geometric regression checks
 that admitted full-box centers remain physically supported after inverse projection.
 No production runtime code changes are involved.
 
-`work/map-compile/climb-angle-routes-gAccNf` contains 1,080 fresh descriptors for
+`work/needs-review/map-compile/climb-angle-routes-gAccNf` contains 1,080 fresh descriptors for
 the same three variants and 360 integer rotations as the failing audit below.
 All 2,160 complete-sprite prepared native routes now pass, with zero permission
 skips. The compiler/physical-floor suites pass 174 tests, clearance passes seven,
@@ -2577,7 +2577,7 @@ parity, and the failed batch must not be counted as complete.
 
 ## Full-circle editor climb audit (2026-10-12, incomplete)
 
-`work/map-compile/climb-angle-routes-CiujW9` contains 1,080 fresh editor descriptors:
+`work/needs-review/map-compile/climb-angle-routes-CiujW9` contains 1,080 fresh editor descriptors:
 ladder, ordinary wall and crenel wall variants at every whole-degree rotation,
 raised 40 units. The initial-state native audit checks both directions using a
 complete character sprite. Of 2,160 prepared routes, 2,112 pass and 48 fail.
@@ -2604,7 +2604,7 @@ floor partitioning. Only floating-point residue within eight relative machine
 epsilons of an integer is cleaned up; actual fractional coordinates are retained.
 No runtime code changed.
 
-`work/map-compile/overlapping-floor-routes-YgBdG3` removes that flag from every
+`work/needs-review/map-compile/overlapping-floor-routes-YgBdG3` removes that flag from every
 loop surface. All eight editable ZIPs reopen and recompile exactly, and all 64
 directed native walks pass across copied, rotated and elevated placements. The
 asset compiler suite passes 157 tests, including the unchanged posture-passage
@@ -2628,10 +2628,10 @@ placement metadata; it does not compile an editor asset. The failure remains
 unresolved and must not be counted as passing traversal coverage. A separate
 check using real editor exports at 157/158/159 degrees and elevations 0/40 passes
 all 36 directed complete-sprite routes across ladder and both wall variants.
-Artifacts are in `work/map-compile/climb-angle-routes-32twis`. These are initial
+Artifacts are in `work/needs-review/map-compile/climb-angle-routes-32twis`. These are initial
 prepared routes through 18 descriptors, not ZIP round trips or player-click checks.
 
-Saved Derby export `work/map-compile/saved-map-exports-90j2PF` succeeds. Compared
+Saved Derby export `work/needs-review/map-compile/saved-map-exports-90j2PF` succeeds. Compared
 with `saved-map-exports-XwDz7Y`, every geometry field except motion data and all
 warnings remain identical. Motion geometry has no structural changes; 50 numeric
 coordinates differ by at most 6.6e-12. Graph bytes grow from 420,927 to 456,627 due
@@ -2654,7 +2654,7 @@ The planner inserts these vertices only within ordinary nearest-integer boundary
 displacement, and quantizes clipped receiving fragments before building graphs.
 Receiving geometry stays precise and source metadata is not mutated.
 
-`work/map-compile/overlapping-floor-routes-slDukx` contains eight editable loop ZIPs,
+`work/needs-review/map-compile/overlapping-floor-routes-slDukx` contains eight editable loop ZIPs,
 with two placements each at four rotations and two elevations. Reopening and
 recompiling reproduces their descriptors exactly. The 0- and 37-degree assemblies
 have generated sector passages; the 90- and 180-degree projections do not require
@@ -2664,7 +2664,7 @@ above removes that requirement for joined regions. Already inconsistent authored
 edges can still lack matching-height seam evidence and remain unsupported.
 
 Native normal-click validation now passes all 64 directed walks in
-`work/map-compile/overlapping-floor-routes-Q3i0aT`, including per-tick receiving
+`work/needs-review/map-compile/overlapping-floor-routes-Q3i0aT`, including per-tick receiving
 plane, height, sector, collision and passage checks. All eight ZIPs reopen and
 recompile identically. The initial movement assertion incorrectly
 required a passage-straddling footprint to remain wholly in one sector; the revised
@@ -2688,7 +2688,7 @@ Every other position retains normal receiver checks. Explicit
 zero-height approaches may use implicit ground; missing elevated receivers are
 rejected. Forty-six existing door-pass tests, three receiver-binding tests and the
 ordinary passage obstacle-state regression pass with the receiver binding
-implementation. Fresh loop artifact `work/map-compile/overlapping-floor-routes-fgOxzq`
+implementation. Fresh loop artifact `work/needs-review/map-compile/overlapping-floor-routes-fgOxzq`
 reopens and recompiles all eight ZIPs and exactly matches the preceding descriptors.
 An intermediate full native run advanced past the 0- and 37-degree passage cases but
 failed the reverse 90-degree walk: the actor remained at approximately
@@ -2701,7 +2701,7 @@ checks to these ordinary graph nodes and their links. Runtime search is unchange
 The fresh Q3i0aT batch passes the full 64-walk audit; the preceding batch also
 passes the separate 32-walk partitioned-view audit. A small returning-corridor
 regression checks source-entry coverage in both directions. Saved Derby export
-`work/map-compile/saved-map-exports-XwDz7Y` exactly matches `saved-map-exports-5ROowT`,
+`work/needs-review/map-compile/saved-map-exports-XwDz7Y` exactly matches `saved-map-exports-5ROowT`,
 including the two small seam warnings. This does not establish full map parity.
 
 ## Self-overlapping navigation regions (2026-10-11)
@@ -2720,7 +2720,7 @@ An assembled-loop regression retains all six pieces and checks the warning;
 a complete asset compiler regression retains the emitted geometry, reports the
 placed asset/region identity and leaves source metadata unchanged. Existing
 non-overlapping and hole cases remain accepted. The saved Derby export
-`work/map-compile/saved-map-exports-5ROowT` preserves the preceding geometry,
+`work/needs-review/map-compile/saved-map-exports-5ROowT` preserves the preceding geometry,
 but adds warnings for the keep main hall's `walk-region-27` and the upper
 gatehouse's `walk-region-36`. Inspecting the captured receiving polygons finds
 overlap areas of 0.75 and approximately 0.9174 square projected units respectively.
@@ -2752,11 +2752,11 @@ retain their warnings instead of being hidden by arbitrary layer allocation.
 The new regression covers both region input orders. The full compiler suite and
 layer tests pass (165 tests), together with TypeScript checking, lint and formatting.
 `node refinement/check-overlapping-floor-routes.mjs --middle-floor` produces
-`work/map-compile/overlapping-floor-routes-CG8T3x`: eight editable ZIPs, two copies
+`work/needs-review/map-compile/overlapping-floor-routes-CG8T3x`: eight editable ZIPs, two copies
 at four rotations and two elevations. All reopen/recompile comparisons and 64
 normal native upper-region walks pass, with per-tick layer, sector, receiver,
 height and collision checks. No geometry-specific export warnings remain in this
-batch. The saved Derby export `work/map-compile/saved-map-exports-C5YWGu` matches
+batch. The saved Derby export `work/needs-review/map-compile/saved-map-exports-C5YWGu` matches
 the preceding descriptor exactly, including its genuine seam-conflict warnings.
 No production engine code changed. Self-overlap and actual cyclic arrangements
 remain unresolved.
@@ -2766,7 +2766,7 @@ remain unresolved.
 The dedicated export audit `node refinement/check-overlapping-floor-routes.mjs`
 now prepares two copies of an asset-local ramp/deck and separate lower floor at
 0/37/90/180 degrees and elevations 0/40. The ramp rises 40 units over a 100-unit
-span. `work/map-compile/overlapping-floor-routes-6QltBt` contains eight ZIPs with
+span. `work/needs-review/map-compile/overlapping-floor-routes-6QltBt` contains eight ZIPs with
 matching extracted descriptors, warnings, pinned scenes and reopened/recompiled
 results. It records 64 directed upper-floor walk probes across 16 placements.
 The first batch clipped a rotated placement at the export frame and is not counted;
@@ -2788,7 +2788,7 @@ The `--under-deck` batch extends the lower floor past both sides of the deck and
 places two lower-floor lanes across it. Source and destination clicks remain
 outside the upper floor's projected boundary. It also recenters the copied parts
 so every rotated floor fits the export frame. All eight ZIP round trips in
-`work/map-compile/under-deck-routes-Pb6QeB` pass. Reusing the compiled floor-click
+`work/needs-review/map-compile/under-deck-routes-Pb6QeB` pass. Reusing the compiled floor-click
 harness with those manifest-selected lower layers passes 64 directed actor walks:
 the character keeps the lower sector, receiver and height while crossing beneath
 the elevated surface. Its assertions use each manifest entry's requested layer;
@@ -2802,8 +2802,8 @@ test build and full Rust formatting check also pass.
 
 The solid-ceiling follow-up adds an asset-local slab from height 50 to 60 above
 the lower floor at height 20. `--ceiling-headroom=20` prepares the open batch
-`work/map-compile/under-deck-routes-MSQTrK`; `--ceiling-headroom=40` prepares the
-blocked batch `work/map-compile/under-deck-routes-gP66VL`. All sixteen ZIP round
+`work/needs-review/map-compile/under-deck-routes-MSQTrK`; `--ceiling-headroom=40` prepares the
+blocked batch `work/needs-review/map-compile/under-deck-routes-gP66VL`. All sixteen ZIP round
 trips pass. The physical slab is identical; only the authored movement-headroom
 requirement changes. The blocked batch retains explicit normalization/material
 triangulation warnings. The two copied physical ceiling volumes match between
@@ -2838,9 +2838,9 @@ upper-layer assertion; enabling it passes. The native placement batch above
 extends this to representative actor traversal, not every overlapping arrangement.
 
 Four fresh editable spline ZIP round trips in
-`work/map-compile/spline-mask-floor-routes-FYxqkS` pass, and the existing native
+`work/needs-review/map-compile/spline-mask-floor-routes-FYxqkS` pass, and the existing native
 complete-sprite audit passes all 16 normal PC walks on their extracted descriptors.
-The saved Derby export `work/map-compile/saved-map-exports-y68SMM` is identical to
+The saved Derby export `work/needs-review/map-compile/saved-map-exports-y68SMM` is identical to
 the preceding descriptor, including warnings. Its authored seam conflicts remain
 open. Self-overlap within a single joined region and cyclic ordering are not
 resolved by separating different regions. No production engine code changed.
@@ -2865,7 +2865,7 @@ Ordering is prepared entirely at export time. No production Rust code changed.
 
 `node refinement/check-spline-floor-routes.mjs` exports straight/curved paths
 with rises 0/30, each containing three repeated receiving floors and masks.
-`work/map-compile/spline-mask-floor-routes-UJXjKf` contains four editable ZIPs;
+`work/needs-review/map-compile/spline-mask-floor-routes-UJXjKf` contains four editable ZIPs;
 descriptor, warning and pinned editor-document extraction/recompilation all pass.
 Raster payloads are blank, so this does not verify appearance.
 
@@ -2886,14 +2886,14 @@ and cyclic receiving-height arrangements require further authoring/export work;
 this correction does not establish complete navigation parity.
 
 The saved Derby scene also compiles successfully in about nine seconds
-(`work/map-compile/saved-map-exports-8Weoud`). It reports conflicting receiving
+(`work/needs-review/map-compile/saved-map-exports-8Weoud`). It reports conflicting receiving
 height order among layers 5, 8, 24, 33 and 36, alongside other existing export
 warnings. That finding requires diagnosis; successful export is not proof of
 correct clicking throughout Derby. The broader map/roof/spline/region tests,
 Rust formatting check and game binary build pass.
 
 Follow-up diagnosis captures the compiler's pre-order receiving regions in
-`work/map-compile/layer-order-diagnosis-Fl303H`. The five reported layers form
+`work/needs-review/map-compile/layer-order-diagnosis-Fl303H`. The five reported layers form
 two independent conflicting groups, involving three ramp/landing overlaps with
 height differences below 0.35 units. One overlap is an almost collinear clipping
 sliver; the others retain small real projected overlaps. The compiler does not
@@ -2906,7 +2906,7 @@ higher floor below the conflicting group. Regression tests cover that higher
 floor and independent conflicting pairs. Resolving the authored seam overlaps
 themselves remains open.
 
-The follow-up Derby export `work/map-compile/saved-map-exports-qz6YDk` completes
+The follow-up Derby export `work/needs-review/map-compile/saved-map-exports-qz6YDk` completes
 in about 8.4 seconds and reports groups 5/24/36 and 8/33 separately. Native static
 construction passes with 60 areas, 371 sight obstacles, 70 doors, two jump pairs,
 64,860 grid blocks and 283 elevation boundaries. This uses the existing native
@@ -2915,7 +2915,7 @@ targeted compiler/layer-order tests, TypeScript checking, lint and changed-file
 formatting pass, as does the game binary build. The workspace Rust formatting check reports unrelated concurrent
 archery, purse, projectile-test and replay-comparison edits.
 
-Further source-stage capture in `work/map-compile/receiving-seam-sources-7xzO95`
+Further source-stage capture in `work/needs-review/map-compile/receiving-seam-sources-7xzO95`
 identifies the affected placements: the keep/hall bridge against the upper east
 curtain, and internal ramp/landing pairs in the east-bailey west and east curtain
 assets. The latter outlines already contain the small overlap before final
@@ -2930,7 +2930,7 @@ conflicting group, with a count for additional overlaps). These are diagnostic
 bounding-box centers, not suggested actor positions. The upper-floor regression
 also checks that warning layer IDs follow the exported remapping.
 
-`work/map-compile/saved-map-exports-sahWm7` verifies those warnings against a
+`work/needs-review/map-compile/saved-map-exports-sahWm7` verifies those warnings against a
 fresh Derby export: layers 28/29/30 report overlaps near (970.41, 1056.40) and
 (1213.55, 1152.97); layers 31/32 report (1711.50, 1380.00). Excluding diagnostic
 warnings, its descriptor is identical to `saved-map-exports-qz6YDk`. The 162
@@ -2952,7 +2952,7 @@ No scene-level fallback or runtime geometry solver is involved.
 ZIP descriptor/warning extraction, reopening and recompilation. The flat cases
 still match the checked-in native fixture exactly. The rising descriptors are
 generated from the same fixture and compiler into
-`work/map-compile/spline-point-mask-slopes-9EV27k/cases.json` rather than adding
+`work/needs-review/map-compile/spline-point-mask-slopes-9EV27k/cases.json` rather than adding
 their larger prepared graphs to the repository.
 
 With `ROBIN_SPLINE_MASK_CASES` pointing to that file, the ignored native test
@@ -3006,9 +3006,9 @@ lifecycle tests.
 `refinement/check-roof-jump-placements.mjs --zip-roundtrip` now packages the
 compiled maps, extracts the native descriptors from the archives, and verifies
 editor reopening/recompilation, warning preservation and pinned scene equality.
-The standard batch is `work/map-compile/prepared-roof-placements-GbARm8`;
+The standard batch is `work/needs-review/map-compile/prepared-roof-placements-GbARm8`;
 adding `--crouched` produces
-`work/map-compile/prepared-crouched-roof-placements-cTVge0`. Each contains eight
+`work/needs-review/map-compile/prepared-crouched-roof-placements-cTVge0`. Each contains eight
 archives: two copied roof assemblies at four rotations and two elevations.
 Both 90-degree cases retain their expected omission of connections too narrow
 for the actor footprint. Diagnostic blank rasters do not verify appearance.
@@ -3037,7 +3037,7 @@ game binary build also pass.
 `node refinement/check-automatic-triggers.mjs --sight-barriers` authors tall
 opaque, nonsolid barriers from reusable asset metadata. Two copies, four rotations
 (0/37/90/180 degrees) and elevations 0/40 produce eight archives in
-`work/map-compile/sight-barriers-iw4e81`. ZIP descriptor extraction, warning
+`work/needs-review/map-compile/sight-barriers-iw4e81`. ZIP descriptor extraction, warning
 preservation, editor reopening and recompilation all match. Blank raster payloads
 make this a gameplay-data round trip, not a rendered appearance check.
 
@@ -3068,7 +3068,7 @@ asset definition. The verifier resolves each approach against its own compiled
 motion area and assigns sector numbers including intervening obstacle sectors.
 Layer numbers alone are insufficient: the copies use sectors 0/8, 0/9 or 1/12
 in these placements. Sixteen archives in
-`work/map-compile/spline-clearance-planes-tNInD9` preserve descriptors, warnings,
+`work/needs-review/map-compile/spline-clearance-planes-tNInD9` preserve descriptors, warnings,
 scenes and pins through reopening/recompilation. Their extracted descriptors
 pass native construction, all 384 collision probes and 192 bounded graph routes.
 All 192 complete sprite crossings now pass, checking collision, receiver and
@@ -3087,7 +3087,7 @@ cutout at export without relaxing the compiler's plane tolerance or adding
 runtime work. Original clearance pieces remain available outside owned floors.
 
 **Editable ZIP round trip:** `--curved --deck --rotated --zip-roundtrip` produces
-16 mod archives in `work/map-compile/spline-clearance-planes-KU1EkO`. Each archive
+16 mod archives in `work/needs-review/map-compile/spline-clearance-planes-KU1EkO`. Each archive
 preserves the compiled descriptor, warning list, editable scene and asset pins;
 reopening and recompiling yields the same descriptor and warnings. The verifier
 writes the native-test input from the ZIP entry. All 192 collision probes and
@@ -3098,8 +3098,8 @@ or native archive-mounting claim.
 
 The formerly failing zero-degree batch now passes native collision and graph
 checks at both starting heights, plus 24 complete sprite crossings
-(`work/map-compile/spline-clearance-planes-ytQfAf`). The four-rotation batch
-`work/map-compile/spline-clearance-planes-dCwISE` passes all 192 collision probes
+(`work/needs-review/map-compile/spline-clearance-planes-ytQfAf`). The four-rotation batch
+`work/needs-review/map-compile/spline-clearance-planes-dCwISE` passes all 192 collision probes
 and 96 bounded graph routes across 16 exports. All 96 complete sprite crossings
 also pass with per-tick collision, receiver and height checks, including the stop
 animation and empty order queue. Maximum travelled distance is 39.990021 units
@@ -3118,14 +3118,14 @@ The fixture identifies the curved region from its sampled perimeter because
 sloped plane ordering can put it before or after the terrain. With openings
 disabled the wall may correctly split the floor into separate regions.
 
-In `work/map-compile/spline-clearance-planes-jxb9rm`, a wall without upright
+In `work/needs-review/map-compile/spline-clearance-planes-jxb9rm`, a wall without upright
 headroom leaves an approximately 0.049493-unit gap at the first crossing: the
 exported receiver height is 42.266609 and the wall bottom is 42.316103.
 Independent triangulation of the bent floor and wall makes their shared authored
 base heights differ after deformation. The fixture now explicitly authors
 20 units of wall movement headroom; the terrain is sufficiently far below it.
 
-The resulting `work/map-compile/spline-clearance-planes-JPlsaV` passes the first
+The resulting `work/needs-review/map-compile/spline-clearance-planes-JPlsaV` passes the first
 disabled-clearance export's collision probes, but fails the first enabled opening:
 the layer-0 crossing from `[129.236593,197.357052]` to
 `[117.299188,235.534248]` remains blocked. Clearance/floor plane matching across
@@ -3141,7 +3141,7 @@ use the local curve tangent instead of the whole path's endpoint direction.
 The clearance's physical height remains thirty units above its navigation height.
 No library definitions or extracted level records are needed by this fixture.
 
-The 16 exports in `work/map-compile/spline-clearance-planes-XHnw2M` pass native
+The 16 exports in `work/needs-review/map-compile/spline-clearance-planes-XHnw2M` pass native
 construction, all 192 thin collision probes, and 96 bounded actor-sized graph
 routes. All 96 complete sprite crossings also pass in both directions, checking
 collision, receiver and height every tick and waiting for the stopping animation
@@ -3151,7 +3151,7 @@ results are saved in `actor-opening-report.json` beside the exported descriptors
 and editable scenes.
 
 The existing straight/sloped audit was regenerated as
-`work/map-compile/spline-clearance-planes-TT69Ak`: 32 exports, 384 collision
+`work/needs-review/map-compile/spline-clearance-planes-TT69Ak`: 32 exports, 384 collision
 probes, 192 bounded graph routes and 192 complete sprite crossings pass. These
 tests exercise prepared navigation and grid collision only; they introduce no
 runtime solver or engine change.
@@ -3178,14 +3178,14 @@ retains the complete native XY outline, leaves its input untouched, and keeps on
 receiver. Existing pinched-notch tests still require triangulation where a real
 outline needs multiple polygons.
 
-Fresh ZIP artifacts: `work/map-compile/grounded-stair-placements-5MY5fu`.
+Fresh ZIP artifacts: `work/needs-review/map-compile/grounded-stair-placements-5MY5fu`.
 At 90 degrees, elevations 0/40 and two copies, all 32 routes pass in each of five
 native routing modes, with zero forbidden routes. These tests read the descriptor
 decoded from each ZIP. All 241 focused compiler/export tests, app type checking
 and scoped lint/format checks pass. This adds no runtime logic.
 
 The final eight-angle matrix, with elevations 0/40 and two copies, is
-`work/map-compile/grounded-stair-placements-DTOVqM`. Prepared, complete-sprite,
+`work/needs-review/map-compile/grounded-stair-placements-DTOVqM`. Prepared, complete-sprite,
 discovered and hidden-selection routing each pass 256/256 routes with no forbidden
 routes. Ordinary clicks pass 252/256: the four covered 217-degree targets still
 require explicit hidden selection, which is exercised for exactly those four
@@ -3207,19 +3207,19 @@ bounds. Existing supported-center tests remain green, and an acute-corner
 regression now checks both precise and rounded output bounds. This is solely an
 export-time change, with no new engine code or runtime geometry work.
 
-Fresh joined/separated exports: `work/map-compile/hall-walkway-connection-cj9fdz`.
+Fresh joined/separated exports: `work/needs-review/map-compile/hall-walkway-connection-cj9fdz`.
 The four joined rotations pass 160/160 native sprite-dispatch jumps and 160/160
 click-driven routes, with no skipped occlusion cases. Reports are in
-`work/map-compile/hall-walkway-bounded-jump-audit-20261011`.
+`work/needs-review/map-compile/hall-walkway-bounded-jump-audit-20261011`.
 Fresh isolated hall ZIP round trips at 270 degrees, elevations 0/40 and two copies
-are in `work/map-compile/grounded-stair-placements-6YObR0`: all 32 stair routes
+are in `work/needs-review/map-compile/grounded-stair-placements-6YObR0`: all 32 stair routes
 pass in each of the five native modes, with zero forbidden routes. The ZIP's
 decoded descriptor is the native test input; its rasters are diagnostic blanks.
 All 235 focused compiler/export tests, app type checking and scoped lint/format
 checks pass. Remaining draft metadata and opposing jump-edge warnings are retained.
 
 The wider eight-angle, two-elevation, two-copy matrix is retained in
-`work/map-compile/grounded-stair-placements-rfYibE`. Prepared, sprite, discovered
+`work/needs-review/map-compile/grounded-stair-placements-rfYibE`. Prepared, sprite, discovered
 and hidden-selection modes each complete 254/256 routes; ordinary clicks complete
 250/256. Four ordinary-click failures at 217 degrees are covered targets requiring
 hidden selection. The other two failures, at 90 degrees/elevation 40 in the first
@@ -3227,7 +3227,7 @@ copy, report disagreement between the actor's current and queried receiver IDs.
 This is a separate pre-existing placement issue: running the pre-fix clearance
 implementation at exactly the same placements produces byte-equivalent parsed
 descriptors and the same two sprite-route failures. That control export is
-`work/map-compile/grounded-stair-placements-75Tlff`. The earlier all-pass matrix
+`work/needs-review/map-compile/grounded-stair-placements-75Tlff`. The earlier all-pass matrix
 used 500 units of padding, so it did not exercise this position. Do not treat this
 wider run as a complete parity pass or attribute the receiver failure to bounded
 clearance. No forbidden routes were skipped.
@@ -3245,7 +3245,7 @@ and solid intersection, and simultaneous mismatch and unsupported flight shape.
 
 All 254 selected jump-clearance/compiler/export tests pass. Fresh
 `check-hall-walkway-connection.mjs` output is
-`work/map-compile/hall-walkway-connection-B6I5vj`; all eight editor
+`work/needs-review/map-compile/hall-walkway-connection-B6I5vj`; all eight editor
 save/reopen/compile cases complete. Joined exports have 18–20 geometry warnings.
 The newly visible findings include solid intersections at 0/37/90 degrees and
 an unverified forward takeoff at 270 degrees. They remain unresolved and require
@@ -3266,12 +3266,12 @@ reject their long-jump equivalents, reject genuinely reversed vertical edges,
 and accept a raised landing whose projection is behind the source. The selected
 jump/assembly/compiler/export suites pass all 260 tests.
 
-Fresh exports are in `work/map-compile/hall-walkway-connection-7YWoTu`.
+Fresh exports are in `work/needs-review/map-compile/hall-walkway-connection-7YWoTu`.
 All eight editor round trips complete; the previous 270-degree unverified
 takeoff warnings become solid-intersection findings. Every descriptor matches
 the preceding `hall-walkway-connection-21cxr8` export after removing warnings.
 Its four joined descriptors were audited in
-`work/map-compile/hall-walkway-narrow-jump-aw169zos`: both
+`work/needs-review/map-compile/hall-walkway-narrow-jump-aw169zos`: both
 `exported_vertical_jumps_climb_with_help_and_descend_upright` and
 `exported_vertical_jumps_resolve_clicks_and_complete_the_route` pass, covering
 160 direct and 160 click-driven traversals. Reports are
@@ -3306,7 +3306,7 @@ not a proven visual collision: the animated body/anchor distinction remains open
 using two copies of a reusable asset with an explicitly authored apply polygon
 and initial/applied sight volumes. Four rotations and elevations 0/40 pass ZIP
 packaging, descriptor/warning extraction and pinned editor reopen/recompile
-equality. Current output: `work/map-compile/automatic-triggers-vJ3tu7`.
+equality. Current output: `work/needs-review/map-compile/automatic-triggers-vJ3tu7`.
 The diagnostic rasters are blank and do not establish rendering.
 
 The native `exported_asset_triggers_track_players_until_last_exit` audit passes
@@ -3347,7 +3347,7 @@ each with different initial/applied color and depth.
 The joined hall/walkway scene at 37 degrees passes with two independent copies
 on new editor terrain: 5000×5000 pixels, 141 sight obstacles and a 49,176,397-byte
 ZIP. The downloaded artifact is
-`work/map-compile/browser-hall-reveal-20261011/rendered-hall-reveal.zip`.
+`work/needs-review/map-compile/browser-hall-reveal-20261011/rendered-hall-reveal.zip`.
 This uses the browser viewport and export worker with a bounded library containing
 only the two pinned reusable assets. It verifies rendered export/reopen fidelity.
 Existing best-effort geometry warnings remain visible and unresolved.
@@ -3384,7 +3384,7 @@ two independent copies of the adjoining asset pair. Asset-local stored origins
 establish a representative relative layout; each pair is then translated and
 rotated together without merging its asset instances. The compiler reads only
 the saved/reopened editor scene and the two asset descriptors. It never reads a
-level-data file. Current output: `work/map-compile/hall-walkway-connection-zO4ANz`.
+level-data file. Current output: `work/needs-review/map-compile/hall-walkway-connection-zO4ANz`.
 
 All eight exports complete: joined/separated at 0/37/90/270 degrees. Each joined
 map has two reveal controls, with distinct waypoints and disjoint initial/applied
@@ -3405,7 +3405,7 @@ actual actor interaction with those controls remain separate checks.
 Scoped lint/formatting, Cargo formatting and the game build pass.
 
 Follow-up native jump audit: the four joined exports were loaded unchanged from
-`work/map-compile/hall-walkway-jump-audit-20261011/`, with both placed copies and
+`work/needs-review/map-compile/hall-walkway-jump-audit-20261011/`, with both placed copies and
 five positions along every directed jump edge. Real Robin and Little John sprite
 dispatch passes all 160 assisted-ascent/upright-descent cases. Click-driven
 walk/jump/walk passes 158/160. At 270 degrees, line 0 and its copied line 4 fail
@@ -3430,7 +3430,7 @@ authoring data, warnings and color/depth hashes must remain identical. Depth mus
 vary, so an empty diagnostic raster cannot satisfy this test. Normal bake mode
 remains available without the second load/render.
 
-Local artifacts are under `work/map-compile/browser-east-hall-20261010/`.
+Local artifacts are under `work/needs-review/map-compile/browser-east-hall-20261010/`.
 The bounded HTTP library contains only the published east-hall catalog entry,
 its embedded descriptor, pinned model/resources and the new two-copy scene from
 `grounded-stair-placements-fR7tTe` at 270 degrees and elevation 40. No level-data
@@ -3458,7 +3458,7 @@ Type checking, scoped lint/formatting, game build and Cargo formatting pass.
 
 Run from the editor directory:
 `node refinement/check-grounded-stair-placements.mjs --asset=derby-east-hall --rotations=270 --zip-roundtrip`.
-Output `work/map-compile/grounded-stair-placements-fR7tTe` contains two diagnostic
+Output `work/needs-review/map-compile/grounded-stair-placements-fR7tTe` contains two diagnostic
 ZIPs, their extracted runtime descriptors, editable documents and native reports.
 Each scene contains two independent editor-inserted copies. Terrain elevations
 are 0 and 40. Each packaged descriptor retains two precise lift contours.
@@ -3496,7 +3496,7 @@ straight-edge noise within two clipping-grid units before constructing clearance
 A regression retains the problematic five-vertex input and verifies supported
 world-space actor footprints throughout the resulting usable integer centers.
 
-Fresh output `work/map-compile/grounded-stair-placements-cY6Eu1` retains all doors
+Fresh output `work/needs-review/map-compile/grounded-stair-placements-cY6Eu1` retains all doors
 and lifts across two copies, eight rotations and two elevations. Prepared,
 sprite, native gate-discovered and hidden-selection audits each pass **256/256**.
 Ordinary clicks pass **252/256**: four covered upper targets at 217 degrees fail
@@ -3526,7 +3526,7 @@ unusable rounded clearance fixes that regression. Final fresh matrices:
 | East hall / `VeWmvd` | 232/256 each | 240/256 | 236/256 | 240/256 |
 | Church side tower / `FtNRqq` | 128/128 each | 128/128 | 128/128 | 128/128 |
 
-Both directories are under `work/map-compile/grounded-stair-placements-`. Each
+Both directories are under `work/needs-review/map-compile/grounded-stair-placements-`. Each
 matrix uses two copies, eight angles and elevations 0/40, with all authored
 entrances retained. East-hall failures are exclusively at 217 degrees; the
 previously failing 270-degree cases pass 32/32 in every mode. Its upper stair at
@@ -3569,7 +3569,7 @@ was reconstructed from rounded movement coordinates. On its nearly edge-on lower
 stair, the resulting receiver vertices ranged from about -86 to 110 units instead
 of the authored 0–110 range. Receivers now use the precise placed floor boundary;
 movement clearance remains separate. Fresh output
-`work/map-compile/grounded-stair-placements-8uWe2L` has four receiver vertices at
+`work/needs-review/map-compile/grounded-stair-placements-8uWe2L` has four receiver vertices at
 0/110 within numerical tolerance. The pinched-floor compiler regression checks
 receiver height bounds for stairs, ladders and walls in copied placements.
 
@@ -3592,7 +3592,7 @@ explicit omission warning. Strict compilation still rejects the collapsed input;
 genuinely degenerate authored geometry remains an error even in best-effort mode.
 Collision blockers are not relaxed. No runtime code changed.
 
-`work/map-compile/grounded-stair-placements-BqoB9w` now contains both 270-degree
+`work/needs-review/map-compile/grounded-stair-placements-BqoB9w` now contains both 270-degree
 exports at elevations 0/40 with two independent hall copies and all authored lift
 entrances. This is not a traversal pass: prepared synthetic and sprite traversal
 each pass **24/32**, while gate discovery, ordinary clicks and hidden-selection
@@ -3603,7 +3603,7 @@ eight-angle hall matrix has not yet been certified. Compiler tests: **146 passed
 
 ## Fresh Derby upper-west curtain (2026-10-10)
 
-`work/map-compile/grounded-stair-placements-xCBv3V` contains sixteen newly authored
+`work/needs-review/map-compile/grounded-stair-placements-xCBv3V` contains sixteen newly authored
 exports of `derby-upper-west-curtain`: two independent copies at rotations
 0/37/90/137/180/217/270/317 and elevations 0/40. Every authored lift and entrance
 survives insertion, scene serialization/reopen and compilation from library assets
@@ -3653,7 +3653,7 @@ model-scene pins are retained. The default tower and its optional mask checks
 remain available. Compilation reads only the chosen library asset and fresh editor
 terrain; the verifier serializes and reopens each inserted scene.
 
-`work/map-compile/grounded-stair-placements-5Selse` contains sixteen exports of
+`work/needs-review/map-compile/grounded-stair-placements-5Selse` contains sixteen exports of
 `nottingham-south-stair-house`: two copies, rotations 0/37/90/137/180/217/270/317
 and elevations 0/40. All 64 routes pass the synthetic, complete-sprite and native
 gate-discovery audits, with no forbidden routes. All lifts and doors survive.
@@ -3687,7 +3687,7 @@ formatting and the game build pass.
 Final native result: **128/128 player-click routes pass**, with zero forbidden
 or failed routes across eight rotations, two elevations and two independent
 copies. Report:
-`work/map-compile/grounded-stair-placements-bO6Dnx/actor-stair-player-click-report.json`.
+`work/needs-review/map-compile/grounded-stair-placements-bO6Dnx/actor-stair-player-click-report.json`.
 All four native stair audits pass against the current engine build: prepared
 synthetic routes, prepared complete-sprite routes, gate-discovered complete-sprite
 routes and player-click routes, each checking all 128 directed traversals.
@@ -3704,7 +3704,7 @@ movement, passage completion, destination layer/sector and receiving-plane check
 The initial raw-endpoint run completed 104 of 128 intended routes. Its other
 24 clicks selected a higher floor or the stair itself, rather than the intended
 landing. This is recorded in
-`work/map-compile/grounded-stair-placements-bO6Dnx/actor-stair-raw-endpoint-click-report.json`.
+`work/needs-review/map-compile/grounded-stair-placements-bO6Dnx/actor-stair-raw-endpoint-click-report.json`.
 An endpoint inside an overlapping screen polygon is not an unambiguous floor
 click. The landing audit therefore chooses the nearest visible, actor-sized point
 on the intended floor, within 64 units and connected to the endpoint by a clear
@@ -3738,7 +3738,7 @@ Only test code changes in the engine.
 The checked-in bidirectional discovery fixture passes, and the compiled actor
 navigation suite reports 26 passed and 30 opt-in audits ignored.
 
-`work/map-compile/grounded-stair-placements-bO6Dnx` passes **128/128 native
+`work/needs-review/map-compile/grounded-stair-placements-bO6Dnx` passes **128/128 native
 complete-sprite routes** across rotations 0/37/90/137/180/217/270/317, terrain
 elevations 0/40 and two independent copies. All sixteen documents are inserted,
 serialized, reopened and compiled through editor APIs; both masks bind terrain
@@ -3776,13 +3776,13 @@ for these newly supported placements.
 
 Final verification: the full editor suite reports 1,069 passed, two skipped and
 one unrelated failure: the locally edited Croisement02 preset has `size: null`.
-Log: `work/map-compile/stair-rotations-editor-final-20261009.log`. Scoped lint,
+Log: `work/needs-review/map-compile/stair-rotations-editor-final-20261009.log`. Scoped lint,
 app typechecking, game build and Rust formatting checks pass. No production
 Rust files change in this endpoint-preparation follow-up.
 
 ## Direct narrow stair approaches and receiving-piece handoffs (2026-10-09)
 
-The fresh tower exports in `work/map-compile/grounded-stair-placements-tWfmuj`
+The fresh tower exports in `work/needs-review/map-compile/grounded-stair-placements-tWfmuj`
 pass all **64 complete-sprite native routes**, with no failures or forbidden
 routes, at rotations 0/37/90/180 and elevations 0/40 for two independent copies.
 The audit waits for the exit passage to finish before accepting arrival, while
@@ -3812,7 +3812,7 @@ Native map integration passes 71 tests (five ignored), actor navigation passes
 Earlier diagnostics are `stair-full-body-diagnostic-JMhI2p` (changing the support
 constant alone leaves eight stalls) and `stair-inset-endpoints-diagnostic-GdQBSY`
 (prepared endpoints expose four receiving failures before the boundary fix).
-All are under `work/map-compile/`.
+All are under `work/needs-review/map-compile/`.
 
 The placement verifier now accepts `--rotations=` and derives its expected route
 count from that list. An additional strict-mask run for 137/217/270/317 degrees,
@@ -3825,7 +3825,7 @@ a missing receiver at elevation zero from an anchor outside the frame at
 elevation 40, so placement/frame coverage still needs inspection. Combined with
 the original matrix, 104 of 128 routes pass. Broader placement remains open.
 
-The full editor suite in `work/map-compile/direct-stair-editor-suite-20261009.log`
+The full editor suite in `work/needs-review/map-compile/direct-stair-editor-suite-20261009.log`
 reports 1,067 passed, two skipped and the same unrelated Croisement02 preset
 failure (`size: null`). App TypeScript checking and focused lint pass.
 The full level-data suite passes 89 tests (eight opt-in tests ignored), and the
@@ -3843,7 +3843,7 @@ collision geometry. Already clear passages, non-stair lifts and switchable-only
 barriers retain their midpoint; normal state-condition compilation follows.
 
 Fresh editor insertion, save/reopen and export checks in
-`work/map-compile/grounded-stair-placements-vmi3Bp` retain both masks and run all
+`work/needs-review/map-compile/grounded-stair-placements-vmi3Bp` retain both masks and run all
 64 native complete-sprite routes. **56 pass, eight fail, none are forbidden.**
 The eight remaining failures are the upper stair at 90 degrees, in both
 directions, at both elevations and in both copies. The audit remains failing.
@@ -3852,7 +3852,7 @@ passage conditions and warnings change: 0 degrees moves `[510,238]` to
 `[512,234]`, and 90 degrees moves `[563,288]` to `[569,289]`, with equivalent
 translation for the second copy and elevated terrain. All other descriptor
 data is identical. The earlier diagnostic is
-`work/map-compile/stair-midpoint-diagnostic-Xkiadl`.
+`work/needs-review/map-compile/stair-midpoint-diagnostic-Xkiadl`.
 
 Focused tests verify unchanged endpoints/collision, idempotence, retained
 switchable conditions, rejection of a shared solid barrier and rejection of a
@@ -3862,7 +3862,7 @@ moving its handoff does not resolve that separate corridor failure.
 
 Validation: app TypeScript checking, focused lint, game build and Rust formatting
 pass. The existing native rotated-stair traversal regression also passes. The
-full editor suite in `work/map-compile/stair-handoff-editor-suite-20261009.log`
+full editor suite in `work/needs-review/map-compile/stair-handoff-editor-suite-20261009.log`
 reports 1,064 passed, two skipped and one existing preset failure caused by the
 locally edited Croisement02 scene's `size: null`; that scene was not changed here.
 
@@ -3878,20 +3878,20 @@ descriptor hash, anchor, ground height and schema before preparing an edit.
 
 `refinement/check-grounded-mask-placements.mjs` inserts two copies on new terrain,
 serializes and reopens the document, then exports four rotations at two terrain
-elevations. Baseline `work/map-compile/grounded-mask-placements-2HvhH0` retains
+elevations. Baseline `work/needs-review/map-compile/grounded-mask-placements-2HvhH0` retains
 10 of 12 masks in every case. Candidate `grounded-mask-placements-RCDDxe` retains
 all 12 and loads all eight exports natively. The comparative run
 `grounded-mask-placements-V2Nyq1` additionally checks that every previous mask
 survives unchanged, the two added masks bind ground with disjoint coverage, and
 all other gameplay is identical after remapping mask-control indices.
 
-Saved exports `work/map-compile/saved-map-exports-txqpee` compile and load native
+Saved exports `work/needs-review/map-compile/saved-map-exports-txqpee` compile and load native
 geometry for both Leicester and Wychford, without keep-mask warnings. Wychford
 retains its separate existing tower receiver warning. Publication snapshots in
-`work/map-compile/ground-mask-receiver-UTfXbT/publication` show only one added
+`work/needs-review/map-compile/ground-mask-receiver-UTfXbT/publication` show only one added
 receiver segment and refreshed descriptor hashes in the two saved scenes.
 Both scenes reopen through the normal pinned-asset loader after publication.
-The installed-library check in `work/map-compile/grounded-mask-placements-4aeYUA`
+The installed-library check in `work/needs-review/map-compile/grounded-mask-placements-4aeYUA`
 passes all eight cases and produces descriptors exactly equal to the staged
 comparative run. Focused script lint, the game build and Rust formatting pass.
 These checks establish receiver binding and data preservation, not complete
@@ -3911,10 +3911,10 @@ inserts two copies on new terrain at four rotations and two elevations, then
 serializes, reopens and exports each document. All eight cases retain two masks
 on the terrain layer with disjoint, nonempty obstacle ownership. Against the
 previous exports, only masks and warnings change. All eight load natively in
-`work/map-compile/grounded-stair-placements-N2R4Ia`; the stricter ownership checks
-also pass in `work/map-compile/grounded-stair-placements-4Nxv8y`.
+`work/needs-review/map-compile/grounded-stair-placements-N2R4Ia`; the stricter ownership checks
+also pass in `work/needs-review/map-compile/grounded-stair-placements-4Nxv8y`.
 
-Saved-scene checks in `work/map-compile/saved-map-exports-df4Z1e` compile and load
+Saved-scene checks in `work/needs-review/map-compile/saved-map-exports-df4Z1e` compile and load
 both maps: Wychford has 86 areas, 31 doors and no jump pairs; Leicester has 57
 areas, 105 doors and 23 jump pairs. Leicester has no tower-mask warning. Wychford
 retains its prior missing-receiver warning for its existing tower placement;
@@ -3923,16 +3923,16 @@ certify construction and receiver binding, not complete visual compositing or
 stair traversal.
 
 Publication and before/after snapshots are in
-`work/map-compile/church-mask-receiver-HnUqtA/publication`. Only the selected
+`work/needs-review/map-compile/church-mask-receiver-HnUqtA/publication`. Only the selected
 mask's `receiverSegment` changes in the descriptor. Leicester and Wychford scene
 edits refresh descriptor hashes only; no placements or models change.
 After publication, both saved scenes reopen through the normal pinned-asset
 loader. Running the fresh-placement check with `--require-masks` against the
 installed library produces eight exports exactly equal to the staged results,
-recorded in `work/map-compile/grounded-stair-placements-3yF1RN`.
+recorded in `work/needs-review/map-compile/grounded-stair-placements-3yF1RN`.
 
 A separate upper-stair experiment in
-`work/map-compile/stair-kernel-diagnostic-vvItIV` retains a conservative convex
+`work/needs-review/map-compile/stair-kernel-diagnostic-vvItIV` retains a conservative convex
 region inside the slightly concave physical floor before preparing clearance.
 With the upper passage restrictions diagnostically removed, eight 90-degree
 routes still stall. That experiment was not installed in the compiler or asset.
@@ -3942,17 +3942,17 @@ routes still stall. That experiment was not installed in the compiler or asset.
 `refinement/check-grounded-stair-placements.mjs` declares 64 required directed
 routes across two independent church-side tower drops, four rotations and two
 terrain elevations. Current exports in
-`work/map-compile/grounded-stair-placements-j4d4sV` complete 48 routes and forbid
+`work/needs-review/map-compile/grounded-stair-placements-j4d4sV` complete 48 routes and forbid
 16. The native complete-sprite audit now reads `expected_directed_routes` and
 fails this batch for incomplete coverage, even though all attempted routes pass.
 Its report records expected, checked, failed and skipped counts separately.
 The two 37-degree exports independently pass a 16-route positive control in
-`work/map-compile/stair-audit-complete-control-XPVx6m`.
+`work/needs-review/map-compile/stair-audit-complete-control-XPVx6m`.
 
 The landing's upper-door passage footprint overlaps a hole formed by the joined
 landing surfaces. The two-segment native passage changes floor membership at
 the midpoint, so treating a floor opening as an arbitrary solid requires review.
-A diagnostic batch in `work/map-compile/stairwell-passage-diagnostic-60UhpF`
+A diagnostic batch in `work/needs-review/map-compile/stairwell-passage-diagnostic-60UhpF`
 removes only the upper doors' prepared passage-state restrictions, retaining all
 motion and receiving geometry. All 64 routes are then attempted: 56 complete,
 while eight fail inside the upper stair at 90 degrees. The stalls occur just
@@ -4108,7 +4108,7 @@ now produce explicit warnings instead of silently dropping the connection.
 
 `node refinement/check-vertical-jump-placements.mjs --automatic --reposition --surfaces`
 removes all authored jump pairs, segments and zones from the compiled asset
-definitions. Batch `work/map-compile/prepared-vertical-jumps-8MzStM` derives both
+definitions. Batch `work/needs-review/map-compile/prepared-vertical-jumps-8MzStM` derives both
 independent connections at four rotations and two elevations. All eight editor
 documents reopen and recompile identically; 32 moved/excess-rise controls disconnect
 only the changed copy and warn. **160 isolated traversals and 160 player-click routes
@@ -4136,7 +4136,7 @@ editor placement; it does not edit compiled data or restore saved connections.
 The reusable authored edges have sufficient inset for the native footprint.
 Attachment limits are unchanged. Each assembly has an independent copy.
 
-Batch `work/map-compile/prepared-vertical-jumps-mxxHd2` retains both connections at
+Batch `work/needs-review/map-compile/prepared-vertical-jumps-mxxHd2` retains both connections at
 0/37/90/180 degrees and elevations 0/40. All eight editor documents reopen and
 recompile identically. **160 isolated native traversals and 160 player-click routes
 pass**, including assisted ascent, unassisted-ascent rejection, upright descent,
@@ -4167,7 +4167,7 @@ climbing edges with geometric attachment rules, not automatic discovery of every
 climbable surface.
 
 Reproduce with `node refinement/check-vertical-jump-placements.mjs --automatic`.
-Batch `work/map-compile/prepared-vertical-jumps-jBQu9I` passes editor document
+Batch `work/needs-review/map-compile/prepared-vertical-jumps-jBQu9I` passes editor document
 reopen/recompile equality for all eight attempted placements. The two unrotated
 placements retain independent copies: **40 isolated native traversals and 40
 player-click routes pass**. The six rotated placements have no geometrically
@@ -4196,7 +4196,7 @@ assets with an authored matching connection, then rotates/copies their assembly
 at 0/37/90/180 degrees and base elevations 0/40. Each export contains two independent
 100-unit climbing pairs. Every saved editor document reopens through validation
 and recompiles to the identical descriptor. The current batch is
-`work/map-compile/prepared-vertical-jumps-RWOwxr`.
+`work/needs-review/map-compile/prepared-vertical-jumps-RWOwxr`.
 
 Dedicated native audits pass **160 isolated traversals, 140 player-click routes
 and 20 occlusion checks** using complete RobinTown/LittleJohn sprites. Ascent
@@ -4228,7 +4228,7 @@ asset authoring and rendered contact remain open.
 
 ## Assisted roof jumps and carrier recovery (2026-10-08)
 
-The prepared roof batch `work/map-compile/prepared-roof-placements-oshhrm` now
+The prepared roof batch `work/needs-review/map-compile/prepared-roof-placements-oshhrm` now
 passes **120 isolated shoulder jumps and 120 shoulder-jump player-click routes**.
 These use the complete RobinTown and LittleJohn animation profiles. Both actors
 start linked at the source receiver. The click path selects the exported jump
@@ -4279,7 +4279,7 @@ them. The focused editor/compiler suite passes **246 tests**; native map integra
 passes **71 tests, 5 ignored**. The refreshed fixtures also pass **85 native jump
 tests, 5 ignored**. App typechecking and scoped type-aware lint also pass.
 
-Fresh batch `work/map-compile/prepared-roof-placements-oshhrm` passes **120 isolated
+Fresh batch `work/needs-review/map-compile/prepared-roof-placements-oshhrm` passes **120 isolated
 upright jumps, 120 complete upright approaches, 120 isolated sword jumps and 120
 player-click routes**. Isolated jumps and interior clicks arrive exactly. All
 four-unit approach cases finish the finite turning startup 0.8 or 1.6 units short,
@@ -4308,7 +4308,7 @@ vertices only when all four stored coordinates become identical in binary32.
 It retains genuine pinches and their triangulation, exact native vertices,
 receiving planes and materials. No production engine code changes.
 
-Fresh batch `work/map-compile/prepared-roof-placements-FzNuR1` passes all **120
+Fresh batch `work/needs-review/map-compile/prepared-roof-placements-FzNuR1` passes all **120
 isolated sprite jumps/landings**. The checked-in rotated-roof descriptor matches
 editor output and passes **84 native receiver queries** along its four directed
 edges. Native actor-sized approach/pathfinder checks include that descriptor.
@@ -4560,7 +4560,7 @@ text. Export takes 137.72 seconds and retains 1,869 warnings. The Chromium
 `map-bake.html` contract passes crop alignment, tile seams, hidden geometry,
 color/depth encoding, state apply/reset, automatic appearance regions, bounded
 sun shadows, resource restoration and ZIP/PNG round-tripping. Its fresh archive
-is `work/map-compile/closed-mask-bake-contract.zip`; this is the generic synthetic
+is `work/needs-review/map-compile/closed-mask-bake-contract.zip`; this is the generic synthetic
 bake fixture, not a rendered closed-mask-island scene or full Wychford bake.
 The native browser contract now accepts a fresh archive through
 `ROBIN_EDITOR_BAKE_CONTRACT_ZIP`, preserving the checked-in archive as a separate
@@ -4605,7 +4605,7 @@ cover insets of 1, 2, 3, 4 and 6 units and extra ground offsets of 0, 20 and 40
 units. Each is compiled at four rotations and two elevations with two copies,
 then checked for 480 flight paths, 160 walk–jump–walk routes and 64 zone endpoints.
 The eight disconnected-terrain negative cases also run for every candidate.
-Results are in `work/map-compile/watermill-contact-review-results.json`.
+Results are in `work/needs-review/map-compile/watermill-contact-review-results.json`.
 
 No candidate passes all three positive checks. At zero extra ground offset,
 the five insets respectively produce 0/12/24/76/80 flight failures and
@@ -4940,7 +4940,7 @@ authored climbing plane; maximum bounding-center distance is 12.012175 units
 (`climb-mesh-audit-IR3yV4`). These measurements do not establish actor-foot
 contact. Both limitations remain explicit draft warnings, and the full export
 still reports 258 warnings across the scene. Publication backups are in
-`work/map-compile/centered-oak-publication-review`.
+`work/needs-review/map-compile/centered-oak-publication-review`.
 
 ## Earlier three-entrance ladder recheck (2026-10-08)
 
@@ -7009,7 +7009,7 @@ Three explicitly staged local corrections use the stair's external ground
 endpoint and its asset-owned upper landing. All 24 placements emit physical
 navigation and reject their raised, disconnected ground entrances. The placement
 checker now accepts an absent lift array when every traversal was omitted.
-`work/map-compile/derby-wall-stair-batch-08ar745d` passes 46/48 directed actor
+`work/needs-review/map-compile/derby-wall-stair-batch-08ar745d` passes 46/48 directed actor
 routes: lower-east and upper-west pass 16/16 each; east-bailey passes 14/16.
 
 Lower-east candidate `local-stair-seams-4ZxBUm` moves its floor by at most 0.877
@@ -7048,7 +7048,7 @@ require a different frame conversion. In the correct frame, all 205 samples acro
 the added contact strip intersect mesh at exactly zero height. The two terrain
 endpoints move 0.6632 and 2.4224 units; no collision holes or other edges change.
 Combined staged edits and mesh evidence are in
-`work/map-compile/derby-stair-ground-contact-wcawND`.
+`work/needs-review/map-compile/derby-stair-ground-contact-wcawND`.
 
 The first combined export (`east-hall-ground-full-HzQaZL`) binds the ground but
 still fails two routes and takes 309.81 seconds. A stair query processed the whole
@@ -7087,7 +7087,7 @@ create no substitute receiving floor. Unused or conflicting selections reject.
 The compiler still resolves the actual placed receiver. The placement checker
 raises these assets by 20 units and asserts that disconnected traversal is omitted.
 
-Unpublished candidate `work/map-compile/local-stair-seams-8uUfqO` corrects the
+Unpublished candidate `work/needs-review/map-compile/local-stair-seams-8uUfqO` corrects the
 east hall's lower stair and upper landing, retaining the published upper stair.
 Floor movement is at most 1.349 units. Mesh sampling intersects 639/641 points;
 the two remaining samples lie within 0.205 units of the mesh edge. The irregular
@@ -7121,7 +7121,7 @@ adjusted because its other endpoint lay beyond the stair span; runtime tracing
 confirmed that neither lower entrance could bind landing support. The revised
 recipe adjusts both endpoints of the complete matching near-coplanar landing edge.
 
-Candidate `work/map-compile/local-stair-seams-GWqLz7` changes the upper floor by at
+Candidate `work/needs-review/map-compile/local-stair-seams-GWqLz7` changes the upper floor by at
 most 0.323 units and its landings by at most 0.532/0.770 units. All 807 sampled
 floor points intersect the pinned stair mesh; the smooth ramp lies within the
 approximately 6.5-unit tread steps. Permissions, control definitions and the
@@ -7136,7 +7136,7 @@ in `east-hall-seam-full-ljO2YV` passes **28/28 stair routes** and all five contr
 apply/reset checks; its upper stair no longer falls back to projected navigation.
 
 The asset and Derby scene pin are published, with backups under
-`work/map-compile/east-hall-seam-publication-20261005`. All ten scenes reopen.
+`work/needs-review/map-compile/east-hall-seam-publication-20261005`. All ten scenes reopen.
 The eight `--published` exports in `local-stair-placements-K2NXTu` and the full
 published Derby descriptor exactly equal their native-tested candidates.
 The refreshed `stair-anchor-support-pAMh3U` audit has 48/53 definitions with local
@@ -7149,7 +7149,7 @@ parity remain unfinished.
 without source maps or inferred ground. It records each stair's planar residual,
 inside/middle anchor containment and height error, distance to the floor edge,
 middle-to-landing height difference and possible flat local landing owners.
-Results are in `work/map-compile/stair-anchor-support-SdVBJ4/report.json`.
+Results are in `work/needs-review/map-compile/stair-anchor-support-SdVBJ4/report.json`.
 All 53 authored stair floors are planar, but 49 have at least one unsupported
 anchor: Derby 7/10, Leicester 8/8, Lincoln 6/6, Nottingham 11/12, Sherwood 1/1
 and York 16/16. Derby's unsupported middles are 0.033–0.954 units from their
@@ -7168,13 +7168,13 @@ full-stair clearances now belong to the reusable central gallery and west tower.
 `refinement/stage-keep-component-seams.mjs` checks source descriptor pins, local
 coordinate frames and baseline surfaces before transferring only reviewed fields.
 Permissions, room membership, appearance and control definitions are retained.
-Review artifacts are in `work/map-compile/keep-component-seams-Dccpop`.
+Review artifacts are in `work/needs-review/map-compile/keep-component-seams-Dccpop`.
 
 `refinement/check-keep-component-seams.mjs` independently inserts all four keep
 components over authored terrain at rotations 0/37/90/180 and elevations 0/40.
 Placement accounts for each component's rotation pivot and camera foreshortening;
 transformed part coordinates are checked against the composite assembly.
-`work/map-compile/keep-component-placements-ow6STQ` passes **80/80 directed native
+`work/needs-review/map-compile/keep-component-placements-ow6STQ` passes **80/80 directed native
 actor routes** and all eight control apply/reset checks. This is initial-state
 walking without complete sprites, not rendered traversal certification.
 
@@ -7189,7 +7189,7 @@ units of mesh edges. This sampled geometry review does not replace actor renderi
 
 Publication through `configureAssetGameplay` updates both descriptors and the
 Derby/Wychford scene pins, with backups in
-`work/map-compile/keep-component-seams-publication-20261005`.
+`work/needs-review/map-compile/keep-component-seams-publication-20261005`.
 The verification script's `--published` mode reads installed gameplay rather than
 overriding it; all eight descriptors in `keep-component-placements-RcPYq9` exactly
 match the native-tested staged exports. The composite asset itself is not published.
@@ -7226,7 +7226,7 @@ region; other routes retain full geometry for visibility while dropping redundan
 candidate vertices within the coordinate-error budget.
 
 The intermediate binding-only audit in
-`work/map-compile/keep-tolerant-bindings-1b2bi0d1` finishes with **4/80 routes
+`work/needs-review/map-compile/keep-tolerant-bindings-1b2bi0d1` finishes with **4/80 routes
 passing** and no landing-binding warnings. This supersedes the previous failure
 to bind every keep landing, not complete keep traversal. Rounded-buffer experiments
 were stopped after exposing excessive pathfinding work; the retained correction
@@ -7234,9 +7234,9 @@ uses bevels and avoids redundant route candidates.
 
 The staged seam correction had also left some stair clearances on their old
 floor boundaries, producing thin collision strips across the corrected floor.
-`work/map-compile/keep-placements-xzcrsx` is a separate diagnostic candidate with
+`work/needs-review/map-compile/keep-placements-xzcrsx` is a separate diagnostic candidate with
 asset-owned clearances covering the corrected stair floors. The final audit is
-retained separately in `work/map-compile/keep-final-clearances-g2q5u6qs`: **80/80
+retained separately in `work/needs-review/map-compile/keep-final-clearances-g2q5u6qs`: **80/80
 directed actor routes pass**, covering three stairs at rotations 0/37/90/180 and
 elevations 0/40. The report marks `audit_finished` and `complete` true. Its scope
 is initial-state walks between every entrance pair, with `complete_sprite` false;
@@ -7271,14 +7271,14 @@ regression accepts a quarter-unit seam lost by integer rounding while rejecting
 short and unrelated oversized receivers. An editor regression verifies the
 zero-height fractional receiver and its physical door endpoint.
 
-The staged eight-placement batch `work/map-compile/keep-placements-us6eTG` still
+The staged eight-placement batch `work/needs-review/map-compile/keep-placements-us6eTG` still
 fails **all 80 directed actor routes**. A filtered diagnostic in
-`work/map-compile/keep-precision-binding-y5lnsdoc` rejects all seven landing doors
+`work/needs-review/map-compile/keep-precision-binding-y5lnsdoc` rejects all seven landing doors
 in the unrotated, zero-elevation placement as not reaching their physical doors.
 Exported receiver-to-midpoint distances there are below 0.0000004 world units;
 the remaining runtime seam rejection needs investigation. No keep definition is
 published by this change, and these results do not establish traversal parity.
-A fresh batch after ring normalization, `work/map-compile/keep-placements-sq7ORI`,
+A fresh batch after ring normalization, `work/needs-review/map-compile/keep-placements-sq7ORI`,
 also fails all 80 routes. In its unrotated placement, six of seven door receivers
 have rounded symmetric-difference areas of 4.5–33 square units against their
 owning motion boundary; one matches exactly. These are final emitted receiving
@@ -7292,7 +7292,7 @@ fixtures remain unchanged.
 
 ## Staged keep seams expose landing precision loss (2026-10-05)
 
-`work/map-compile/keep-door-seams-WR2Oyl` stages asset-local seam corrections from
+`work/needs-review/map-compile/keep-door-seams-WR2Oyl` stages asset-local seam corrections from
 the unchanged keep candidate. Each stair keeps its existing plane. Its end
 vertices move along the slope to the adjacent asset-owned landing heights; door
 midpoints are recomputed on their outside-to-inside segments. Nearby landing
@@ -7311,10 +7311,10 @@ allocating control pairs. Native boundary validation accepts only the same
 coordinate-rounding budget used by physical route queries; tests still reject
 meaningful unsupported positions.
 
-`work/map-compile/keep-placements-kPG2tq` emits all three physical stairs at each
+`work/needs-review/map-compile/keep-placements-kPG2tq` emits all three physical stairs at each
 of eight placements and loads natively. **All 80 directed actor routes fail** at
 entry. This is not a publishable candidate. The isolated trace in
-`work/map-compile/keep-bindings-zw__462v` finds no bound landings: five doors fail
+`work/needs-review/map-compile/keep-bindings-zw__462v` finds no bound landings: five doors fail
 receiver reach and two fail shared-edge matching in the zero-rotation case.
 Their exact midpoints are 0.121979–0.471218 units from the integer-rounded landing
 navigation edges. Some receiver contours also differ. Preserve actual authored
@@ -7329,7 +7329,7 @@ remains at 56/80 successful routes; this staged candidate does not supersede it.
 
 ## Refreshed keep placement audit and unsupported door seams (2026-10-05)
 
-`work/map-compile/keep-placements-9UUrtV` recompiles the precision-preserving
+`work/needs-review/map-compile/keep-placements-9UUrtV` recompiles the precision-preserving
 candidate from `keep-placements-RegQxL` with the current ordinary export pipeline.
 It retains three stairs, six building groups and one control at each of eight
 placements (rotations 0/37/90/180, elevations 0/40). The native directed actor
@@ -7358,7 +7358,7 @@ the failing door ordinal, anchor name and world position, and the height error
 when applicable. Focused compiler tests verify these diagnostics.
 
 Reproduction: from `level-editor`, run
-`node work/map-compile/check-keep-placements.mjs work/map-compile/keep-placements-RegQxL --precise-stairs`.
+`node work/needs-review/map-compile/check-keep-placements.mjs work/needs-review/map-compile/keep-placements-RegQxL --precise-stairs`.
 Pass the printed output directory as an absolute `ROBIN_ASSET_MAP_DIAGNOSTICS`
 value to native test `exported_stairs_support_complete_actor_routes --ignored`.
 The output directory contains the compiled descriptors and actor-route report.
@@ -7957,7 +7957,7 @@ the 12-by-6 test footprint in physical XY, for the current unchanged screen box,
 for the plane-projected parallelogram and for its axis-aligned bounding box.
 It asserts the affine area invariant and independently verifies analytically
 derived edge-on rotations. The output is
-`work/map-compile/keep-placements-RegQxL/physical-footprint-audit.json`.
+`work/needs-review/map-compile/keep-placements-RegQxL/physical-footprint-audit.json`.
 
 All fifteen placement checks and six edge-on checks pass. At 180 degrees, the
 large gallery stair retains about 976 square units of possible physical foot-box
@@ -7986,7 +7986,7 @@ The bridge is published with an explicit warning that textured actor compositing
 remains unverified. Its gameplay matches the native-tested headroom candidate;
 only the draft warning changes. The pinned review catalog records both descriptor
 hashes. Publication backups and the scene-pin audit are in
-`work/map-compile/published-imported-bridge-headroom`; all ten saved scenes reopen.
+`work/needs-review/map-compile/published-imported-bridge-headroom`; all ten saved scenes reopen.
 
 `refinement/review-imported-bridge-collision.py` renders the pinned mesh alongside
 the actual authored volume faces and deck surfaces in three orthographic views.
@@ -8005,7 +8005,7 @@ This reconstructs the authored geometry from the pinned mesh, compares its JSON
 representation to the installed gameplay, then compiles the installed definition.
 JSON comparison normalizes negative zero exactly as publication does. The command
 requires the hull files produced by `author-imported-bridge-supports.py --structure`.
-The published run `work/map-compile/imported-bridge-deck-BFZSPh` passes all 30
+The published run `work/needs-review/map-compile/imported-bridge-deck-BFZSPh` passes all 30
 directed native actor routes, 75 blocked points and 140 sight/projectile probes.
 All ten descriptors differ from `X16cpf` only in their single draft warning;
 the placement script also passes all ten landing-height rejection checks.
@@ -8021,7 +8021,7 @@ Tests cover rotation, elevation, sloping floors, standing on top, raising a soli
 away from independent terrain, repeated spline deformation and invalid values.
 
 The bridge review recipe specifies 80 units. The reproducible candidate
-`work/map-compile/imported-bridge-deck-X16cpf` passes 30 directed native actor
+`work/needs-review/map-compile/imported-bridge-deck-X16cpf` passes 30 directed native actor
 routes, 75 blocked points and ten landing-height rejection checks across five
 rotations. Ten routes cross the deck; twenty foundation routes detour around
 the now-blocked low structure. The separate native ray test passes all 140
@@ -8037,7 +8037,7 @@ checks do not establish full map parity or posture-dependent crawling behavior.
 
 ## Bridge sight/projectile gaps and body-clearance review (2026-10-05)
 
-`work/map-compile/imported-bridge-deck-y6Ojxi` adds explicit world-space ray
+`work/needs-review/map-compile/imported-bridge-deck-y6Ojxi` adds explicit world-space ray
 probes without changing any of the ten previously tested geometry descriptors.
 The new ignored native test
 `exported_geometry_preserves_authored_sight_and_projectile_gaps` loads the
@@ -8077,7 +8077,7 @@ merging reduces the complete candidate from 3,499 to 1,527 volumes while the
 per-hull volume checks still pass. Numerical dust below 1e-7 square local units
 is discarded before it can create a degenerate height plane.
 
-`work/map-compile/imported-bridge-deck-SMVEnH` compiles strictly at five rotations
+`work/needs-review/map-compile/imported-bridge-deck-SMVEnH` compiles strictly at five rotations
 and passes thirty directed native deck/underpass routes and all sixty blocked
 support-foot probes. Ten mismatched landing cases have disjoint wood/terrain
 navigation references. Matching cases share a region used for actual traversal;
@@ -8106,7 +8106,7 @@ integrated piece volume matches each hull within a relative tolerance of 1e-7.
 Each volume carries wood material and solid/opaque/mouse flags. No level data is
 read, and the scripts do not publish the result.
 
-`work/map-compile/imported-bridge-deck-GcCB3a` passes thirty native directed
+`work/needs-review/map-compile/imported-bridge-deck-GcCB3a` passes thirty native directed
 routes: ten complete deck crossings and twenty underpass crossings across five
 rotations. All sixty support-foot sample positions are blocked. Ground-route
 endpoints are inside terrain triangles; an earlier fixture put them on ambiguous
@@ -8126,7 +8126,7 @@ Its `body-volume-review.json` records summed-cell versus signed-mesh volumes;
 these are not equivalent occupancy measures when cells overlap. The next body
 authoring step needs reviewed, compact collision shapes preserving the arched
 deck, rail openings and cross-braces, rather than treating that conversion as a
-usable definition. Experimental scripts remain under `work/map-compile` as
+usable definition. Experimental scripts remain under `work/needs-review/map-compile` as
 `author-bridge-closed-bodies-experiment.py` and
 `stage-bridge-closed-bodies-experiment.mjs`.
 
@@ -8136,8 +8136,8 @@ recorded in `refinement/catalogs/sketchfab-long-wood-bridge-deck-review.json`.
 The staged definition uses local game coordinates, wood receiving material,
 one multi-plane navigation region and two end sockets. It compiles strictly at
 0, 37, 90, 180 and 270 degrees. The review script is
-`work/map-compile/stage-imported-bridge-deck.mjs`; the resulting descriptors,
-source pins and routes are in `work/map-compile/imported-bridge-deck-O5SOR0`.
+`work/needs-review/map-compile/stage-imported-bridge-deck.mjs`; the resulting descriptors,
+source pins and routes are in `work/needs-review/map-compile/imported-bridge-deck-O5SOR0`.
 The subsequent `imported-bridge-deck-MiYngY` batch also checks landings one game
 unit above and below each of the five placements. All ten mismatches retain
 separate deck and terrain navigation regions; matching landings form one region.
@@ -8151,7 +8151,7 @@ and is not published; the missing-definition count remains 35.
 
 ## Keep stair precision and projected actor clearance (2026-10-05)
 
-The clearance experiment `work/map-compile/keep-placements-FgNcOp` adds complete
+The clearance experiment `work/needs-review/map-compile/keep-placements-FgNcOp` adds complete
 stair-surface clearances without widening the walking surfaces. It still fails
 the same 12 of 68 native routes. Its `stair-clearance-audit.json` intersects the
 candidate center regions for all four corners of the test actor's 12-by-6
@@ -8161,7 +8161,7 @@ check does not prove routes through polygons with a nonempty intersection.
 The failures therefore cannot be fixed solely by changing the actor's route.
 
 Preserving fractional stair coordinates through clipping separately fixes the
-180-degree assembly disconnection. `work/map-compile/keep-placements-RegQxL`
+180-degree assembly disconnection. `work/needs-review/map-compile/keep-placements-RegQxL`
 uses only that precision setting, without the experimental full clearances.
 All eight placements retain three stairs and pass native construction and the
 available control's apply/reset. The native traversal audit still fails 24 of
@@ -8174,7 +8174,7 @@ and `derby-keep-west-tower`, using the compact pinned recipe
 `refinement/catalogs/derby-keep-stair-precision.json`. The publication helper
 supports reviewed per-surface precision settings without copying megabytes of
 unchanged mask geometry into a recipe. Its four tests and pipeline typecheck
-pass. `work/map-compile/keep-stair-precision-3DHB3d` contains the reviewed before/
+pass. `work/needs-review/map-compile/keep-stair-precision-3DHB3d` contains the reviewed before/
 after Derby exports and transactional publication backups. Derby's complete
 compiled geometry is exactly unchanged; both snapshots pass all 28 native stair
 routes and five control apply/reset checks. Scene pins are refreshed without
@@ -8188,7 +8188,7 @@ assets and preserved before/after descriptors. Wychford geometry equality is not
 claimed. The composite keep remains unpublished, and no ZIP is rebaked.
 
 The subsequent calibrated comparison in
-`work/map-compile/wychford-wall-calibration-EFEmVR` preserves both descriptors
+`work/needs-review/map-compile/wychford-wall-calibration-EFEmVR` preserves both descriptors
 before comparing them. Only obstacle 21,321's points differ, with its projection
 area `[449, 22]` unchanged. All other geometry and descriptor fields, and the
 warning lists, are exactly equal. Polygon XOR measures about 0.000658 square
@@ -8206,7 +8206,7 @@ This covers sampled initial-state crossings, not every route or control state.
 
 ## Composite keep placement and best-effort failures (2026-10-05)
 
-The revised candidate `work/map-compile/keep-reassembly-yEL2X5` explicitly
+The revised candidate `work/needs-review/map-compile/keep-reassembly-yEL2X5` explicitly
 preserves each component's choice of implicit solid versus authored-contour
 movement collision. Concatenating components without that distinction silently
 changes collision. The comparison in `keep-reassembly-comparison-NFpDXX`
@@ -8215,7 +8215,7 @@ door coordinates/permissions, room memberships and traversal endpoint identities
 Runtime indices reorder. Both the original component assembly and the candidate
 pass all 28 directed native stair routes and five control apply/reset checks.
 
-`work/map-compile/keep-placements-wVlmPz` tests new placements on authored terrain
+`work/needs-review/map-compile/keep-placements-wVlmPz` tests new placements on authored terrain
 at rotations 0, 37, 90 and 180 degrees and elevations 0 and 40. All eight exports
 now construct and pass their one available control's apply/reset checks. The
 stair audit is **not green**: 56 of 68 directed routes pass. Both 90-degree
@@ -8247,7 +8247,7 @@ fixtures before/after migration: slopes, clearances, receivers, masks, changing
 stairs, interiors, jumps, controls, materials, sounds and rotated scenery. The
 pipeline typecheck and focused lint pass.
 
-`work/map-compile/keep-reassembly-5HGm6U` stages the composite Derby keep from its
+`work/needs-review/map-compile/keep-reassembly-5HGm6U` stages the composite Derby keep from its
 four gameplay-bearing components. Every one of its 71 physical parts matches
 the corresponding component after translation. The combined gameplay validates
 after separating source-local navigation labels and appearance IDs. This is an
@@ -8270,7 +8270,7 @@ data but do not verify rendered traversal or every possible placement.
 ## Library-wide missing-definition audit (2026-10-05)
 
 The saved-scene audit does not cover every asset available for new maps.
-`work/map-compile/library-missing-gameplay-20261005.json` records the library
+`work/needs-review/map-compile/library-missing-gameplay-20261005.json` records the library
 index hash, descriptor hashes, part counts and physical-part counts for all
 35 missing definitions among 1,288 indexed assets. All 35 are absent from both
 their index entries and descriptors, rather than merely being stale index data.
@@ -8280,7 +8280,7 @@ thirteen York entries. None is placed in the ten saved scenes. These require
 individual authoring/ownership review; buildings and bridges cannot receive
 empty scenery declarations merely to remove export warnings.
 
-The follow-up `work/map-compile/library-missing-gameplay-owners-20261005.json`
+The follow-up `work/needs-review/map-compile/library-missing-gameplay-owners-20261005.json`
 uses every indexed descriptor path, including assets directly under the asset
 root. It pins both missing and candidate-owner descriptors. Thirty-two missing
 assets have all their part names represented in gameplay-bearing replacements:
@@ -8313,7 +8313,7 @@ describe the cart and longhouse assembly; they must not be duplicated onto the
 tool or loose poles. The log and stake have no overlapping physical-volume
 bounds. These definitions do not claim neighboring masks or lighting regions.
 
-`work/map-compile/lincoln-static-props-H7noaD` contains the staged export,
+`work/needs-review/map-compile/lincoln-static-props-H7noaD` contains the staged export,
 before/after warnings, publication backups and scene audit. Lincoln's complete
 compiled geometry is unchanged, excluding warnings; exactly the five missing
 definition warnings disappear. Twenty fresh terrain assemblies (five assets at
@@ -8342,13 +8342,13 @@ in best-effort mode.
 The compiler/export/spline suites pass 189 tests; app typecheck, focused lint and
 the production editor build pass. Regression cases cover sloped clearances at seven rotations and two
 elevations, holes that must remain blocked, and mismatched navigation heights.
-`work/map-compile/watermill-placement-F6AfOv` contains 24 new placements at eight
+`work/needs-review/map-compile/watermill-placement-F6AfOv` contains 24 new placements at eight
 rotations and three elevations, retaining all three entrances, one jump pair and
 both masks. Native checks pass 48 directed platform crossings and 24 blocked
 body-interior points. Generated integer-grid normalization and collapsed-fragment
 warnings remain; these sampled routes do not certify every point on the platform.
 
-`work/map-compile/watermill-collision-2GsrXz` preserves Leicester's complete
+`work/needs-review/map-compile/watermill-collision-2GsrXz` preserves Leicester's complete
 compiled geometry exactly. Both Leicester and Wychford pass native construction
 and all fifteen control apply/reset checks (14.66 seconds). Wychford's existing
 mill still has elevated approaches without supporting terrain, so its receiver,
@@ -8359,7 +8359,7 @@ Publication backups live in the two-map artifact's `publication` directory.
 Leicester/Wychford scene pins are refreshed; all ten saved scenes reopen with the
 tested gameplay. A fresh published Leicester descriptor equals the staged result.
 The 24 fresh published placement descriptors in
-`work/map-compile/watermill-placement-mKTGrj` also equal their native-tested
+`work/needs-review/map-compile/watermill-placement-mKTGrj` also equal their native-tested
 counterparts. This publication does not refresh an existing baked mod ZIP.
 
 ## Native movement-obstacle mouse rejection (2026-10-05)
@@ -8376,7 +8376,7 @@ The explicit endpoint audit accepts optional `blocked_points`. Unlike boundary
 intersection alone, these reject positions deep inside an obstacle. With the
 runtime fix, the staged watermill cardinal-placement batch below passes all twelve
 body-interior checks and 24 directed actor crossings. The published-definition
-negative control in `work/map-compile/watermill-negative-vLBjYY` correctly fails
+negative control in `work/needs-review/map-compile/watermill-negative-vLBjYY` correctly fails
 at the same body point. This separates missing asset collision from the runtime
 selection bug; fixing one does not fix the other.
 
@@ -8389,13 +8389,13 @@ placement-ground metadata produces the identical inserted editor document.
 
 The staged candidate derives collision from solid parts except the platform,
 adds a platform clearance and selects the receiving region through the platform
-entrance. `work/map-compile/watermill-placement-EIgfKI` compiles twelve placements
+entrance. `work/needs-review/map-compile/watermill-placement-EIgfKI` compiles twelve placements
 at three elevations and four cardinal rotations, retaining three entrances,
-one jump pair and two masks. `work/map-compile/watermill-collision-tgsIKN` has
+one jump pair and two masks. `work/needs-review/map-compile/watermill-collision-tgsIKN` has
 exactly the same complete Leicester geometry as the published edge-bank baseline.
 Wychford still reports the elevated mill's missing receiver and approaches.
 
-The expanded check in `work/map-compile/watermill-placement-bZjhGM` rejects the
+The expanded check in `work/needs-review/map-compile/watermill-placement-bZjhGM` rejects the
 45-degree placement: body collision blocks the raised platform entrance. The
 clearance was projected to the lower plane before rotation; that construction
 does not preserve the physical platform's projected footprint at other angles.
@@ -8413,7 +8413,7 @@ rejects a missing or different old attachment, while reapplying the installed
 recipe remains safe and repeatable. Six authoring tests, pipeline typecheck and
 lint pass.
 
-The staged descriptors in `work/map-compile/edge-bank-attachments-9n7wM3` preserve
+The staged descriptors in `work/needs-review/map-compile/edge-bank-attachments-9n7wM3` preserve
 Leicester's complete compiled geometry exactly. Wychford's navigation and physical
 point arrays are unchanged; obstacle 402 gains receiving area `[167, 0]`, and two
 bank masks are restored (17 to 19 masks). Its third mask anchor remains outside
@@ -8437,11 +8437,11 @@ ZIP was regenerated by this publication.
 The reviewed bridge and Leicester terrain definitions are now published through
 the transactional gameplay installer. The review catalog is
 `refinement/catalogs/leicester-footbridge-ownership.json`; backups and exact
-edits are in `work/map-compile/footbridge-ownership-xRp193/publication` and its
+edits are in `work/needs-review/map-compile/footbridge-ownership-xRp193/publication` and its
 parent directory. Models and placements are unchanged. Leicester and Wychford
 scene references now use the updated descriptor hashes.
 
-`work/map-compile/published-footbridge-lpfyyF` contains fresh exports from those
+`work/needs-review/map-compile/published-footbridge-lpfyyF` contains fresh exports from those
 published definitions. All ten pinned saved scenes reopen. Leicester's complete
 descriptor equals the staged, tested ownership migration. Both affected maps
 pass native construction (14.01 seconds) and all fifteen compiled controls pass
@@ -8462,10 +8462,10 @@ The fixed bridge's upper neighbour is a stateful drawbridge. Its connection must
 retain the existing controlled passages, rather than merging both navigation
 regions. The lower end can join ordinary terrain through an explicit socket.
 
-`work/map-compile/stage-footbridge-ownership.mjs` stages an asset-owned deck,
+`work/needs-review/map-compile/stage-footbridge-ownership.mjs` stages an asset-owned deck,
 subtracts its projected footprint from Leicester's terrain boundary, preserves
 the terrain's authored exclusion contours, and authors a matching lower socket.
-The staged outputs in `work/map-compile/footbridge-ownership-xRp193` retain
+The staged outputs in `work/needs-review/map-compile/footbridge-ownership-xRp193` retain
 Leicester's doors, controls and physical sight obstacles exactly. Moving the
 bridge 300 units removes its old footprint from terrain navigation. The lower
 connection in the equivalent `footbridge-ownership-WgfrPw` descriptor passes two
@@ -8480,7 +8480,7 @@ now close cracks within 0.0001 map units while retaining larger separations.
 Mixed boundary policies retain crossing exclusions and ordinary floor blockers,
 independently of input order. Six focused assembly tests and 175 compiler/export
 tests pass. The migration's exact bridge metadata also passes the new-placement
-checks in `work/map-compile/footbridge-endpoints-00UfHo`, including all 30 native
+checks in `work/needs-review/map-compile/footbridge-endpoints-00UfHo`, including all 30 native
 actor routes and five raised-landing rejection cases.
 
 The native endpoint audit now accepts an explicit layer and sector for routes
@@ -8492,13 +8492,13 @@ socket remains unmatched by design in Leicester; its doors provide that route.
 ## Asset-owned footbridge deck and endpoint traversal (2026-10-05)
 
 The unpublished east-village footbridge candidate now has explicit navigation
-sockets on both short deck edges. `work/map-compile/check-footbridge-endpoints.mjs`
+sockets on both short deck edges. `work/needs-review/map-compile/check-footbridge-endpoints.mjs`
 places this asset above two separately authored terrain landings at 0, 45, 90,
 180 and 270 degrees. Each assembly compiles to one navigation region. Raising
 both landings by 20 units instead leaves both endpoints unmatched in all five
 cases; the compiler does not invent a connection across the height gap.
 
-`work/map-compile/footbridge-endpoints-RVRKim` contains the descriptors, explicit
+`work/needs-review/map-compile/footbridge-endpoints-RVRKim` contains the descriptors, explicit
 routes, candidate gameplay and rejected-landing checks. Native test
 `exported_endpoint_routes_support_actor_crossings` passes 30 directed routes:
 each endpoint and the complete landing-to-landing span, in both directions at
@@ -8513,7 +8513,7 @@ with `cargo test -p robin_engine --lib exported_endpoint_routes_support_actor_cr
 single exported navigation region, rather than relying on sampled eligible seams.
 
 The candidate remains unpublished. Staged original-scene exports in
-`work/map-compile/footbridge-deck-Zak8FY` still report both endpoints unmatched.
+`work/needs-review/map-compile/footbridge-deck-Zak8FY` still report both endpoints unmatched.
 Leicester's previous receiver shares navigation owned by the terrain asset;
 the ownership migration must preserve traversability while making the deck
 movable. Wychford also has a placement mismatch: the deck-end midpoints are at
@@ -8551,9 +8551,9 @@ The published `leicester-east-village-footbridge` has no walkable surfaces. Its
 physical receiving volume has a sloping top matching the modeled deck, but its
 receiver anchor depends on another asset's navigation. This fails in Wychford.
 
-The unpublished experiment `work/map-compile/stage-footbridge-deck.mjs` assigns
+The unpublished experiment `work/needs-review/map-compile/stage-footbridge-deck.mjs` assigns
 that top to an asset-owned walkable surface using `projectionVolume`. Outputs in
-`work/map-compile/footbridge-deck-UyLvKh` remove the east-footbridge receiver
+`work/needs-review/map-compile/footbridge-deck-UyLvKh` remove the east-footbridge receiver
 warning and pass native construction for both Leicester and Wychford (9.06
 seconds). This is **not a usable fix**: Leicester gains an independent deck layer
 (18), and the focused actor receiver audit for obstacle 385 finds zero eligible
@@ -8574,7 +8574,7 @@ authored bank relief (50.001003 units) above/below the base, derived from the
 physical shape rather than a scene-specific terrain height. The asset definition
 and Leicester/Wychford pins are published; all ten saved scenes reopen.
 
-The staged outputs in `work/map-compile/woodland-bank-attachment-BYht4j` preserve
+The staged outputs in `work/needs-review/map-compile/woodland-bank-attachment-BYht4j` preserve
 Leicester's complete compiled geometry exactly. Wychford gains receiver bindings
 for sight obstacles 404 and 405. Navigation geometry and physical points are
 unchanged; virtual building references are renumbered to account for the two new
@@ -8592,7 +8592,7 @@ baked ZIP and prior calibrated descriptor predate this metadata publication.
 
 ## Refreshed published-map batch (2026-10-05)
 
-`work/map-compile/published-probes-20261005-r2` contains fresh best-effort exports
+`work/needs-review/map-compile/published-probes-20261005-r2` contains fresh best-effort exports
 of all ten saved scenes using their pinned asset definitions. Native construction
 passes for every descriptor (8.66 seconds), and all 71 compiled controls pass
 apply/reset (7.60 seconds). Controls per map are Wychford 3, Croisement01 6,
@@ -8611,7 +8611,7 @@ recovery-review warnings also remain. Successful loading and state changes do no
 certify omitted geometry, rendered output or complete actor traversal.
 
 The fresh calibrated Wychford run is
-`work/map-compile/wychford-wall-calibration-UNeRFM`. Model calibration reports no
+`work/needs-review/map-compile/wychford-wall-calibration-UNeRFM`. Model calibration reports no
 warnings. Its descriptor has 146 movement areas, 21,323 sight obstacles, 30 doors,
 17 masks, two lifts and three controls. Native construction passes (5.97 seconds),
 including 57,456 grid blocks and 36,983 elevation boundaries; all three controls
@@ -8700,7 +8700,7 @@ the metadata change is exactly identical.
 
 The reviewed value is recorded in
 `refinement/catalogs/leicester-placement-ground.json`; validation and publication
-snapshots are under `work/map-compile/church-placement-ground-lnFlbN`. The
+snapshots are under `work/needs-review/map-compile/church-placement-ground-lnFlbN`. The
 Leicester and Wychford descriptor pins are refreshed. Existing placements are
 unchanged, so Wychford's already-elevated church approach still needs supporting
 terrain or an intentional placement edit. These insertion checks do not prove
@@ -8734,7 +8734,7 @@ when no supporting floor exists; the probe does not relocate that entrance.
 
 Both descriptor fixtures pass native construction and apply/reset of all five
 Derby and three Wychford controls (5.35/5.74 seconds). Evidence and publication
-snapshots are in `work/map-compile/tower-control-attachment-2NjWaI`; the reviewed
+snapshots are in `work/needs-review/map-compile/tower-control-attachment-2NjWaI`; the reviewed
 recipe is `refinement/catalogs/derby-control-terrain-attachments.json`. The asset
 definition and referencing scene pins are published. This focused Wychford
 batch omits wall calibration; the previously baked ZIP predates this fix and
@@ -8758,7 +8758,7 @@ from providing the authoring mechanism.
 ## Calibrated Wychford browser ZIP round trip (2026-10-05)
 
 The corrected full-library browser fixture produces
-`work/map-compile/wychford-wall-calibration-QcegIB/editor-wychford-current.zip`
+`work/needs-review/map-compile/wychford-wall-calibration-QcegIB/editor-wychford-current.zip`
 (51,927,200 bytes, SHA-256
 `0c76ca3c7735ce08709a4077480b7581236d27cb4d1f1d75eee8d1fa8fc2b2e7`).
 The 3600×2400 baked map was visually inspected. The native
@@ -8776,7 +8776,7 @@ archive was not overwritten.
 ## Fresh calibrated Wychford construction (2026-10-05)
 
 The current scene with model-calibrated walls exports to
-`work/map-compile/wychford-wall-calibration-QcegIB`. Native construction passes
+`work/needs-review/map-compile/wychford-wall-calibration-QcegIB`. Native construction passes
 with 146 areas, 21,323 sight/receiving obstacles, 30 doors, 57,456 grid blocks and
 36,983 elevation boundaries (8.69 seconds). Both compiled controls apply/reset
 (8.45 seconds). The church-side traversal endpoint remains at height 134.10
@@ -8792,7 +8792,7 @@ this correction has not yet been verified by a new rendered ZIP round trip.
 ## Fresh ten-map native construction and controls (2026-10-05)
 
 After repairing Lincoln's spire bindings, the completed descriptor batch at
-`work/map-compile/published-mask-probes-20261005` passes native geometry
+`work/needs-review/map-compile/published-mask-probes-20261005` passes native geometry
 construction for all ten maps (9.09 seconds). All 70 compiled controls apply and
 reset (9.04 seconds): Croisement01/02/03 have 6/9/9, Derby 5, Leicester 12,
 Lincoln 11, Nottingham 10, Sherwood 0, Wychford 2 and York 6.
@@ -8820,9 +8820,9 @@ one-unit hall/spire move also constructs and applies/resets its ten surviving
 controls, but exposes unresolved neighboring receiving geometry: one control,
 a traversal, doors and light bindings are omitted. The moved result is not a
 placement-parity pass. Staged descriptors, warnings and publication snapshots
-are under `work/map-compile/lincoln-spire-repair-yblqgl`.
+are under `work/needs-review/map-compile/lincoln-spire-repair-yblqgl`.
 
-The preceding all-map batch at `work/map-compile/published-mask-probes-20261005`
+The preceding all-map batch at `work/needs-review/map-compile/published-mask-probes-20261005`
 compiled six scenes before the Lincoln failure; its incomplete output is not
 an all-map acceptance result. The remaining maps and calibrated Wychford still
 need fresh verification.
@@ -9022,7 +9022,7 @@ partially invalid sources, save/reopen and asynchronous cancellation. The focuse
 compiler/export batch passes 178 tests; both editor typechecks and lint pass.
 
 Wychford's isolated ridge-curtain now compiles from its actual pinned models
-without calibration warnings (`work/map-compile/wychford-wall-calibration-5aVMhz`).
+without calibration warnings (`work/needs-review/map-compile/wychford-wall-calibration-5aVMhz`).
 This found rounded navigation islands whose receiving fragments all collapse on
 the integer movement grid. Those islands now produce explicit omission warnings
 instead of dereferencing a missing plane. A reduced regression retains another
@@ -9033,7 +9033,7 @@ script's final summary initially failed on an absent optional control array afte
 writing the successful descriptor; that reporting bug is corrected.
 
 The full current Wychford scene also compiles with its wall included
-(`work/map-compile/wychford-wall-calibration-PNsV4t`): 21,323 sight/receiving
+(`work/needs-review/map-compile/wychford-wall-calibration-PNsV4t`): 21,323 sight/receiving
 obstacles, two controls and two traversals. Native construction and apply/reset
 of both controls pass in 22.07 seconds. The standalone test binary requires the
 same `RUST_MIN_STACK=33554432` configured for Cargo tests; omitting it caused a
@@ -9050,7 +9050,7 @@ app-test files). The native Wychford receiver audit found 8,734 eligible pairs b
 stopped at map coordinate `[436,1498]`: receivers 10674 and 10671 meet at the same
 terrain vertex, while the audit requires a direct shared elevation edge between
 them. Their heights agree at that vertex. A 67-receiver reduction reproduces the
-failure in 0.10 seconds (`work/map-compile/wychford-receiver-junction-GDKJfg`).
+failure in 0.10 seconds (`work/needs-review/map-compile/wychford-receiver-junction-GDKJfg`).
 Allowing equal-height receiver identities at the exact shared vertex moves the
 failure one step further: at `[436,1497]`, the reduced case still owns receiver
 48 while lookup selects 25. A synthetic four-triangle sloping fan independently
@@ -9094,7 +9094,7 @@ All ten saved library scenes compiled with the ordinary `compileMap` entry point
 best-effort mode, their pinned asset descriptors and their authored states intact.
 No source-level records were read. The audit emitted descriptors only; it did not
 bake images or run the resulting maps in the game.
-Artifacts: `work/map-compile/current-map-states-20261004-xVEHqn/diagnostics.json`
+Artifacts: `work/needs-review/map-compile/current-map-states-20261004-xVEHqn/diagnostics.json`
 under `level-editor`.
 
 | Scene | Controls | Traversals |
@@ -9156,7 +9156,7 @@ overlaps and independent stairs with overlapping projections. Full-map stair
 audits check receiving surfaces and height outside the passage animation and at
 arrival; these use synthetic walking frames and do not certify ladder/wall
 animations, every actor size or rendered sprite alignment.
-Fresh published-asset diagnostics in `work/map-compile/stair-routing-HtMZ9h`
+Fresh published-asset diagnostics in `work/needs-review/map-compile/stair-routing-HtMZ9h`
 pass all 288 directed stair walks across ten maps and 6,234 sampled actor
 crossings (6,178 between receiving planes and 56 between planes and ground),
 using the corrected 6×3 footprint. No stair routes were skipped for permissions.
@@ -9177,7 +9177,7 @@ do not receive a duplicate corridor. The west Sherwood treehouse and York's
 central-lane stone-gable house now preserve their complete asset-local movement
 contours, with the corrected descriptors published and scene hashes updated.
 
-The combined native audit in `work/map-compile/stair-routing-2IBVdk` passes
+The combined native audit in `work/needs-review/map-compile/stair-routing-2IBVdk` passes
 **288 stair walks, 84 ladder/wall walks and 6,234 sampled receiving crossings**.
 Climb walks use Robin's complete animation rows and validate arrival, exact
 sector/layer and landing receiver/height; no routes were skipped for permissions.
@@ -9210,7 +9210,7 @@ without this metadata keep their existing endpoint/corridor behavior. New export
 fixtures and updated runtime share the field; precompiled shipping containers
 require regeneration for datadir v23 / mission v14.
 
-Fresh exports in `work/map-compile/stair-routing-25heix` pass 272 stair routes,
+Fresh exports in `work/needs-review/map-compile/stair-routing-25heix` pass 272 stair routes,
 76 ladder/wall routes and 6,196 receiving-boundary crossings with the new
 endpoint metadata. All ten currently published scenes were compiled; Lincoln's
 current asset revision contains no lifts and contributes no traversal coverage.
@@ -9219,9 +9219,9 @@ does not establish parity for the revised Lincoln assets.
 
 **Ordinary route consistency:** fresh best-effort exports of all ten saved maps
 with the corrected 6×3 half-diagonal pass 1,316 sampled routes in 93 seconds in
-`work/map-compile/stair-routing-2IBVdk`; the Lincoln snapshot limitation above
+`work/needs-review/map-compile/stair-routing-2IBVdk`; the Lincoln snapshot limitation above
 also applies here. Historical exports using the larger 6×4 footprint
-are under `work/map-compile/route-sampling-HpYhrj`. A native collision flood-fill
+are under `work/needs-review/map-compile/route-sampling-HpYhrj`. A native collision flood-fill
 finds connected actor-sized samples within numbered motion sectors, then checks
 forward/reverse pathfinder routes and clearance on every returned segment. The
 baseline passed 1,336 routes using a 6×4 half-diagonal, taking 3,471 seconds
@@ -9277,7 +9277,7 @@ plane and returning to uncovered ground with no receiver and zero ground height.
 Together the two audits cover 6,222 directed walks, with nonzero coverage in every
 map, while retaining the sampling and state limitations above.
 
-**Exported depth PNG:** the fixture in `work/map-compile/export-depth-gpu` packages
+**Exported depth PNG:** the fixture in `work/needs-review/map-compile/export-depth-gpu` packages
 a known two-region 16-bit depth image and a pinned sprite through the normal ZIP
 exporter. The native map decoder, GPU upload and character masking pass reproduce
 all 64 expected pixels at three ground depths: fully hidden, half visible and fully
@@ -9285,14 +9285,14 @@ visible. The offscreen GPU contract passed with this fixture. This verifies the
 depth-file pipeline; it does not establish arbitrary 3D bake accuracy, full entity
 mask selection, or scenery-overlay rendering. Repeat instructions are in
 `docs/TESTING.md` under GPU execution.
-The separate `work/map-compile/browser-depth-gpu` export comes from the editor's
+The separate `work/needs-review/map-compile/browser-depth-gpu` export comes from the editor's
 real WebGL bake of ground, raised surfaces, transparent cutouts and ownership-filled
 geometry with a nonzero crop origin. The browser bake contract passed, then the
 native GPU test checked six locations at three character depths, including both
 sides of a tile seam. This closes that fixture's geometry-to-bake-to-ZIP-to-native
 pixel chain. Arbitrary scene geometry, complete entity-mask selection and rendered
 scenery overlays are still not certified by it.
-The `work/map-compile/browser-state-gpu` fixture extends this chain to changing
+The `work/needs-review/map-compile/browser-state-gpu` fixture extends this chain to changing
 appearance: the browser packages initial/applied color and depth, the native
 background loader resolves the appearance manifest, and GPU readback checks both
 sides of the tile seam through initial, applied, transitioning, reset and reapplied
@@ -9322,7 +9322,7 @@ packages the files under `Data/Animations/Day/<bank>.rhs.d/`. Missing or changed
 resources omit the affected bank's animations with warnings; other gameplay stays
 available. Resource reads report progress and honor cancellation. ZIP byte checks
 and a native PNG/profile decoder check pass using the generated two-frame fixture
-under `work/map-compile/scenery-resources-v2`. Its decoded profile and exported
+under `work/needs-review/map-compile/scenery-resources-v2`. Its decoded profile and exported
 descriptor also pass the engine's scenery-spawn and static-tick paths: the sprite
 keeps its editor-authored anchor/elevation, follows the expected frame-delay
 sequence, loops, and stops advancing when inactive. This does not yet verify GPU
@@ -9342,9 +9342,9 @@ are rewritten together. Pinned banks also receive separate names when sharing a
 name with an installed, unpinned bank. Invalid resources omit only their bank,
 preserving valid alternatives. These bindings remain editor export metadata and are not
 written into the native level descriptor. Regression tests cover these cases;
-`work/map-compile/scenery-placed-resources` retains byte-identical runtime files
+`work/needs-review/map-compile/scenery-placed-resources` retains byte-identical runtime files
 to the native-tested animation export.
-The two-bank export regression is under `work/map-compile/scenery-bank-conflicts`.
+The two-bank export regression is under `work/needs-review/map-compile/scenery-bank-conflicts`.
 The native decoder verifies distinct pixels in both packaged banks, and the
 runtime spawns both effects with separate cached profiles at their exported
 positions. This checks resource identity and spawning, not rendered occlusion.
@@ -9417,7 +9417,7 @@ animation's explicit `.rhs.d` directory, including its required pinned manifest.
 Unrelated model textures and unused banks remain excluded. The staged catalog
 retains the original resource pins and gameplay definitions. Publication tests
 cover duplicate bank use, changed frame bytes, missing manifest pins and escaping
-symlinks. The generated asset under `work/map-compile/scenery-publication-fDA5SR`
+symlinks. The generated asset under `work/needs-review/map-compile/scenery-publication-fDA5SR`
 passes catalog generation and offline staging; an export rebuilt from the staged
 catalog and files retains the animation and all three sprite resources without
 reading original descriptors. This verifies publication transport, not preview,
@@ -9449,7 +9449,7 @@ The compiler requires neither the input bank nor any source level afterward.
 
 The library's game-data atlases intentionally retain preview frames only; they
 cannot provide complete animated sequences. Use a complete PNG bank for animation.
-The six-frame candle profile under `work/map-compile/scenery-candle-profile-20261004.rhs.d`
+The six-frame candle profile under `work/needs-review/map-compile/scenery-candle-profile-20261004.rhs.d`
 was authored into a standalone asset in `scenery-candle-asset-20261004`; the native
 sprite family encoder verifies all six frames. It has no level-specific placement
 metadata. Offline publication and re-export from the runtime catalog preserve all
@@ -9462,7 +9462,7 @@ groups have regression coverage. The export uses diagnostic ground artwork;
 native rendered placement and full-engine scheduling checks remain open.
 The validated `authored-candle-cluster` asset is installed in the local main library
 with its six frames and pinned manifest. Publication retained a rollback receipt
-in `work/map-compile/scenery-candle-promotion-20261004`; a fresh export from that
+in `work/needs-review/map-compile/scenery-candle-promotion-20261004`; a fresh export from that
 main catalog also succeeds. No remote library deployment was performed.
 The normal mission preload now installs referenced custom Day scenery banks as
 well as characters. It selects scenery from the compiled map independently of
@@ -9524,7 +9524,7 @@ its independent second stair also survives (two compiled lifts instead of one).
 The other nine maps compile unchanged; all ten pass native construction and
 existing route probes. Native checks also pass 372 directed lift callbacks and
 apply/reset all 57 exported state transitions. Diagnostics:
-`work/map-compile/lift-collision-fallback`. This does not invent a missing landing
+`work/needs-review/map-compile/lift-collision-fallback`. This does not invent a missing landing
 or make the disconnected stair usable.
 Separated, overlapping or orientation-incompatible assembly sockets also warn
 and omit affected traversal pieces during best-effort export. Every competing
@@ -9545,8 +9545,8 @@ The north/south mill cottages now author an eight-unit vertical reach above and
 below their anchors. This restores four Wychford mask placements (three to seven
 compiled masks), with all other geometry unchanged. The nine reference maps
 compile identically; all ten exports pass native construction and mask checks.
-Publication backups are in `work/map-compile/mask-receiver-publication`; native
-fixtures are in `work/map-compile/mask-receiver-native-v2`. This does not conform
+Publication backups are in `work/needs-review/map-compile/mask-receiver-publication`; native
+fixtures are in `work/needs-review/map-compile/mask-receiver-native-v2`. This does not conform
 building geometry to terrain, repair missing door endpoints or certify rendered
 occlusion on arbitrary slopes. Other masks still need authored attachment rules.
 
@@ -9563,8 +9563,8 @@ reach all six new approach points; a synthetic sloped fixture verifies walking
 both directions, gate links and retained lock flags. All nine reference maps
 compile unchanged, and all ten exports construct successfully. This does not
 generate stairs, adjust building meshes or certify entrance animation rendering.
-Publication snapshots are in `work/map-compile/door-receiver-publication`; the
-native placement probes are in `work/map-compile/door-approach-native`.
+Publication snapshots are in `work/needs-review/map-compile/door-receiver-publication`; the
+native placement probes are in `work/needs-review/map-compile/door-approach-native`.
 
 **Repeatable terrain attachment authoring:**
 `pipeline/src/author-terrain-attachments.ts` applies explicit local feature rules
@@ -9581,14 +9581,14 @@ cottages. The additional ten assets restore twelve more Wychford entrances and
 ten mask tiles: **25 total native doors and 17 mask tiles** now compile. Native
 character-sized approach routes pass for all twelve restored entrances. The nine
 reference maps compile unchanged, and all ten exports pass native construction
-and mask checks. Evidence is in `work/map-compile/ground-attachment-native`, with
-publication backups in `work/map-compile/ground-attachment-publication`.
+and mask checks. Evidence is in `work/needs-review/map-compile/ground-attachment-native`, with
+publication backups in `work/needs-review/map-compile/ground-attachment-publication`.
 Run from `level-editor/`, using a fresh output directory:
 
 ```sh
 pnpm --filter pipeline exec node src/author-terrain-attachments.ts \
   ../library ../refinement/catalogs/terrain-attachments.json \
-  ../work/map-compile/terrain-attachment-review
+  ../work/needs-review/map-compile/terrain-attachment-review
 ```
 
 Use `--apply` with a separate fresh output directory to install reviewed results.
@@ -9599,7 +9599,7 @@ two asset rooms in the editor document; moving either asset carries only its own
 entrance. Wychford receives the corrected asset definitions without inheriting
 Leicester's map connection. The reviewed transfer preserves Leicester's 24
 interior entrances, 16 rooms, door rules, navigation and collision geometry.
-Publication backups are in `work/map-compile/interior-connection-publication`.
+Publication backups are in `work/needs-review/map-compile/interior-connection-publication`.
 All ten saved maps reopen, compile and construct in the native engine after
 publication. The other eight reference maps retain identical compiled geometry.
 The courtyard wall now has a reviewed eight-unit terrain attachment around its
@@ -9623,8 +9623,8 @@ Together with the courtyard entrance, these changes restore four Wychford doors
 (25 → 29). Leicester changes only that ramp destination; the other eight reference
 maps retain identical compiled geometry. Native diagnostics exercise both sides
 of all three restored passages and the corrected Leicester landing. Publication
-backups are in `work/map-compile/courtyard-door-publication` and
-`work/map-compile/stilt-passage-publication`.
+backups are in `work/needs-review/map-compile/courtyard-door-publication` and
+`work/needs-review/map-compile/stilt-passage-publication`.
 
 **Gate barriers on continuous terrain:** transition blocker surfaces can author
 `terrainReach: { below, above }`. Compilation intersects the resulting local
@@ -9650,9 +9650,9 @@ receiving planes and material references. Native regression checks verify that a
 inactive platform remains a height/material receiver without blocking sight or
 projectiles. Existing levels without this field retain their default activity.
 All ten stored maps compile to unchanged gameplay data after the door fallback
-change (`work/map-compile/door-control-fallback`).
+change (`work/needs-review/map-compile/door-control-fallback`).
 The sight fallback also leaves all ten exports unchanged
-(`work/map-compile/sight-control-fallback`). Packed datadirs require version 21
+(`work/needs-review/map-compile/sight-control-fallback`). Packed datadirs require version 21
 and mission payloads version 12 to retain the new initial obstacle activity.
 
 **Unavailable reveal controls:** for the supported fallback controls above, if the
@@ -9665,7 +9665,7 @@ resets while the retained initial coverage stays active. Wychford's west tower
 loses two incorrectly active revealed-state masks (17 → 15 exported mask tiles);
 the other nine maps compile identically. Its raised control still needs a valid
 walkable approach before it can operate. Diagnostic exports are in
-`work/map-compile/state-control-fallback`.
+`work/needs-review/map-compile/state-control-fallback`.
 
 The Derby south gatehouse now authors an eight-unit reach and a closed-state strip
 across its opening. All three passages prohibit every actor category when closed,
@@ -9683,8 +9683,8 @@ animation and mission activation still need separate authoring.
 The pinned gameplay replacement is
 `refinement/catalogs/terrain-gate-gameplay.json`; it is installed through
 `pipeline/src/configure-surface-jumps.ts`, which also updates saved-scene pins.
-Publication backups are in `work/map-compile/terrain-gate-publication`, and native
-movement probes are in `work/map-compile/terrain-gate-probes`. These definitions
+Publication backups are in `work/needs-review/map-compile/terrain-gate-publication`, and native
+movement probes are in `work/needs-review/map-compile/terrain-gate-probes`. These definitions
 belong to the asset and follow every placement; export reads no source level.
 
 Automatic room recovery now checks every entrance against the inferred owner's
@@ -9697,7 +9697,7 @@ by this guard. An asset-only audit of the nine reference maps flags eleven rooms
 for review, including the southeast cottage's second entrance about 1,462 units
 from its owning geometry. Some other flags are near the inference threshold and
 may need explicit ownership rather than splitting. The audit is recorded in
-`work/map-compile/interior-locality-audit.json`.
+`work/needs-review/map-compile/interior-locality-audit.json`.
 
 **Physical receivers on uneven terrain:** projection receivers may also author
 finite `receiverSegment` bounds. The selected unblocked terrain surface supplies
@@ -9711,8 +9711,8 @@ restores two Wychford projection bindings (2,310 to 2,312) without changing
 movement geometry, doors, masks or physical shapes. The third placement is too
 far above its receiver and remains unbound with a warning. Reference-map compiled
 geometry remains unchanged. Staged/native evidence is in
-`work/map-compile/bank-receiver-review` and `work/map-compile/bank-receiver-native`;
-publication backups are in `work/map-compile/bank-receiver-publication`.
+`work/needs-review/map-compile/bank-receiver-review` and `work/needs-review/map-compile/bank-receiver-native`;
+publication backups are in `work/needs-review/map-compile/bank-receiver-publication`.
 
 **New-layout jump connections:** assets may author an oriented jump edge plus
 maximum gap, rise, drop and minimum overlap in map units. Export matches facing
@@ -9730,7 +9730,7 @@ flight against solid volumes in both directions, including takeoff. A low obstac
 may clear the arc while blocking the sword-fighting path, so both constrain the
 exported span. Native fixtures check both styles at five positions along each
 retained edge. All ten library maps compile unchanged after this additional check;
-diagnostics are in `work/map-compile/sword-jump-clearance`.
+diagnostics are in `work/needs-review/map-compile/sword-jump-clearance`.
 Clearance also follows the runtime's fixed eight-unit airborne steps and integer
 frame countdowns. Intermediate orders retain their actual endpoint rather than
 snapping to each arc waypoint; the final order snaps to the landing. Both the
@@ -9740,14 +9740,14 @@ the ideal arc and direct path, and a short-gap regression catches an overshoot
 beyond the receiving edge. Native checks compare integration endpoints and test
 actual per-frame movement for both styles across the exported fixtures. All ten
 library maps compile unchanged; diagnostics are in
-`work/map-compile/integrated-jump-clearance`.
+`work/needs-review/map-compile/integrated-jump-clearance`.
 Shoulder-assisted departures now also check the in-place 40-unit rise and the
 resulting integrated flight toward the ordinary arc targets. The world Y anchor
 stays fixed during this rise; it does not use the ordinary 15-unit moving takeoff.
 This protects assisted jumps against overhead obstacles close to the departure
 edge. Native fixtures exercise both directions and five edge positions with
 upright, sword-fighting and shoulder-assisted departures. All ten library maps
-still compile unchanged (`work/map-compile/assisted-jump-clearance`). These checks
+still compile unchanged (`work/needs-review/map-compile/assisted-jump-clearance`). These checks
 do not yet certify every sprite-driven takeoff displacement.
 Blocked portions are removed, clear spans are
 retained and warnings explain omissions. Integer endpoints keep equal opposing
@@ -9777,7 +9777,7 @@ updated courtyard, skewed-roof and complete-house fixtures now pass approach and
 departure routes at five positions along every edge, including both endpoints.
 The tests check goal authorization and thick movement, separately from flight.
 All ten library maps retain identical geometry, with additional warnings for
-unusable candidate edges (`work/map-compile/jump-walking-clearance`).
+unusable candidate edges (`work/needs-review/map-compile/jump-walking-clearance`).
 Generated connections also trim their full approach spans against the compiled
 movement areas and movement-only blockers, using the runtime's goal-authorization
 footprint (the stock move box minus one unit). The test covers the entire inward
@@ -9796,7 +9796,7 @@ Both movement-blocker fixtures also pass native ordinary, sword and assisted fli
 checks; their generated gates retain the character skill and helper restrictions.
 The complete-house fixture remains unchanged, including its angled roof approach.
 All ten saved maps still compile with identical geometry and warning counts
-(`work/map-compile/jump-movement-exclusions`).
+(`work/needs-review/map-compile/jump-movement-exclusions`).
 Nineteen reviewed library surfaces now carry these rules, with descriptor pins
 updated in six saved scenes. All ten scenes still compile and construct native
 geometry. A real rock-surface fixture checks a newly placed
@@ -9804,7 +9804,7 @@ rotated neighbour without saved jump records. Further library adoption remains
 in progress; unmarked roof meshes do not acquire jumps. The authoring tool
 `pipeline/src/configure-surface-jumps.ts` stages descriptor-bound edits, updates
 scene pins and retains rollback snapshots; this publication is backed up in
-`work/map-compile/surface-jump-publication`.
+`work/needs-review/map-compile/surface-jump-publication`.
 
 Surface jump rules can also author `maxLevelAdjustment`, a maximum horizontal
 outer-edge endpoint displacement onto the surface's level contour before inset.
@@ -9827,9 +9827,9 @@ checks, not a visual or whole-building parity certification; the isolated fixtur
 has no ground for its entrances, which are omitted with warnings.
 `refinement/catalogs/roof-surface-jumps.json` records the descriptor-bound rule;
 publication updates York's scene pin and retains backups in
-`work/map-compile/roof-surface-publication`. Broader roof publication remains unfinished.
+`work/needs-review/map-compile/roof-surface-publication`. Broader roof publication remains unfinished.
 All ten library maps compiled unchanged after contour support and this publication
-(`work/map-compile/roof-surface-native`); the walking-clearance diagnostics above
+(`work/needs-review/map-compile/roof-surface-native`); the walking-clearance diagnostics above
 include the subsequent candidate-edge warnings.
 
 **Reusable walkway connections:** navigation sockets now support an explicit
@@ -9840,8 +9840,8 @@ full-character routes through a partial seam. Seven Sherwood bridge/platform ass
 now permit 12-unit shared spans. Their original combined geometry is unchanged;
 an isolated real bridge/platform pair remains traversable after sliding the bridge
 along the seam and separates after moving it away. The update is installed with
-rollback data in `work/map-compile/navigation-overlap-publication`; native checks
-are in `work/map-compile/navigation-overlap-native-v2`. Other exact sockets retain
+rollback data in `work/needs-review/map-compile/navigation-overlap-publication`; native checks
+are in `work/needs-review/map-compile/navigation-overlap-native-v2`. Other exact sockets retain
 their existing behavior unless explicitly opted in.
 
 **Spline walls:** calibrated sources now export solid/opaque volumes and authored
@@ -9858,7 +9858,7 @@ straightening, source rotation, stateful walls and deformed doors/lifts/masks re
 unsupported and produce warnings; ordinary placed assets still support those
 features. Model hashes bind calibration to the authored model. All 19 presets pass
 native construction and movement probes; all ten saved maps still compile.
-The publication retains rollback data under `work/map-compile/spline-gameplay-publication`.
+The publication retains rollback data under `work/needs-review/map-compile/spline-gameplay-publication`.
 
 Five curtain strips also have explicit wall-walk recipes: Derby upper/lower,
 Leicester castle, Lincoln east and Nottingham castle. The authoring tool dissolves
@@ -9886,11 +9886,11 @@ joining physically separated decks or filling authored openings. A native fixtur
 checks both the route uphill and increasing receiving height. Connections to
 separate stairs/towers and extreme bends or overlapping paths still need checks.
 The five installed definitions have rollback data in
-`work/map-compile/wall-walkway-publication`; route diagnostics are in
-`work/map-compile/wall-walkway-native-v15`.
+`work/needs-review/map-compile/wall-walkway-publication`; route diagnostics are in
+`work/needs-review/map-compile/wall-walkway-native-v15`.
 The slope-ready definitions are installed with rollback data in
-`work/map-compile/wall-walkway-slopes-publication`; their native route diagnostics
-are in `work/map-compile/wall-walkway-slopes-native-v3`.
+`work/needs-review/map-compile/wall-walkway-slopes-publication`; their native route diagnostics
+are in `work/needs-review/map-compile/wall-walkway-slopes-native-v3`.
 
 Current combined drafts recover all 27 map-source movement transitions.
 York's market assembly completes the movement-state ownership inventory.
@@ -9909,20 +9909,20 @@ This includes 17 legacy Sherwood assets whose recovered definitions were rebased
 to their existing pivots. Definitions carry explicit draft issues; publication is
 not parity certification. The initial publication skipped assets with changed
 physical metadata or without a matching recovery. The publication tool retains
-before/after snapshots and a report under `work/map-compile/main-library-draft-publication`.
+before/after snapshots and a report under `work/needs-review/map-compile/main-library-draft-publication`.
 A further 169 additive assets and their placements are installed in the nine
 recovered map scenes: 80 lighting fields, 72 sound fields and 17 navigation or
 physical assets. All existing placements, references and scene settings are
 preserved; Wychford is unchanged by this addition. Models are copied into the
 library with verified resource hashes, not linked to work directories. The
-transaction backup is `work/map-compile/additive-gameplay-publication`. Eighteen
+transaction backup is `work/needs-review/map-compile/additive-gameplay-publication`. Eighteen
 replacement-family assets are now installed across Croisement01/02/03, Nottingham
 and York, replacing 31 old placements without overlapping old and new geometry.
 All 125 replaced obstacle parts retain their world coordinates and physical flags;
 723 unrelated placements and all other scene settings remain unchanged. Models
 and resources are copied into the main library, and all 42 installed files pass
 hash verification. The transaction backup is
-`work/map-compile/family-gameplay-publication`. All ten maps compile after this
+`work/needs-review/map-compile/family-gameplay-publication`. All ten maps compile after this
 migration; full traversal and visual parity remain unverified.
 Twenty previously skipped physical definitions are now explicitly reconciled in
 Lincoln, Nottingham, Sherwood and York. Only obstacle volumes, collision opt-outs,
@@ -9931,7 +9931,7 @@ remain intact. Live and recovered model bytes match for all twenty assets, with
 221 canonical part frames and their source identities verified independently.
 Saved scenes retain every placement and receive only descriptor pin updates.
 Default publication still rejects physical differences; this separate reviewed
-operation is backed up under `work/map-compile/reviewed-physical-publication`.
+operation is backed up under `work/needs-review/map-compile/reviewed-physical-publication`.
 These definitions remain incomplete drafts, not full parity certification.
 Light bindings whose receiving geometry is still missing produce best-effort
 warnings; available receivers remain active and strict mode still rejects gaps.
@@ -9984,7 +9984,7 @@ Wychford's terrain adds 1,804 sloped receiving triangles derived from its author
 mesh, simplified with a one-unit error budget. Native construction passes. Water
 exclusion, impassable slopes and material regions are not yet authored, so this
 terrain is explicitly provisional rather than a finished traversal definition.
-Its separate publication snapshot is `work/map-compile/main-library-terrain-publication`.
+Its separate publication snapshot is `work/needs-review/map-compile/main-library-terrain-publication`.
 The combined Wychford best-effort descriptor constructs in Rust with 13 movement
 areas, 2,216 sight obstacles, six doors and no jump pairs. Disconnected connections
 and incomplete states are reported as omissions; this is not traversal parity.
@@ -10238,7 +10238,7 @@ assets. Its complete baseline geometry is unchanged; moving either wall one pixe
 east detaches the join and increases movement areas from 113 to 114. All three
 descriptors load natively with 654 sight obstacles, 89 doors and ten jump pairs.
 The initial authored surface drafts and diagnostics are under
-`work/map-compile/lincoln-navigation-join-native`. Repeatable migration now uses
+`work/needs-review/map-compile/lincoln-navigation-join-native`. Repeatable migration now uses
 `refinement/catalogs/lincoln-navigation-joins.json`, pinned to the source and both
 asset models. Recovery validates each named surface and source owner, requires
 one shared ordinary source movement region and checks the complete assembled seam
@@ -10251,17 +10251,17 @@ From `level-editor`, regenerate the current Lincoln drafts with:
 
 ```sh
 node --max-old-space-size=1536 pipeline/src/recover-asset-gameplay.ts \
-  --library work/map-compile/projection-material-library \
-  --map work/map-compile/projection-material-library/scenes/lincoln.rhlos-map.json \
+  --library work/needs-review/map-compile/projection-material-library \
+  --map work/needs-review/map-compile/projection-material-library/scenes/lincoln.rhlos-map.json \
   --source library/game-data/Data/Levels/Lincoln.rhp.json \
   --mask-definitions refinement/catalogs/lincoln-masks.json \
   --navigation-definitions refinement/catalogs/lincoln-navigation-joins.json \
-  --out work/map-compile/lincoln-navigation-join-recovery
+  --out work/needs-review/map-compile/lincoln-navigation-join-recovery
 ```
 
 Freshly recovered definitions reproduce the previous baseline exactly and both
 independent wall moves pass native construction again. Those diagnostics are under
-`work/map-compile/lincoln-reviewed-navigation-native`. The definitions remain
+`work/needs-review/map-compile/lincoln-reviewed-navigation-native`. The definitions remain
 unpublished; recovery of the other maps' joins is unfinished. A full-edge candidate
 audit found no exact Derby seam in the tested drafts; boundary/height differences
 still require authoring work. This does not certify full-map connectivity or actor
@@ -10277,12 +10277,12 @@ and detachment, not full source-map topology or actor traversal. For example:
 
 ```sh
 node --max-old-space-size=1536 pipeline/src/verify-reviewed-navigation-recovery.ts \
-  --library work/map-compile/projection-material-library \
-  --map work/map-compile/projection-material-library/scenes/lincoln.rhlos-map.json \
+  --library work/needs-review/map-compile/projection-material-library \
+  --map work/needs-review/map-compile/projection-material-library/scenes/lincoln.rhlos-map.json \
   --source library/game-data/Data/Levels/Lincoln.rhp.json \
-  --recovery work/map-compile/lincoln-navigation-join-recovery \
+  --recovery work/needs-review/map-compile/lincoln-navigation-join-recovery \
   --navigation-definitions refinement/catalogs/lincoln-navigation-joins.json \
-  --out work/map-compile/lincoln-navigation-cli-native
+  --out work/needs-review/map-compile/lincoln-navigation-cli-native
 ```
 
 Nottingham's `refinement/catalogs/nottingham-navigation-joins.json` supplies four
@@ -10290,7 +10290,7 @@ exact seams in three groups across seven assets: south gate/tower/curtain wall 2
 the sloped curtain walls 3/4, and the southwest curtain's north/south segments.
 Its recovered baseline preserves all geometry and bindings after remapping sector
 identities and projection-array order. Drafts are under
-`work/map-compile/nottingham-navigation-join-recovery`. The baseline and six
+`work/needs-review/map-compile/nottingham-navigation-join-recovery`. The baseline and six
 independent one-pixel westward moves construct natively, with 114 movement areas,
 741 sight obstacles, 172 doors and 38 jump pairs at baseline.
 
@@ -10298,10 +10298,10 @@ The north segment of the southwest curtain still fails movement checks in either
 direction because the neighboring stair's inside endpoint loses its receiving
 surface. Wall 4 also cannot move east within the existing export frame. Both
 directional verifier manifests remain incomplete under
-`work/map-compile/nottingham-reviewed-navigation-native` and
-`work/map-compile/nottingham-reviewed-navigation-west-native`. The seven successful
+`work/needs-review/map-compile/nottingham-reviewed-navigation-native` and
+`work/needs-review/map-compile/nottingham-reviewed-navigation-west-native`. The seven successful
 westward/baseline construction cases are retained separately under
-`work/map-compile/nottingham-navigation-construction-native`, with the excluded
+`work/needs-review/map-compile/nottingham-navigation-construction-native`, with the excluded
 placement failure recorded explicitly. These definitions remain unpublished.
 The full-edge audit also found eleven candidate edges in York. Leicester,
 Sherwood and the three crossing maps had no matches in the tested drafts. This
@@ -10313,20 +10313,20 @@ groups across six assets: castle east round tower/great hall, cathedral precinct
 terrain/stone causeway, and the west precinct footbridge/city wall. Their combined
 baseline retains all geometry and bindings after sector identity remapping:
 192 movement areas, 1,373 sight obstacles, 254 doors and 72 jump pairs. Drafts are
-under `work/map-compile/york-reviewed-join-recovery`; the verifier output is under
-`work/map-compile/york-selected-navigation-native`. Five independent one-pixel
+under `work/needs-review/map-compile/york-reviewed-join-recovery`; the verifier output is under
+`work/needs-review/map-compile/york-selected-navigation-native`. Five independent one-pixel
 eastward moves pass compilation. Moving the causeway fails its doorway's outside
 receiving-height check (157.9875 authored versus 158.0735 on the neighboring
 slope), so the placement manifest remains incomplete. The baseline and five
 successful moves load natively; their construction manifest explicitly records
-the excluded failure in `work/map-compile/york-navigation-construction-native`.
+the excluded failure in `work/needs-review/map-compile/york-navigation-construction-native`.
 
 Seven other candidate York groups remain unreviewed. Applying all ten groups
 changed movement areas from 192 to 195 and projection/sight records from 1,373 to
 1,330. Isolated probes show three groups change motion topology, while four change
 projection partitions and associated references. Exact edge coincidence alone
 therefore does not establish complete region ownership or equivalent gameplay.
-The probes and comparisons remain under `work/map-compile/york-navigation-group-probes`.
+The probes and comparisons remain under `work/needs-review/map-compile/york-navigation-group-probes`.
 These differences need comparison against intended source topology; they are not
 automatically improvements or regressions. No York join definitions are published,
 and full-map connectivity/state/actor traversal remain unverified.
@@ -10345,7 +10345,7 @@ The isolated York inner-east curtain join reduces projection records by 25 while
 preserving every compared coverage group exactly. Its non-projection data also
 matches after motion/interior reference remapping, and both variants load natively
 with 192 movement areas, 254 doors and 72 jump pairs. The native probes are under
-`work/map-compile/york-inner-wall-partition-native`. Native receiving queries now
+`work/needs-review/map-compile/york-inner-wall-partition-native`. Native receiving queries now
 expose a real elevation difference despite the exact coverage comparison: 51,381
 half-pixel samples include 28,285 receiving points, of which 28,268 differ by up to
 0.000015258789 in height. Coverage and material selection match. Comparing the
@@ -10366,8 +10366,8 @@ The binary shipping schema advances to datadir 19 / mission 10; older binary
 bundles must be regenerated. Existing source files and hackable JSON without the
 optional field retain their loading behavior.
 
-York was recovered again into `work/map-compile/york-plane-anchor-recovery` and
-both variants compiled into `work/map-compile/york-plane-anchor-native`. The same
+York was recovered again into `work/needs-review/map-compile/york-plane-anchor-recovery` and
+both variants compiled into `work/needs-review/map-compile/york-plane-anchor-native`. The same
 51,381 native queries now have zero coverage, material or elevation differences.
 This fixes the observed float32 subdivision mismatch, without accepting a height
 tolerance. Exact coverage grouping still detects approximately 2.777463 square
@@ -10377,7 +10377,7 @@ verification is still required; the candidate remains outside the reviewed catal
 and the regenerated definitions remain unpublished.
 
 The receiving-plane migration was also checked across all nine source maps.
-`work/map-compile/all-plane-anchor-native/diagnostics.json` records nine successful
+`work/needs-review/map-compile/all-plane-anchor-native/diagnostics.json` records nine successful
 native constructions. `pipeline/src/compare-receiving-plane-anchors.ts` compares
 ordered anchor triples at float32 bit precision, including the export-frame
 offset, and reports receivers without anchors separately. Its baseline audit
@@ -10402,7 +10402,7 @@ receiving polygons provide no receiver. An exported synthetic platform fixture
 verifies the same behavior through native queries: no receiver in the opening,
 with elevation preserved on its surrounding edges.
 
-Recompilation into `work/map-compile/receiving-gap-native` removes 412 unsupported
+Recompilation into `work/needs-review/map-compile/receiving-gap-native` removes 412 unsupported
 receivers across the nine maps. All nine descriptors construct natively; their
 non-sight geometry is unchanged after remapping interior constructor references,
 and all 698 anchored receivers are unchanged. That diagnostic retained one
@@ -10418,7 +10418,7 @@ collision, while explicit asset surfaces, passages and volumes remain usable.
 Referencing a preview box as a gameplay obstacle requires an authored volume
 instead. The bridge's actual state geometry and behavior still need asset authoring;
 removing the fabricated surface does not complete that work.
-The batch under `work/map-compile/preview-bounds-native` passes native construction
+The batch under `work/needs-review/map-compile/preview-bounds-native` passes native construction
 for all nine maps. Derby now has 60 movement areas, 348 sight records, 70 doors and
 two jump pairs; the other eight compiled geometries are unchanged. No unanchored
 receivers remain in this recovered static batch. This does not certify the
@@ -10430,7 +10430,7 @@ projection surfaces. It keeps each patch and initial/applied role distinct, chec
 for stale sight indices, and distinguishes masks by layer plus index. It does not
 assign asset ownership, recover motion changes or import mission actors/scripts.
 
-The authoring inventory in `work/map-compile/mission-map-effects.json` covers all
+The authoring inventory in `work/needs-review/map-compile/mission-map-effects.json` covers all
 39 retained mission files and records hashes of each mission and its map source.
 Derby's three missions all link both drawbridge patches to initial sight obstacle
 267; the second additionally activates projection 268 and binds doors 37/38.
@@ -10460,11 +10460,11 @@ volumes on both surfaces, avoiding ambiguous overlap ordering.
 One-time recovery now links uniquely owned, state-controlled projection surfaces
 to their existing physical parts or local volumes. Across all nine source maps,
 the three affected map-patch receivers are Leicester 384, 389 and 390. Fresh
-Leicester recovery in `work/map-compile/projection-volume-recovery/leicester`
+Leicester recovery in `work/needs-review/map-compile/projection-volume-recovery/leicester`
 retains their ordered float32 vertices, top/bottom heights, physical flags and
 default materials exactly. Compiled receiver indices 93, 56 and 243 respectively
 bind their owning drawbridges' applied sight states. The diagnostic in
-`work/map-compile/projection-volume-native` constructs successfully in Rust and
+`work/needs-review/map-compile/projection-volume-native` constructs successfully in Rust and
 applies/resets all five recovered Leicester transitions, checking sight activation,
 door rights and movement state restoration. This is not actor-traversal or visual
 parity: the full scene still rejects unsupported visual states, 450 masks remain
@@ -10475,7 +10475,7 @@ vertices, retaining later vertex heights instead of requiring the whole volume
 top to be planar. The authored walking surface must still agree with that plane;
 degenerate first triples and height mismatches remain errors.
 
-An all-map candidate audit in `work/map-compile/static-receiver-audit/audit.json`
+An all-map candidate audit in `work/needs-review/map-compile/static-receiver-audit/audit.json`
 found 557 static surface links whose uniquely owned physical parts exactly match
 source float32 vertices and flags; 32 other surfaces lack that ownership/geometry
 evidence. These are proposed links, not published definitions. Croisement03's 14
@@ -10495,7 +10495,7 @@ The editor/native island fixture verifies distinct receiver references, correct
 stone/leaves material lookup, retained height and no direct walking route across
 the gap. Physical receiving footprints themselves remain intact.
 
-Recompilation in `work/map-compile/receiver-ownership-native` removes 96 wrongly
+Recompilation in `work/needs-review/map-compile/receiver-ownership-native` removes 96 wrongly
 assigned generated receiver records from the previous static diagnostics: 2 in
 Croisement01, 6 in Croisement02, 12 in Derby, 2 in Leicester, 23 in Lincoln, 1 in
 Sherwood and 50 in York. Other geometry fields outside sight/building references
@@ -10513,10 +10513,10 @@ geometry and flags, and material references before changing any packet. Output
 uses local part IDs; recipe source indices do not become runtime links. Stale pins,
 changed shapes, missing material definitions and duplicate recipes fail atomically.
 
-Fresh output in `work/map-compile/reviewed-projection-recovery/croisement03`
+Fresh output in `work/needs-review/map-compile/reviewed-projection-recovery/croisement03`
 matches the prior audited baseline. The baseline plus independent one-pixel moves
 of all 13 owning assets compile and construct natively in
-`work/map-compile/reviewed-projection-native` (14 cases). Connection counts can
+`work/needs-review/map-compile/reviewed-projection-native` (14 cases). Connection counts can
 change when moved endpoints detach. These definitions are still unpublished:
 Croisement03 retains 131 unrecovered masks, two missing movement transition
 groups, and unverified visuals and actor traversal.
@@ -10530,10 +10530,10 @@ walkable or receiving surface. Recovery accepts it via `--transition-planes`;
 argument. Missing coverage still fails when no explicit plane is supplied.
 
 Staging created `croisement03-navigation-boundary-004` in
-`work/map-compile/croisement03-transition-plane-stage-v2`. Fresh recovery into
-`work/map-compile/croisement03-transition-plane-recovery` now has eight recovered
+`work/needs-review/map-compile/croisement03-transition-plane-stage-v2`. Fresh recovery into
+`work/needs-review/map-compile/croisement03-transition-plane-recovery` now has eight recovered
 movement groups and one missing group (the multi-asset sight change). The export
-in `work/map-compile/croisement03-transition-plane-native` retains exactly the
+in `work/needs-review/map-compile/croisement03-transition-plane-native` retains exactly the
 previous sight geometry, flags and material links, with regenerated area references.
 All eight recovered transitions pass native apply/reset state checks. Masks,
 shared state ownership, navigation coverage, visuals and actor traversal still
@@ -10544,13 +10544,13 @@ The remaining Croisement03 movement group now has one physical asset owner.
 parts 102–105 into `croisement03-southwest-state-assembly`; one map patch enables
 all four, and no other map patch controls them. The canonical staging tool retains
 the complete model resources and part geometry in a common movable frame.
-The staged library is `work/map-compile/croisement03-state-assembly-stage` and
-fresh recovery is `work/map-compile/croisement03-state-assembly-recovery`.
+The staged library is `work/needs-review/map-compile/croisement03-state-assembly-stage` and
+fresh recovery is `work/needs-review/map-compile/croisement03-state-assembly-recovery`.
 
 All nine map movement groups now recover for this scene. The baseline and a
 one-pixel eastward assembly move preserve the four parts' exact ordered float32
 vertices and flags, and both pass native apply/reset checks for all nine transitions
-in `work/map-compile/croisement03-state-assembly-native`. The assembly waypoint
+in `work/needs-review/map-compile/croisement03-state-assembly-native`. The assembly waypoint
 moves with its geometry. This verifies movement/sight state binding only: patch 8
 also controls layer-0 masks 122–124 (global mask records 128–130), which remain
 unrecovered, along with visual states. The candidates remain unpublished and do
@@ -10572,7 +10572,7 @@ or actor-traversal certification. The York manifest is `projection-comparison.js
 The east bridge terrace candidate instead changes material bindings across
 1.366211 square pixels. The riverside wall and middle outer bastion candidates
 retain smaller nonzero coverage differences; no tolerance was used to accept them.
-Detailed comparisons are under `work/map-compile/york-navigation-group-probes/verified-coverage-*.json`.
+Detailed comparisons are under `work/needs-review/map-compile/york-navigation-group-probes/verified-coverage-*.json`.
 
 The native compiler interchange accepts typed mask bitmaps with character and
 projectile polylines, view flags and regenerated sight-obstacle references.
@@ -10626,11 +10626,11 @@ asset; completing two masks does not certify its other parts.
 
 ```sh
 node pipeline/src/audit-mask-surfaces.ts \
-  --library work/map-compile/projection-material-library \
-  --map work/map-compile/projection-material-library/scenes/derby.rhlos-map.json \
+  --library work/needs-review/map-compile/projection-material-library \
+  --map work/needs-review/map-compile/projection-material-library/scenes/derby.rhlos-map.json \
   --source library/game-data/Data/Levels/Derby.rhp.json \
   --asset derby-southwest-postern --masks 67,68,70,71 \
-  --out work/map-compile/postern-mask-coverage.json
+  --out work/needs-review/map-compile/postern-mask-coverage.json
 ```
 
 The one-time bitmap recovery helper strictly decodes source scanlines and merges
@@ -10675,7 +10675,7 @@ materials still reject; mipmap/minification silhouettes are not certified by thi
 base-level authoring geometry.
 
 The central Sherwood oak now passes through the alpha-aware support audit:
-`work/map-compile/sherwood-central-oak-alpha-support.json`. Its cutout mesh expands
+`work/needs-review/map-compile/sherwood-central-oak-alpha-support.json`. Its cutout mesh expands
 to 660,698 triangles. Of seven nearby mask probes, record 150 has complete support
 for all 375 pixels; records 32/34/62/70/151/153 still lack coverage. This probe does
 not establish ownership or recover a complete mask definition. Subsequent asset
@@ -10686,13 +10686,13 @@ overlapping tree. The reviewed mask total remains 72. Reviewed recovery now disc
 union of the requested masks' projected bounds before expanding texture alpha.
 For these seven probes it reduces the candidate geometry from 660,698 to 3,327
 triangles (99.5%) with identical complete support/gap reports, recorded in
-`work/map-compile/sherwood-central-oak-alpha-bounded-support.json`. Accepted texels
+`work/needs-review/map-compile/sherwood-central-oak-alpha-bounded-support.json`. Accepted texels
 also merge regardless of stored alpha when vertex alpha is uniform; varying
 vertex alpha retains distinct clipping thresholds. Full-tree silhouette hashes
 remain identical at baseline and 45-degree rotation. This does not simplify or
 alter the published tree model. A fresh Croisement03 recovery also produces
 identical gameplay candidates for all 93 assets, including its recovered mask
-and state geometry (`work/map-compile/croisement03-bounded-mask-recovery`).
+and state geometry (`work/needs-review/map-compile/croisement03-bounded-mask-recovery`).
 Broader tree recovery and visual filtering
 fidelity remain unfinished.
 
@@ -10704,15 +10704,15 @@ can share a part frame without ambiguous bindings; volume clearance IDs are also
 independent. Clearance subtraction uses fixed-point clipping for near-coincident
 edges that otherwise fail to close a polygon.
 
-`work/map-compile/sherwood-ladder-volume-recovery` validates all 81 asset drafts.
+`work/needs-review/map-compile/sherwood-ladder-volume-recovery` validates all 81 asset drafts.
 The baseline and central-platform translation construct native maps with 29 areas,
 294 sight obstacles, 15 doors and one jump pair. The ladder-oak platform also
 compiles independently when translated 100 units away, or one unit together with
 its separate oak asset. Across all four cases the three restored volume shapes
 and flags match the source at float32 precision, and all four lift endpoint sets,
 directions, types and lock rules match after translation. See
-`work/map-compile/sherwood-ladder-volume-native` and its generator
-`work/map-compile/verify-sherwood-ladders.mjs`.
+`work/needs-review/map-compile/sherwood-ladder-volume-native` and its generator
+`work/needs-review/map-compile/verify-sherwood-ladders.mjs`.
 
 The one-unit platform-only move still fails: isolating collision for each of the
 81 assets identifies the unmoved oak as the only owner whose collision removal
@@ -10729,12 +10729,12 @@ physical asset owner: Sherwood retains record 13 (referenced by mask 76), plus
 sight records establish metadata presence only, not geometric fidelity.
 
 The same passage-callback check passes across the nine earlier static drafts in
-`work/map-compile/receiver-ownership-native`: Derby 32 directed pairs, Leicester
+`work/needs-review/map-compile/receiver-ownership-native`: Derby 32 directed pairs, Leicester
 38, Lincoln 24, Nottingham 92, York 170 and the older Sherwood draft two. The
 three crossing drafts contain no recovered lifts, so they exercise no callbacks.
 The updated Sherwood cases above cover its additional restored ladders.
 
-`work/map-compile/all-sight-owner-audit/audit.json` inventories all nine source
+`work/needs-review/map-compile/all-sight-owner-audit/audit.json` inventories all nine source
 maps against their pinned assets and current explicit ownership declarations.
 Only two source sight records still have no physical asset owner: Derby 35
 (referenced by mask 6) and Sherwood 13 (referenced by mask 76). Both are solid,
@@ -10755,7 +10755,7 @@ and visible volume-preview meshes. These are explicitly unfinished appearance
 drafts; they contain no mission actors, invented navigation or source-map lookup.
 
 The staged `derby-canopy-stage` and `sherwood-canopy-stage` scenes under
-`work/map-compile` reopen successfully and recover 42/82 asset definitions with
+`work/needs-review/map-compile` reopen successfully and recover 42/82 asset definitions with
 zero unowned sight records. Baseline and 100-unit canopy translations match each
 restored volume's ordered vertices and flags at float32 precision and construct
 native maps (`canopy-draft-native`): Derby has 60 areas, 337 sight obstacles,
@@ -10776,7 +10776,7 @@ gameplay collision. Derby's visible front post reduces mask 6's unsupported
 pixels from 87 to 32 (no interior gaps); Sherwood's three visible posts reduce
 mask 76's gaps from 1,311 to 805 (381 interior pixels). These measurements are in
 `derby-canopy-pole-mask-audit.json` and `sherwood-canopy-post-mask-audit.json`
-under `work/map-compile`. Remaining thatch, roof-edge and timber detail gaps
+under `work/needs-review/map-compile`. Remaining thatch, roof-edge and timber detail gaps
 still require geometry authoring; neither mask is recovered yet.
 `verify-canopy-drafts.mjs --posts` verifies the complete compiled gameplay output
 is unchanged for both maps at baseline and after moving each canopy 100 units.
@@ -10823,7 +10823,7 @@ Croisement03's staged southwest assembly owns all three applied masks of patch 8
 (global records 128–130; layer-local records 122–124), but its mesh lacks support
 for 981, 803 and 5 covered pixels respectively, including 661 and 520 interior
 pixels in the first two masks. The reproducible `audit-mask-surfaces.ts` report is
-`work/map-compile/croisement03-state-assembly-mask-audit.json`. These masks need
+`work/needs-review/map-compile/croisement03-state-assembly-mask-audit.json`. These masks need
 authored surface geometry and remain unrecovered; state ownership alone does not
 establish mask parity. The reviewed static-mask total remains 64.
 
@@ -10833,8 +10833,8 @@ with all 2,592 pixels supported by `croisement03-group-062`. The pinned recipe i
 receiving elevation and binds its initial cover to local `movement-change-5`.
 Baseline and a one-unit asset move preserve exact coverage, masking rules and
 transition links; baseline non-mask geometry is unchanged. Drafts are under
-`work/map-compile/croisement03-controlled-mask-recovery`, and diagnostics under
-`work/map-compile/croisement03-controlled-mask-native`. Both scenes pass native
+`work/needs-review/map-compile/croisement03-controlled-mask-recovery`, and diagnostics under
+`work/needs-review/map-compile/croisement03-controlled-mask-native`. Both scenes pass native
 apply/reset checks for all nine transitions, now including mask activation and
 unchanged unrelated masks. The map still has 130 unrecovered masks. This brings
 reviewed recovery at that stage to 65 masks across seven maps, including 64 static masks;
@@ -10850,7 +10850,7 @@ world XY. These additions bring reviewed recovery to 68 masks: 64 static and
 four changing masks across seven maps. Derby has nine reviewed masks and 227
 remaining; Leicester has seventeen reviewed masks and 449 remaining.
 Drafts and baseline/moved diagnostics are under
-`work/map-compile/{derby,leicester}-controlled-mask-{recovery,native}`. Derby's
+`work/needs-review/map-compile/{derby,leicester}-controlled-mask-{recovery,native}`. Derby's
 baseline and six independently moved assets pass exact mask and native state
 checks; Leicester's baseline and eight independently moved assets do likewise.
 Visual patch effects, complete receiving-layer fidelity and publication are still
@@ -10862,8 +10862,8 @@ Both pairs bind to existing asset-local door-triggered sight transitions. Upper
 prison character thresholds use its 250.001-unit platform; southwest thresholds
 receive on ground. The updated pinned mask catalog verifies twenty source masks
 at baseline and after fifteen independent asset moves, with 507 masks remaining.
-Drafts and diagnostics are under `work/map-compile/nottingham-controlled-mask-recovery`
-and `work/map-compile/nottingham-controlled-mask-native`.
+Drafts and diagnostics are under `work/needs-review/map-compile/nottingham-controlled-mask-recovery`
+and `work/needs-review/map-compile/nottingham-controlled-mask-native`.
 All sixteen descriptors pass native apply/reset checks. The diagnostic additionally
 passes a test actor through each mask-controlled door in both directions, checking
 destination sector/layer and the triggered mask/sight changes. These are passage
@@ -10871,7 +10871,7 @@ callback checks, not approach routing, lock-authorisation or animation playback.
 Reviewed recovery now totals 72 masks across seven maps: 64 static and eight changing.
 
 The nine-map changing-mask support audit is recorded in
-`work/map-compile/controlled-mask-support-summary.json`. It found complete mesh
+`work/needs-review/map-compile/controlled-mask-support-summary.json`. It found complete mesh
 support for the recovered Derby, Leicester, Nottingham and Croisement03 sets,
 plus five Lincoln candidates requiring ownership review. Support from terrain
 alone does not assign a building mask to that terrain. The audit is incomplete
@@ -10896,27 +10896,27 @@ For example, from `level-editor`:
 
 ```sh
 node --max-old-space-size=1536 pipeline/src/verify-reviewed-mask-recovery.ts \
-  --library work/map-compile/projection-material-library \
-  --map work/map-compile/projection-material-library/scenes/derby.rhlos-map.json \
+  --library work/needs-review/map-compile/projection-material-library \
+  --map work/needs-review/map-compile/projection-material-library/scenes/derby.rhlos-map.json \
   --source library/game-data/Data/Levels/Derby.rhp.json \
-  --recovery work/map-compile/derby-hall-mask-recovery \
+  --recovery work/needs-review/map-compile/derby-hall-mask-recovery \
   --mask-definitions refinement/catalogs/derby-masks.json \
-  --out work/map-compile/reviewed-mask-verification/derby
+  --out work/needs-review/map-compile/reviewed-mask-verification/derby
 ```
 
 The six-map static batch verifies its 64 reviewed masks and 45 independent asset
 moves. All 51 baseline/moved descriptors load natively. Adding the latest masks
 leaves baseline non-mask geometry unchanged. Outputs are under
-`work/map-compile/reviewed-mask-verification/<map>`. This broader check caught a
+`work/needs-review/map-compile/reviewed-mask-verification/<map>`. This broader check caught a
 fractional-anchor regression on Derby's postern: mask receiver elevation now uses
 the authored floating-point position, while polygon membership uses the movement
 grid. A sloped fractional-anchor regression test protects this distinction.
-The earlier tile-aware verifier rerun is under `work/map-compile/tile-mask-verification`;
+The earlier tile-aware verifier rerun is under `work/needs-review/map-compile/tile-mask-verification`;
 all 61 then-reviewed source records pass and all 48 native-tested descriptors are unchanged.
 The current batch also uses that verifier, including three additional Lincoln masks.
 Horizontal/vertical multi-tile tests reject missing pixels, overlaps and mixed
 bindings. All ten oversized source bitmaps also pass a format-only split/reassembly
-check (`work/map-compile/oversized-mask-roundtrip.json`): Derby 129/168/172/173,
+check (`work/needs-review/map-compile/oversized-mask-roundtrip.json`): Derby 129/168/172/173,
 Leicester 24, Lincoln 268 and Nottingham 126/127/449/504. This does not recover
 their asset ownership, geometry, receiving surfaces or state bindings.
 
@@ -10927,8 +10927,8 @@ character threshold heights follow the owning assembly's sloped part 007.
 The receiving anchor is on adjacent navigable terrain. Coverage and both open
 boundaries match exactly, including after moving the assembly one pixel east.
 Both scenes load natively, and baseline non-mask geometry matches the jump-anchor
-diagnostic. Drafts and native checks are under `work/map-compile/croisement01-mask-recovery`
-and `work/map-compile/croisement01-mask-native`. There are 102 unrecovered masks;
+diagnostic. Drafts and native checks are under `work/needs-review/map-compile/croisement01-mask-recovery`
+and `work/needs-review/map-compile/croisement01-mask-native`. There are 102 unrecovered masks;
 complete asset coverage, mask-controlled depth and publication remain unfinished.
 
 Seven real static masks are recovered for Derby: southwest postern records
@@ -10953,8 +10953,8 @@ coverage and character/projectile boundaries when their owning asset moves one p
 Native construction verifies their bitmap coverage and layer registration. The
 baseline and all five independently moved scenes load natively. Baseline non-mask
 geometry is unchanged. Updated drafts are under
-`work/map-compile/derby-hall-mask-recovery`, with native descriptors under
-`work/map-compile/derby-hall-mask-native`. Derby still has 229
+`work/needs-review/map-compile/derby-hall-mask-recovery`, with native descriptors under
+`work/needs-review/map-compile/derby-hall-mask-native`. Derby still has 229
 unrecovered masks; neither the complete asset nor map is publication-certified.
 
 Leicester has sixteen reviewed static masks in
@@ -10973,13 +10973,13 @@ All sixteen preserve exact coverage, flags, open boundaries and local obstacle
 links after each asset moves one pixel east. Native loading passes for the
 baseline and all eight independently moved scenes; baseline non-mask data matches
 the same-library jump-anchor diagnostic. Moving the tower detaches one jump pair
-and its gate. Updated drafts are under `work/map-compile/leicester-village-mask-recovery`,
-with native diagnostics in `work/map-compile/leicester-village-mask-native`.
+and its gate. Updated drafts are under `work/needs-review/map-compile/leicester-village-mask-recovery`,
+with native diagnostics in `work/needs-review/map-compile/leicester-village-mask-native`.
 Leicester still has 450 unrecovered
 masks; these assets do not have complete mask coverage or mask-controlled depth enabled.
 
 A broader unlinked static-mask support audit is recorded in
-`work/map-compile/<map>-unlinked-mask-candidates.json`. It found 13 supported
+`work/needs-review/map-compile/<map>-unlinked-mask-candidates.json`. It found 13 supported
 records on Croisement01, none on Croisement02/03, 9 on Derby, 75 on Leicester,
 157 on Lincoln, 44 on Nottingham, 1 on Sherwood and 140 on York. These are
 candidate counts, including overlapping terrain/building support and already
@@ -11004,12 +11004,12 @@ jump-anchor diagnostic; sound sources match the previous same-library mask
 baseline. Four jump-zone receiving references differ from that older baseline
 because of the already verified owner-anchor fix, with polygons and helper rules
 unchanged. Some moved jump connections detach. Updated drafts and native checks
-are under `work/map-compile/nottingham-landing-mask-recovery` and
-`work/map-compile/nottingham-landing-mask-native`. There are 511 unrecovered
+are under `work/needs-review/map-compile/nottingham-landing-mask-recovery` and
+`work/needs-review/map-compile/nottingham-landing-mask-native`. There are 511 unrecovered
 Nottingham masks; complete asset coverage and mask-controlled depth remain pending.
 
 Moving the north stone house 32 pixels west also preserves its mask exactly and
-loads natively (`work/map-compile/nottingham-landing-west-native`). A 32-pixel
+loads natively (`work/needs-review/map-compile/nottingham-landing-west-native`). A 32-pixel
 east move exposed a neighboring mask receiver covered by movement collision.
 Mask compilation now retains a uniquely identified authored receiving layer
 under such exclusions, while requiring actual asset surface support and retaining
@@ -11027,8 +11027,8 @@ the split east curtain uses its own surface component. Bitmap coverage remains
 entirely mesh-supported. Coverage, boundaries and obstacle links match exactly
 before and after moving each owner independently one pixel east. All five scenes
 load natively, and baseline non-mask geometry is unchanged. Current drafts and
-native checks are under `work/map-compile/lincoln-curtain-mask-recovery` and
-`work/map-compile/reviewed-mask-verification/lincoln`.
+native checks are under `work/needs-review/map-compile/lincoln-curtain-mask-recovery` and
+`work/needs-review/map-compile/reviewed-mask-verification/lincoln`.
 There are 424 unrecovered Lincoln masks.
 
 Annex view-only mask 398 matches all 7,593 pixels at baseline, but remains outside
@@ -11037,7 +11037,7 @@ endpoint disagree with the neighboring slope's height by approximately 0.121 uni
 The receiving slope belongs to another asset. Endpoint validation correctly
 rejects the traversal connection after this placement.
 The failed placement diagnostic is retained under
-`work/map-compile/lincoln-raised-mask-native` with `complete: false`.
+`work/needs-review/map-compile/lincoln-raised-mask-native` with `complete: false`.
 
 York's reviewed recipe (`refinement/catalogs/york-masks.json`) recovers twenty static
 masks: scaffolded corner house 79/86 (2,777/747 pixels), southwest square corner house
@@ -11056,8 +11056,8 @@ the owning house's flat 152.001-unit platform. The remaining receivers use the
 flat 90.00101-unit town surface. All twenty match in the baseline and after independent one-pixel
 asset moves. Native loading passes for the baseline and all fourteen moved scenes.
 Adding the town-house masks leaves baseline non-mask geometry unchanged. Updated drafts and
-native checks are under `work/map-compile/york-town-mask-recovery` and
-`work/map-compile/york-town-mask-native`. York still has 808 unrecovered masks.
+native checks are under `work/needs-review/map-compile/york-town-mask-recovery` and
+`work/needs-review/map-compile/york-town-mask-native`. York still has 808 unrecovered masks.
 These assets have incomplete mask coverage and do not enable mask-controlled
 depth. None of these maps is certified for complete gameplay or publication.
 
@@ -11072,8 +11072,8 @@ fields remain unchanged. Moving the scaffolded house detaches two jump pairs
 and their gates without invalidating its neighbor's remaining landing anchor.
 All nine maps retain all 173 recovered pairs, pass static compilation, and load
 natively in the jump-anchor regression batch. Updated York recovery is under
-`work/map-compile/jump-anchor-recovery/york`, with baseline/moved native checks
-under `work/map-compile/york-jump-anchor-native`. Traversal fidelity and complete
+`work/needs-review/map-compile/jump-anchor-recovery/york`, with baseline/moved native checks
+under `work/needs-review/map-compile/york-jump-anchor-native`. Traversal fidelity and complete
 map publication remain separate requirements.
 
 Recovery discards faces outside a mask's bounds before fitting their depth
@@ -11096,12 +11096,12 @@ occlusion surfaces before recovering that state. The reproducible audit is:
 
 ```sh
 node pipeline/src/audit-mask-surfaces.ts \
-  --library work/map-compile/projection-material-library \
-  --map work/map-compile/projection-material-library/scenes/derby.rhlos-map.json \
+  --library work/needs-review/map-compile/projection-material-library \
+  --map work/needs-review/map-compile/projection-material-library/scenes/derby.rhlos-map.json \
   --source library/game-data/Data/Levels/Derby.rhp.json \
   --asset derby-upper-gatehouse \
   --masks 217,218,219,220,221,222,223,224,225,226,227,228,229 \
-  --out work/map-compile/gatehouse-mask-state-audit.json
+  --out work/needs-review/map-compile/gatehouse-mask-state-audit.json
 ```
 
 A separate probe adding the same asset's existing obstacle-volume faces closes
@@ -11159,7 +11159,7 @@ non-rendering gameplay-frame marker and acoustic definitions.
 node pipeline/src/author-ambient-sound-assets.ts \
   --source library/game-data/Data/Levels/Derby.rhp.json \
   --recipe refinement/catalogs/derby-ambient-sounds.json \
-  --map Derby --out work/map-compile/ambient-authoring-library
+  --map Derby --out work/needs-review/map-compile/ambient-authoring-library
 ```
 
 The staged scene `ambient-authoring-library/derby-ambient.rhlos-map.json` reopens
@@ -11222,8 +11222,8 @@ York regions 12/14 now recover to the west-town terrain asset with exact origina
 contours on layers 30/68 and 30/92 respectively. This raises the recovery evidence
 to 37/149 regions; 112 remain pending. The native diagnostic checks contour
 registration and activation for ambience masks 1, 2 and 4. Updated Leicester,
-Lincoln and York drafts are in `work/map-compile/receiver-light-recovery`, with
-descriptors in `work/map-compile/receiver-light-native`. Independent receiver
+Lincoln and York drafts are in `work/needs-review/map-compile/receiver-light-recovery`, with
+descriptors in `work/needs-review/map-compile/receiver-light-native`. Independent receiver
 movement and duplicate-layer handling pass compiler tests. Moving the large York
 terrain asset alone by one pixel merges a bridge passage's two areas. Unrestricted,
 non-clickable passages can now carry `allowContinuous` in their asset definition:
@@ -11500,7 +11500,7 @@ The physical-volume audit also checks whether visual component bounds preserve
 the shared sight footprint and ordered bottom/top planes. Twenty-six split
 records across Lincoln, Nottingham, Sherwood and York differ in footprint or
 height; these are not certified equivalent merely because every record has an
-asset owner. The audit is `work/map-compile/sight-partition-audit.json`.
+asset owner. The audit is `work/needs-review/map-compile/sight-partition-audit.json`.
 
 York record 650 is wholly owned by the dedicated west-market shared occlusion
 asset. Its five visual component bounds add about 1,154 square game units and
@@ -11512,7 +11512,7 @@ compiler reads only the resulting local definition, which moves with the asset.
 The visual model remains intact. Other split records span separate assets and
 still require ownership and geometry work; they cannot use this whole-asset fix.
 
-`work/map-compile/york-whole-volume-recovery` retains the twenty reviewed masks.
+`work/needs-review/map-compile/york-whole-volume-recovery` retains the twenty reviewed masks.
 The baseline and translated drafts reproduce the shared volume's ordered points
 and flags at engine precision and construct 192 movement areas, 1,197 sight
 obstacles, 254 doors and 72 jump pairs in Rust. Duplicating the complete asset
@@ -11532,7 +11532,7 @@ east-green stall's extra collision across a notch. The four original meshes and
 all other physical parts remain unchanged. Sloped, receiving, material-linked,
 mask-linked and changing volumes require separate authoring and are rejected.
 
-The reopened overlay is `work/map-compile/nottingham-market-volume-stage-v3`;
+The reopened overlay is `work/needs-review/map-compile/nottingham-market-volume-stage-v3`;
 its recovered definitions are in `nottingham-market-volume-recovery`. The four
 compiled pieces differ from the reference footprint by 0.000056 square game
 units under fixed-point clipping, compared with roughly 2,512 extra square units
@@ -11570,7 +11570,7 @@ doors and 38 jump pairs. Four independently moved drafts also construct, leaving
 deterministic rays against the reference volume, including impact presence,
 coordinates and ray parameter; all match exactly. Its input is
 `nottingham-market-volume-seams-native/sight-query-case.json` under
-`work/map-compile`. This verifies sampled queries against this assembled volume,
+`work/needs-review/map-compile`. This verifies sampled queries against this assembled volume,
 not full-scene impact ordering, all placements, visual behavior or map parity.
 
 The southwest parapet's flat record 219 uses a second reviewed partition recipe,
@@ -11589,7 +11589,7 @@ collision overrides, updates scene/index hashes and reopens the compact scene.
 Its tests verify unchanged source files and model bytes, reload fidelity, stale
 pin rejection, override rejection and exclusive creation of the output directory.
 
-The combined market/parapet overlay is `work/map-compile/nottingham-parapet-volume-stage`;
+The combined market/parapet overlay is `work/needs-review/map-compile/nottingham-parapet-volume-stage`;
 recovery and native diagnostics use the matching `-recovery` and `-native`
 directories. The baseline constructs 114 areas, 667 sight obstacles, 172 doors
 and 38 jump pairs. Moving both wall assets and the attached southwest stair one
@@ -11609,7 +11609,7 @@ in component bounds. Record 876 restores the bastion's inner arc instead of
 filling it, and corrects its slightly negative bottoms and raised top. Both retain
 independent assets and assemble only when their local seams coincide.
 
-The combined overlay is `work/map-compile/york-flat-volume-stage`, with definitions
+The combined overlay is `work/needs-review/map-compile/york-flat-volume-stage`, with definitions
 in `york-flat-volume-recovery` and diagnostics in `york-flat-volume-native`.
 It also retains the earlier correction for record 650. The baseline constructs
 192 movement areas, 1,195 sight obstacles, 254 doors and 72 jump pairs. Each of
@@ -11638,7 +11638,7 @@ runs from ground to 340.001 instead of bottom 320 and mismatched tops 355/364.
 Their assembled reference vertices match at engine precision, and each passes
 100,000 exact native sight and impact comparisons.
 
-The overlay is `work/map-compile/lincoln-parapet-volume-stage`; recovery uses the
+The overlay is `work/needs-review/map-compile/lincoln-parapet-volume-stage`; recovery uses the
 matching `-recovery` directory and retains four reviewed masks, with 424 still
 pending. The baseline constructs 113 areas, 567 sight obstacles, 89 doors and 10
 jump pairs. All four assets independently moved one unit east now compile and
@@ -11777,12 +11777,12 @@ observed full-list impact-order gap; fast-find-grid candidate behavior, material
 ties, receiving geometry, visuals and full actor traversal still need verification.
 
 The metadata migration also validates and compiles for all nine maps with source
-level data. `work/map-compile/query-order-recovery/validation.json` records their
+level data. `work/needs-review/map-compile/query-order-recovery/validation.json` records their
 input libraries and zero invalid candidates. Local priority counts are
 Croisement01 85, Croisement02 150, Croisement03 106, Derby 271, Leicester 392,
 Lincoln 474, Nottingham 565, Sherwood 127 and York 993. These count independently
 authored physical pieces before assembly. Compiled static drafts are in
-`work/map-compile/query-order-native`; Wychford remains outside this source-backed
+`work/needs-review/map-compile/query-order-native`; Wychford remains outside this source-backed
 verification. All nine drafts pass native geometry construction with their rebuilt
 mask and state references. This migration does not certify the other maps' remaining geometry,
 state, mask or full-scene query differences.
@@ -11804,14 +11804,14 @@ ordered binary32 geometry, flags and model/source pins before replacing generate
 receivers with asset-local volume references. Traversal receivers 97, 98 and 101 were
 already linked. Ground bluff 111 remains excluded because its surface spans two
 compiled receiving areas. The compiler still consumes only the scene and assets.
-The candidates in `work/map-compile/sherwood-physical-receiver-recovery` compile to
+The candidates in `work/needs-review/map-compile/sherwood-physical-receiver-recovery` compile to
 129 sight volumes instead of 143. Baseline, treehouse-only move, platform-only move
 and combined move all construct natively with 29 areas, 15 doors and one jump pair.
 
 The native projection diagnostic now accepts a source geometry fixture through
 `before_proto`, supports different compiled layer numbers, and reports differences
 per sector pair with the selected obstacle indices. Comparing the 14 restored
-receivers in `work/map-compile/sherwood-physical-receiver-native` samples 701,438
+receivers in `work/needs-review/map-compile/sherwood-physical-receiver-native` samples 701,438
 integer/half-pixel positions: seven cases match exactly; the other seven have
 19,664 coverage differences and 27 height differences (maximum 1.9894714), with
 zero material differences. That batch fails the parity assertion.
@@ -11843,7 +11843,7 @@ Reviewed recovery can now replace a surface's movement contour while retaining i
 height plane. It generates owned collision clearances from the restored contours
 before other geometry recovery; the compiler needs no source map. The authored
 piece union exactly reproduces the source movement polygon and its holes before
-compilation. In `work/map-compile/sherwood-navigation-native`, all 701,438 native
+compilation. In `work/needs-review/map-compile/sherwood-navigation-native`, all 701,438 native
 receiving samples now match exactly: zero coverage, height or material differences.
 Baseline and treehouse-only movement construct 23 areas; central-platform-only and
 combined movement construct 24. All four have 129 sight volumes, 15 doors and one
@@ -11864,7 +11864,7 @@ other navigation areas, full actor traversal, visuals and publication remain ope
 this does not certify full map parity.
 
 The precision change was also applied through fresh recovery of all nine maps in
-`work/map-compile/clearance-precision-recovery`: every asset candidate validates,
+`work/needs-review/map-compile/clearance-precision-recovery`: every asset candidate validates,
 and all nine static exports in `clearance-precision-native` construct in Rust.
 The resulting area counts are 46/32/30 for the crossings, 60 Derby, 82 Leicester,
 112 Lincoln, 114 Nottingham, 29 Sherwood and 198 York. This broad batch uses the
@@ -11891,7 +11891,7 @@ not yet connect the river bluff or permit its physical receiver link. The treeho
 region remains geometrically exact and all 701,438 native receiving samples still
 match. These are unpublished recovery candidates, not a full-map parity result.
 
-Fresh all-map recovery in `work/map-compile/ground-precision-recovery` reduces the
+Fresh all-map recovery in `work/needs-review/map-compile/ground-precision-recovery` reduces the
 ground-decomposition difference below 0.0006 square units on eight maps. Croisement01
 improves from 1023.3774 to 66.4752 square units but retains a larger discrepancy.
 All candidates validate and all nine static descriptors in `ground-precision-native`
@@ -11913,7 +11913,7 @@ checks this case; the previous complement reconstruction lost about 23.15 square
 units in that fixture. The fix changes offline asset authoring, not the compiler's
 source-data isolation or the separation between maps and missions.
 
-The fresh `work/map-compile/ground-exclusions-recovery` batch has valid asset
+The fresh `work/needs-review/map-compile/ground-exclusions-recovery` batch has valid asset
 candidates and ground-decomposition differences below 0.0006 square units for all
 nine maps. All nine static descriptors in `ground-exclusions-native` compile and
 construct in Rust. Croisement01 now constructs 41 areas instead of 40; the other
@@ -12217,10 +12217,10 @@ From `level-editor`, recover the combined candidate with:
 
 ```sh
 node pipeline/src/recover-asset-gameplay.ts \
-  --library work/map-compile/croisement03-state-assembly-stage \
-  --map work/map-compile/croisement03-state-assembly-stage/scenes/croisement03.rhlos-map.json \
+  --library work/needs-review/map-compile/croisement03-state-assembly-stage \
+  --map work/needs-review/map-compile/croisement03-state-assembly-stage/scenes/croisement03.rhlos-map.json \
   --source library/game-data/Data/Levels/Croisement03.rhp.json \
-  --out work/map-compile/croisement03-combined-recovery \
+  --out work/needs-review/map-compile/croisement03-combined-recovery \
   --ownership refinement/catalogs/croisement03-navigation-ownership.json \
   --transition-planes refinement/catalogs/croisement03-transition-planes.json \
   --projection-definitions refinement/catalogs/croisement03-elevated-projections.json \
@@ -12265,7 +12265,7 @@ coordinates. Labels remain scoped to the placed transition and initial/applied
 state, and distinct contours retain independent intersections. This removes the
 8.5-square-unit terrace blocker discrepancy caused by separately rounded pieces.
 
-The draft under `work/map-compile/croisement03-terrace-native` has matching initial
+The draft under `work/needs-review/map-compile/croisement03-terrace-native` has matching initial
 and applied coverage for eight of its nine transitions, including the terrace,
 and retains exact static ground coverage. The fourteen-receiver native scan now
 passes all 792,816 queries with zero coverage, height or material differences,
@@ -12307,10 +12307,10 @@ cross partitions. The remaining house structures retain their door ownership and
 static mask support through `nottingham-state-ownership.json` and
 `nottingham-state-masks.json`.
 
-The staged scene is `work/map-compile/nottingham-state-assembly-stage`; recovery
+The staged scene is `work/needs-review/map-compile/nottingham-state-assembly-stage`; recovery
 uses those two catalogs, `nottingham-ground-receivers.json`, preserved ground
 boundaries and the complete movement-coverage gate. The resulting candidate is
-`work/map-compile/nottingham-state-assembly-recovery`. Compilation reads only
+`work/needs-review/map-compile/nottingham-state-assembly-recovery`. Compilation reads only
 that scene and the recovered asset definitions.
 
 The baseline and a one-pixel assembly move construct in Rust with 101 movement
@@ -12341,8 +12341,8 @@ socket matching only; the physical receiving planes retain their original values
 their surfaces, replacing synthesized receiving geometry.
 
 The combined draft adds both catalogs to the northern facade recovery above.
-Artifacts are under `work/map-compile/nottingham-state-navigation-recovery` and
-`work/map-compile/nottingham-state-navigation-native`. Its six-receiver Rust scan
+Artifacts are under `work/needs-review/map-compile/nottingham-state-navigation-recovery` and
+`work/needs-review/map-compile/nottingham-state-navigation-native`. Its six-receiver Rust scan
 (the courtyard five plus ground receiver 168) passes 2,170,166 queries with zero
 height, material or coverage differences. All twenty compiled masks remain
 unchanged.
@@ -12369,7 +12369,7 @@ remain an explicit error.
 
 Focused regressions cover crossing outer contours, another surface opening a
 cutout, and state changes restricted to their own height plane. The experimental
-Nottingham output under `work/map-compile/nottingham-state-navigation-native-preserved`
+Nottingham output under `work/needs-review/map-compile/nottingham-state-navigation-native-preserved`
 constructs in Rust. Its courtyard envelope and both changing-state coverages match,
 but permanent free coverage differs by about 158.446 square units in both states.
 The ground transition's full free coverage also differs by one square unit, even
@@ -12382,7 +12382,7 @@ setting alongside authored vertices. Clearance recovery subtracts exclusion
 contours geometrically instead of assuming they are interior holes, and removes
 floating contact slivers below its geometric tolerance while retaining subpixel
 openings. The full-contour Nottingham draft now produces valid asset definitions
-under `work/map-compile/nottingham-state-contours-recovery`.
+under `work/needs-review/map-compile/nottingham-state-contours-recovery`.
 
 That draft initially failed compilation: unioning nearly coincident cutout edges near
 projected coordinates (696.9921, 1191.7559) fails to close a polygon ring. The
@@ -12419,8 +12419,8 @@ The combined Nottingham recovery now uses `--precise-ground-ownership` with
 `--preserve-ground-boundaries`, `--require-movement-coverage`, and the
 `nottingham-state-contours.json` navigation recipe. This removes the one-square-unit
 ground gap: both initial and applied full walkable coverage match exactly.
-Candidates and diagnostics are under `work/map-compile/nottingham-precise-contours-recovery`
-and `work/map-compile/nottingham-precise-contours-native`.
+Candidates and diagnostics are under `work/needs-review/map-compile/nottingham-precise-contours-recovery`
+and `work/needs-review/map-compile/nottingham-precise-contours-native`.
 
 The compiler also discards a fractional cutout already entirely covered by a
 complete integer exclusion in the same contour group, before rounding can expand
@@ -12473,8 +12473,8 @@ Recovery uses each new staged scene, its ownership and ground-receiver catalogs,
 and `--preserve-ground-boundaries --precise-ground-ownership --require-movement-coverage`.
 Croisement01 also retains its existing mask catalog; Croisement02 has no reviewed
 mask catalog yet. Staged libraries, candidates and native diagnostics use the
-`work/map-compile/croisement01-state-assembly-*` and
-`work/map-compile/croisement02-state-assembly-*` prefixes.
+`work/needs-review/map-compile/croisement01-state-assembly-*` and
+`work/needs-review/map-compile/croisement02-state-assembly-*` prefixes.
 
 All six Croisement01 transitions and all nine Croisement02 transitions now recover.
 For all fifteen, the baseline envelopes, permanent coverage and initial/applied
@@ -12505,8 +12505,8 @@ physical heights and materials remain independent of navigation. Without these
 bindings, separate receiving footprints incorrectly replaced large portions of
 the ground movement envelope. Recovery also uses the unchanged York mask catalog,
 `--preserve-ground-boundaries --precise-ground-ownership --require-movement-coverage`.
-Use `work/map-compile/york-state-assembly-stage` for the library/scene and
-`work/map-compile/york-state-ground-recovery` for the combined candidate output.
+Use `work/needs-review/map-compile/york-state-assembly-stage` for the library/scene and
+`work/needs-review/map-compile/york-state-ground-recovery` for the combined candidate output.
 
 The baseline market envelope, permanent coverage and full initial/applied walkable
 coverage now match exactly. All eight ordinary ground regions retain exact
@@ -12536,7 +12536,7 @@ geometry in asset-local coordinates, together with sample IDs, timing, falloff,
 volume, acoustic altitude and ambience filters. Compilation needs only the
 placed assets and scene, not the extraction source.
 
-The combined stages in `work/map-compile/crossing-sound-library/{croisement02,croisement03}`
+The combined stages in `work/needs-review/map-compile/crossing-sound-library/{croisement02,croisement03}`
 extend the latest movement-assembly scenes and reopen their pinned documents.
 Recovery retains the movement coverage gate, ground receivers and, for
 Croisement03, the terrace navigation joins, transition planes, projections and
@@ -12550,7 +12550,7 @@ emitter follows its placement and all non-sound compiled geometry stays identica
 All thirteen exports load and construct in Rust, including sound sample selection,
 emitter handles, spatial geometry and delay settings. Every export also applies
 and resets all nine compiled transitions. These diagnostics are in
-`work/map-compile/crossing-sound-native`; they do not verify audible playback,
+`work/needs-review/map-compile/crossing-sound-native`; they do not verify audible playback,
 complete visual state fidelity or a published ZIP round trip. Neither map is
 certified or published at full parity.
 
@@ -12563,7 +12563,7 @@ asset; existing uniquely owned and global emitters retain their previous owners.
 The regions preserve full polylines, including points beyond the map boundary,
 and retain sample, delay, falloff, volume, altitude and ambience settings.
 
-Combined candidates in `work/map-compile/town-forest-sound-recovery` recover all
+Combined candidates in `work/needs-review/map-compile/town-forest-sound-recovery` recover all
 12/24/8 emitters with zero pending sound ownership. Their libraries extend the
 Derby canopy-pole stage, Leicester projection/material stage and Sherwood central
 treehouse stage, retaining ground receiver definitions and Sherwood navigation
@@ -12577,7 +12577,7 @@ filtering under each ambience bit without adding mission settings to map exports
 All 44 baseline emitter records match exactly. Moving each of the 28 new regions
 by 50 pixels moves only that emitter; non-sound geometry stays identical both
 across these variants and against the preceding map drafts. The 31 exported
-descriptors in `work/map-compile/town-forest-sound-native` pass 52 Rust construction
+descriptors in `work/needs-review/map-compile/town-forest-sound-native` pass 52 Rust construction
 cases: baseline maps under all eight ambience bits, plus the moved-region exports.
 These check required sample selection, emitter handles, shape and delay settings.
 All compiled transitions also apply/reset successfully (Derby two, Leicester
@@ -12593,16 +12593,16 @@ existing asset owners. Several independent emitters use the same sample ID, so
 comparisons retain record multiplicity and full geometry rather than treating
 sample IDs as unique emitter identifiers.
 
-`work/map-compile/nottingham-sound-library/nottingham` extends the current
+`work/needs-review/map-compile/nottingham-sound-library/nottingham` extends the current
 movement-assembly scene, retaining its existing sound pins. Combined recovery
 uses the state ownership, state mask, ground receiver, state projection and
 complete state contour catalogs with precise ground ownership and the movement
-coverage gate. The report in `work/map-compile/nottingham-sound-recovery/nottingham`
+coverage gate. The report in `work/needs-review/map-compile/nottingham-sound-recovery/nottingham`
 has zero pending sound sources; 507 masks and 23 shadow regions remain pending.
 All 24 baseline emitter records match exactly, and non-sound geometry is identical
 to the preceding precise-contour draft.
 
-The native batch in `work/map-compile/nottingham-sound-native` contains 22 exports:
+The native batch in `work/needs-review/map-compile/nottingham-sound-native` contains 22 exports:
 the baseline, twenty independent 50-pixel region moves, and a duplicated emitter
 whose sample is also used by other regions. All variants preserve non-sound
 geometry; duplication adds exactly one correctly placed emitter. Twenty-nine Rust
@@ -12621,11 +12621,11 @@ Lincoln sources 1/13 overlap the west tower/hillside and great hall/plateau;
 York sources 12/20 overlap a house/raised terrain and market frontage/shared
 volume/raised terrain. They still require explicit asset ownership.
 
-The combined stages in `work/map-compile/lincoln-york-sound-library` retain
+The combined stages in `work/needs-review/map-compile/lincoln-york-sound-library` retain
 Lincoln's door-turret volume scene and York's market movement assembly scene.
 Recovery uses their mask and ground-receiver definitions; York also retains
 its state ownership catalog and precise ground ownership. Both pass the
-movement coverage gate. Reports in `work/map-compile/lincoln-york-sound-recovery`
+movement coverage gate. Reports in `work/needs-review/map-compile/lincoln-york-sound-recovery`
 now recover 12/14 Lincoln and 21/23 York emitters, with exactly those four
 ownership gaps. Pending masks remain 424/808 and shadow regions 25/16.
 
@@ -12633,7 +12633,7 @@ All recovered emitter records match exactly, including repeated sample IDs.
 Thirteen independent 50-pixel moves affect only the selected sound region.
 Non-sound geometry also matches the preceding Lincoln ground-receiver and York
 state-ground drafts exactly. Fifteen exports in
-`work/map-compile/lincoln-york-sound-native` pass 29 native construction cases,
+`work/needs-review/map-compile/lincoln-york-sound-native` pass 29 native construction cases,
 including both baselines under all eight ambience bits. These are partial
 sound-definition checks, not audible playback or full-map parity certification.
 All nine Lincoln and six York compiled transitions also apply/reset successfully
@@ -12652,10 +12652,10 @@ or extraction source.
 `york-state-ownership.json` attaches the two remaining emitters to the jettied house
 and visible market-frontage house. These are explicit authoring decisions: their
 underlying terrain and shared volumes retain separate ownership. Combined reports
-in `work/map-compile/declared-sound-recovery` now recover all 14 Lincoln and 23 York
+in `work/needs-review/map-compile/declared-sound-recovery` now recover all 14 Lincoln and 23 York
 emitters with zero pending sound sources. Baseline non-sound geometry is unchanged.
 
-Six diagnostics in `work/map-compile/declared-sound-native` cover both complete
+Six diagnostics in `work/needs-review/map-compile/declared-sound-native` cover both complete
 baselines and four acoustic probes using building frames translated by 50 pixels.
 All emitter values match, with only the selected emitter moving. Twenty Rust
 construction cases pass, including both baselines under all eight ambience bits.
@@ -12669,7 +12669,7 @@ missing/ambiguous frames and empty review reasons. Complete visual assets,
 valid relocated traversal assemblies, publication, audible playback and ZIP round
 trips remain outstanding.
 
-The consolidated `work/map-compile/complete-sound-definition-audit.json` compares
+The consolidated `work/needs-review/map-compile/complete-sound-definition-audit.json` compares
 the complete emitter-record multisets for all nine source-backed staged maps:
 Croisement01/02/03 2/6/6, Derby 12, Leicester 24, Lincoln 14, Nottingham 24,
 Sherwood 8 and York 23. All 119 records match exactly, including duplicate sample
@@ -12695,17 +12695,17 @@ Generate the asset with:
 node pipeline/src/author-light-region-assets.ts \
   --source library/game-data/Data/Levels/Sherwood.rhp.json \
   --recipe refinement/catalogs/sherwood-light-regions.json \
-  --map Sherwood --out work/map-compile/sherwood-light-stage
+  --map Sherwood --out work/needs-review/map-compile/sherwood-light-stage
 ```
 
 The staged scene extends the latest Sherwood sound library with the emitted
 `light-region-assets.json` fragment and reopens its pinned assets. Recovery uses
 the explicit light ownership catalog plus the existing ground receiver,
 navigation join and projection definitions, with the movement coverage gate.
-`work/map-compile/sherwood-light-recovery` now has zero pending shadow regions
+`work/needs-review/map-compile/sherwood-light-recovery` now has zero pending shadow regions
 and sound sources. Its 166 pending masks remain unfinished.
 
-The baseline and a 50-pixel region move in `work/map-compile/sherwood-light-native`
+The baseline and a 50-pixel region move in `work/needs-review/map-compile/sherwood-light-native`
 reproduce the complete contour and ambience exactly. All non-light geometry and
 metadata, including the eight sound emitters, are unchanged. Native light queries
 pass for both exports under ambience bits 1, 2 and 4. Unit tests cover independent
@@ -12723,17 +12723,17 @@ Strict per-plane recovery still rejects missing elevated geometry, and field
 recovery fails if it cannot establish receiving anchors. Ownership checks retain
 the full contour footprint so uncovered margins do not silently acquire an owner.
 
-The geometry-only audit in `work/map-compile/light-field-audit.json` now preserves
+The geometry-only audit in `work/needs-review/map-compile/light-field-audit.json` now preserves
 147 of 148 complete contours across Derby (26), Leicester (30), Lincoln (30/31),
 Nottingham (24) and York (37). Lincoln source 11 still fails with a degenerate
 height plane. This audit does not assign owners or prove compiled receiving-layer
 equivalence for every field; the earlier per-map pending reports remain in force.
 
 `derby-light-regions.json` authors the previously rejected west-steps night field
-(source 4). Its asset in `work/map-compile/derby-light-field-stage` compiles alongside
+(source 4). Its asset in `work/needs-review/map-compile/derby-light-field-stage` compiles alongside
 the existing Derby gameplay definitions. The complete contour and ambience match;
 its source layer 1 resolves to rebuilt layer 23, whose receiving plane matches the
-step plane. The diagnostic in `work/map-compile/derby-light-field-native` contains
+step plane. The diagnostic in `work/needs-review/map-compile/derby-light-field-native` contains
 three light regions and preserves all non-light geometry and metadata. Native
 queries pass under ambience bits 1, 2 and 4. This is one additional compiled field,
 not a fully recovered or published Derby map.
@@ -12754,8 +12754,8 @@ Lincoln source 11. This supersedes the one remaining geometry error above;
 ownership and compiled receiving-layer validation are still incomplete overall.
 
 `lincoln-light-regions.json` authors that previously failing elevated field into
-`work/map-compile/lincoln-light-field-stage`. It compiles alongside the complete
-Lincoln sound definitions into `work/map-compile/lincoln-light-field-native`, with
+`work/needs-review/map-compile/lincoln-light-field-stage`. It compiles alongside the complete
+Lincoln sound definitions into `work/needs-review/map-compile/lincoln-light-field-native`, with
 seven light contours and unchanged non-light data. The added contour and ambience
 match exactly, with source layer 2 resolved to rebuilt layer 10. Native light
 queries pass under ambience bits 1, 2 and 4. Publication and full map/ZIP parity
@@ -12767,8 +12767,8 @@ The combined Derby stage now retains eight building-owned regions and eighteen
 independent environmental fields. `derby-light-regions.json` contains the eighteen
 field recipes; `derby-light-ownership.json` retains Derby's existing ownership
 definitions and pins their explicit field owners. The reopened scene in
-`work/map-compile/derby-light-stage` extends the complete sound stage. Recovery in
-`work/map-compile/derby-light-recovery` has zero pending shadow regions or sound
+`work/needs-review/map-compile/derby-light-stage` extends the complete sound stage. Recovery in
+`work/needs-review/map-compile/derby-light-recovery` has zero pending shadow regions or sound
 sources; 227 masks and visual patch definitions remain unfinished.
 
 Combining all regions exposed two anchor issues. Recovery now excludes permanent
@@ -12778,7 +12778,7 @@ move it outside a narrow contour or receiving surface. The exported contour vert
 remain quantized. Regression tests cover both cases, and geometry recovery still
 preserves all 148 contours in the five-map audit.
 
-The export in `work/map-compile/derby-complete-light-native` contains all 26 source
+The export in `work/needs-review/map-compile/derby-complete-light-native` contains all 26 source
 outlines and ambience filters with no extra outline. These produce 30 runtime
 regions: source region 16 spans five rebuilt receiving layers. The per-source
 layer mapping is recorded in `source-light-mapping.json`. All non-light geometry
@@ -12799,7 +12799,7 @@ Its `ROBIN_LIGHT_COMPARISON` manifest specifies source/compiled layer pairs and
 their common navigation coverage, excluding permanent obstacles. It samples an
 integer/half-pixel grid under ambience bits 1, 2 and 4 and writes a query report.
 
-Derby's `work/map-compile/derby-complete-light-native/light-query-comparison.json`
+Derby's `work/needs-review/map-compile/derby-complete-light-native/light-query-comparison.json`
 has thirty nonempty query windows covering the full bounds of the relevant source
 and compiled contours, expanded by two pixels. The windows include potentially
 unwanted light from other source layers sharing a rebuilt layer; candidate windows
@@ -12818,14 +12818,14 @@ or rendered appearance. Full-map publication and ZIP round trips remain unfinish
 `nottingham-light-regions.json` authors nineteen independent environmental fields;
 five additional regions remain building-owned. `nottingham-light-ownership.json`
 retains the movement assembly and existing ownership definitions while adding the
-explicit field owners. The reopened scene in `work/map-compile/nottingham-light-stage`
+explicit field owners. The reopened scene in `work/needs-review/map-compile/nottingham-light-stage`
 extends the complete sound library and retains its navigation contours, physical
 projection receivers, ground receivers and reviewed mask definitions.
 
-The combined recovery in `work/map-compile/nottingham-light-recovery` has zero
+The combined recovery in `work/needs-review/map-compile/nottingham-light-recovery` has zero
 pending shadow regions or sound sources, with the movement coverage gate passing.
 All 24 light contours and ambience filters compile exactly into 24 runtime regions
-in `work/map-compile/nottingham-complete-light-native`. Non-light data matches the
+in `work/needs-review/map-compile/nottingham-complete-light-native`. Non-light data matches the
 preceding sound-complete draft, including all sound emitters. The engine constructs
 the map and applies/resets all nine compiled transitions.
 
@@ -12842,14 +12842,14 @@ publication and complete ZIP round trips remain outstanding.
 `york-light-regions.json` authors sixteen independent environmental fields;
 twenty-one additional regions remain on existing assets. `york-light-ownership.json`
 retains the market movement assembly and complete sound ownership while adding
-the explicit field owners. The reopened scene in `work/map-compile/york-light-stage`
+the explicit field owners. The reopened scene in `work/needs-review/map-compile/york-light-stage`
 extends the complete sound library and retains its reviewed ground receivers
 and mask definitions.
 
-The combined recovery in `work/map-compile/york-light-recovery` has zero pending
+The combined recovery in `work/needs-review/map-compile/york-light-recovery` has zero pending
 shadow regions or sound sources, with the movement coverage gate passing. All
 37 source light contours and ambience filters compile exactly into 37 runtime
-regions in `work/map-compile/york-complete-light-native`. Non-light data matches
+regions in `work/needs-review/map-compile/york-complete-light-native`. Non-light data matches
 the preceding sound-complete draft. The Rust engine constructs 161 areas,
 1,180 sight obstacles, 254 doors and 72 jump pairs, and applies/resets all six
 compiled transitions.
@@ -12867,12 +12867,12 @@ definitions; publication and complete ZIP round trips remain outstanding.
 `leicester-light-regions.json` authors fifteen independent environmental fields;
 fifteen additional regions recover onto existing assets. The explicit field
 owners are in `leicester-light-ownership.json`. The combined scene in
-`work/map-compile/leicester-light-stage` extends the sound-complete draft and
+`work/needs-review/map-compile/leicester-light-stage` extends the sound-complete draft and
 retains its ground receivers and reviewed mask definitions. Recovery has zero
 pending light or sound records and passes the movement coverage gate.
 
 All 30 source contours and ambience filters compile into 34 runtime regions in
-`work/map-compile/leicester-complete-light-native`; some contours receive on
+`work/needs-review/map-compile/leicester-complete-light-native`; some contours receive on
 multiple rebuilt layers. Non-light data matches the preceding sound-complete
 draft. Rust constructs 55 areas, 444 sight obstacles, 105 doors and 23 jump pairs,
 and applies/resets all six compiled transitions.
@@ -12908,7 +12908,7 @@ are assigned after the new ordering. Unanchored planar fields can cover multiple
 resulting layers. Compiler tests cover independent coplanar receivers, a field
 covering both, and moving the asset.
 
-The refreshed Leicester draft in `work/map-compile/leicester-separated-light-native`
+The refreshed Leicester draft in `work/needs-review/map-compile/leicester-separated-light-native`
 retains all 30 contours and filters as 34 runtime regions. Its 37 nonempty comparison
 windows pass all 4,277,196 Rust lighting query evaluations under ambience bits 1,
 2 and 4. Restoring the leaking contour to the wrong layer in a separate negative
@@ -12941,9 +12941,9 @@ anchor support. The emitted assets retain local coordinates, not source sector
 indices. A regression covers overlapping higher footprints, and all 148 town
 contours still recover with receiving identities enabled.
 
-`work/map-compile/lincoln-light-recovery` has zero pending light or sound records
+`work/needs-review/map-compile/lincoln-light-recovery` has zero pending light or sound records
 and passes the movement coverage gate. Its 31 contours and ambience filters
-compile into 33 runtime regions in `work/map-compile/lincoln-complete-light-native`.
+compile into 33 runtime regions in `work/needs-review/map-compile/lincoln-complete-light-native`.
 Non-light records compare equal after resolving sector/layer references to
 receiving geometry and sorting generated projection records; mask payloads
 compare without their rebuilt layer numbers.
@@ -12965,7 +12965,7 @@ receiving anchors select the adjacent 465.001-unit gallery platform. The east
 mask's character threshold continues that plane, and projectile thresholds retain
 the world XY datum.
 
-`work/map-compile/derby-main-hall-mask-recovery` recovers eleven mask records,
+`work/needs-review/map-compile/derby-main-hall-mask-recovery` recovers eleven mask records,
 reducing Derby's pending count from 227 to 225. In the baseline export, the two
 added records reproduce all 4,692 and 23,708 covered pixels respectively, plus
 their character/projectile polylines and application flags. Rust constructs the
@@ -12992,7 +12992,7 @@ Offline recovery emits segments for sloped receivers, bounded by the receiving
 plane's heights over the source motion area's footprint. Flat receivers retain
 exact point anchors. Only local endpoint coordinates enter the asset definition.
 
-The refreshed Derby draft in `work/map-compile/derby-segment-light-recovery` now
+The refreshed Derby draft in `work/needs-review/map-compile/derby-segment-light-recovery` now
 allows the previously failing +1 X main-hall move. Both new masks preserve every
 covered pixel and shift their boundary rules exactly; the gallery light retains
 its complete shifted contour and ambience filter on the traversal layer. Baseline
@@ -13022,7 +13022,7 @@ GLBs and their saved model hashes must be regenerated together before publicatio
 
 ### Refreshed environmental field model libraries
 
-`work/map-compile/editor-field-model-library/<map>` now contains isolated refreshed
+`work/needs-review/map-compile/editor-field-model-library/<map>` now contains isolated refreshed
 libraries for all ten editor scenes. The refresh reads existing asset definitions,
 regenerates only their invisible field models with the corrected hierarchy, and
 updates model hashes in the saved scene. Descriptor bytes, gameplay definitions,
@@ -13036,8 +13036,8 @@ Sherwood 6, Croisement02 5 and Croisement03 6. Croisement01 and Wychford have no
 standalone fields to refresh. All ten saved scenes reopen with equivalent content;
 the comparison normalizes only absent versus empty resource lists. A fresh palette
 index is written for each scene's assets. The report is
-`work/map-compile/editor-field-model-library/refresh-report.json` and the local
-reproduction script is `work/map-compile/refresh-editor-field-models.mjs`.
+`work/needs-review/map-compile/editor-field-model-library/refresh-report.json` and the local
+reproduction script is `work/needs-review/map-compile/refresh-editor-field-models.mjs`.
 
 This resolves the generated-model hierarchy and pinning problem for these combined
 drafts. It does not publish the remaining recovered gameplay packets, refresh older
@@ -13046,7 +13046,7 @@ or establish an in-game ZIP round trip.
 
 ### Reopened scenes compile from embedded asset definitions
 
-`work/map-compile/embedded-gameplay-library/<map>` now embeds recovered gameplay in
+`work/needs-review/map-compile/embedded-gameplay-library/<map>` now embeds recovered gameplay in
 the actual asset descriptors for nine source-backed maps: Derby 69, Leicester 100,
 Lincoln 118, Nottingham 165, York 271, Sherwood 88, Croisement01 61, Croisement02 150
 and Croisement03 99. Scene descriptor hashes and palette entries are updated together.
@@ -13061,7 +13061,7 @@ current compiler. Eight outputs also match their preceding native JSON snapshots
 from the newer allocation logic; its refreshed comparison passes 10,298,961 lighting
 query evaluations on mapped common walkable coverage, with zero differences.
 
-Rust loads all nine exports in `work/map-compile/embedded-gameplay-native` and
+Rust loads all nine exports in `work/needs-review/map-compile/embedded-gameplay-native` and
 applies/resets all 56 compiled transitions. Full-scene compilation still rejects
 Derby, Leicester, Lincoln and Nottingham because of unsupported scene state
 transitions. York, Sherwood and the three crossings pass that compiler gate, but
@@ -13071,7 +13071,7 @@ Wychford's gameplay definitions remain separately unfinished.
 
 Each staged library contains `gameplay-staging-report.json` with the pending
 inventory, original review issues and full-scene compiler result. The local script
-`work/map-compile/stage-derby-gameplay-definitions.mjs <map>` reproduces the staging
+`work/needs-review/map-compile/stage-derby-gameplay-definitions.mjs <map>` reproduces the staging
 and comparisons. No pending items were waived and no map is marked published or
 fully playable at parity. Visual/depth state integration, gameplay publication and
 actual in-game ZIP round trips remain outstanding.
@@ -13098,9 +13098,9 @@ remain deferred because their supporting triangles change with an appearance
 state. Neither this batch nor native construction certifies full map parity.
 The recipe is `refinement/catalogs/leicester-masks.json`; recovery, appearance
 proofs and transaction backups are under
-`work/map-compile/keep-static-view-publication` and
-`work/map-compile/keep-static-view-state-proof.json`. The shared-reference repair
-backup is `work/map-compile/keep-static-view-scene-pin-repair`.
+`work/needs-review/map-compile/keep-static-view-publication` and
+`work/needs-review/map-compile/keep-static-view-state-proof.json`. The shared-reference repair
+backup is `work/needs-review/map-compile/keep-static-view-scene-pin-repair`.
 
 ### Published cottage, watermill and west-wing static masks
 
@@ -13129,12 +13129,12 @@ map parity remains unverified. Baseline and all three independently moved export
 pass native construction and mask verification. Fresh exports of all ten published
 maps also construct successfully, and all 56 switches apply and reset correctly.
 The fresh all-map descriptors are under
-`work/map-compile/published-receiver-mask-native`.
+`work/needs-review/map-compile/published-receiver-mask-native`.
 
 The recipe is `refinement/catalogs/leicester-masks.json`. State support evidence
-is `work/map-compile/leicester-static-mask-state-proof.json`; transaction snapshots
+is `work/needs-review/map-compile/leicester-static-mask-state-proof.json`; transaction snapshots
 and four baseline/independently moved native fixtures are under
-`work/map-compile/leicester-static-mask-publication`.
+`work/needs-review/map-compile/leicester-static-mask-publication`.
 
 ### Published southwest-bank and south-hall masks
 
@@ -13154,8 +13154,8 @@ four shared descriptor references changed in Leicester and Wychford, with no
 placement changes. The user ZIPs remain unchanged.
 
 Recipes are in `refinement/catalogs/leicester-masks.json`; recovery evidence is
-`work/map-compile/next-static-mask-review.json`, and publication snapshots plus
-native fixtures are under `work/map-compile/leicester-bank-hall-mask-publication`.
+`work/needs-review/map-compile/next-static-mask-review.json`, and publication snapshots plus
+native fixtures are under `work/needs-review/map-compile/leicester-bank-hall-mask-publication`.
 The southeast manor candidate remains deferred because its proposed receiving
 anchor did not pass the elevation check; no definition was published for it.
 
@@ -13178,8 +13178,8 @@ and user ZIPs remain unchanged. Full traversal, arbitrary rearrangements and
 rendered parity remain unverified.
 
 The recipes are in `refinement/catalogs/lincoln-masks.json`. Recovery evidence is
-`work/map-compile/lincoln-next-static-mask-review.json`; publication snapshots and
-native fixtures are under `work/map-compile/lincoln-static-mask-publication`.
+`work/needs-review/map-compile/lincoln-next-static-mask-review.json`; publication snapshots and
+native fixtures are under `work/needs-review/map-compile/lincoln-static-mask-publication`.
 The bailey cottage candidate 169 remains unpublished: mesh coverage passes, but
 the proposed receiving anchor is too far away to accept without further review.
 
@@ -13210,8 +13210,8 @@ authoring and runtime traversal verification remain required; simply increasing
 the matching tolerance could create ambiguous or invalid connections.
 
 Recipes are in `refinement/catalogs/york-masks.json`; recovery evidence is
-`work/map-compile/york-next-static-mask-review.json`. Publication snapshots and
-the nine native fixtures are under `work/map-compile/york-static-mask-publication`.
+`work/needs-review/map-compile/york-next-static-mask-review.json`. Publication snapshots and
+the nine native fixtures are under `work/needs-review/map-compile/york-static-mask-publication`.
 
 ### Lincoln gameplay after model republication
 
@@ -13224,7 +13224,7 @@ The compiler continues to read only saved editor placements and asset metadata.
 Models, placements and mission content are unchanged.
 
 Recovery and rollback evidence is in
-`work/map-compile/lincoln-republished-owned-recovery-20261004`. Native actor tests
+`work/needs-review/map-compile/lincoln-republished-owned-recovery-20261004`. Native actor tests
 pass all 16 stair routes and eight ladder/wall routes in both directions. The
 current scene exports 50 navigation layers and ten lifts instead of two layers
 and no lifts. These counts are coverage evidence, not full parity certification.
@@ -13233,7 +13233,7 @@ seven appearance bindings and 12 patches. One tower light receiver is omitted
 with a warning because its segment intersects multiple navigation surfaces.
 Ground receiver and visual-state coverage still need review in the revised assets.
 
-All ten current published scenes compile in `work/map-compile/stair-routing-9236w2`.
+All ten current published scenes compile in `work/needs-review/map-compile/stair-routing-9236w2`.
 The complete native navigation audit passes 19 tests, including 288 stair routes,
 84 ladder/wall routes and 6,220 receiving/ground crossings. It also retains the
 constructed rotation sweep. Lincoln contributes 24 receiving crossings; no ground
@@ -13252,7 +13252,7 @@ together across all assets: installing only the receiver-owning assets disconnec
 six lifts because neighboring assets retain incompatible exclusions.
 
 The published complete revision is in
-`work/map-compile/lincoln-republished-ground-recovery-20261004`; it has 39 layers
+`work/needs-review/map-compile/lincoln-republished-ground-recovery-20261004`; it has 39 layers
 and all ten lifts. Eight native tests pass, including all 24 Lincoln lift routes,
 six ground crossings and 32 other receiving crossings. Reopening the published
 document and compiling exclusively from its pinned assets reproduces the tested
@@ -13269,7 +13269,7 @@ enters the asset definition; the compiler still resolves the placed geometry and
 rejects missing or ambiguous receivers. Equal-height overlaps remain ambiguous.
 
 The updated tower definition is published. Evidence is under
-`work/map-compile/lincoln-bounded-light-recovery-20261004`. Baseline and a one-pixel
+`work/needs-review/map-compile/lincoln-bounded-light-recovery-20261004`. Baseline and a one-pixel
 independent tower move export all 33 light regions and ten lifts without omitted
 light warnings. Other baseline gameplay geometry is unchanged. Rust loads both
 exports and verifies all 33 light contours/layers for ambience masks 1, 2 and 4.
@@ -13289,7 +13289,7 @@ Conflicting control ownership and invalid coordinate conversions fail.
 Three Lincoln relationships are now published: great hall and slate spire,
 west slate tower and tower hall, and drawbridge mechanism and gatehouse appearance.
 The six asset definitions and scene pins were updated together. Evidence and rollback
-bytes are in `work/map-compile/lincoln-shared-appearances-l6H7Ry`. Native construction
+bytes are in `work/needs-review/map-compile/lincoln-shared-appearances-l6H7Ry`. Native construction
 passes with 62 movement areas, 546 sight obstacles, 86 doors and ten jump pairs;
 all nine compiled transitions apply and reset successfully. Authoring tests cover
 independent movement and conversion of rotated/elevated local control coordinates.
@@ -13314,14 +13314,14 @@ control, separately from the existing six-door rights control. Its gatehouse
 appearance is explicitly linked using local frames. Both asset definitions and
 scene pins are published. Baseline and a jointly moved bridge/gatehouse compile
 ten controls; native apply/reset passes all ten in both exports. Evidence and
-rollback files are under `work/map-compile/lincoln-bridge-state-hWz7IQ`.
+rollback files are under `work/needs-review/map-compile/lincoln-bridge-state-hWz7IQ`.
 
 Two appearance bindings remain unresolved on the west plateau and terrace.
 Animated lowering, mask coverage and rendered state changes remain unverified;
 the new control is not evidence that the complete bridge sequence has parity.
 
 A fresh library-wide authoring scan in
-`work/map-compile/sight-state-library-recovery-20261004` produced 1,045 schema-valid
+`work/needs-review/map-compile/sight-state-library-recovery-20261004` produced 1,045 schema-valid
 drafts across eight source-backed maps. Nottingham recovery stopped at a stale
 declared door-owner frame before this new recovery stage; Wychford has no source
 recovery by design. Those scan drafts were not published. This is an authoring
@@ -13336,7 +13336,7 @@ definitions and scene pins are published. The baseline now compiles in strict
 mode with all appearance bindings resolved, 11 controls, ten lifts and 33 lights.
 Native apply/reset passes all 11 controls for the baseline and jointly moved pair.
 
-Evidence and rollback files are in `work/map-compile/lincoln-plateau-state-gaTztD`.
+Evidence and rollback files are in `work/needs-review/map-compile/lincoln-plateau-state-gaTztD`.
 The one-pixel placement test retains all controls but uses best-effort export:
 an independent light-region anchor has no receiving floor after the supporting
 assets move. Its omission remains an explicit warning, not a passed lighting
@@ -13361,14 +13361,14 @@ to the arch asset instead of the courtyard floor. Asset-local coordinates were
 rebased without changing baseline exported door data; the arch appearance is
 bound to that control. Both descriptors and the saved-scene pins are published.
 The baseline and independent one-unit arch/floor moves pass native apply/reset
-for all nine controls (`work/map-compile/nottingham-gate-control-OiiIqc`). The
+for all nine controls (`work/needs-review/map-compile/nottingham-gate-control-OiiIqc`). The
 control moves with the arch only. Portcullis animation and east-tower appearance
 coverage remain unfinished.
 
 The default Nottingham authoring recipe also names the current dormer-house
 remainder instead of its pre-split asset. Its scan now completes with 165 valid
 drafts; explicit gateway ownership reduces pending appearance bindings from two
-to one (`work/map-compile/nottingham-gate-owner-recovery-20261004`). Other draft
+to one (`work/needs-review/map-compile/nottingham-gate-owner-recovery-20261004`). Other draft
 geometry was not published. Older mask/light coverage totals are not superseded
 by this scan, which did not supply the additional reviewed recovery recipes.
 
@@ -13379,14 +13379,14 @@ It retains the activation point at its receiving height and carries no movement,
 sight-obstacle or door-rights changes. Published baseline and one-unit tower-move
 exports have ten controls with no missing appearance-binding warnings; both pass
 native apply/reset. Reopening and compiling the published scene reproduces the
-tested baseline exactly (`work/map-compile/nottingham-tower-state-KurPT1`). These
+tested baseline exactly (`work/needs-review/map-compile/nottingham-tower-state-KurPT1`). These
 bindings complete the currently modeled Nottingham appearance controls, not the
 unrecovered masks, animation or rendered-state coverage.
 
 ### Full Lincoln archive and current control audit
 
 The full browser bake and Rust mod-loader check now pass for
-`work/map-compile/lincoln-plateau-state-gaTztD/editor-lincoln-current.zip`.
+`work/needs-review/map-compile/lincoln-plateau-state-gaTztD/editor-lincoln-current.zip`.
 The 152,115,399-byte ZIP includes the editable scene, color/depth/minimap and
 three appearance regions with 48 states. Without a base datadir, Rust constructs
 546 sight obstacles, 86 door projections and 69,920 grid blocks and validates
@@ -13395,7 +13395,7 @@ lifts and 33 light sectors, but zero explicit masks. This proves archive loading
 it does not prove mask coverage, animated effects or rendered gameplay parity.
 
 A fresh ten-scene export snapshot in
-`work/map-compile/published-controls-audit-20261004` passes native apply/reset for
+`work/needs-review/map-compile/published-controls-audit-20261004` passes native apply/reset for
 all 60 compiled controls. Wychford still omits 25 doors, 15 masks, five jumps,
 one lift and one control, and Derby/Leicester retain 98/203 unbound appearance-part warnings.
 These omissions prevent a full-parity claim even though the exports load.
@@ -13405,7 +13405,7 @@ These omissions prevent a full-parity claim even though the exports load.
 Two additional appearance-only controls are published for the keep hall and
 upper gatehouse. They retain asset-local activation geometry and receiving
 height. The baseline and independent one-unit moves pass native apply/reset for
-all four controls (`work/map-compile/derby-appearance-controls-lwHfaC`). The west
+all four controls (`work/needs-review/map-compile/derby-appearance-controls-lwHfaC`). The west
 tower's existing mask control remains intact. The remaining 43 appearance-part
 warnings belong to the east hall's unbound sight-state change; it requires its
 physical state semantics rather than another appearance-only control.
@@ -13415,13 +13415,13 @@ physical state semantics rather than another appearance-only control.
 Derby's east hall now switches one initial sight volume to eight applied volumes
 with its appearance. Its baseline navigation, doors and lifts remain unchanged;
 native apply/reset passes all five controls for the baseline and moved hall.
-The published scene matches `work/map-compile/derby-hall-sight-state-fWXBwB`.
+The published scene matches `work/needs-review/map-compile/derby-hall-sight-state-fWXBwB`.
 
 Leicester now has twelve baseline controls, including separate keep, moat-tower
 and west-wing sight changes. Three moat-reveal assets use explicit local contacts:
 joint translation retains twelve controls, while detaching the church-side tower
 produces thirteen independent controls. Native apply/reset passes all three
-fixtures in `work/map-compile/leicester-appearance-controls-MJmVl8`, and reopening
+fixtures in `work/needs-review/map-compile/leicester-appearance-controls-MJmVl8`, and reopening
 the published scene reproduces its tested baseline. Baseline navigation/doors/
 lifts are unchanged and no modeled appearance binding is missing in either map.
 
@@ -13441,7 +13441,7 @@ not be described as 47 missing controls or assemblies.
 Profiling showed terrain generation repeated during fallback retries. Compilation
 now reuses terrain within one export, rebuilding it for every subsequent export.
 The descriptor and all warnings are byte-identical before and after this change
-(`work/map-compile/wychford-control-audit-JQmg56` and `wychford-control-audit-SHbyM9`).
+(`work/needs-review/map-compile/wychford-control-audit-JQmg56` and `wychford-control-audit-SHbyM9`).
 Observed compile time dropped from 128.75 to 77.84 seconds, with profiling enabled
 only for the baseline. This preserves exact geometry and does not repair the
 reported placement gaps. Compiler and authored-terrain suites pass 120 tests.

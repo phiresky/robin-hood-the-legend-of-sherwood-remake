@@ -20,7 +20,7 @@ sys.path.insert(0, str(HERE))
 import south_gate_walls_assets as A  # noqa: E402
 
 ROOT = HERE.parents[2]
-R = ROOT / 'level-editor/work/lincoln-refinement'
+R = ROOT / 'level-editor/work/needs-review/lincoln-refinement'
 WS = R / os.environ.get('SOUTH_GATE_ROUND', 'round-1') / 'assets/lincoln-south-gate-drawbridge'
 BOX = (1000, 1740, 1240, 2000)
 SCALE = 3

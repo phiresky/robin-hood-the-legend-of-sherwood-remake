@@ -75,7 +75,7 @@ const parts = selected.map((part) => {
     }),
   };
 });
-const output = await fs.mkdtemp("work/map-compile/climb-mesh-audit-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/climb-mesh-audit-");
 await fs.writeFile(`${output}/report.json`, JSON.stringify({
   scope: "mesh-plane-alignment-only-not-contact-or-traversal-certification",
   asset, lift: liftId, nodePattern, reference,

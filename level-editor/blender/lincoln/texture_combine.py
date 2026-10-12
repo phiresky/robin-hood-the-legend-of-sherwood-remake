@@ -39,7 +39,7 @@ import sys
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[3]
-TEXTURES = ROOT / 'level-editor/work/lincoln-refinement/textures'
+TEXTURES = ROOT / 'level-editor/work/needs-review/lincoln-refinement/textures'
 GENERATION = 'generation-short-no-mask-with-lighting-openrouter'
 VIEW_MIN_COSINE = 0.05  # Match the global reprojection's grazing floor (--grazing-cosine 0.05).
 GRAZING_RESET = 3  # global_reproject fill-mask value: bake source texel reset below its grazing floor.

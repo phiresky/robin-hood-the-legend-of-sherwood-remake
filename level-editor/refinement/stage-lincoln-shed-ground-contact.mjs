@@ -108,7 +108,7 @@ for (let along = 0; along <= 40; along++)
 const supported = samples.every((sample) =>
   sample.hits.some((height) => Math.abs(height - z) < 0.06),
 );
-const output = await fs.mkdtemp("work/map-compile/lincoln-shed-ground-contact-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/lincoln-shed-ground-contact-");
 await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify(

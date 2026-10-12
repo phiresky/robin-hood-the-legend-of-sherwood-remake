@@ -460,7 +460,7 @@ unresolved, including supporting-wall contacts. No runtime changes were needed.
 Contact warnings now identify the placed asset part/volume, directed edge and
 affected percentage ranges. Repeated hits are merged per blocker/direction;
 copied instances retain distinct identities. Fresh hall/walkway diagnostics
-are in `work/map-compile/hall-walkway-connection-AmwMS8`, with unchanged gameplay
+are in `work/needs-review/map-compile/hall-walkway-connection-AmwMS8`, with unchanged gameplay
 geometry. These are conservative clearance contacts, not a certification that
 the rendered character intersects each named part.
 
@@ -932,8 +932,8 @@ was reproduced in actor ticks and corrected by checking the exact emitted segmen
 when smoothing a route; shortened endpoints could incorrectly clear a corner.
 The actor now completes that route both ways with per-tick collision and height
 checks. This is focused navigation evidence, not full Wychford gameplay certification.
-Current graph evidence: `work/map-compile/wychford-graph-final-iaAtSp`, regenerated
-from the complete scene export `work/map-compile/saved-map-exports-f0f5B4`.
+Current graph evidence: `work/needs-review/map-compile/wychford-graph-final-iaAtSp`, regenerated
+from the complete scene export `work/needs-review/map-compile/saved-map-exports-f0f5B4`.
 This supersedes earlier Wychford navigation claims below.
 
 **Full parity is not yet verified.** “Tested” below describes specific evidence,
@@ -956,8 +956,8 @@ The roof placement audit accepts `--crouched`; the eight resulting descriptors
 match the upright control exactly apart from area flags. Native sprite landing,
 walk-jump-walk and player-click routing each pass 120 cases across two copies,
 0/37/180-degree rotations and 0/40 height offsets, checking the destination's
-crouched posture. Evidence: `work/map-compile/prepared-crouched-roof-placements-8A1PvE`;
-upright control: `work/map-compile/prepared-roof-placements-ntgG7I`.
+crouched posture. Evidence: `work/needs-review/map-compile/prepared-crouched-roof-placements-8A1PvE`;
+upright control: `work/needs-review/map-compile/prepared-roof-placements-ntgG7I`.
 Both variants omit the 90-degree jump pairs because no character-sized receiving
 span remains; those omitted connections are not covered by the passing audit.
 The narrow roof's projected width is at most 7.21 along the level ledge normal,
@@ -971,12 +971,12 @@ The synthetic copied curved rising deck audit also accepts `--crouched` with
 all 16 diagnostic ZIPs reopen and recompile identically at 0/37/90/180 degrees
 and deck elevations 40/80. Native construction passes 384 collision probes and
 192 bounded routes, retaining independent deck sectors and upright ground.
-Evidence: `work/map-compile/spline-clearance-planes-B3ktkm`. These ZIPs use blank
+Evidence: `work/needs-review/map-compile/spline-clearance-planes-B3ktkm`. These ZIPs use blank
 diagnostic rasters, so this does not certify rendered appearance. The first
-zero-rotation batch (`work/map-compile/spline-clearance-planes-FTFRiO`) passes
+zero-rotation batch (`work/needs-review/map-compile/spline-clearance-planes-FTFRiO`) passes
 48 complete sprite crossings and subsequent crouched waiting transitions,
 checking collision, receiving floor, height and no movement while crouching.
-The corresponding upright control (`work/map-compile/spline-clearance-planes-vq1qHO`)
+The corresponding upright control (`work/needs-review/map-compile/spline-clearance-planes-vq1qHO`)
 passes all 48 crossings and remains upright when waiting under the same audit.
 The full rotated batch passes all 192 complete sprite crossings and crouched
 waiting transitions under the same collision, receiver, height and stationary
@@ -994,7 +994,7 @@ trips: two independent copies at 0/37/90/180 degrees, elevations 40/80 and clear
 split or fully blocked seams. Native player routes from the extracted descriptors
 pass all 96 directed crossings, checking completion, corridor adherence, sector,
 height and destination posture; eight blocked cases retain zero doors. Evidence:
-`work/map-compile/posture-passages-DlAdIG/actor-posture-report.json`. Blank diagnostic
+`work/needs-review/map-compile/posture-passages-DlAdIG/actor-posture-report.json`. Blank diagnostic
 rasters do not verify rendered appearance. A rotated opening clipped by an earlier
 test frame was correctly omitted; the final audit asserts that no case is clipped.
 Ordinary standalone doors now export obstacle-state requirements for both
@@ -1022,7 +1022,7 @@ editable ZIP round trips at 0/37/90/180 degrees and floor elevations 40/80.
 Native player movement passes all 32 directed crossings after opening the
 relevant asset control, checking independent copied availability, corridor
 adherence, final posture, height and sector. Evidence:
-`work/map-compile/closed-posture-passages-OuSqkE/actor-posture-report.json`.
+`work/needs-review/map-compile/closed-posture-passages-OuSqkE/actor-posture-report.json`.
 Solid-barrier closure during these posture-changing crossings passes 32 native
 cases across the same eight ZIPs, both copies and both directions. The audit
 opens the reversible control, starts a full-sprite player crossing, then operates
@@ -1031,7 +1031,7 @@ barrier overlaps the actor, blocks the passage and marks the actor unreachable
 for crushing without changing the other copy's passage availability. A forced
 patch reset is deliberately not used: it restores state without actor
 invalidation/damage. Evidence:
-`work/map-compile/closed-posture-passages-OuSqkE/actor-posture-crushing-report.json`;
+`work/needs-review/map-compile/closed-posture-passages-OuSqkE/actor-posture-crushing-report.json`;
 reproduce with `exported_posture_barriers_crush_overlapping_crossings` and the
 same diagnostics/sprite environment as the crossing audit. This checks damage
 dispatch eligibility, not the death animation or final health. Non-overlapping
@@ -1051,7 +1051,7 @@ Native player routes pass all 64 directed full-character crossings, including
 the initially usable and switched openings, with the expected corridor,
 destination posture, height and sector. Changing one copy leaves the other
 copy's availability unchanged. Evidence:
-`work/map-compile/alternating-posture-passages-XgD0Q0/actor-posture-report.json`.
+`work/needs-review/map-compile/alternating-posture-passages-XgD0Q0/actor-posture-report.json`.
 The same eight ZIP-extracted descriptors also pass 64 three-PC group clicks
 (192 actor crossings) through both copies, in both directions and both obstacle
 states. Normal player dispatch selects the routes and authorizes formation
@@ -1062,7 +1062,7 @@ authorization can move individual slots. This does not certify collision between
 actors during traversal, mid-crossing state changes, or rendering. Reproduce
 with `exported_posture_openings_support_player_formations`, using the same
 diagnostics directory and character sprite as the single-PC audit; evidence:
-`work/map-compile/alternating-posture-passages-XgD0Q0/actor-formation-report.json`.
+`work/needs-review/map-compile/alternating-posture-passages-XgD0Q0/actor-formation-report.json`.
 Virtual-room entrances now prepare their outdoor leg against the outdoor area's
 state word and retained permanent cuts; the virtual interior has no motion-area
 state word. Compiler and ZIP checks cover permanent blocking and warning output,
@@ -1087,14 +1087,14 @@ that the actor's footprint remains authorized. An earlier closer barrier at
 180 degrees overlapped the actor after its first animation step; a separate
 native regression verifies the resulting unreachable flag. The safe-closure
 audit moves that barrier four asset-local units along the approach. Evidence:
-`work/map-compile/building-passages-5BWPJQ/actor-building-report.json`.
+`work/needs-review/map-compile/building-passages-5BWPJQ/actor-building-report.json`.
 Blank diagnostic rasters do not certify rendered appearance. A separate native
 player-click audit now passes 48 cases from the same eight ZIP descriptors:
 screen selection identifies the intended door in each copy; 16 blocked clicks
 leave the actor outside, while 32 initially open or reopened clicks leave it
 settled in the correct virtual room and layer. No gate path or selected-sector
 override is supplied. Evidence:
-`work/map-compile/building-passages-5BWPJQ/actor-building-click-report.json`.
+`work/needs-review/map-compile/building-passages-5BWPJQ/actor-building-click-report.json`.
 The same audit now also passes 32 outdoor player-click exits, including 16 after
 reopening. Sixteen blocked-exit checks keep the actor in its virtual room for
 600 ticks; reopening then completes exit with the correct position, layer,
@@ -1106,8 +1106,8 @@ and passes the same eight ZIP/reopen round trips, 16 native control round trips,
 96 mid-crossing closure cases, 48 player entry checks, 32 exits and 16 blocked
 exits. Full character animations exercise the native trap endpoint adaptation;
 no runtime changes are required. Evidence:
-`work/map-compile/building-trap-passages-ZkktWx/actor-building-report.json` and
-`work/map-compile/building-trap-passages-ZkktWx/actor-building-click-report.json`.
+`work/needs-review/map-compile/building-trap-passages-ZkktWx/actor-building-report.json` and
+`work/needs-review/map-compile/building-trap-passages-ZkktWx/actor-building-click-report.json`.
 Multiple actors, NPC trap restrictions and broader lock/permission
 interactions still need coverage. Changing mixed-posture passages
 and regions without explicit sockets still need broader coverage. This is not full crouch-area
@@ -1471,7 +1471,7 @@ offset. The surface needs mesh-based reauthoring as well as actor-sized route
 validation; relaxing endpoint checks alone would not establish usable climbing.
 These measurements are alignment diagnostics, not traversal certification.
 Reproduce from `level-editor` with
-`node refinement/audit-climb-mesh.mjs sherwood-ladder-oak-platform gameplay-volume-101-lift rung work/map-compile/three-door-oak-oBXE0a`.
+`node refinement/audit-climb-mesh.mjs sherwood-ladder-oak-platform gameplay-volume-101-lift rung work/needs-review/map-compile/three-door-oak-oBXE0a`.
 The helper accepts other assets, lift IDs and mesh-node patterns and records
 descriptor/model/staged-data hashes in its report.
 

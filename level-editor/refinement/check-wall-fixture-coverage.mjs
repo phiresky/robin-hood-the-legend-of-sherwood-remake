@@ -5,7 +5,7 @@ import { compileMap } from "../app/src/map-compile.ts";
 import { wallSplineFixture, wallMaterialFixture, wallAutomaticLightFixture } from "../shared/test-fixtures/wall-spline.ts";
 const require = createRequire(new URL("../shared/package.json", import.meta.url));
 const clipping = require("polygon-clipping");
-const output = await fs.mkdtemp("work/map-compile/wall-fixture-coverage-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/wall-fixture-coverage-");
 const reports = [];
 const canonical = (value) => JSON.stringify(value, (_, v) =>
   v && typeof v === "object" && !Array.isArray(v)

@@ -5,7 +5,7 @@ prediction or geometry edit. Run through Blender with `--background --threads 2
 --python level-editor/blender/leicester/keep_texture_revision.py --` followed by
 one of the commands below. Output directories must be fresh.
 
-The frozen experiments under `level-editor/work/leicester-refinement/round-1/textures`
+The frozen experiments under `level-editor/work/needs-review/leicester-refinement/round-1/textures`
 are `leicester-great-keep-approved-wave2-v1` (A) and
 `leicester-great-keep-revealed-approved-wave2-v1` (B). Their cached generation is
 `generation-short-no-mask-with-lighting/generated-preserved.png`.

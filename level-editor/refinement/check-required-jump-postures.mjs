@@ -9,7 +9,7 @@ const [directory] = process.argv.slice(2).filter((argument) => argument !== "--r
 assert.ok(directory, "Supply a completed saved-map export directory");
 const manifest = JSON.parse(await fs.readFile(path.join(directory, "diagnostics.json")));
 assert.equal(manifest.complete, true);
-const output = await fs.mkdtemp("work/map-compile/required-jump-postures-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/required-jump-postures-");
 const results = [];
 for (const result of manifest.results) {
   const bytes = await fs.readFile(path.join(directory, result.file));

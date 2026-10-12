@@ -16,7 +16,7 @@ const links = ["3d-assets", "game-data", "population"];
 for (const name of links) {
   assert.ok((await fs.stat(path.join(library, name))).isDirectory(), `Missing library ${name}`);
 }
-const output = await fs.mkdtemp(`work/map-compile/${map}-rendered-library-`);
+const output = await fs.mkdtemp(`work/needs-review/map-compile/${map}-rendered-library-`);
 await fs.mkdir(path.join(output, "scenes"));
 await fs.writeFile(path.join(output, "scenes", filename), bytes);
 for (const name of links) await fs.symlink(path.join(library, name), path.join(output, name));

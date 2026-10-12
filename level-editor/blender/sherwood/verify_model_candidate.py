@@ -15,7 +15,7 @@ from stage_grouping_review import fingerprint,sha
 root=Path(sys.argv[sys.argv.index('--')+1]).resolve()
 stage=json.loads((root/'stage.json').read_text())
 assert sha(root/'candidate.blend')==stage['worker_sha256']
-baseline=EDITOR/'work/sherwood-refinement/grouping-review/grouped-source-only.blend'
+baseline=EDITOR/'work/needs-review/sherwood-refinement/grouping-review/grouped-source-only.blend'
 assert sha(baseline)==stage['baseline_worker_sha256']
 assert sha(root/'native-volume.npz')==stage['source_geometry']['geometry_npz_sha256']
 bpy.ops.wm.open_mainfile(filepath=str(baseline))

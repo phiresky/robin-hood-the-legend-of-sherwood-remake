@@ -106,7 +106,7 @@ def sprite_mesh(name, image, bbox, plane_y, depth):
     """
     import numpy as np
     from PIL import Image
-    path = Path(__file__).resolve().parents[2] / 'work/lincoln-refinement/source-states' / image
+    path = Path(__file__).resolve().parents[2] / 'work/needs-review/lincoln-refinement/source-states' / image
     alpha = np.asarray(Image.open(path).convert('RGBA'))[:, :, 3] > 127
     left, top, width, height = bbox
     if alpha.shape != (height, width) or not alpha.any():

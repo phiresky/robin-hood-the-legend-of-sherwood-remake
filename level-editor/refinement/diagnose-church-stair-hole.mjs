@@ -9,7 +9,7 @@ diagnostics.results = diagnostics.results.filter(
   (entry) => entry.file === "leicester-church-side-tower-0-0.level.json",
 );
 assert.equal(diagnostics.results.length, 1);
-const output = await fs.mkdtemp("work/map-compile/church-hole-ablation-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/church-hole-ablation-");
 for (const entry of diagnostics.results) {
   const descriptor = JSON.parse(await fs.readFile(`${source}/${entry.file}`, "utf8"));
   assert.ok(entry.file.startsWith("leicester-church-side-tower-"));

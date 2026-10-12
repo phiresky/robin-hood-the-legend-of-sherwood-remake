@@ -22,7 +22,7 @@ validateAssetGameplay(gameplay, descriptor);
 const bytes = await fs.readFile(`library/${source.descriptor}`);
 const digest = createHash("sha256").update(bytes).digest("hex");
 assert.equal(digest, source.descriptor_sha256);
-const output = await fs.mkdtemp("work/map-compile/surface-receiver-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/surface-receiver-");
 await fs.writeFile(
   `${output}/edits.json`,
   JSON.stringify([{ asset, descriptorSha256: digest, modelSha256: source.model_sha256, gameplay }]),

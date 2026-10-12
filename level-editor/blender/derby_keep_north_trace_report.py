@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 from PIL import Image, ImageDraw
 ROOT=Path(__file__).resolve().parents[2]
-N=ROOT/'level-editor/work/derby-refinement/round-2/assets/derby-great-keep/component-followups/north'
+N=ROOT/'level-editor/work/needs-review/derby-refinement/round-2/assets/derby-great-keep/component-followups/north'
 OUT=N/'pixel-trace-v4'
 data=json.loads((OUT/'trace.json').read_text())
 source=Image.open(N/'approval-final/context.png').convert('RGB')

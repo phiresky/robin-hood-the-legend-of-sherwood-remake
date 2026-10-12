@@ -75,7 +75,7 @@ class MeshBuilder:
                 uv.data[i].uv=sum((values[j]*weights[j] for j in range(3)),Vector((0,0)))
         # Small source donors provide wood/interior fallback for newly exposed
         # surfaces. Visible faces subsequently receive visibility-aware projection.
-        image_path=Path(__file__).resolve().parents[1]/'work/derby-refinement/interior-layers/covered.png'
+        image_path=Path(__file__).resolve().parents[1]/'work/needs-review/derby-refinement/interior-layers/covered.png'
         image=bpy.data.images.load(str(image_path),check_existing=True);image.pack()
         width,height=image.size
         sampled=mesh.uv_layers.new(name='Covered well donor')

@@ -17,7 +17,7 @@ for (const edit of edits) {
   );
   assets.get(edit.asset).gameplay = edit.gameplay;
 }
-const output = await fs.mkdtemp("work/map-compile/york-component-exports-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-component-exports-");
 console.log(output);
 const results = [];
 const report = (complete) =>

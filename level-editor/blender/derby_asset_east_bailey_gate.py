@@ -63,7 +63,7 @@ def _roof_fallback(obj):
     name = "East Bailey gate / concealed roof tile donor"
     material = bpy.data.materials.get(name)
     if material is None:
-        path = Path(__file__).resolve().parent.parent / "work/derby-refinement/interior-layers/covered.png"
+        path = Path(__file__).resolve().parent.parent / "work/needs-review/derby-refinement/interior-layers/covered.png"
         source = bpy.data.images.load(str(path), check_existing=True)
         width, height = source.size
         x, y, size = 1150, height - 1500 - 16, 16

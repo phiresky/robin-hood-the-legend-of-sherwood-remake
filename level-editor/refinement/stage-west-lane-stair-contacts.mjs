@@ -110,7 +110,7 @@ for (const contact of [
     gameplay,
   });
 }
-const output = await fs.mkdtemp("work/map-compile/west-lane-stair-contacts-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/west-lane-stair-contacts-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/review.json`, JSON.stringify({ stage, changes }));
 console.log(JSON.stringify({ output, changes }));

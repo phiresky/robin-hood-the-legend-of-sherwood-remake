@@ -12,7 +12,7 @@ JavaScript is formatted with the workspace formatter and excluded from lint.
 The scalar benchmark build remains available for comparison.
 
 From the repository root, after checking out the pinned upstream revision under
-`level-editor/work/bc7f-benchmark/basis_universal`:
+`level-editor/work/needs-review/bc7f-benchmark/basis_universal`:
 
 ```sh
 BC7F_APP=1 BC7F_SIMD=1 bash level-editor/benchmarks/bc7f/build.sh

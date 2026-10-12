@@ -25,7 +25,7 @@ from mathutils import Vector
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-ROOT = HERE.parents[1] / 'work/lincoln-refinement'
+ROOT = HERE.parents[1] / 'work/needs-review/lincoln-refinement'
 TOOLING = ROOT / 'tooling/e6b57cb851c7142b'
 COS = math.cos(math.radians(35))
 TAG = 'lincoln_great_hall_recipe'

@@ -38,7 +38,7 @@ for (const [side, edge] of pair.edges.entries()) {
   edge.b = [center[0] + 1.5 * direction[0] * sign, center[1] + 1.5 * direction[1] * sign, height];
 }
 validateAssetGameplay(gameplay, asset);
-const output = await fs.mkdtemp("work/map-compile/york-lane-level-jump-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-lane-level-jump-");
 await fs.writeFile(
   `${output}/edits.json`,
   JSON.stringify([

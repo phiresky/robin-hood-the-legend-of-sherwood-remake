@@ -19,7 +19,7 @@ const clipping = createRequire(new URL("../shared/package.json", import.meta.url
 const [directory, stage] = process.argv.slice(2);
 assert.ok(directory && stage, "Usage: check-stair-landing-support.mjs EXPORTS STAGE");
 const output = process.argv.includes("--prepare")
-  ? await fs.mkdtemp("work/map-compile/joined-stair-support-diagnostic-")
+  ? await fs.mkdtemp("work/needs-review/map-compile/joined-stair-support-diagnostic-")
   : undefined;
 const manifest = JSON.parse(await fs.readFile(`${directory}/diagnostics.json`, "utf8"));
 assert.equal(manifest.complete, true);

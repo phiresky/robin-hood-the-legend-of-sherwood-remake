@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 from build_mask_review import bitmap, digest, INVENTORY, SOURCE, EDITOR
 
-ROOT=EDITOR/'work/sherwood-refinement/textures/native-mask-audit/authored-domains'
+ROOT=EDITOR/'work/needs-review/sherwood-refinement/textures/native-mask-audit/authored-domains'
 SPEC=Path(__file__).with_name('source-domain-partitions.json')
 
 def main():

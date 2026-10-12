@@ -9,7 +9,7 @@ const [source] = process.argv.slice(2);
 assert.ok(source);
 const manifest = JSON.parse(await fs.readFile(`${source}/diagnostics.json`));
 assert.equal(manifest.complete, true);
-const output = await fs.mkdtemp("work/map-compile/hall-ordinary-approach-diagnostic-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/hall-ordinary-approach-diagnostic-");
 for (const entry of manifest.results) {
   const descriptor = JSON.parse(await fs.readFile(`${source}/${entry.file}`));
   const geometry = descriptor.asset_geometry;

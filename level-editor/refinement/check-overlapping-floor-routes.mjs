@@ -25,7 +25,7 @@ const loopFloor = process.argv.includes("--loop");
 assert.ok(!loopFloor || (!middleFloor && !underDeck), "Loop audits use a separate assembly");
 assert.ok(!middleFloor || !underDeck, "Middle-floor and under-deck audits use separate assemblies");
 const output = await fs.mkdtemp(
-  `work/map-compile/${underDeck ? "under-deck" : "overlapping-floor"}-routes-`,
+  `work/needs-review/map-compile/${underDeck ? "under-deck" : "overlapping-floor"}-routes-`,
 );
 console.log(output);
 const results = [];

@@ -5,7 +5,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import sharp from "sharp";
 import { snapFloatingParts, type MapCamera, type SceneDoc } from "@rle/shared";
-import { libraryDir, workDir, loadEnvironment } from "./env.ts";
+import { libraryDir, mapWorkRoot, loadEnvironment } from "./env.ts";
 import { findMapPng, loadProtoLevel, mapImageSource } from "./asset-writer.ts";
 import { fitMapCamera } from "./map-camera.ts";
 import { buildGeometry, footprintArea, TERRACE_AREA, type Geometry } from "./volume-geometry.ts";
@@ -71,7 +71,7 @@ export async function reconstruct(
   opts: ReconstructOptions = {},
 ): Promise<Reconstruction> {
   pathComponent(map, "map");
-  const textures = synthesisOptions(opts.textures);
+  const textures = synthesisOptions({ workDirectory: mapWorkRoot(map), ...opts.textures });
   const synthBinary = textures.synthBinary;
   let fill: Fill = opts.fill ?? "synth";
   if (!["proc", "synth", "smear", "none"].includes(fill)) throw new Error(`unknown fill ${fill}`);
@@ -190,7 +190,7 @@ async function main() {
 
   await fs.mkdir(outDir, { recursive: true });
   const stem = `${map.toLowerCase()}-volumes${fill === "none" ? "-holes" : fill === "synth" ? "" : `-${fill}`}`;
-  const glbFile = path.join(workDir, `${map.toLowerCase()}-scene`, `${stem}.scene.glb`);
+  const glbFile = path.join(mapWorkRoot(map), `${map.toLowerCase()}-scene`, `${stem}.scene.glb`);
   await fs.mkdir(path.dirname(glbFile), { recursive: true });
   await exportGlb(glbFile, g, tex, cam, size, fill);
   const doc: SceneDoc = {
@@ -220,7 +220,7 @@ async function main() {
   await fs.writeFile(documentFile, JSON.stringify(converted.document, null, 2) + "\n");
   console.log(`wrote ${documentFile} (${converted.report.verified_assets} library assets)`);
   const atlasOut = path.join(
-    workDir,
+    mapWorkRoot(map),
     `${map.toLowerCase()}-scene`,
     `${stem.slice(map.length + 1)}-atlas.${fill === "none" ? "png" : "jpg"}`,
   );

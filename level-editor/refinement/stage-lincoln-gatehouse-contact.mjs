@@ -115,7 +115,7 @@ edits.push({
   gameplay,
 });
 for (const edit of edits) assets.get(edit.asset).gameplay = edit.gameplay;
-const output = await fs.mkdtemp("work/map-compile/lincoln-gatehouse-contact-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/lincoln-gatehouse-contact-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(
   `${output}/review.json`,

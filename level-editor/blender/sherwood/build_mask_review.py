@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 EDITOR = Path(__file__).resolve().parents[2]
 RECIPE = Path(__file__).with_name('source-mask-candidates.json')
-ROOT = EDITOR/'work/sherwood-refinement/textures/native-mask-audit/assignments'
+ROOT = EDITOR/'work/needs-review/sherwood-refinement/textures/native-mask-audit/assignments'
 INVENTORY = EDITOR.parent/'datadirs/fullgame_gog_hackable/Data/Levels/Sherwood.rhp.d/masks/manifest.json'
 SOURCE = EDITOR.parent/'datadirs/fullgame_gog_hackable/Data/Levels/Day/sherwood.map.png'
 

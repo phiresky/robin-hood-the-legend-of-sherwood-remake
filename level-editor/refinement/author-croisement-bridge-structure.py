@@ -203,7 +203,7 @@ for face_ids in sorted(groups.values(), key=min):
                        'convexCaps': len(caps),
                        'meshVolume': mesh_volume, 'recoveredVolume': recovered_volume})
 
-output = Path('work/map-compile/croisement-bridge-structure.json')
+output = Path('work/needs-review/map-compile/croisement-bridge-structure.json')
 output.write_text(json.dumps({'modelSha256': hashlib.sha256(data).hexdigest(),
                               'components': components, 'pieces': pieces, 'rayProbes': ray_probes}))
 print(json.dumps({'output': str(output), 'components': len(components), 'pieces': len(pieces),

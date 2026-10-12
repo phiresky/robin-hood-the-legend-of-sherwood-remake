@@ -1,7 +1,7 @@
 """Collect verified Nottingham worker packets without granting approval.
 
 Run with Python, after workers produce packets. Defaults target
-work/nottingham-refinement/{grouping/catalog-v15.json,round-1/assets,gallery}.
+work/needs-review/nottingham-refinement/{grouping/catalog-v15.json,round-1/assets,gallery}.
 Workers provide candidate.json with version, asset_id, geometry_refined, status,
 inspected_views, recipe, model_sha256, modified_views_sha256, changes, limitations.
 Ready candidates also require review.md and all eight visually inspected views.
@@ -155,7 +155,7 @@ def state_bundle_hash(state_records, complete_contracts=None):
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
-ORIGINAL_HALL_STATE_MANIFEST = Path(__file__).resolve().parents[3] / 'level-editor/work/nottingham-refinement/round-42/assets/nottingham-castle-main-hall/inspection/state-models/manifest.json'
+ORIGINAL_HALL_STATE_MANIFEST = Path(__file__).resolve().parents[3] / 'level-editor/work/needs-review/nottingham-refinement/round-42/assets/nottingham-castle-main-hall/inspection/state-models/manifest.json'
 
 
 def complete_state_records(workspace, config, manifest, available, framing):
@@ -576,7 +576,7 @@ def supplemental_packet(directory, asset_id, framing, *, mask_origin=None):
 
 
 def main(argv=None):
-    root = Path(__file__).resolve().parents[2] / "work/nottingham-refinement"
+    root = Path(__file__).resolve().parents[2] / "work/needs-review/nottingham-refinement"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog", type=Path, default=root / "grouping/catalog-v15.json")
     parser.add_argument("--assets", type=Path, default=root / "round-1/assets")

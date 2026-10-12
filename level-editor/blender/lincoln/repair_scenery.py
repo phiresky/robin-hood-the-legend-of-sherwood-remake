@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/lincoln-refinement'
+WORK = ROOT / 'level-editor/work/needs-review/lincoln-refinement'
 SELECTED = ('lincoln-bush-west-tower-northwest', 'lincoln-bush-north-curtain-west',
             'lincoln-village-pond-landing-stage')
 # Traced on covered.png: the tiled roof below the western bush, and the keep

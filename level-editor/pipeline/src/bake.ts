@@ -34,7 +34,7 @@ import {
   type MapCamera,
   type SightObstacle,
 } from "@rle/shared";
-import { libraryDir, workDir, datadirPath, loadEnvironment } from "./env.ts";
+import { libraryDir, mapWorkRoot, datadirPath, loadEnvironment } from "./env.ts";
 import type { MeshData } from "./mesh.ts";
 import { mapView, render } from "./render.ts";
 import { groundToScene } from "@rle/shared";
@@ -170,7 +170,7 @@ export function assertReconstructedBakeSources(document: unknown): void {
 export async function bake(options: BakeOptions): Promise<void> {
   const map = pathComponent(options.map, "map");
   const ambiance = pathComponent(options.ambiance ?? "Day", "ambiance");
-  const outDir = options.output ?? path.join(workDir, `${map.toLowerCase()}-bake`);
+  const outDir = options.output ?? path.join(mapWorkRoot(map), `${map.toLowerCase()}-bake`);
   const docPath =
     options.document ?? path.join(libraryDir, "scenes", `${map.toLowerCase()}.rhlos-map.json`);
   const input = await readDocument(docPath, options.document !== undefined);

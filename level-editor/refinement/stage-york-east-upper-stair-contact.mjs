@@ -87,7 +87,7 @@ edits.push({
   descriptorSha256: index.find((entry) => entry.id === id).descriptor_sha256,
   gameplay,
 });
-const output = await fs.mkdtemp("work/map-compile/york-east-upper-stair-contact-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-east-upper-stair-contact-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/review.json`, JSON.stringify({ stage, changes }));
 for (const edit of edits) assets.get(edit.asset).gameplay = edit.gameplay;

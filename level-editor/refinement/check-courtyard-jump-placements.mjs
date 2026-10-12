@@ -44,7 +44,7 @@ const source = {
   assetSources: saved.assetSources.filter((entry) => ids.includes(entry.id)),
   sceneAssets: [],
 };
-const output = await fs.mkdtemp("work/map-compile/courtyard-jump-placements-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/courtyard-jump-placements-");
 console.log(output);
 const results = [];
 const save = (complete) =>

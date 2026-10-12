@@ -152,7 +152,7 @@ for (let along = 0; along <= 40; along++)
       .filter((height) => height !== undefined);
     samples.push({ point, hits, receivingEdgeDistance, stairHits });
   }
-const output = await fs.mkdtemp("work/map-compile/lower-west-stair-landing-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/lower-west-stair-landing-");
 const supported = samples.every((sample) => sample.hits.some((z) => Math.abs(z - height) < 0.1));
 const accepted = samples.every(
   (sample) =>

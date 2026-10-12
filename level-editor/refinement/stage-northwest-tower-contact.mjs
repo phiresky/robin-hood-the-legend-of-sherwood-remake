@@ -98,7 +98,7 @@ for (let along = 0; along <= 40; along++)
         );
     samples.push({ point, hits, uncoveredDistance });
   }
-const output = await fs.mkdtemp("work/map-compile/northwest-tower-contact-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/northwest-tower-contact-");
 const maximumUncoveredDistance = Math.max(...samples.map((s) => s.uncoveredDistance));
 // Explicit authoring review bound; this does not relax runtime floor matching.
 const supported = maximumUncoveredDistance <= 0.25;

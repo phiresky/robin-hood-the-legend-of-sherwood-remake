@@ -27,7 +27,7 @@ for (const edit of edits) {
     assets.get(edit.asset).gameplay = edit.gameplay;
   }
 }
-const output = await fs.mkdtemp("work/map-compile/church-terrace-placements-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/church-terrace-placements-");
 const results = [];
 const disconnected = [];
 for (const elevation of [0, 40])

@@ -1,7 +1,7 @@
 {
-  "baseline": "level-editor/work/derby-refinement/round-2/publication-11-south-curtain/worker.blend",
+  "baseline": "level-editor/work/needs-review/derby-refinement/round-2/publication-11-south-curtain/worker.blend",
   "baseline_sha256": "29a4125118f8bb631b7002acbcc7962ed9db64c54167d817460e3ccb7d495a9c",
-  "output": "level-editor/work/derby-refinement/round-2/publication-12-approved-recovery",
+  "output": "level-editor/work/needs-review/derby-refinement/round-2/publication-12-approved-recovery",
   "map_name": "Derby",
   "scene_name": "Derby Refinement",
   "collection_name": "Derby Working",
@@ -31,11 +31,11 @@
         "East Bailey East Curtain / Upper stair parapets / segment 02 / modeled crenellations",
         "East Bailey East Curtain / Upper wall stair / modeled treads"
       ],
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-east-architecture-20260923/derby-east-bailey-east-curtain/baked/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-east-architecture-20260923/derby-east-bailey-east-curtain/baked/worker.blend",
       "blend_sha256": "f23eb91c9dcfc33147e668b6efdd56c1dba06ddca662a7ed5e787268aa225854",
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-east-architecture-20260923/derby-east-bailey-east-curtain/packet/views.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-east-architecture-20260923/derby-east-bailey-east-curtain/packet/views.json",
       "review_manifest_sha256": "3b5f53aa1a4904256fc1d27b040a27d2cae335ebc64dfc0c517a3b6a60bf3b9b",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-east-architecture-20260923/derby-east-bailey-east-curtain/baked/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-east-architecture-20260923/derby-east-bailey-east-curtain/baked/validation.json",
       "bake_validation_sha256": "6081b578ceea0cf635990e5455309d5902f36caadf77d14b665df4ff16cb32d6"
     },
     {
@@ -63,11 +63,11 @@
         "East Bailey Gatehouse / Gate turret roof / segment 02 / Round corner turret conical roof",
         "East Bailey Gatehouse / Gate turret roof / segment 02 / reviewed geometry"
       ],
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-east-architecture-20260923/derby-east-bailey-gate/baked/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-east-architecture-20260923/derby-east-bailey-gate/baked/worker.blend",
       "blend_sha256": "1be84b46748d9852237fa89582cb68d156a12c6aeb7c5d18611e5faca186be8d",
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-east-architecture-20260923/derby-east-bailey-gate/packet/views.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-east-architecture-20260923/derby-east-bailey-gate/packet/views.json",
       "review_manifest_sha256": "31ea7f262a3cef8732c6e5ac75d40e2fef9085593218437e79c2fe7dcef8d7bd",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-east-architecture-20260923/derby-east-bailey-gate/baked/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-east-architecture-20260923/derby-east-bailey-gate/baked/validation.json",
       "bake_validation_sha256": "aa57c7acd83e66464bf15c26d328fed50dc048e4b515dba8c2292850bb219bb4"
     },
     {
@@ -109,16 +109,16 @@
         "East Bailey West Curtain / Wall parapets / segment 01 / audited parapet / modeled battlements",
         "East Bailey West Curtain / Wall parapets / segment 02 / modeled crenellations"
       ],
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-east-bailey-west-curtain/packet-two-sided/baked/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-east-bailey-west-curtain/packet-two-sided/baked/worker.blend",
       "blend_sha256": "85cfaa6b89e7a04fab4562ec6cef3048375c2c9f1d3dcc3a82e43e805b152902",
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-east-bailey-west-curtain/packet-two-sided/views.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-east-bailey-west-curtain/packet-two-sided/views.json",
       "review_manifest_sha256": "1abb361348eb8a20acf663c2da7fa1a6bbe10cec0cc8fcb0bc56bd449af5209e",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-east-bailey-west-curtain/packet-two-sided/baked/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-east-bailey-west-curtain/packet-two-sided/baked/validation.json",
       "bake_validation_sha256": "116979b0c280c940942b183b0b45ac72e016c84cb303b62f3a72cf8fdc6480b6"
     },
     {
       "asset_id": "derby-east-courtyard-south-shelter",
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-east-courtyard-south-shelter/baked-chimney-retry/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-east-courtyard-south-shelter/baked-chimney-retry/worker.blend",
       "blend_sha256": "23cfae8041f2b1a113c7ccebc83536142b52aa4fca6659ff2e32308e810c75ec",
       "object_names": [
         "East Bailey South Curtain Lean-to / Lean-to roof and walls / closed supporting wall shell",
@@ -129,17 +129,17 @@
         "building-067",
         "building-068"
       ],
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-east-courtyard-south-shelter/experiment-chimney-retry/views.json",
-      "approval_evidence": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-east-courtyard-south-shelter/experiment-chimney-retry/approval.json",
-      "geometry_baseline": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-east-courtyard-south-shelter/model.blend",
-      "validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-east-courtyard-south-shelter/baked-chimney-retry/validation.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-east-courtyard-south-shelter/experiment-chimney-retry/views.json",
+      "approval_evidence": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-east-courtyard-south-shelter/experiment-chimney-retry/approval.json",
+      "geometry_baseline": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-east-courtyard-south-shelter/model.blend",
+      "validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-east-courtyard-south-shelter/baked-chimney-retry/validation.json",
       "review_manifest_sha256": "53f6b2182a22b53687614848cc8ec89aba822638b17d04220e4e57d628b7da5c",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-east-courtyard-south-shelter/baked-chimney-retry/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-east-courtyard-south-shelter/baked-chimney-retry/validation.json",
       "bake_validation_sha256": "3d371258d7a91f19c018f07ea45319a3abc653933f497ccde06d4f3afee89046"
     },
     {
       "asset_id": "derby-east-wall-landing",
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-east-wall-landing/baked/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-east-wall-landing/baked/worker.blend",
       "blend_sha256": "bb40f94a77c59df9fb7c5b0413cc5a0707fdc2c1c7e7fced5ac37a94d28d75a8",
       "object_names": [
         "East Wall Lean-to Shelter / Lean-to shelter / plank roof",
@@ -148,12 +148,12 @@
       "source_nodes": [
         "building-069"
       ],
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-east-wall-landing/experiment/views.json",
-      "approval_evidence": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-east-wall-landing/experiment/approval.json",
-      "geometry_baseline": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-east-wall-landing/model.blend",
-      "validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-east-wall-landing/baked/validation.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-east-wall-landing/experiment/views.json",
+      "approval_evidence": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-east-wall-landing/experiment/approval.json",
+      "geometry_baseline": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-east-wall-landing/model.blend",
+      "validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-east-wall-landing/baked/validation.json",
       "review_manifest_sha256": "16398d5a7883a889545d3d67b1d430d35e3276bcb117a8d2a440fbc0d01e4daf",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-east-wall-landing/baked/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-east-wall-landing/baked/validation.json",
       "bake_validation_sha256": "7d05ea45e6f80b21221d4198362a363d33023f34de1296d44e2583ddcf97a591"
     },
     {
@@ -171,11 +171,11 @@
         "Keep to East Hall Bridge / Rear bridge parapet / Open arch masonry",
         "Keep to East Hall Bridge / West bridge landing / Open arch masonry"
       ],
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-east-architecture-20260923/derby-keep-hall-bridge/baked/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-east-architecture-20260923/derby-keep-hall-bridge/baked/worker.blend",
       "blend_sha256": "0dc2ed82683189928336c6548f3b2703ece7ca53a0789004c93882883ef336e3",
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-east-architecture-20260923/derby-keep-hall-bridge/packet/views.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-east-architecture-20260923/derby-keep-hall-bridge/packet/views.json",
       "review_manifest_sha256": "410ac3f9b7551dbd00deaa9ded486e3236eaf3ee1d40f594fda55b908c9ef976",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-east-architecture-20260923/derby-keep-hall-bridge/baked/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-east-architecture-20260923/derby-keep-hall-bridge/baked/validation.json",
       "bake_validation_sha256": "37e9b6fcab0b39f8da027f7bc038fddaa6319ac41a48cf240f7eb59d65c999af"
     },
     {
@@ -190,11 +190,11 @@
         "Lower Bailey Well / Shaft",
         "Lower Bailey Well / Shallow ground pail"
       ],
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-courtyard-prop/packet/baked/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-courtyard-prop/packet/baked/worker.blend",
       "blend_sha256": "d941c27e1ee259cc11d3a8d6e5fa590433234d781f29ef421c8c88a8ebdb7b0e",
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-courtyard-prop/packet/views.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-courtyard-prop/packet/views.json",
       "review_manifest_sha256": "df7188c168d511bff4ca24f14659167b900ceed0e4812c93db0965902329960e",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-courtyard-prop/packet/baked/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-courtyard-prop/packet/baked/validation.json",
       "bake_validation_sha256": "716ad77e3b6b11ebe659d993f4ae60489b61a838e8dd1911b4b91de692b5b9c6"
     },
     {
@@ -209,11 +209,11 @@
         "Lower Bailey East Cottage / Lean-to / reviewed shell",
         "Lower Bailey East Cottage / West roof and supporting wall / reviewed shell"
       ],
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-east-cottage/baked/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-east-cottage/baked/worker.blend",
       "blend_sha256": "deeabcff0fefecdcce90dba52156495836f393612819d5be904960d5d99e060e",
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-east-cottage/texture/views.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-east-cottage/texture/views.json",
       "review_manifest_sha256": "c7a4966c4298dedc05ca65b8289af7b14f2acae16ae44f17286016e225b160c3",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-east-cottage/baked/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-east-cottage/baked/validation.json",
       "bake_validation_sha256": "f724c678116965d474aa9aea2f55820ae42406a3428b758285b9659e5c1eb085"
     },
     {
@@ -224,16 +224,16 @@
       "object_names": [
         "Lower Bailey East Cottage Barrel / Upright yard barrel / reviewed shell"
       ],
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-east-cottage-barrel/baked-toned/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-east-cottage-barrel/baked-toned/worker.blend",
       "blend_sha256": "eb65bcfaac623253e8f45461c516a59d478796a2fe023d10467ab34814caf9e7",
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-east-cottage-barrel/texture/views.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-east-cottage-barrel/texture/views.json",
       "review_manifest_sha256": "e47a1a908755bdb57d8dbdd90850b0882baaa6e6af2d605a98627750a6a6aa6c",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-east-cottage-barrel/baked-toned/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-east-cottage-barrel/baked-toned/validation.json",
       "bake_validation_sha256": "49ffe767fe97c39ae65da29479bdc1b54b3d0504afeef004d9dd5983306acaaf"
     },
     {
       "asset_id": "derby-lower-northwest-cottage-barrel",
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-lower-northwest-cottage-barrel/baked/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-lower-northwest-cottage-barrel/baked/worker.blend",
       "blend_sha256": "a1bf99dc801bb69beb2844b9c37085b696329bb1b2d368fa7f9b5e0559df50dd",
       "object_names": [
         "Lower Bailey Northwest Cottage Barrel / Upright yard barrel.001"
@@ -241,12 +241,12 @@
       "source_nodes": [
         "building-062"
       ],
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-lower-northwest-cottage-barrel/experiment/views.json",
-      "approval_evidence": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-lower-northwest-cottage-barrel/experiment/approval.json",
-      "geometry_baseline": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-lower-northwest-cottage-barrel/model.blend",
-      "validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-lower-northwest-cottage-barrel/baked/validation.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-lower-northwest-cottage-barrel/experiment/views.json",
+      "approval_evidence": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-lower-northwest-cottage-barrel/experiment/approval.json",
+      "geometry_baseline": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-lower-northwest-cottage-barrel/model.blend",
+      "validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-lower-northwest-cottage-barrel/baked/validation.json",
       "review_manifest_sha256": "a64810dc362b724bb93515e048dbc64ee4b7442b168bb581669b872d1d81eb45",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/derby-lower-northwest-cottage-barrel/baked/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/derby-lower-northwest-cottage-barrel/baked/validation.json",
       "bake_validation_sha256": "ff6b61748267929efeaf91aa0a88e2e94dd30d938bf5ab37d2be1b3f233d4d9f"
     },
     {
@@ -259,11 +259,11 @@
         "Lower Bailey Southwest Cottage / East roof and supporting wall / reviewed thatch",
         "Lower Bailey Southwest Cottage / West roof and supporting wall / reviewed thatch"
       ],
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-southwest-cottage/baked/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-southwest-cottage/baked/worker.blend",
       "blend_sha256": "26f0298af3171ad811bcf95783f438160a923520119b1769df3422bd30bfba60",
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-southwest-cottage/texture/views.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-southwest-cottage/texture/views.json",
       "review_manifest_sha256": "85cfd9259fac1e202c6ff42eeeea05e1032053f371f70fd8a44938037350fd32",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-southwest-cottage/baked/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-cottages-20260923/derby-lower-southwest-cottage/baked/validation.json",
       "bake_validation_sha256": "864b71374ccc827668f87aa1358692fbb2788f8ce998095764f362399f8c050a"
     },
     {
@@ -280,11 +280,11 @@
         "Lower Bailey West Curtain Access Stair / Landing battlements / modeled battlements",
         "Lower Bailey West Curtain Access Stair / Landing parapet return"
       ],
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-access-stair/packet/baked/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-access-stair/packet/baked/worker.blend",
       "blend_sha256": "f36b3a66e3ac7e17abf10e8afcdb5c4c982bc4e36b6d51a821f182236bd85ac9",
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-access-stair/packet/views.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-access-stair/packet/views.json",
       "review_manifest_sha256": "33dcbc89b9e987adf0d8d94e106ef1bcf5ae3dd0689a3dd8d174741a744501ac",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-access-stair/packet/baked/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-access-stair/packet/baked/validation.json",
       "bake_validation_sha256": "71f7b0e992b6f98ad8e19dbe9cfacc9f4270bc0476b9fbd04b91dba39eb6d579"
     },
     {
@@ -296,11 +296,11 @@
       "object_names": [
         "Lower Bailey West Curtain South Wall Walk / Continuous wall walk and masonry support"
       ],
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-walkway-045-full/packet/baked/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-walkway-045-full/packet/baked/worker.blend",
       "blend_sha256": "c2bf2012d882bf96f69c32a52d97808dcd82b996233f244d583d89154f6b62d3",
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-walkway-045-full/packet/views.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-walkway-045-full/packet/views.json",
       "review_manifest_sha256": "ae6daea183aa6125529149e50df885afa28cc28a335045fed6ddce5c682b2000",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-walkway-045-full/packet/baked/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-walkway-045-full/packet/baked/validation.json",
       "bake_validation_sha256": "62d50fa626fe8b30ecbf0512a6c8aeedc16493b97ec559481d50014eda652125"
     },
     {
@@ -322,29 +322,29 @@
         "Lower Bailey Southwest Wall Turret / Curved roof and finial / sector 05 / continuous roof sector",
         "Lower Bailey Southwest Wall Turret / Round masonry shaft / round masonry"
       ],
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-wall-turret/packet/baked-tone/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-wall-turret/packet/baked-tone/worker.blend",
       "blend_sha256": "91374f2c2d6d7948d77af669a5e460cc7410e6868dc662c82f855987c99af893",
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-wall-turret/packet/views.json",
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-wall-turret/packet/views.json",
       "review_manifest_sha256": "c9cc0b504bbed7eb5dd2155350ccd9e7e3f5ccd1c16129f414af97cb1898cd02",
-      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-wall-turret/packet/baked-tone/validation.json",
+      "bake_validation": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-wall-turret/packet/baked-tone/validation.json",
       "bake_validation_sha256": "172a461d03f0f4c574e70a791e387997c5088e8154945820c5f18b8e8b67c042"
     }
   ],
   "handoff_fragments": [
     {
-      "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-cottages-20260923/import-fragments.json",
+      "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-cottages-20260923/import-fragments.json",
       "sha256": "0ec833a0876ccd64e0f1574f438696738de95951c1cc6107d3418a65c6c6625e"
     },
     {
-      "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-shelters-20260923/imports.json",
+      "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923/imports.json",
       "sha256": "2e2e4bd5cf7c905d78a67e727bf7ade3276a02e62172be86f81efc892e63e396"
     },
     {
-      "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/recovery-east-architecture-20260923/imports.json",
+      "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/recovery-east-architecture-20260923/imports.json",
       "sha256": "22f5fee27e0321e1a6baf42ab03fa046e773b6e4dbaaa4c9329f0fccd2a66dd7"
     },
     {
-      "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/publication12-imports.json",
+      "path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/publication12-imports.json",
       "sha256": "4f10aa9f4f14ced0b5fe4d4a0a684f00b21a2acf82eb84ef6fdc47ae9a224f4f"
     }
   ]

@@ -124,7 +124,7 @@ def finalize_glb(path, descriptor):
 
 def main(output):
     output=Path(output).resolve();output.mkdir(parents=True,exist_ok=False)
-    source=EDITOR/'work/sherwood-refinement/sherwood-refinement.blend'
+    source=EDITOR/'work/needs-review/sherwood-refinement/sherwood-refinement.blend'
     source_sha=sha(source)
     library=EDITOR/'library';document=json.loads((library/'scenes/sherwood.rhlos-map.json').read_text())
     descriptors={};owners={};before={};renames={}

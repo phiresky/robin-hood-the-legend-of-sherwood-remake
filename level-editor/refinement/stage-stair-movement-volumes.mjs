@@ -105,7 +105,7 @@ for (const id of ids) {
   );
   validateAssetGameplay(gameplay, descriptor);
 }
-const output = await fs.mkdtemp("work/map-compile/stair-movement-volumes-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/stair-movement-volumes-");
 await fs.writeFile(
   `${output}/edits.json`,
   JSON.stringify(standalone ? edits.filter((edit) => ids.includes(edit.asset)) : edits),

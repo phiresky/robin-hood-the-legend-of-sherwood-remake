@@ -1,7 +1,7 @@
 """Stage mesh-owned convex support solids, with explicit grounded feet.
 
 Run from level-editor: python3 refinement/author-imported-bridge-supports.py
-Requires NumPy and SciPy. Output remains unpublished under work/map-compile.
+Requires NumPy and SciPy. Output remains unpublished under work/needs-review/map-compile.
 """
 import hashlib
 import json
@@ -74,7 +74,7 @@ for index, ids in enumerate(supports):
         'volume': hull.volume,
         'faces': [{'indices': face.tolist(), 'plane': plane.tolist()} for face, plane in zip(hull.simplices, hull.equations)],
     })
-output = Path('work/map-compile/imported-bridge-support-hulls.json')
+output = Path('work/needs-review/map-compile/imported-bridge-support-hulls.json')
 output.write_text(json.dumps({'modelSha256': review['modelSha256'], 'supports': result}, indent=2) + '\n')
 print(json.dumps({'output': str(output), 'supports': len(result), 'hullFaces': sum(len(s['faces']) for s in result)}))
 
@@ -122,7 +122,7 @@ if '--structure' in sys.argv:
         bottom = [deck[(deck[:, :2] == point[:2]).all(axis=1), 2].min() for point in top]
         assert all(low < point[2] for point, low in zip(top, bottom))
         thickness.append({'face': face, 'bottomHeights': [float(z * math.cos(math.radians(35))) for z in bottom]})
-    output = Path('work/map-compile/imported-bridge-structure-hulls.json')
+    output = Path('work/needs-review/map-compile/imported-bridge-structure-hulls.json')
     output.write_text(json.dumps({'modelSha256': review['modelSha256'], 'supports': structures,
                                  'deckThickness': thickness}, indent=2) + '\n')
     print(json.dumps({'output': str(output), 'woodProxies': len(structures), 'deckTriangles': len(thickness)}))

@@ -1,7 +1,7 @@
 # Lincoln refinement
 
 Implements `level-editor/refinement/PROCEDURE.md` for Lincoln. Run from the repository
-root; evidence lives in `level-editor/work/lincoln-refinement/` (resume from `RESUME.json`).
+root; evidence lives in `level-editor/work/needs-review/lincoln-refinement/` (resume from `RESUME.json`).
 
 1. `source_states.py`: covered/revealed artwork, native masks and patch-state frames → `source-states/`.
 2. `setup_scene.py` (Blender) freezes the volume export into `baseline/lincoln-baseline.blend`
@@ -15,7 +15,7 @@ root; evidence lives in `level-editor/work/lincoln-refinement/` (resume from `RE
    It renames `Lincoln …` scene/collections to `lincoln …`, because shared helpers derive
    `<catalog map> Working`.
 7. `prepare_assets.py` (Blender) creates frozen per-asset workspaces in `round-1/assets/`.
-8. Lane workers follow `work/lincoln-refinement/WORKER_BRIEF.md` with `refine_<lane>.py` recipes.
+8. Lane workers follow `work/needs-review/lincoln-refinement/WORKER_BRIEF.md` with `refine_<lane>.py` recipes.
 9. `build_gallery.py` collects packets into the pending-only review gallery. It requires a
    hash-bound `source-coverage-audit.json` for every ready card.
 

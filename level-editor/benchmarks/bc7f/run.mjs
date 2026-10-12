@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { chromeEndpoint, socketOpen } from "../../app/tests/cdp.mjs";
 const dir = path.dirname(fileURLToPath(import.meta.url));
-const work = path.resolve(dir, "../../work/bc7f-benchmark");
+const work = path.resolve(dir, "../../work/needs-review/bc7f-benchmark");
 const artifacts = path.join(work, "results-" + (process.env.BENCH_VARIANT ?? "scalar"));
 await fs.mkdir(artifacts, { recursive: true });
 const rows = [];

@@ -155,7 +155,7 @@ for (const [id, descriptorHash, modelHash, rules] of reviewed) {
   validateAssetGameplay(gameplay, asset);
   edits.push({ asset: id, descriptorSha256: descriptorHash, modelSha256: modelHash, gameplay });
 }
-const output = await fs.mkdtemp("work/map-compile/reviewed-jump-receivers-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/reviewed-jump-receivers-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/review.json`, JSON.stringify(reviews));
 console.log(output);

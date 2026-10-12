@@ -16,7 +16,7 @@ const before = structuredClone(segment);
 for (const point of [segment.edge.a, segment.edge.b]) point[1] -= 3;
 validateAssetGameplay(descriptor.gameplay, descriptor);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const output = await fs.mkdtemp("work/map-compile/courtyard-jump-inset-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/courtyard-jump-inset-");
 await fs.writeFile(
   `${output}/edits.json`,
   JSON.stringify([

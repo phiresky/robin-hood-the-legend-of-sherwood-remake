@@ -1,7 +1,7 @@
 import json,math
 from pathlib import Path
 from PIL import Image,ImageDraw,ImageFont
-root=Path('work/wall-presets');rows=json.loads((root/'candidates.json').read_text())
+root=Path('work/needs-review/wall-presets');rows=json.loads((root/'candidates.json').read_text())
 font=ImageFont.load_default(size=12)
 for source in sorted(set(x['source_map'] for x in rows)):
  entries=[x for x in rows if x['source_map']==source and (root/'candidates'/f"{x['id']}.webp").exists()]

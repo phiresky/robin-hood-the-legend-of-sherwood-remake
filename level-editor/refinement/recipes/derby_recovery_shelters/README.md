@@ -2,7 +2,7 @@
 
 These map-specific recipes use the shared renderer, ownership constraints,
 OpenRouter texture driver and guarded texture baker. Run from repository root.
-Outputs live under `level-editor/work/derby-refinement/round-2/recovery-shelters-20260923`.
+Outputs live under `level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923`.
 
 The three approved groups are East Wall Lean-to (`building-069`), South Curtain
 Lean-to (`building-067`, `building-068`) and Northwest Cottage Barrel (`building-062`).

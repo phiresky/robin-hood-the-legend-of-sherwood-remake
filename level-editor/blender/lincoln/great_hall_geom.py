@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover - outside Blender
 
 SIN = math.sin(math.radians(35))
 COS = math.cos(math.radians(35))
-SOURCE = Path(__file__).resolve().parents[2] / 'work/lincoln-refinement/source-states/covered.png'
+SOURCE = Path(__file__).resolve().parents[2] / 'work/needs-review/lincoln-refinement/source-states/covered.png'
 
 
 def to_world(p):

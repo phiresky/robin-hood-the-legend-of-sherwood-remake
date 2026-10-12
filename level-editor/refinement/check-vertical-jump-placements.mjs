@@ -9,7 +9,7 @@ import { gameToScene } from "../shared/src/scene.ts";
 import { applyAffineMatrix, sceneToGame } from "../shared/src/geometry.ts";
 
 // Keep both sides independently authored; connection assembly uses their placed edges.
-const output = await fs.mkdtemp("work/map-compile/prepared-vertical-jumps-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/prepared-vertical-jumps-");
 console.log(output);
 const results = [];
 const automatic = process.argv.includes("--automatic");

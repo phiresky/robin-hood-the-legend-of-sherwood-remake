@@ -6,7 +6,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 LIBRARY = ROOT / 'library/3d-assets'
-OUTPUT = ROOT / 'work/wall-presets'
+OUTPUT = ROOT / 'work/needs-review/wall-presets'
 
 def inventory():
     entries = json.loads((LIBRARY/'index.json').read_text())['assets']

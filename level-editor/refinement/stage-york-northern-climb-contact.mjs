@@ -176,7 +176,7 @@ changes.push({
   before: previousUpperClearance,
   after: upperClearance,
 });
-const output = await fs.mkdtemp("work/map-compile/york-northern-climb-contact-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-northern-climb-contact-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/review.json`, JSON.stringify({ stage, changes }));
 console.log(JSON.stringify({ output, changes }));

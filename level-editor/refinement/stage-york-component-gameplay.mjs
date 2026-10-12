@@ -58,6 +58,6 @@ for (const id of ids) {
   validateAssetGameplay(gameplay, descriptor);
   edits.push({ asset: id, descriptorSha256, gameplay });
 }
-const output = await fs.mkdtemp("work/map-compile/york-component-gameplay-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-component-gameplay-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 console.log(JSON.stringify({ output, assets: edits.map((edit) => edit.asset), published: false }));

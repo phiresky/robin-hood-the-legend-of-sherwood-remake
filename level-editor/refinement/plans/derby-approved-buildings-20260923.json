@@ -1,6 +1,6 @@
 {
-  "baseline": "level-editor/work/derby-refinement/round-2/publication-4/worker.blend",
-  "output": "level-editor/work/derby-refinement/round-2/publication-6-approved-buildings-v2",
+  "baseline": "level-editor/work/needs-review/derby-refinement/round-2/publication-4/worker.blend",
+  "output": "level-editor/work/needs-review/derby-refinement/round-2/publication-6-approved-buildings-v2",
   "map_name": "Derby",
   "scene_name": "Derby Refinement",
   "collection_name": "Derby Working",
@@ -10,30 +10,30 @@
   "imports": [
     {
       "asset_id": "derby-keep-north-tower",
-      "blend_path": "level-editor/work/derby-refinement/round-2/sunburst-derby-keep-north-tower-approved-20260922/baked/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-derby-keep-north-tower-approved-20260922/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-derby-keep-north-tower-approved-20260922/baked/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-derby-keep-north-tower-approved-20260922/views.json"
     },
     {
       "asset_id": "derby-keep-central-gallery",
       "source_asset_id": "derby-great-keep",
-      "blend_path": "level-editor/work/derby-refinement/round-2/sunburst-derby-keep-central-gallery-approved-20260922/baked-v2/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-derby-keep-central-gallery-approved-20260922/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-derby-keep-central-gallery-approved-20260922/baked-v2/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-derby-keep-central-gallery-approved-20260922/views.json"
     },
     {
       "asset_id": "derby-keep-west-tower",
       "source_asset_id": "derby-great-keep",
-      "blend_path": "level-editor/work/derby-refinement/round-2/sunburst-derby-keep-west-tower-approved-20260922/baked-exterior-only/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-derby-keep-west-tower-approved-20260922/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-derby-keep-west-tower-approved-20260922/baked-exterior-only/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-derby-keep-west-tower-approved-20260922/views.json"
     },
     {
       "asset_id": "derby-upper-gatehouse",
-      "blend_path": "level-editor/work/derby-refinement/round-2/sunburst-upper-gatehouse-approved-corner-v3/bake/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-upper-gatehouse-approved-corner-v3/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-upper-gatehouse-approved-corner-v3/bake/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-upper-gatehouse-approved-corner-v3/views.json"
     },
     {
       "asset_id": "derby-east-hall",
-      "blend_path": "level-editor/work/derby-refinement/round-2/sunburst-east-hall-approved-band-v3/bake-exterior-two-sided-roof/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-east-hall-approved-band-v3/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-east-hall-approved-band-v3/bake-exterior-two-sided-roof/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-east-hall-approved-band-v3/views.json"
     }
   ]
 }

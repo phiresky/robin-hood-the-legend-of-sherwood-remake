@@ -161,7 +161,7 @@ def main(stage, output, reuse_canopies=None):
                 mat = mat.copy()
                 del mat['foliage_physical_opacity']
                 obj.data.materials[index] = mat
-        manifest_path = EDITOR / 'work/sherwood-refinement/animation-references/manifest.json'
+        manifest_path = EDITOR / 'work/needs-review/sherwood-refinement/animation-references/manifest.json'
         records = json.loads(manifest_path.read_text())['assets']
         source_records = []
         for record in records:
@@ -261,7 +261,7 @@ def main(stage, output, reuse_canopies=None):
     # Full reset of ground RGB; old inpainted ground is never a source.
     # The audited native cleanup mask also excludes painted object remnants
     # outside the reconstructed silhouettes.
-    cleanup = EDITOR / 'work/sherwood-refinement/ground-reprojection/cleanup-mask.png'
+    cleanup = EDITOR / 'work/needs-review/sherwood-refinement/ground-reprojection/cleanup-mask.png'
     mask = (np.asarray(Image.open(cleanup).convert('L')) > 0) | ground_occluded
     Image.fromarray(mask.astype(np.uint8)*255).save(output / 'ground-unknown.png')
     rgba = np.asarray(Image.open(source).convert('RGBA')).copy()

@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path.cwd()
-R = ROOT / 'level-editor/work/lincoln-refinement'
+R = ROOT / 'level-editor/work/needs-review/lincoln-refinement'
 T = R / 'trees'
 sys.path.insert(0, str(ROOT / 'level-editor/blender/lincoln'))
 from render_slots import acquire  # noqa: E402

@@ -27,7 +27,7 @@ def main():
  prepare(case/'review-manifest.json',asset,case/'experiment',case/'decisions.json')
  e=case/'experiment';folder=e/'material-references';folder.mkdir();refs=[]
  for name,rev,box in REFERENCES:
-  source=ROOT/'level-editor/work/leicester-refinement/round-1/texture-review/approved-evidence'/name/rev/'textured.png';target=folder/(name+'-leaf-material.png');Image.open(source).crop(box).save(target)
+  source=ROOT/'level-editor/work/needs-review/leicester-refinement/round-1/texture-review/approved-evidence'/name/rev/'textured.png';target=folder/(name+'-leaf-material.png');Image.open(source).crop(box).save(target)
   refs.append(dict(source='material',file=str(target),sha256=sha(target),asset_id=name,role='Leaf material and palette only. Do not copy layout. Preserve target geometry, thin stems, alpha and all native pixels. Gray source regions are unknown, not texture.',parent_image=str(source),parent_sha256=sha(source),crop_box=list(box),crop_method='Exact pixels, no resizing or recoloring',authorization='User explicitly permitted this named Leicester tree'))
  write(e/'auxiliary-references.json',dict(version=1,input_sha256=sha(e/'input.png'),lighting_sha256=sha(e/'solid.png'),references=refs))
  write(case/'preparation-scope.json',dict(status='Prepared after explicit geometry approval; final appearance pending',approval=decision,receivers=['Tree02 decorative wood','Tree02 inferred crown','Tree02 upper stems'],method='Existing frozen transport views, identical cameras, source ownership buffers preserved; no model or UV edits. Supplementary examples supplied for crown with no native color context.'))

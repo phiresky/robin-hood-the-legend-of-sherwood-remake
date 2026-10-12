@@ -16,7 +16,7 @@ const angles = selectedAngle
   : args.length
     ? [5, 6, 7, 8, 172, 173, 174, 175]
     : Array.from({ length: 360 }, (_, index) => index);
-const output = await mkdtemp("work/map-compile/climb-angle-routes-");
+const output = await mkdtemp("work/needs-review/map-compile/climb-angle-routes-");
 console.log(output);
 const results = [];
 const report = (complete) =>

@@ -21,7 +21,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from south_gate_walls_geometry import to_world, to_native  # noqa: E402
 
-R = HERE.parents[2] / 'level-editor/work/lincoln-refinement'
+R = HERE.parents[2] / 'level-editor/work/needs-review/lincoln-refinement'
 
 
 def main():

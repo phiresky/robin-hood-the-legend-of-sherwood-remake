@@ -7,7 +7,7 @@ import sys
 
 
 EDITOR = Path(__file__).resolve().parents[2]
-DEFAULT_ROOT = EDITOR / "work/nottingham-refinement/tooling"
+DEFAULT_ROOT = EDITOR / "work/needs-review/nottingham-refinement/tooling"
 
 
 def sha(path):

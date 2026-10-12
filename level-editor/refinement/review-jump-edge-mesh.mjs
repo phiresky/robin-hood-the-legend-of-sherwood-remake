@@ -86,7 +86,7 @@ const samples = Array.from({ length: 17 }, (_, step) => {
   }
   return { point, nearest, surfacesAtXY };
 });
-const output = await fs.mkdtemp("work/map-compile/jump-edge-mesh-review-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/jump-edge-mesh-review-");
 await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify({

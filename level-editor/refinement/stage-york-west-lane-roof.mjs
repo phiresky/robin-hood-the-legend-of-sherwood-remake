@@ -40,7 +40,7 @@ for (const point of [edge.a, edge.b]) {
   point[2] = height;
 }
 validateAssetGameplay(gameplay, asset);
-const output = await fs.mkdtemp("work/map-compile/york-west-lane-roof-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-west-lane-roof-");
 await fs.writeFile(
   `${output}/edits.json`,
   JSON.stringify([

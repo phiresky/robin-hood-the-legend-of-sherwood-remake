@@ -8,7 +8,7 @@ assert.ok(directory, "Supply a completed two-copy, two-elevation folded-floor ex
 const manifest = JSON.parse(await fs.readFile(path.join(directory, "diagnostics.json")));
 assert.equal(manifest.complete, true);
 assert.equal(manifest.results.length, 2);
-const output = await fs.mkdtemp("work/map-compile/folded-floor-passages-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/folded-floor-passages-");
 const results = [];
 for (const entry of manifest.results) {
   const descriptor = JSON.parse(await fs.readFile(path.join(directory, entry.file)));

@@ -65,7 +65,7 @@ gameplay.jumpSegments = edges.map((edge, i) => ({
 gameplay.draft.issues.push(
   "Unpublished boundary jump candidate: physical ledges replace the inset authored pair; native flight, approach, landing and rendered contact require review.",
 );
-const output = await fs.mkdtemp("work/map-compile/watermill-boundary-jump-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/watermill-boundary-jump-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/review.json`, JSON.stringify({ source: stage, before: pair, edges }));
 console.log(output);

@@ -86,7 +86,7 @@ for (const entry of index) {
   }
 }
 const output = await fs.mkdtemp(
-  `work/map-compile/${mode === "--all-lifts" ? "lift" : "stair"}-anchor-support-`,
+  `work/needs-review/map-compile/${mode === "--all-lifts" ? "lift" : "stair"}-anchor-support-`,
 );
 const unsupported = results.filter(
   (result) =>

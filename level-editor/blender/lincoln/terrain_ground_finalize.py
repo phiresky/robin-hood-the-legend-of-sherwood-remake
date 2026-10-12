@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1] / 'work/lincoln-refinement'
+ROOT = HERE.parents[1] / 'work/needs-review/lincoln-refinement'
 WORKSPACE = ROOT / 'round-4/assets/lincoln-terrain'
 
 

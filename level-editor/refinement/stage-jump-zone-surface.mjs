@@ -29,7 +29,7 @@ assert.ok(
   "The existing zone anchor must belong to the selected surface",
 );
 validateAssetGameplay(gameplay, asset);
-const output = await fs.mkdtemp("work/map-compile/jump-zone-surface-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/jump-zone-surface-");
 await fs.writeFile(
   `${output}/edits.json`,
   JSON.stringify([

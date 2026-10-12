@@ -7,7 +7,7 @@ const [directory] = process.argv.slice(2);
 assert.ok(directory, "Supply a completed folded roof/slab assembly export");
 const manifest = JSON.parse(await fs.readFile(path.join(directory, "diagnostics.json")));
 assert.equal(manifest.complete, true);
-const output = await fs.mkdtemp("work/map-compile/folded-supported-clicks-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/folded-supported-clicks-");
 const results = [];
 for (const entry of manifest.results) {
   const bytes = await fs.readFile(path.join(directory, entry.file));

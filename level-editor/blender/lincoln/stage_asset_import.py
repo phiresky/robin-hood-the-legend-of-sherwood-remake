@@ -38,7 +38,7 @@ def main(argv):
         raise ValueError('Stage-in worker changed after integration')
     model = args.model.resolve(strict=True)
     model_sha = sha(model)
-    root = Path(__file__).resolve().parents[2] / 'work/lincoln-refinement'
+    root = Path(__file__).resolve().parents[2] / 'work/needs-review/lincoln-refinement'
     approvals = json.loads((root / 'approvals.json').read_text())['approvals']
     approval = [r for r in approvals if r['asset_id'] == args.asset and r['decision'] == 'approved'
                 and r['model_sha256'] == model_sha and r['scope'] in ('geometry', 'geometry-and-states')]

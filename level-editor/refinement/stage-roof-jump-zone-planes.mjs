@@ -46,7 +46,7 @@ for (const [id, zoneId, surfaceId] of [
   validateAssetGameplay(edit.gameplay, descriptor);
   changes.push({ id, before, after: zone, surface: surface.id });
 }
-const output = await fs.mkdtemp("work/map-compile/roof-jump-zone-planes-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/roof-jump-zone-planes-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(
   `${output}/review.json`,

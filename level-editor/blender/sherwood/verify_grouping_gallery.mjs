@@ -1,7 +1,7 @@
 import {spawn} from 'node:child_process';
 import {mkdir,mkdtemp,writeFile,readFile} from 'node:fs/promises';
 import {chromeEndpoint,socketOpen} from '../../app/tests/cdp.mjs';
-const expectedIds=JSON.parse(await readFile('work/sherwood-refinement/grouping-review/gallery-manifest.json','utf8')).items.map(i=>i.id);
+const expectedIds=JSON.parse(await readFile('work/needs-review/sherwood-refinement/grouping-review/gallery-manifest.json','utf8')).items.map(i=>i.id);
 const root='/home/phire/.cache/sccache/sherwood-gallery-browser';await mkdir(root,{recursive:true});
 const profile=await mkdtemp(root+'/p-');
 const chrome=spawn('/usr/lib/chromium/chromium',['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--window-size=1440,1100','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:['ignore','ignore','pipe'],env:{...process.env,TMPDIR:root}});
@@ -30,7 +30,7 @@ try{
  const note=card.querySelector('.review-note');note.value='Gallery verification note';note.dispatchEvent(new Event('input',{bubbles:true}));
  if(!document.querySelector('#review-export').value.includes(card.id+': feedback — Gallery verification note'))throw Error('Feedback export failed');
  return {status:'PASS',cards:cards.length,ready,images_loaded:[...card.querySelectorAll('img')].every(i=>i.naturalWidth>0),feedback_export:true};})()`);
- const shot=await call('Page.captureScreenshot',{format:'png'});await writeFile('work/sherwood-refinement/grouping-review/browser.png',Buffer.from(shot.data,'base64'));
+ const shot=await call('Page.captureScreenshot',{format:'png'});await writeFile('work/needs-review/sherwood-refinement/grouping-review/browser.png',Buffer.from(shot.data,'base64'));
  await evaluate(`document.querySelector('#clear-reviews').click()`);
- await writeFile('work/sherwood-refinement/grouping-review/browser-check.json',JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result));
+ await writeFile('work/needs-review/sherwood-refinement/grouping-review/browser-check.json',JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result));
 }finally{ws?.close();chrome.kill('SIGTERM');await closed;}

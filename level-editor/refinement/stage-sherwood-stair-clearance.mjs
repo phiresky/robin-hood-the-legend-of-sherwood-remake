@@ -82,7 +82,7 @@ gameplay.movementClearances = [
   },
 ];
 validateAssetGameplay(gameplay, asset);
-const output = await fs.mkdtemp("work/map-compile/sherwood-stair-clearance-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/sherwood-stair-clearance-");
 await fs.writeFile(
   `${output}/edits.json`,
   JSON.stringify([

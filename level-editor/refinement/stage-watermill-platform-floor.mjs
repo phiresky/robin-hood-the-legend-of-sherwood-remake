@@ -83,7 +83,7 @@ gameplay.draft.issues.push(
   "Unpublished upper doorway contact moved onto the authored platform; rendered threshold alignment requires review.",
 );
 validateAssetGameplay(gameplay, descriptor);
-const output = await fs.mkdtemp("work/map-compile/watermill-platform-floor-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/watermill-platform-floor-");
 await fs.writeFile(
   `${output}/edits.json`,
   JSON.stringify([{ asset: id, descriptorSha256: hash(bytes), modelSha256, gameplay }]),

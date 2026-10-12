@@ -1,6 +1,6 @@
 # Sherwood Blender reconstruction
 
-Native scene: `level-editor/work/sherwood-refinement/sherwood-refinement.blend`.
+Native scene: `level-editor/work/needs-review/sherwood-refinement/sherwood-refinement.blend`.
 All textures are packed. The hidden baseline and original working objects remain
 available; replacements have numbered collections. Game collision and source
 obstacles are retained. The editor migration below exports the reconstruction
@@ -68,8 +68,8 @@ For model review before further texture generation, run:
 
 ```sh
 python3 blender/sherwood/build_model_review.py \
-  --packets work/sherwood-refinement/textures/sunburst \
-  --output work/sherwood-refinement/model-review
+  --packets work/needs-review/sherwood-refinement/textures/sunburst \
+  --output work/needs-review/sherwood-refinement/model-review
 ```
 
 This uses the normal gallery with solid and original-art sheets, plus full-scene
@@ -211,7 +211,7 @@ The ground-cleaned version is `turntable-ground-clean/sherwood-before-after.mp4`
 It reuses unchanged original, solid and wireframe passes; refreshed textured
 passes use the new ground material. Override the loaded `turntable.py` module's
 `OUT` with that directory and compose with
-`--fast --split --output-dir level-editor/work/sherwood-refinement/turntable-ground-clean`.
+`--fast --split --output-dir level-editor/work/needs-review/sherwood-refinement/turntable-ground-clean`.
 
 `turntable-hq/sherwood-before-after.mp4` is the slower 24-second version at
 1920 × 1280 and 60 fps. `render_hq_turntable.py` creates separate linked scenes
@@ -226,7 +226,7 @@ RGBA coordinates. The framing and permitted edge cropping match the preview.
 Load the HQ module with `__name__='hq'`, call `setup()` once, then
 `render_batch(side, mode, start, count)` over valid consecutive intervals from
 `modes(frame)` for frames 5–1444. `side` is `refined` or `original`. Compose with
-`compose_turntable.py --hq --split --output-dir level-editor/work/sherwood-refinement/turntable-hq`.
+`compose_turntable.py --hq --split --output-dir level-editor/work/needs-review/sherwood-refinement/turntable-hq`.
 Call `finish()` through MCP after rendering to check pass completeness, matched
 cameras and advancing wind, then restore the textured preview and save the scene.
 
@@ -253,7 +253,7 @@ the map around the orbit center to expose trees, platforms and nearby structures
 This is a fresh Blender render at the closer camera scale, not an enlargement
 of the previous video. Load the renderer with both `SIDE_BY_SIDE=True` and
 `CLOSE_UP=True`; use the same setup/render/finish workflow. Compose with
-`compose_turntable.py --hq --side-by-side --output-dir level-editor/work/sherwood-refinement/turntable-close-up`.
+`compose_turntable.py --hq --side-by-side --output-dir level-editor/work/needs-review/sherwood-refinement/turntable-close-up`.
 
 ## Ground texture reprojection
 
@@ -401,7 +401,7 @@ ridges as well as grooves, avoiding the nearly black output of the old crop.
 
 `inspect_bark.py` renders four matched central-oak angles; set `LABEL` to
 `before` before applying the fix and `after` afterward. Outputs are in
-`work/sherwood-refinement/bark-inspection/`. The native scene keeps a
+`work/needs-review/sherwood-refinement/bark-inspection/`. The native scene keeps a
 `sherwood-before-synthesized-bark.blend` backup. Geometry and baseline meshes
 are unchanged. The close-up side-by-side video was refreshed with all 576
 refined textured frames rerendered after this correction; unchanged baseline,

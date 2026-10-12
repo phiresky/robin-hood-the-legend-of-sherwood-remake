@@ -5,7 +5,7 @@ Run from the repository root before freezing source mask authority.
 from pathlib import Path
 from PIL import Image,ImageDraw
 import json,hashlib
-root=Path('level-editor/work/nottingham-refinement');out=root/'state-review/owned-masks';out.mkdir(parents=True,exist_ok=True);source=root/'source-states';layers=json.load(open(source/'layers.json'));base=Image.open(source/'revealed.png').convert('RGBA');covered=Image.open(source/'covered.png').convert('RGB')
+root=Path('level-editor/work/needs-review/nottingham-refinement');out=root/'state-review/owned-masks';out.mkdir(parents=True,exist_ok=True);source=root/'source-states';layers=json.load(open(source/'layers.json'));base=Image.open(source/'revealed.png').convert('RGBA');covered=Image.open(source/'covered.png').convert('RGB')
 polygons={
  'church-nave-floor':[(1764,1039),(1802,1061),(1856,1092),(1892,1071),(1969,1028),(2004,1048),(2109,987),(2155,1014),(2242,965),(2164,928),(2203,860),(2155,829),(2104,819),(2013,841),(1906,881),(1694,999)],
  'church-side-room-floor':[(1885,1088),(2039,1176),(2073,1169),(2133,1132),(2062,1091),(2044,1080),(1972,1039),(1935,1060),(1903,1077)],

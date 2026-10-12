@@ -1,6 +1,6 @@
 {
-  "baseline": "level-editor/work/derby-refinement/round-2/publication-9-main-hall-states-v2/worker.blend",
-  "output": "level-editor/work/derby-refinement/round-2/publication-10-final-curtains",
+  "baseline": "level-editor/work/needs-review/derby-refinement/round-2/publication-9-main-hall-states-v2/worker.blend",
+  "output": "level-editor/work/needs-review/derby-refinement/round-2/publication-10-final-curtains",
   "map_name": "Derby",
   "scene_name": "Derby Refinement",
   "collection_name": "Derby Working",
@@ -11,9 +11,9 @@
     {
       "asset_id": "derby-upper-west-curtain",
       "source_nodes": ["building-073", "building-074", "building-114", "building-116", "building-117", "building-127", "building-128"],
-      "blend_path": "level-editor/work/derby-refinement/round-2/sunburst-upper-west-approved-stairs-v4/baked/worker.blend",
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-upper-west-approved-stairs-v4/baked/worker.blend",
       "blend_sha256": "5563179411999846d059df6c9766e02f8f081df9a53e1973eae8931ef1c695ae",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-upper-west-approved-stairs-v4/views.json"
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-upper-west-approved-stairs-v4/views.json"
     }
   ]
 }

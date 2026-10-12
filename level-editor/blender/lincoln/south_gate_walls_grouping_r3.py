@@ -16,7 +16,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-R = Path(__file__).resolve().parents[3] / 'level-editor/work/lincoln-refinement'
+R = Path(__file__).resolve().parents[3] / 'level-editor/work/needs-review/lincoln-refinement'
 WS = R / 'round-3/assets'
 CUT = (1884.0, 1885 + (1884 - 1852) * 18 / 44)
 LANDING = [(1863, 1915), (1831, 1901), (1852, 1885), CUT]

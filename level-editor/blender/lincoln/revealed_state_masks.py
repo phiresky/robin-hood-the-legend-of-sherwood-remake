@@ -27,7 +27,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[2]
-WORK = ROOT / 'work/lincoln-refinement'
+WORK = ROOT / 'work/needs-review/lincoln-refinement'
 
 
 def sha(path):

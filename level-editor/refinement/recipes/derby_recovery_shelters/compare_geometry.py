@@ -3,7 +3,7 @@ from pathlib import Path
 ROOT=Path.cwd()
 sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
 from refinement_workspace import _geometry
-base=ROOT/'level-editor/work/derby-refinement/round-2'
+base=ROOT/'level-editor/work/needs-review/derby-refinement/round-2'
 jobs=['sunburst-south-curtain-lean-to-approved','sunburst-east-wall-lean-to-approved','sunburst-derby-lower-northwest-cottage-barrel-approved']
 out={}
 for job in jobs:

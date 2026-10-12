@@ -12,7 +12,7 @@ import time
 import uuid
 
 ROOT = Path(__file__).resolve().parents[3]
-POOL = ROOT / 'level-editor/work/lincoln-refinement/render-slots'
+POOL = ROOT / 'level-editor/work/needs-review/lincoln-refinement/render-slots'
 # Current heavy-job admission explicitly uses acquire(2), not the module default.
 ACTIVE_SLOTS = 2
 BASE = ROOT / 'level-editor/work/active/croisement02/native-effect-production-oct12-v1'

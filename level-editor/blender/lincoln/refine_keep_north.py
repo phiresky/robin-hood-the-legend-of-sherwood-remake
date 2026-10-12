@@ -29,7 +29,7 @@ sys.path.insert(0, str(HERE))
 import keep_north_geom as G  # noqa: E402
 
 ROOT = HERE.parents[2]
-REFINE = ROOT / 'level-editor/work/lincoln-refinement'
+REFINE = ROOT / 'level-editor/work/needs-review/lincoln-refinement'
 ASSETS = REFINE / 'round-1/assets'  # --assets-dir selects round-2
 TOOLING = REFINE / 'tooling/e6b57cb851c7142b'
 GROUND = G.GROUND

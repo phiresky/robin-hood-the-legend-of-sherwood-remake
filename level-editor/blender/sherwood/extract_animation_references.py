@@ -13,7 +13,7 @@ from PIL import Image, ImageDraw
 
 ROOT=Path(__file__).resolve().parents[3]
 from paths import DATA
-OUT=ROOT/'level-editor/work/sherwood-refinement/animation-references'
+OUT=ROOT/'level-editor/work/needs-review/sherwood-refinement/animation-references'
 OUT.mkdir(parents=True,exist_ok=True)
 level=json.loads((DATA/'Levels/Sherwood.rhp.json').read_text())
 composite=Image.open(DATA/'Levels/Day/sherwood.map.png').convert('RGBA')

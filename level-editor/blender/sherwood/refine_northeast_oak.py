@@ -16,7 +16,7 @@ from PIL import Image
 
 HERE = Path(__file__).resolve().parent
 EDITOR = HERE.parents[1]
-ROOT = EDITOR/'work/sherwood-refinement/northeast-oak-review'
+ROOT = EDITOR/'work/needs-review/sherwood-refinement/northeast-oak-review'
 NATIVE = EDITOR.parent/'datadirs/fullgame_gog_hackable/Data/Levels/Sherwood.rhp.d/masks'
 TARGETS = ['Tree 042 - tapered trunk.001',
            'Sherwood - Arbre03 tree 042 - limbs forks and terminal twigs.001', 'building-043.002']
@@ -99,7 +99,7 @@ def stage():
     from source_projection_bake import bake
     from stage_editor_migration import runtime_material
     acquire()
-    grouping=EDITOR/'work/sherwood-refinement/grouping-review'
+    grouping=EDITOR/'work/needs-review/sherwood-refinement/grouping-review'
     worker=grouping/'grouped-source-only.blend'
     source_record=json.loads((ROOT/'geometry-source.json').read_text())
     assert sha(ROOT/'native-volume.npz')==source_record['geometry_npz_sha256']
@@ -127,7 +127,7 @@ def stage():
     source=EDITOR.parent/'datadirs/fullgame_gog_hackable/Data/Levels/Day/sherwood.map.png'
     bake('Sherwood',source,ROOT/'bark-reprojection.json',projection_label='exterior',preserve_authored=False,
          receiver_object_names=TARGETS,collection_name='Sherwood Working',
-         source_mask_manifest=EDITOR/'work/sherwood-refinement/textures/native-mask-audit/compiled-pass-2/source-masks.json',
+         source_mask_manifest=EDITOR/'work/needs-review/sherwood-refinement/textures/native-mask-audit/compiled-pass-2/source-masks.json',
          provenance_directory=ROOT/'ownership')
     for obj in leaves:obj.hide_render=visibility[obj.name]
     assert fingerprint(other)==before,'Unrelated geometry/UV/material bindings changed'

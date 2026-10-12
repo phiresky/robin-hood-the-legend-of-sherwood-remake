@@ -1,7 +1,7 @@
 {
   "description": "Validated approved Derby texture fills. Merge these import fragments into a publication plan; publication is a separate step.",
-  "baseline": "level-editor/work/derby-refinement/round-2/publication-11-south-curtain/worker.blend",
-  "handoff": "level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/handoff.json",
+  "baseline": "level-editor/work/needs-review/derby-refinement/round-2/publication-11-south-curtain/worker.blend",
+  "handoff": "level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/handoff.json",
   "limitations": [
     "The turret retains original source roof shading; raw-reference reconciliation adjusts unknown texels only.",
     "East Bailey west curtain restores four approved buttresses absent from publication11.",
@@ -47,9 +47,9 @@
         "East Bailey West Curtain / Wall parapets / segment 01 / audited parapet / modeled battlements",
         "East Bailey West Curtain / Wall parapets / segment 02 / modeled crenellations"
       ],
-      "blend_path": "level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-east-bailey-west-curtain/packet-two-sided/baked/worker.blend",
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-east-bailey-west-curtain/packet-two-sided/baked/worker.blend",
       "blend_sha256": "85cfaa6b89e7a04fab4562ec6cef3048375c2c9f1d3dcc3a82e43e805b152902",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-east-bailey-west-curtain/packet-two-sided/views.json"
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-east-bailey-west-curtain/packet-two-sided/views.json"
     },
     {
       "asset_id": "derby-lower-west-access-stair",
@@ -65,9 +65,9 @@
         "Lower Bailey West Curtain Access Stair / Landing battlements / modeled battlements",
         "Lower Bailey West Curtain Access Stair / Landing parapet return"
       ],
-      "blend_path": "level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-access-stair/packet/baked/worker.blend",
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-access-stair/packet/baked/worker.blend",
       "blend_sha256": "f36b3a66e3ac7e17abf10e8afcdb5c4c982bc4e36b6d51a821f182236bd85ac9",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-access-stair/packet/views.json"
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-access-stair/packet/views.json"
     },
     {
       "asset_id": "derby-lower-west-wall-turret",
@@ -88,9 +88,9 @@
         "Lower Bailey Southwest Wall Turret / Curved roof and finial / sector 05 / continuous roof sector",
         "Lower Bailey Southwest Wall Turret / Round masonry shaft / round masonry"
       ],
-      "blend_path": "level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-wall-turret/packet/baked-tone/worker.blend",
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-wall-turret/packet/baked-tone/worker.blend",
       "blend_sha256": "91374f2c2d6d7948d77af669a5e460cc7410e6868dc662c82f855987c99af893",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-wall-turret/packet/views.json"
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-wall-turret/packet/views.json"
     },
     {
       "asset_id": "derby-lower-west-curtain",
@@ -101,9 +101,9 @@
       "object_names": [
         "Lower Bailey West Curtain South Wall Walk / Continuous wall walk and masonry support"
       ],
-      "blend_path": "level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-walkway-045-full/packet/baked/worker.blend",
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-walkway-045-full/packet/baked/worker.blend",
       "blend_sha256": "c2bf2012d882bf96f69c32a52d97808dcd82b996233f244d583d89154f6b62d3",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-walkway-045-full/packet/views.json"
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-west-walkway-045-full/packet/views.json"
     },
     {
       "asset_id": "derby-lower-courtyard-prop",
@@ -117,9 +117,9 @@
         "Lower Bailey Well / Shaft",
         "Lower Bailey Well / Shallow ground pail"
       ],
-      "blend_path": "level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-courtyard-prop/packet/baked/worker.blend",
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-courtyard-prop/packet/baked/worker.blend",
       "blend_sha256": "d941c27e1ee259cc11d3a8d6e5fa590433234d781f29ef421c8c88a8ebdb7b0e",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-courtyard-prop/packet/views.json"
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/remaining-approved-fill-20260923/derby-lower-courtyard-prop/packet/views.json"
     }
   ]
 }

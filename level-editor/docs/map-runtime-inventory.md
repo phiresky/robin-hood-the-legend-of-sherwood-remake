@@ -79,7 +79,7 @@ recurs in these runs. A universal approximately 1 ms budget, full frame/renderin
 costs, hashing, and every mission remain uncertified. Do not add speculative
 runtime optimizations or restore geometric solvers on the basis of these timings.
 
-Artifacts under `work/map-compile/performance-comparison-20261011/` include
+Artifacts under `work/needs-review/map-compile/performance-comparison-20261011/` include
 `comparison-inputs.json`, `install-hashes.json`, `compare.py`, both result JSONs
 (`comparison-results.json`, `warm-comparison-results.json`), binary hashes, and
 all 18 per-run logs. The first two baseline build attempts ended with SIGTERM;
@@ -91,10 +91,10 @@ test binary completes all 540 stock frames. Median advancing-thread CPU times
 are 4.417 / 1.004 / 3.026 ms for H07 / H01 / S01 respectively; wall medians are
 4.786 / 1.035 / 3.109 ms. Navigation node, link and collision-line counts still
 match the earlier run. Evidence is in
-`work/map-compile/stock-tick-wall-cpu-publication-check-20261010.log`.
+`work/needs-review/map-compile/stock-tick-wall-cpu-publication-check-20261010.log`.
 
 A sandboxed hardware-cycle sample also completed with no lost samples
-(`work/map-compile/stock-tick-publication-cycles-20261010.perf`). This samples
+(`work/needs-review/map-compile/stock-tick-publication-cycles-20261010.perf`). This samples
 the whole test, including loading: decompression accounts for about 44% of
 samples, so these percentages must not be presented as tick costs. Sampled
 tick work includes actor-slot retention, enemy detection, animation updates,
@@ -113,7 +113,7 @@ variation rather than establishing a restored baseline.
 also records Linux advancing-thread CPU time. This is test-only instrumentation;
 it does not change gameplay, include startup in tick timing, or count worker
 threads. Frame zero remains excluded from both distributions. The direct repeat
-in `work/map-compile/stock-tick-wall-cpu-20261010.log` under the editor directory
+in `work/needs-review/map-compile/stock-tick-wall-cpu-20261010.log` under the editor directory
 completes all 540 frames:
 
 | Mission | Wall median / p95 | Thread CPU median / p95 |
@@ -139,7 +139,7 @@ Fresh east-hall 270-degree exports now pass all 32 routes in each of five native
 audit modes; broader rotation limitations remain in the map-data checklist.
 
 The optimized stock regression and a direct repeat both complete all 540 frames.
-The repeat is saved in `work/map-compile/subpixel-stair-stock-ticks-20261010.log`
+The repeat is saved in `work/needs-review/map-compile/subpixel-stair-stock-ticks-20261010.log`
 under the editor directory. Its median / p95 / maximum tick times are:
 
 | Mission | Median | p95 | Maximum |
@@ -258,7 +258,7 @@ The saved Derby scene compiles a **613,728-byte graph**, with no graph omission
 warning, in roughly 4.6 seconds of export-time graph preparation. Its descriptor
 constructs 60 areas, 848 sight obstacles, 70 doors and 2 jump pairs. Native sampling
 passes **144 ordinary routes**, spending 0.01 seconds in pathfinding in the
-unoptimized harness. Evidence: `work/map-compile/saved-map-exports-GEMe4m` under
+unoptimized harness. Evidence: `work/needs-review/map-compile/saved-map-exports-GEMe4m` under
 the editor directory. Its 268 other authoring warnings remain; this is not full
 gameplay parity.
 
@@ -267,8 +267,8 @@ its graph. The optimized clearance check reached the same limit in 4.5 seconds
 without changing the existing fixture graphs. With inward-floor-corner pruning
 and extended link indices, the complete scene compiles in 257 seconds, including
 about 21 seconds for the graph. Evidence:
-`work/map-compile/saved-map-exports-f0f5B4`; final graph-only regeneration from that
-descriptor is `work/map-compile/wychford-graph-final-iaAtSp` (**3,069 nodes,
+`work/needs-review/map-compile/saved-map-exports-f0f5B4`; final graph-only regeneration from that
+descriptor is `work/needs-review/map-compile/wychford-graph-final-iaAtSp` (**3,069 nodes,
 321,516 links, 10,359,643 bytes**). No graph omission warning remains.
 
 Native construction succeeds (86 areas, 16,442 sight obstacles, 31 doors, no jump
@@ -331,7 +331,7 @@ the distribution.
 | H01_Lin_VL | 633 | 0.313 ms | 0.324 ms | 0.368 ms | 0.403 ms |
 | S01_Not_VL | 891 | 1.594 ms | 1.101 ms | 1.639 ms | 1.884 ms |
 
-Latest evidence: `work/map-compile/carrier-recovery-performance-repeat-20261008.log`
+Latest evidence: `work/needs-review/map-compile/carrier-recovery-performance-repeat-20261008.log`
 under the editor directory. This optimized rebuild includes the carrier-recovery
 fix in `2b9dff95a`; the Cargo test and a direct repeat both pass all 540 ticks.
 The table records the repeat. These are working-tree measurements, including

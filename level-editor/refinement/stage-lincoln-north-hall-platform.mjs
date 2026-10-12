@@ -114,7 +114,7 @@ for (let along = 0; along <= 40; along++)
     samples.push({ point, hits });
   }
 const supported = samples.every((s) => s.hits.some((h) => Math.abs(h - z) < 0.1));
-const output = await fs.mkdtemp("work/map-compile/lincoln-north-hall-platform-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/lincoln-north-hall-platform-");
 await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify({ before, after, supported, samples, modelSha256: hash(modelBytes) }, null, 2),

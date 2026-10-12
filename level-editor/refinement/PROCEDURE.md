@@ -141,7 +141,7 @@ Repeat for each distinct `layer` in the level's `masks` array. `--layer` selects
 the actor gameplay layer whose masks are included, and defaults to zero. The
 exported `<map>.rhp.d/masks/manifest.json` and mask PNGs must accompany the level
 JSON. Local exports for all nine maps and 54 mask layers are available under
-`level-editor/work/map-compile/occlusion-depth-all-layers/`; regenerate if absent
+`level-editor/work/needs-review/map-compile/occlusion-depth-all-layers/`; regenerate if absent
 or if the source changes.
 
 The output is a 16-bit threshold PNG with a JSON report. Optional `--mask-ids`
@@ -382,7 +382,7 @@ the whole staged scene for voids that the source camera cannot see: holes to
 the ground and recesses behind neighbouring assets. Render several azimuths
 (for example eight views at 20–45° elevation), cluster the empty or recessed
 pixels, and attribute each cluster to its surface and occluding asset. Lincoln
-did this with a scratch scan (`work/lincoln-refinement/scratch/reproject/scan_gaps.py`,
+did this with a scratch scan (`work/needs-review/lincoln-refinement/scratch/reproject/scan_gaps.py`,
 evidence in `gap-scan/`); it is not a reusable tool yet.
 
 Hide approved items from the pending gallery, but retain their archived review
@@ -975,7 +975,7 @@ arguments, and output hashes for every accepted change.
 
 Every background render or bake takes a lease from one machine-wide pool of
 four slots: `refinement/render_slots.py`, locks in
-`work/lincoln-refinement/render-slots/`, FIFO waiters. All maps, workers and
+`work/needs-review/lincoln-refinement/render-slots/`, FIFO waiters. All maps, workers and
 lossy derivation share that pool, so call `render_slots.acquire()` before
 loading a large scene and never start a private pool.
 
@@ -1152,9 +1152,14 @@ mappings are retained in `work/storage-maintenance/migration-20261012/`.
 Historical approval records retain their original bytes; current scripts use
 the relocated paths or explicitly verified operational copies.
 Derby, Leicester, Lincoln, Nottingham and Sherwood are complete, but their
-existing refinement directories remain protected mixed storage until their
-final manifests and dependencies are verified. Unclassified legacy directories
-and loose files are also protected. Do not infer that an unprefixed directory
+legacy refinement directories now live in `work/needs-review/<map>-refinement/`
+until their final manifests and dependencies are verified. Verified packed
+master copies live in `work/final/{derby,leicester,lincoln,sherwood}/`; Nottingham
+remains protected pending repair of a pre-existing missing external image.
+Raw synthesis outputs and newer standalone variants remain protected in the
+legacy archives; a packed master does not replace their retention audit.
+Unclassified legacy directories and loose files also live in `needs-review/`.
+Do not infer that an unprefixed directory
 is disposable. The published `library/` remains the canonical editor/runtime
 asset store and is outside work-directory cleanup.
 

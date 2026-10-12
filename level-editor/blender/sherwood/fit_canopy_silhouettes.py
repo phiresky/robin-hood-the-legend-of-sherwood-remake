@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 from paths import ROOT
 
-out=ROOT/'level-editor/work/sherwood-refinement/branch-canopies'
+out=ROOT/'level-editor/work/needs-review/sherwood-refinement/branch-canopies'
 refs=out.parent/'animation-references'
 records=json.loads((refs/'manifest.json').read_text())['assets']
 fit_path=Path(__file__).with_name('foliage_fit_samples.json')

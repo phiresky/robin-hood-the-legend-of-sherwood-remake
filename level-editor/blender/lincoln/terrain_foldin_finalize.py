@@ -18,7 +18,7 @@ import numpy as np
 from PIL import Image
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1] / 'work/lincoln-refinement'
+ROOT = HERE.parents[1] / 'work/needs-review/lincoln-refinement'
 H, W = 2176, 2944
 
 

@@ -52,7 +52,7 @@ Hiding only the changed sight obstacles would miss both.
 The bridge and mechanism entries remain confirmed gaps. This inventory
 does not validate the game runtime's door, collision, or masking behavior.
 
-Local evidence: `work/derby-patch-audit-20260927/audit.json` records native input,
+Local evidence: `work/needs-review/derby-patch-audit-20260927/audit.json` records native input,
 graphic-frame and published-model hashes, all patch states, and actual exported
 bindings. `interiors.png` compares the four covered/revealed source crops.
 

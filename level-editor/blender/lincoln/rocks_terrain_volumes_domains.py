@@ -25,7 +25,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from rocks_terrain_volumes_carveouts import CARVEOUTS, MIN_PIXELS, SKIP  # noqa: E402
 
-ROOT = HERE.parents[1] / 'work/lincoln-refinement'
+ROOT = HERE.parents[1] / 'work/needs-review/lincoln-refinement'
 SOURCE = ROOT / 'source-states/covered.png'
 MANIFEST = ROOT / 'mask-review/source-masks-v3.json'
 CATALOG = ROOT / 'grouping/catalog-v3.json'

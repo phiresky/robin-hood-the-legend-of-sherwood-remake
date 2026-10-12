@@ -24,7 +24,7 @@ assert.ok(!mask.receiverPoints && !mask.receiverPolyline && !mask.receiverPolyli
 if (mask.receiverSegment) assert.deepEqual(mask.receiverSegment, catalog.receiverSegment);
 mask.receiverSegment = catalog.receiverSegment;
 parseProjectionAssetDescriptor(descriptor);
-const output = await fs.mkdtemp("work/map-compile/ground-mask-receiver-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/ground-mask-receiver-");
 await fs.writeFile(`${output}/asset.json`, JSON.stringify(descriptor) + "\n");
 await fs.writeFile(
   `${output}/edits.json`,

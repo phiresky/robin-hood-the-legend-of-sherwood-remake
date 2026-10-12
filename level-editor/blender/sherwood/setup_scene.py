@@ -10,7 +10,7 @@ from mathutils import Vector
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(Path(__file__).parent))
 from paths import DATA
-OUT=ROOT/'level-editor/work/sherwood-refinement'
+OUT=ROOT/'level-editor/work/needs-review/sherwood-refinement'
 if 'Sherwood Refinement' in bpy.data.scenes:
     raise RuntimeError('Sherwood scene already exists; open its saved checkpoint instead')
 scene=bpy.data.scenes.new('Sherwood Refinement')

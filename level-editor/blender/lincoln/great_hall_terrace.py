@@ -21,7 +21,7 @@ from pathlib import Path
 
 from great_hall_geom import crenel_profile, load_trace, replace_mesh
 
-TRACE = (Path(__file__).resolve().parents[2] / 'work/lincoln-refinement/round-1/assets/'
+TRACE = (Path(__file__).resolve().parents[2] / 'work/needs-review/lincoln-refinement/round-1/assets/'
          'lincoln-hall-south-terrace/inspection/terrace-parapet-trace.json')
 GROUND = 400.0          # terrace wall foot (same datum as the pillar cut)
 BARTIZAN_FOOT = 436.0   # corbel foot of the hanging bartizan (native 277 bottom; art ~441)

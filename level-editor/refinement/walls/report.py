@@ -6,7 +6,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[2]
-WORK = ROOT / 'work/wall-presets'
+WORK = ROOT / 'work/needs-review/wall-presets'
 
 
 def main():

@@ -16,7 +16,7 @@ const entries = manifests.map(
   (manifest) => new Map(manifest.results.map((entry) => [entry.file, entry])),
 );
 assert.deepEqual([...entries[0].keys()].sort(), [...entries[1].keys()].sort());
-const output = await fs.mkdtemp("work/map-compile/combined-jump-clicks-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/combined-jump-clicks-");
 const results = [];
 for (const label of ["baseline", "candidate"]) await fs.mkdir(path.join(output, label));
 for (const file of entries[0].keys()) {

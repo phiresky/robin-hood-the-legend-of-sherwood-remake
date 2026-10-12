@@ -24,7 +24,7 @@ def main():
  prepare(W/'review-manifest.json',member['asset_id'],W/'experiment',W/'decisions.json')
  E=W/'experiment';folder=E/'material-references';folder.mkdir();refs=[]
  for name,rev,_ in REFERENCES:
-  source=ROOT/'level-editor/work/leicester-refinement/round-1/texture-review/approved-evidence'/name/rev/'textured.png'
+  source=ROOT/'level-editor/work/needs-review/leicester-refinement/round-1/texture-review/approved-evidence'/name/rev/'textured.png'
   target=folder/(name+'-native-example.png');Image.open(source).crop((0,0,256,320)).save(target)
   refs.append({'source':'material','file':str(target),'sha256':sha(target),'asset_id':name,'role':'Supplementary native-view tree example. Use only the brown trunk bark character and bark palette; do not add foliage to the target wood, and do not copy geometry, gray patches, background or proportions. Target source bark has priority.','parent_image':str(source),'parent_sha256':sha(source),'crop_box':[0,0,256,320],'crop_method':'Exact first native camera tile pixels; no resizing or recoloring','authorization':'Only the two Leicester trees explicitly permitted by user.'})
  write(E/'auxiliary-references.json',{'version':1,'input_sha256':sha(E/'input.png'),'lighting_sha256':sha(E/'solid.png'),'references':refs})

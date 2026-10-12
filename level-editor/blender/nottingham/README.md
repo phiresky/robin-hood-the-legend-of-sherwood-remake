@@ -7,7 +7,7 @@ in the 2026-09-26 Python cleanup and remain in git history (tag
 `python-cleanup-base`). They implemented the workflow in
 [`../../refinement/PROCEDURE.md`](../../refinement/PROCEDURE.md). Run commands
 from the repository root. Generated evidence lives in
-`level-editor/work/nottingham-refinement/`.
+`level-editor/work/needs-review/nottingham-refinement/`.
 
 The initial reviewed grouping was `grouping/catalog-v7.json` (117 selectable
 groups owning 555 canonical source parts exactly once); the final catalog is

@@ -12,7 +12,7 @@ from pathlib import Path
 import time
 import uuid
 
-POOL = Path(__file__).resolve().parents[1] / 'work/lincoln-refinement/render-slots'
+POOL = Path(__file__).resolve().parents[1] / 'work/needs-review/lincoln-refinement/render-slots'
 SLOTS = 4
 _lease = None
 

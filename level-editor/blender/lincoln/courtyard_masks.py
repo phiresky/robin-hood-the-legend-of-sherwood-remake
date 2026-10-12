@@ -29,7 +29,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-LINCOLN = Path(__file__).resolve().parents[2] / 'work/lincoln-refinement'
+LINCOLN = Path(__file__).resolve().parents[2] / 'work/needs-review/lincoln-refinement'
 BARN = 'the barn masks 172/175 cover the whole shed'
 FOREGROUND = ('Visually reviewed foreground silhouettes drawn in front of this receiver in the covered '
               'artwork (foliage, fence, interior props or animals); those pixels belong to the foreground '

@@ -73,7 +73,7 @@ const source = sources.find((s) => s.id === asset);
 const bytes = await fs.readFile(`library/${source.descriptor}`);
 assert.equal(createHash("sha256").update(bytes).digest("hex"), source.descriptor_sha256);
 edits.push({ asset, descriptorSha256: source.descriptor_sha256, gameplay });
-const output = await fs.mkdtemp("work/map-compile/east-wall-terrace-seam-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/east-wall-terrace-seam-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(
   `${output}/review.json`,

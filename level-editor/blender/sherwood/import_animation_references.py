@@ -14,7 +14,7 @@ import bpy
 from mathutils import Vector
 
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/sherwood-refinement/animation-references'
+OUT=ROOT/'level-editor/work/needs-review/sherwood-refinement/animation-references'
 SIN=math.sin(math.radians(35))
 COS=math.cos(math.radians(35))
 NAME='07 Reference only - authored animated sprites'

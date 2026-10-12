@@ -92,7 +92,7 @@ def nested_initial_report(output, layers):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--datadir', type=Path, default=ROOT.parent / 'datadirs/fullgame_gog_hackable')
-    parser.add_argument('--output', type=Path, default=ROOT / 'work/lincoln-refinement/source-states')
+    parser.add_argument('--output', type=Path, default=ROOT / 'work/needs-review/lincoln-refinement/source-states')
     args = parser.parse_args()
     output = args.output.resolve()
     data = args.datadir.resolve()

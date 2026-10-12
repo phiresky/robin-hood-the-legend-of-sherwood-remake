@@ -1,7 +1,7 @@
 """Collect verified Lincoln worker packets without granting approval.
 
 Run with Python, after workers produce packets. Defaults target
-work/lincoln-refinement/{grouping/catalog.json,round-1/assets,gallery}.
+work/needs-review/lincoln-refinement/{grouping/catalog.json,round-1/assets,gallery}.
 Workers provide candidate.json with version, asset_id, geometry_refined, status,
 inspected_views, recipe, model_sha256, modified_views_sha256, changes, limitations.
 Ready candidates also require review.md and all eight visually inspected views.
@@ -336,7 +336,7 @@ def supplemental_packet(directory, asset_id, framing, *, mask_origin=None):
 
 
 def main(argv=None):
-    root = Path(__file__).resolve().parents[2] / "work/lincoln-refinement"
+    root = Path(__file__).resolve().parents[2] / "work/needs-review/lincoln-refinement"
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog", type=Path, default=root / "grouping/catalog.json")
     parser.add_argument("--assets", type=Path, default=root / "round-1/assets")

@@ -149,7 +149,7 @@ descriptor.gameplay = {
 };
 if (!solidDeck) delete descriptor.gameplay.volumes;
 if (structure) {
-  const timber = JSON.parse(await fs.readFile("work/map-compile/croisement-bridge-structure.json"));
+  const timber = JSON.parse(await fs.readFile("work/needs-review/map-compile/croisement-bridge-structure.json"));
   assert.equal(timber.modelSha256, hash(bytes));
   structureRays = timber.rayProbes;
   for (const piece of timber.pieces) {
@@ -259,7 +259,7 @@ const reference = {
   model_scene: entry.model_scene,
   resources: descriptor.resources ?? [],
 };
-const output = await fs.mkdtemp("work/map-compile/croisement-bridge-gameplay-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/croisement-bridge-gameplay-");
 console.log(
   JSON.stringify({ output, structure, volumes: descriptor.gameplay.volumes?.length ?? 0 }),
 );

@@ -23,7 +23,7 @@ def main():
     from refinement_inventory import inventory
     baseline = OUT / 'baseline'
     baseline.mkdir(parents=True, exist_ok=False)
-    archive = ROOT / 'level-editor/work/scene-backups/map-manifest-migration/scenes'
+    archive = ROOT / 'level-editor/work/needs-review/scene-backups/map-manifest-migration/scenes'
     data = ROOT / 'datadirs/fullgame_gog_hackable/Data/Levels'
     inputs = {}
     for source, name in [

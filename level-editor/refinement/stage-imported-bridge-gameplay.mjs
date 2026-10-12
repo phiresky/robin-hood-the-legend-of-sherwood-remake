@@ -1,5 +1,5 @@
 // Run from level-editor; add --supports after author-imported-bridge-supports.py.
-// Writes unpublished candidates and native-test fixtures under work/map-compile.
+// Writes unpublished candidates and native-test fixtures under work/needs-review/map-compile.
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -110,11 +110,11 @@ if (process.argv.includes("--supports") || process.argv.includes("--structure"))
   const require = createRequire(new URL("../pipeline/package.json", import.meta.url));
   const clipping = require("polygon-clipping");
   supportHulls = JSON.parse(
-    await fs.readFile("work/map-compile/imported-bridge-support-hulls.json"),
+    await fs.readFile("work/needs-review/map-compile/imported-bridge-support-hulls.json"),
   );
   assert.equal(supportHulls.modelSha256, review.modelSha256);
   const structure = process.argv.includes("--structure")
-    ? JSON.parse(await fs.readFile("work/map-compile/imported-bridge-structure-hulls.json"))
+    ? JSON.parse(await fs.readFile("work/needs-review/map-compile/imported-bridge-structure-hulls.json"))
     : undefined;
   if (structure) assert.equal(structure.modelSha256, review.modelSha256);
   descriptor.gameplay.volumes = [];
@@ -226,7 +226,7 @@ if (published) {
   assert.deepEqual(withoutDraft(descriptor.gameplay), withoutDraft(publishedGameplay));
   descriptor.gameplay = publishedGameplay;
 }
-const output = await fs.mkdtemp("work/map-compile/imported-bridge-deck-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/imported-bridge-deck-");
 await fs.writeFile(
   `${output}/candidate.gameplay.json`,
   JSON.stringify(descriptor.gameplay, null, 2),

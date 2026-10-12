@@ -18,7 +18,7 @@ parser.add_argument('maps', type=Path)
 parser.add_argument('--synthesizer', default=shutil.which('texture-synthesis'))
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
-work = root / 'work/riverbanks'
+work = root / 'work/needs-review/riverbanks'
 work.mkdir(parents=True, exist_ok=True)
 out = root / 'app/src/terrain-textures'
 source = Image.open(args.maps / 'sherwood.map.png').convert('RGB')

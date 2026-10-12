@@ -112,7 +112,7 @@ for (let i = 0; i <= 40; i++)
       : Math.min(...top.flatMap((t) => t.map((a, k) => distance(point, a, t[(k + 1) % 3]))));
     samples.push({ point, supported, gap });
   }
-const output = await fs.mkdtemp("work/map-compile/york-terrace-receiver-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-terrace-receiver-");
 const gap = Math.max(...samples.map((s) => s.gap));
 await fs.writeFile(
   `${output}/review.json`,

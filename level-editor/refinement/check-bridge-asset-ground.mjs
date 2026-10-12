@@ -11,7 +11,7 @@ assert.ok(stage, "Provide a bridge fixture stage");
 const manifest = JSON.parse(await fs.readFile(`${stage}/diagnostics.json`));
 assert.equal(manifest.complete, true);
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`));
-const output = await fs.mkdtemp("work/map-compile/bridge-asset-ground-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/bridge-asset-ground-");
 console.log(JSON.stringify({ output }));
 const results = [];
 const areasForMaterial = (compiled, material) =>

@@ -103,7 +103,7 @@ assert.ok(
 );
 const assets = new Map([[id, descriptor]]);
 const bounds = [0, 0, 2000 + padding * 2, 2000 + padding * 2];
-const output = await fs.mkdtemp("work/map-compile/grounded-stair-placements-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/grounded-stair-placements-");
 console.log(output);
 const results = [];
 const report = async () =>

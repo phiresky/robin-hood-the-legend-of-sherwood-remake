@@ -1,6 +1,6 @@
 {
-  "baseline": "level-editor/work/derby-refinement/round-2/publication-6-approved-buildings-v2/worker.blend",
-  "output": "level-editor/work/derby-refinement/round-2/publication-7-approved-north-wall",
+  "baseline": "level-editor/work/needs-review/derby-refinement/round-2/publication-6-approved-buildings-v2/worker.blend",
+  "output": "level-editor/work/needs-review/derby-refinement/round-2/publication-7-approved-north-wall",
   "map_name": "Derby",
   "scene_name": "Derby Refinement",
   "collection_name": "Derby Working",
@@ -12,8 +12,8 @@
       "asset_id": "derby-lower-west-curtain",
       "source_asset_id": "derby-lower-west-curtain-north",
       "source_nodes": ["building-025"],
-      "blend_path": "level-editor/work/derby-refinement/round-2/sunburst-lower-west-north-v14-approved-20260923/baked/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-lower-west-north-v14-approved-20260923/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-lower-west-north-v14-approved-20260923/baked/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-lower-west-north-v14-approved-20260923/views.json"
     }
   ]
 }

@@ -14,8 +14,8 @@ sys.path.insert(0, str(HERE))
 import keep_north_finalize as R1  # noqa: E402
 
 ROOT = HERE.parents[2]
-R2 = ROOT / 'level-editor/work/lincoln-refinement/round-2/assets'
-R1DIR = ROOT / 'level-editor/work/lincoln-refinement/round-1/assets'
+R2 = ROOT / 'level-editor/work/needs-review/lincoln-refinement/round-2/assets'
+R1DIR = ROOT / 'level-editor/work/needs-review/lincoln-refinement/round-1/assets'
 
 RESOLVED = {
     'lincoln-keep-annex': [

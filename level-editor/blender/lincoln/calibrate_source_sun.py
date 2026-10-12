@@ -4,7 +4,7 @@ Runs with system python3 + Pillow + numpy (no Blender):
 
     python3 level-editor/blender/lincoln/calibrate_source_sun.py
 
-Writes into level-editor/work/lincoln-refinement/lighting-calibration/:
+Writes into level-editor/work/needs-review/lincoln-refinement/lighting-calibration/:
   estimate.json, map-lighting.json and annotated evidence PNGs.
 
 Projection: native (x, y, z) -> pixel (x, y - z).  Blender world X = x,
@@ -31,7 +31,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[3]
-R = ROOT / "level-editor/work/lincoln-refinement"
+R = ROOT / "level-editor/work/needs-review/lincoln-refinement"
 OUT = R / "lighting-calibration"
 SOURCE = R / "source-states/covered.png"
 LEVEL = R / "source-states/level.json"
@@ -332,7 +332,7 @@ def main():
     report = dict(
         status="SOURCE-CALIBRATED-REVIEW-ESTIMATE",
         map="lincoln",
-        source="level-editor/work/lincoln-refinement/source-states/covered.png",
+        source="level-editor/work/needs-review/lincoln-refinement/source-states/covered.png",
         source_sha256=sha(SOURCE),
         level_sha256=sha(LEVEL),
         projection="native (x,y,z) -> pixel (x, y-z); world X=x, Y=-y/sin35, Z=z/cos35",

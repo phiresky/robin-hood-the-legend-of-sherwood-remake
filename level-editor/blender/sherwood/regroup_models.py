@@ -121,7 +121,7 @@ def build(geometry, output):
             sources=[source_for_part(p) for p in group['parts']],objects=sorted(names),
             previous_assets=sorted({o['asset'] for o in records if o['name'] in names})))
     (output/'catalog.json').write_text(json.dumps(catalog,indent=2)+'\n')
-    plan=dict(version=1,source_worker_sha256=sha(EDITOR/'work/sherwood-refinement/textures/reproject-v2/source-only.blend'),
+    plan=dict(version=1,source_worker_sha256=sha(EDITOR/'work/needs-review/sherwood-refinement/textures/reproject-v2/source-only.blend'),
               geometry_audit_sha256=sha(geometry),catalog_sha256=sha(output/'catalog.json'),
               original_groups=len(original['groups']),candidate_groups=len(groups),
               assignments=assignments,groups=audit,checks=['every visible mesh assigned exactly once','all original source ownership retained',

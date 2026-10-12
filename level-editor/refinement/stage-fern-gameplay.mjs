@@ -18,7 +18,7 @@ import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json")).assets;
-const output = await fs.mkdtemp("work/map-compile/fern-gameplay-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/fern-gameplay-");
 const edits = [],
   results = [],
   reviews = [];

@@ -4,7 +4,7 @@ Run from the repository root after trees_inventory.py:
 
     /usr/bin/blender --background --threads 2 --python-exit-code 1 \
       --python level-editor/blender/lincoln/trees_geometry.py -- \
-      --output level-editor/work/lincoln-refinement/trees/scene [asset ids ...]
+      --output level-editor/work/needs-review/lincoln-refinement/trees/scene [asset ids ...]
 
 Without asset ids every proposal in the tree catalog proposal is built. The script opens
 lincoln-grouped-v5.blend (terrain ground with the stream cut), adds each asset to
@@ -37,7 +37,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path.cwd()
-R = ROOT / 'level-editor/work/lincoln-refinement'
+R = ROOT / 'level-editor/work/needs-review/lincoln-refinement'
 sys.path.insert(0, str(ROOT / 'level-editor/blender/lincoln'))
 # Leicester foliage recipes are the reviewed-good precedent; reused, not copied.
 sys.path.insert(0, str(ROOT / 'level-editor/blender/leicester'))

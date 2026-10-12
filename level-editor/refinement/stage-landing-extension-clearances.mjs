@@ -64,7 +64,7 @@ for (const change of review.changes) {
 assert.ok(added.length, "No reviewed landing extensions need clearance");
 validateAssetGameplay(gameplay, descriptor);
 review.changes.push({ landingExtensionClearances: added });
-const output = await fs.mkdtemp("work/map-compile/landing-extension-clearances-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/landing-extension-clearances-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits, null, 2));
 await fs.writeFile(`${output}/review.json`, JSON.stringify(review, null, 2));
 console.log(JSON.stringify({ output, asset: edit.asset, clearances: added.length }));

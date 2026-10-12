@@ -43,7 +43,7 @@ gameplay.jumpSegments = [];
 gameplay.draft.issues.push(
   "Unpublished walking jump candidate: inset launch and landing span requires full walking review. Authored connection retains flight-clearance warnings, including possible combat animation intersection with the platform.",
 );
-const output = await fs.mkdtemp("work/map-compile/watermill-walking-jump-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/watermill-walking-jump-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(
   `${output}/review.json`,

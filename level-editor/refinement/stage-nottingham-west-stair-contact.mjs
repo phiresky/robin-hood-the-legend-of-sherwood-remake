@@ -157,7 +157,7 @@ gameplay.draft.issues.push(
 );
 validateAssetGameplay(gameplay, descriptor);
 edits.push({ asset, descriptorSha256: source.descriptor_sha256, gameplay });
-const output = await fs.mkdtemp("work/map-compile/nottingham-west-stair-contact-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/nottingham-west-stair-contact-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(
   `${output}/review.json`,

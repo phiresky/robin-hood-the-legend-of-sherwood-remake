@@ -60,7 +60,7 @@ Every script has a module docstring; `--help` lists its arguments.
   change an existing worker's implementation. Pure-Python modules in
   `refinement/` are not part of those snapshots.
 - **Render slots.** `render_slots.acquire()` (in `refinement/`) takes one of
-  four machine-wide slots in `work/lincoln-refinement/render-slots/` (FIFO); every
+  four machine-wide slots in `work/needs-review/lincoln-refinement/render-slots/` (FIFO); every
   map, worker and lossy derivation uses that one pool. Acquire before loading
   large scenes.
 - **Recipe provenance.** Gallery builders re-hash the `candidate.json` `"recipe"`

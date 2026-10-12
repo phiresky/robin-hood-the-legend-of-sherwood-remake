@@ -118,7 +118,7 @@
           },
           "metric": "Per pixel max |channel| difference (0-255) after compositing both renders over gray 128; statistics over the union of both silhouettes."
         },
-        "sheet": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/wychford-square-atlas/work/leicester/leicester-watermill/model/compare-sheet.png"
+        "sheet": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/wychford-square-atlas/work/leicester/leicester-watermill/model/compare-sheet.png"
       },
       "lossy_sha256": "791a46b793bd48e61811f63cb7f67e22925d08b441286169d60f3d35e8568a39",
       "old_validation": {
@@ -368,7 +368,7 @@
           },
           "metric": "Per pixel max |channel| difference (0-255) after compositing both renders over gray 128; statistics over the union of both silhouettes."
         },
-        "sheet": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/wychford-square-atlas/work/leicester/leicester-church-side-tower/model/compare-sheet.png"
+        "sheet": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/wychford-square-atlas/work/leicester/leicester-church-side-tower/model/compare-sheet.png"
       },
       "lossy_sha256": "cd6e5e92fd70f8335f9134ea60c07bab1ede8f7c496b6707b645e1d446c85ab1",
       "old_validation": {
@@ -618,7 +618,7 @@
           },
           "metric": "Per pixel max |channel| difference (0-255) after compositing both renders over gray 128; statistics over the union of both silhouettes."
         },
-        "sheet": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/wychford-square-atlas/work/derby/derby-east-watchtower/model/compare-sheet.png"
+        "sheet": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/wychford-square-atlas/work/derby/derby-east-watchtower/model/compare-sheet.png"
       },
       "lossy_sha256": "cd116ea14632c0cf5b80ab97f69bd5771258d7f81f922004addf55798f7e10f6",
       "old_validation": {

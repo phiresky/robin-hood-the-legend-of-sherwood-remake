@@ -19,7 +19,7 @@ from modeling import ROOT,DATA,SIN,COS,EYE,collection,game_point
 NAME='10 Animated foliage - curved canopy shells'
 c=collection(NAME)
 UP=Vector((0,SIN,COS));RIGHT=Vector((1,0,0))
-records=json.loads((ROOT/'level-editor/work/sherwood-refinement/animation-references/manifest.json').read_text())['assets']
+records=json.loads((ROOT/'level-editor/work/needs-review/sherwood-refinement/animation-references/manifest.json').read_text())['assets']
 level=json.loads((DATA/'Levels/Sherwood.rhp.json').read_text())
 refs=bpy.data.collections['07 Reference only - authored animated sprites']
 supports={'Sherwood - Arbre01':[27,30,32], 'Sherwood - Arbre02':[46,35,29,31,24,25,27],

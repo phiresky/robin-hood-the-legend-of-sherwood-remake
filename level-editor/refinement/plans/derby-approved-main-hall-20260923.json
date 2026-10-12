@@ -1,6 +1,6 @@
 {
-  "baseline": "level-editor/work/derby-refinement/round-2/publication-8-approved-backlog/worker.blend",
-  "output": "level-editor/work/derby-refinement/round-2/publication-9-main-hall-states-v2",
+  "baseline": "level-editor/work/needs-review/derby-refinement/round-2/publication-8-approved-backlog/worker.blend",
+  "output": "level-editor/work/needs-review/derby-refinement/round-2/publication-9-main-hall-states-v2",
   "map_name": "Derby",
   "scene_name": "Derby Refinement",
   "collection_name": "Derby Working",
@@ -9,7 +9,7 @@
   "hackable_map": "datadirs/fullgame_gog_hackable/Data/Levels/Derby.rhp.json",
   "imports": [{
     "asset_id": "derby-keep-main-hall",
-    "blend_path": "level-editor/work/derby-refinement/round-2/sunburst-keep-main-hall-approved-48/covered-material-state/state-bound.blend",
-    "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-keep-main-hall-approved-48/views.json"
+    "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-keep-main-hall-approved-48/covered-material-state/state-bound.blend",
+    "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-keep-main-hall-approved-48/views.json"
   }]
 }

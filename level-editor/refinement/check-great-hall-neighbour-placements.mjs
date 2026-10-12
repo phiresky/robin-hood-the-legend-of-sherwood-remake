@@ -16,7 +16,7 @@ for (const id of ids) {
   if (mode === "--published") assert.deepEqual(assets.get(id).gameplay, edit.gameplay);
   else assets.get(id).gameplay = edit.gameplay;
 }
-const output = await fs.mkdtemp("work/map-compile/great-hall-neighbour-placements-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/great-hall-neighbour-placements-");
 console.log(output);
 const results = [],
   rejected = [];

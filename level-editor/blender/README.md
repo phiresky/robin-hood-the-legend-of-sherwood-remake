@@ -18,7 +18,7 @@ generated textures are excluded from the evidence used to refine geometry.
 
 ## Derby checkpoint
 
-`work/derby-refinement/derby-refinement.blend` contains a hidden imported baseline,
+`work/needs-review/derby-refinement/derby-refinement.blend` contains a hidden imported baseline,
 the working map, 30 named asset parents and reference/oblique/detail cameras.
 The 270 source obstacles have complete ownership in `refinement/catalogs/derby.json`.
 The Great Keep, East Hall, freestanding watchtower, cottages and curtain walls
@@ -119,7 +119,7 @@ Run separate jobs against copied checkpoints with `run_worker.py`:
 ```sh
 /usr/bin/blender --background --factory-startup --python-exit-code 1 \
   --python level-editor/refinement/blender/run_worker.py -- \
-  --source level-editor/work/derby-refinement/derby-refinement.blend \
+  --source level-editor/work/needs-review/derby-refinement/derby-refinement.blend \
   --job path/to/job.py --output-dir path/to/fresh-worker-directory
 ```
 

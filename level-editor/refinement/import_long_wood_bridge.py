@@ -7,7 +7,7 @@ After importing, generate browser derivatives from the repository root with:
     blender --background --threads 2 --python-exit-code 1 \
       --python level-editor/refinement/blender/lossy_assets.py -- library \
       --root level-editor/library/3d-assets --assets sketchfab-long-wood-bridge \
-      --run level-editor/work/bridge-lossy-import --apply
+      --run level-editor/work/needs-review/bridge-lossy-import --apply
 """
 import argparse
 import hashlib

@@ -17,7 +17,7 @@ from paths import DATA, ROOT
 parser=argparse.ArgumentParser()
 parser.add_argument('--prepare-only',action='store_true')
 args=parser.parse_args()
-OUT=ROOT/'level-editor/work/sherwood-refinement/ground-reprojection'
+OUT=ROOT/'level-editor/work/needs-review/sherwood-refinement/ground-reprojection'
 source=Image.open(DATA/'Levels/Day/sherwood.map.png').convert('RGB')
 before=Image.open(OUT/'ground-before.png').convert('RGB')
 if source.size!=before.size or source.size!=(1920,1088):

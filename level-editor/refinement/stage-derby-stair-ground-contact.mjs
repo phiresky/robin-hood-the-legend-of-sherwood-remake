@@ -136,7 +136,7 @@ for (let along = 0; along <= 40; along++)
       .filter((z) => z !== undefined);
     samples.push({ point, hits });
   }
-const output = await fs.mkdtemp("work/map-compile/derby-stair-ground-contact-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/derby-stair-ground-contact-");
 const supported = samples.every((sample) => sample.hits.some((z) => Math.abs(z) < 0.05));
 await fs.writeFile(
   `${output}/review.json`,

@@ -12,7 +12,7 @@ Vector = _geom.Vector
 
 import great_hall_geom as G
 
-WORKSPACE = Path(__file__).resolve().parents[2] / 'work/lincoln-refinement/round-1/assets/lincoln-great-hall'
+WORKSPACE = Path(__file__).resolve().parents[2] / 'work/needs-review/lincoln-refinement/round-1/assets/lincoln-great-hall'
 
 # --- East wing -------------------------------------------------------------------------
 # Native roof lines (from the native roof receivers 246/247; their SE-end projection

@@ -45,7 +45,7 @@ const frame = [
   Math.min(source.size[0], box[2] + 200),
   Math.min(source.size[1], box[3] + 200),
 ];
-const output = await fs.mkdtemp("work/map-compile/lift-neighbour-collision-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/lift-neighbour-collision-");
 const results = [];
 console.log(JSON.stringify({ output, primary, nearby }));
 for (const included of [[], ...nearby.map((id) => [id]), nearby]) {

@@ -46,7 +46,7 @@ for (const [node, sector] of [
   review.push({ before, after: surface });
 }
 validateAssetGameplay(gameplay, asset);
-const output = await fs.mkdtemp("work/map-compile/leicester-keep-clearance-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/leicester-keep-clearance-");
 await fs.writeFile(
   `${output}/edits.json`,
   JSON.stringify([

@@ -136,7 +136,7 @@ for (const [neighbour, node, corners] of [
   validateAssetGameplay(data, assets.get(neighbour));
 }
 for (const edit of edits) assets.get(edit.asset).gameplay = edit.gameplay;
-const output = await fs.mkdtemp("work/map-compile/york-wooden-stair-floor-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-wooden-stair-floor-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 const compiled = compileMap(document, [0, 0, ...document.size], assets, { bestEffort: true });
 await fs.writeFile(`${output}/york.level.json`, JSON.stringify(compiled.descriptor));

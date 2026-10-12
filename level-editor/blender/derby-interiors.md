@@ -73,7 +73,7 @@ cd level-editor
 pnpm --filter pipeline exec node --test ../app/src/patch-display.test.ts ../shared/src/patch-bindings.test.ts
 ```
 
-Current repair evidence is under `work/derby-interiors-fix/`: `states-v4/` records
+Current repair evidence is under `work/needs-review/derby-interiors-fix/`: `states-v4/` records
 input/output hashes and covered-resource invariance; `covered-comparison.json`
 records zero changed pixels in all three covered renders; `review.png` compares
 the room references and restored appearances. The publication browser audit

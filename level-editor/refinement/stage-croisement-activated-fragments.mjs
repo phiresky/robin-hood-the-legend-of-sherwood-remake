@@ -101,7 +101,7 @@ for (const [suffix, descriptorSha256, modelSha256] of reviewed) {
   });
   edits.push({ asset: id, descriptorSha256, modelSha256, gameplay: descriptor.gameplay });
 }
-const output = await fs.mkdtemp("work/map-compile/activated-fragments-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/activated-fragments-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 console.log(output);
 const results = [];

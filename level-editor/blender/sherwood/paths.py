@@ -5,4 +5,4 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 GAME_ROOT=ROOT.parents[1] if ROOT.parent.name=='.worktrees' else ROOT
 DATA=Path(os.environ.get('SHERWOOD_DATA_DIR',str(GAME_ROOT/'datadirs/fullgame_gog_hackable/Data')))
-OUT=ROOT/'level-editor/work/sherwood-refinement/pass2'
+OUT=ROOT/'level-editor/work/needs-review/sherwood-refinement/pass2'

@@ -44,7 +44,7 @@ assert.ok(ids.length && ids.every((id) => !id.startsWith("-")), "Supply library 
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json")).assets;
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const output = await fs.mkdtemp("work/map-compile/physical-mesh-audit-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/physical-mesh-audit-");
 const results = [];
 console.log(JSON.stringify({ output }));
 for (const id of ids) {

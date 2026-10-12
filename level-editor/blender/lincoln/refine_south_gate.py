@@ -28,7 +28,7 @@ from south_gate_walls_geometry import (Mesh, prism, ribbon, crenellated_strip,  
 import south_gate_walls_assets as assets  # noqa: E402
 
 ROOT = HERE.parents[2]
-R = ROOT / 'level-editor/work/lincoln-refinement'
+R = ROOT / 'level-editor/work/needs-review/lincoln-refinement'
 TOOLING = R / 'tooling/e6b57cb851c7142b'
 TAG = 'south_gate_walls_recipe_v1'
 

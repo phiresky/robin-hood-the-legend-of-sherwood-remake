@@ -42,7 +42,7 @@ def world_points(objects):
 def main(root, only=None):
     root=Path(root).resolve();plan=json.loads((root/'plan.json').read_text())
     assert sha(root/'catalog.json')==plan['catalog_sha256']
-    source=EDITOR/'work/sherwood-refinement/textures/reproject-v2/source-only.blend'
+    source=EDITOR/'work/needs-review/sherwood-refinement/textures/reproject-v2/source-only.blend'
     assert sha(source)==plan['source_worker_sha256']
     acquire();bpy.ops.wm.open_mainfile(filepath=str(source))
     scene=bpy.data.scenes['Sherwood Editor Migration'];bpy.context.window.scene=scene
@@ -125,7 +125,7 @@ def main(root, only=None):
         uv=np.column_stack([points[:,0],-points[:,1]*math.sin(math.radians(35))-points[:,2]*math.cos(math.radians(35))])
         lo=np.floor(uv.min(0)-20).astype(int);hi=np.ceil(uv.max(0)+20).astype(int)
         bounds=[int(max(0,lo[0])),int(max(0,lo[1])),int(min(1920,hi[0])),int(min(1088,hi[1]))]
-        with Image.open(EDITOR/'work/sherwood-refinement/textures/original-static-art.png') as art:art.crop(bounds).save(folder/'original.png')
+        with Image.open(EDITOR/'work/needs-review/sherwood-refinement/textures/original-static-art.png') as art:art.crop(bounds).save(folder/'original.png')
         packet={**group,'scope':'grouping-only','geometry_uv_materials_unchanged':True,
             'worker_sha256':receipt['worker_sha256'],'catalog_sha256':receipt['catalog_sha256'],'views':entries,'source_bounds':bounds,
             'files':{name:sha(folder/name) for name in ('solid.png','textured.png','original.png')}}

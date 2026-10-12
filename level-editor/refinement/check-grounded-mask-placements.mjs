@@ -34,7 +34,7 @@ const reference = {
 const assets = new Map([[id, descriptor]]);
 const expectedMasks = descriptor.gameplay.masks.length * 2;
 assert.ok(expectedMasks > 0);
-const output = await fs.mkdtemp("work/map-compile/grounded-mask-placements-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/grounded-mask-placements-");
 console.log(output);
 const results = [];
 const report = async () =>

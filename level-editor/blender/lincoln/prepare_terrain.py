@@ -31,7 +31,7 @@ import bpy
 from mathutils import Vector
 
 HERE = Path(__file__).resolve().parent
-ROOT = HERE.parents[1] / 'work/lincoln-refinement'
+ROOT = HERE.parents[1] / 'work/needs-review/lincoln-refinement'
 sys.path.insert(0, str(HERE))
 from render_slots import acquire  # noqa: E402
 from freeze_tooling import select_tooling  # noqa: E402

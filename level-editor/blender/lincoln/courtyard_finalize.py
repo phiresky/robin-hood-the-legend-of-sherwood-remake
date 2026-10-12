@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-LINCOLN = HERE.parents[1] / 'work/lincoln-refinement'
+LINCOLN = HERE.parents[1] / 'work/needs-review/lincoln-refinement'
 RECIPE = HERE / 'refine_courtyard.py'
 
 GROUND = ('Ground contact: native z 220 (Blender Z 268.57), the top of the inner/north bailey plateau '

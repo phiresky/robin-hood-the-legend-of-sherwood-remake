@@ -43,7 +43,7 @@ TMPDIR=/home/phire/.cache node refinement/walls/render-audit.mjs --segments --fo
 python3 refinement/walls/report.py
 ```
 
-Inspect `work/wall-presets/review.html`, `repeat-joins.jpg`, `all-strips.jpg` and `overview.jpg`.
+Inspect `work/needs-review/wall-presets/review.html`, `repeat-joins.jpg`, `all-strips.jpg` and `overview.jpg`.
 Each full-model comparison has game-camera and angled views of the original,
 prepared strip, three repeats, an S-curve, a corner and an enlarged join centered
 in the frame. The browser checks that

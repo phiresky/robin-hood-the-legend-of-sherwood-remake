@@ -25,7 +25,7 @@ native-mask-constrained Day bake. This remains a model review, not a final textu
 approval or a published replacement.
 
 The isolated artifacts are in
-`work/sherwood-refinement/northeast-oak-review/`:
+`work/needs-review/sherwood-refinement/northeast-oak-review/`:
 
 - `candidate.blend` and `stage.json`: revised worker and exact baseline binding.
 - `geometry-source.json`: original mask hash and inferred geometry details.

@@ -3,7 +3,7 @@
 Example (from the repository root):
   blender --background --factory-startup --python-exit-code 1 \
     --python level-editor/refinement/blender/run_worker.py -- \
-    --source level-editor/work/derby-refinement/derby-refinement.blend \
+    --source level-editor/work/needs-review/derby-refinement/derby-refinement.blend \
     --job path/to/refinement_job.py --output-dir path/to/new/worker-directory
 
 The job receives ``worker_output_dir`` and ``worker_source_blend`` globals and

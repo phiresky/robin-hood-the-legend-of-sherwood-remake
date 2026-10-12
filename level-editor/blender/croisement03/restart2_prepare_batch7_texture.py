@@ -59,7 +59,7 @@ def main():
         permitted=[('leicester-southeast-cottage-tree','9a8974c11e28d00c9729745d71fdc25d00385fb48a002e8b51833e5809fd5312'),
                    ('leicester-moat-bank-tree','6a18f955edc12e45fc5f05892022419f07aa527b9960c16a651645ce8c593392')]
         for donor,revision in permitted:
-            source=ROOT/'level-editor/work/leicester-refinement/round-1/texture-review/approved-evidence'/donor/revision/'textured.png'
+            source=ROOT/'level-editor/work/needs-review/leicester-refinement/round-1/texture-review/approved-evidence'/donor/revision/'textured.png'
             image=Image.open(source);w,h=image.size;box=(0,0,w//4,h//2)
             target=refs/(donor+'.png')
             image.crop(box).resize((w//4*3,h//2*3),Image.Resampling.NEAREST).save(target)

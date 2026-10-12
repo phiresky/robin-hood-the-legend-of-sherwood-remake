@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-R = HERE.parents[2] / 'level-editor/work/lincoln-refinement'
+R = HERE.parents[2] / 'level-editor/work/needs-review/lincoln-refinement'
 RECIPE = HERE / 'refine_south_gate.py'
 
 LANE_NOTES = {

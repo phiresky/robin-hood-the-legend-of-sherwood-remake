@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import sharp, { type OverlayOptions } from "sharp";
 import { groundToScene, type MapCamera } from "@rle/shared";
-import { workDir } from "./env.ts";
+import { mapWorkRoot } from "./env.ts";
 import type { Geometry } from "./volume-geometry.ts";
 import type { Textured } from "./volume-fill.ts";
 import type { MeshData, TextureData } from "./mesh.ts";
@@ -71,7 +71,7 @@ export async function renders(
     { mesh: ground, positions: ground.positions },
     { mesh: volumes, positions: volumes.positions },
   ];
-  const outDir = path.join(options.workDirectory ?? workDir, `${map.toLowerCase()}-scene`);
+  const outDir = path.join(options.workDirectory ?? mapWorkRoot(map), `${map.toLowerCase()}-scene`);
   await fs.mkdir(outDir, { recursive: true });
 
   const view = { ...mapView(cam, [0, 0, w, h], scale), unlit: true };

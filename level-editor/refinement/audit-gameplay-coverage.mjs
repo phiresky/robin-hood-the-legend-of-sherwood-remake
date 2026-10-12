@@ -85,7 +85,7 @@ const summary = {
   missingAssetsWithStateOwnedParts: missing.filter((asset) => asset.hasStateOwnedParts).length,
 };
 assert.equal(hash(await fs.readFile("library/3d-assets/index.json")), hash(indexBytes));
-const output = await fs.mkdtemp("work/map-compile/gameplay-coverage-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/gameplay-coverage-");
 await fs.writeFile(
   `${output}/report.json`,
   JSON.stringify(

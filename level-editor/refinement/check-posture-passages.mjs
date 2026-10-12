@@ -18,7 +18,7 @@ const initiallyClosed = options.includes("--initially-closed");
 const alternating = options.includes("--alternating");
 assert.ok(!(initiallyClosed && alternating), "choose one changing-obstacle scenario");
 const output = await fs.mkdtemp(
-  `work/map-compile/${alternating ? "alternating-" : initiallyClosed ? "closed-" : ""}posture-passages-`,
+  `work/needs-review/map-compile/${alternating ? "alternating-" : initiallyClosed ? "closed-" : ""}posture-passages-`,
 );
 console.log(output);
 const results = [];

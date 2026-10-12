@@ -13,7 +13,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 HERE = Path(__file__).resolve().parent
-R = HERE.parents[2] / 'level-editor/work/lincoln-refinement'
+R = HERE.parents[2] / 'level-editor/work/needs-review/lincoln-refinement'
 WS = R / 'round-2/assets'
 
 # proposed asset -> (name, [(source_node, component or None)])

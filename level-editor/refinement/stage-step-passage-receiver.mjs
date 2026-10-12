@@ -17,7 +17,7 @@ door.inside = [...door.insideAnchor];
 delete door.insideAnchor;
 validateAssetGameplay(gameplay, descriptor);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const output = await fs.mkdtemp("work/map-compile/step-passage-receiver-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/step-passage-receiver-");
 await fs.writeFile(
   `${output}/edits.json`,
   JSON.stringify([

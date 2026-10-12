@@ -12,7 +12,7 @@ const ids = process.argv.slice(2);
 assert.ok(ids.length && ids.every((id) => !id.startsWith("-")), "Supply draft wood asset IDs");
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8"));
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const output = await fs.mkdtemp("work/map-compile/wood-cap-slivers-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/wood-cap-slivers-");
 console.log(output);
 const edits = [],
   reviews = [],

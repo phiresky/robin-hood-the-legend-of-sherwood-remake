@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-R = ROOT / 'level-editor/work/lincoln-refinement'
+R = ROOT / 'level-editor/work/needs-review/lincoln-refinement'
 RECIPE = str(Path(__file__).resolve().parent / 'refine_keep_north.py')
 GROUND = 'native z = 220 (Blender Z = 268.57), the north-bailey plateau top'
 COMMON = ['Covered state only; no interior or state patch applies to these nodes.',

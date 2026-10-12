@@ -20,7 +20,7 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
-WORK = ROOT / 'work/lincoln-refinement'
+WORK = ROOT / 'work/needs-review/lincoln-refinement'
 SOURCE = WORK / 'source-states'
 
 # Reviewed state selection. Each state lists the applied base patches it shows.

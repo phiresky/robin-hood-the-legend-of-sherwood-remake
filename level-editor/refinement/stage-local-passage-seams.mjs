@@ -64,7 +64,7 @@ for (const edit of edits) {
   }
 }
 assert.ok(changes.length, "No ordinary passage stair crossings found");
-const output = await fs.mkdtemp("work/map-compile/local-passage-seams-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/local-passage-seams-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(
   `${output}/review.json`,

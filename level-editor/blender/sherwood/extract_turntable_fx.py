@@ -6,7 +6,7 @@ import numpy as np
 from PIL import Image
 from paths import DATA
 
-OUT = Path(__file__).resolve().parents[3] / 'level-editor/work/sherwood-refinement/animation-references'
+OUT = Path(__file__).resolve().parents[3] / 'level-editor/work/needs-review/sherwood-refinement/animation-references'
 records = json.loads((OUT / 'manifest.json').read_text())['assets']
 for r in records:
     if r['kind'] != 'ambient':

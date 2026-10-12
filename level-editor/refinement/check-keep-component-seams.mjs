@@ -71,7 +71,7 @@ for (const component of components) {
 const assets = new Map(
   components.map((component) => [component.descriptor.id, component.descriptor]),
 );
-const output = await fs.mkdtemp("work/map-compile/keep-component-placements-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/keep-component-placements-");
 const results = [];
 for (const height of [0, 40])
   for (const rotation of [0, 37, 90, 180]) {

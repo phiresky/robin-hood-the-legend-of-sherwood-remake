@@ -12,13 +12,13 @@ Requirements: Node with global WebSocket, Chromium, Python/Pillow, Emscripten,
 and `wasm-strip` (WABT). From the repository root:
 
 ```sh
-mkdir -p level-editor/work/bc7f-benchmark
-git clone https://github.com/BinomialLLC/basis_universal.git level-editor/work/bc7f-benchmark/basis_universal
-git -C level-editor/work/bc7f-benchmark/basis_universal checkout 99f52d63aa6799cbdaecfe977111dc5ec3b31d47
+mkdir -p level-editor/work/needs-review/bc7f-benchmark
+git clone https://github.com/BinomialLLC/basis_universal.git level-editor/work/needs-review/bc7f-benchmark/basis_universal
+git -C level-editor/work/needs-review/bc7f-benchmark/basis_universal checkout 99f52d63aa6799cbdaecfe977111dc5ec3b31d47
 python3 level-editor/benchmarks/bc7f/prepare.py
 bash level-editor/benchmarks/bc7f/build.sh
-cp level-editor/work/bc7f-benchmark/bc7f.js level-editor/work/bc7f-benchmark/bc7f-scalar.js
-cp level-editor/work/bc7f-benchmark/bc7f.wasm level-editor/work/bc7f-benchmark/bc7f-scalar.wasm
+cp level-editor/work/needs-review/bc7f-benchmark/bc7f.js level-editor/work/needs-review/bc7f-benchmark/bc7f-scalar.js
+cp level-editor/work/needs-review/bc7f-benchmark/bc7f.wasm level-editor/work/needs-review/bc7f-benchmark/bc7f-scalar.wasm
 BC7F_SIMD=1 bash level-editor/benchmarks/bc7f/build.sh
 BENCH_GPU=hardware BENCH_BUILD=scalar BENCH_VARIANT=scalar-hardware node level-editor/benchmarks/bc7f/run.mjs
 BENCH_GPU=hardware BENCH_VARIANT=simd-hardware node level-editor/benchmarks/bc7f/run.mjs
@@ -30,7 +30,7 @@ Set `EMXX` to select a compatible Emscripten compiler. The recorded build used
 Emscripten 4.0.22, LLVM 22, Binaryen 132. Hardware mode disables software fallback
 and rejects a reported software GPU. Omitting `BENCH_GPU` selects SwiftShader.
 Each run uses a fresh Chromium profile and local HTTP server, and closes both.
-Artifacts and extracted images stay in the ignored `work/bc7f-benchmark` directory.
+Artifacts and extracted images stay in the ignored `work/needs-review/bc7f-benchmark` directory.
 
 ## Recorded results
 
@@ -120,7 +120,7 @@ This starts its own Vite server and fresh hardware Chromium profiles, changing
 only the served encoder worker limit. It checks that the requested number of
 encoders became active, disables HMR, and leaves application files untouched.
 `BENCH_TRIALS` defaults to three; `BENCH_MAPS=Wychford` restricts the map list. Detailed ~100 ms memory samples go to the ignored
-`work/bc7f-benchmark/worker-pool` directory. `worker-pool-results.json` retains
+`work/needs-review/bc7f-benchmark/worker-pool` directory. `worker-pool-results.json` retains
 the compact results. No separate codec warmup runs before these measurements.
 
 Three trials per configuration, alternating order, on the same Radeon 780M:

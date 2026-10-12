@@ -79,7 +79,7 @@ def main(root,asset):
     screen=np.column_stack([points[:,0],-points[:,1]*math.sin(math.radians(35))-points[:,2]*math.cos(math.radians(35))])
     lo=np.floor(screen.min(0)-20).astype(int);hi=np.ceil(screen.max(0)+20).astype(int)
     bounds=[max(0,int(lo[0])),max(0,int(lo[1])),min(1920,int(hi[0])),min(1088,int(hi[1]))]
-    art=EDITOR/'work/sherwood-refinement/textures/original-static-art.png'
+    art=EDITOR/'work/needs-review/sherwood-refinement/textures/original-static-art.png'
     with Image.open(art) as original:original.crop(bounds).save(folder/'original.png')
     day=EDITOR.parent/'datadirs/fullgame_gog_hackable/Data/Levels/Day/sherwood.map.png'
     with Image.open(day) as original:original.crop(bounds).save(folder/'original-day.png')

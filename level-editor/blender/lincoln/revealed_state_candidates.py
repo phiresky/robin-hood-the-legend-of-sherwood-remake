@@ -21,7 +21,7 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[2]
-WORK = ROOT / 'work/lincoln-refinement'
+WORK = ROOT / 'work/needs-review/lincoln-refinement'
 
 
 def sha(path):

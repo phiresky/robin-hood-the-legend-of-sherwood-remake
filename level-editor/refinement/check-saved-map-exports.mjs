@@ -20,7 +20,7 @@ const files = (await fs.readdir("library/scenes"))
 for (const map of selectedMaps) {
   assert.ok(files.includes(`${map}.rhlos-map.json`), `Unknown saved map: ${map}`);
 }
-const output = await fs.mkdtemp("work/map-compile/saved-map-exports-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/saved-map-exports-");
 const edits = stage ? JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8")) : [];
 console.log(output);
 const results = [];

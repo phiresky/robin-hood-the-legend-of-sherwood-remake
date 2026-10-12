@@ -147,7 +147,7 @@ review.changes.push({
   meshHeightMargin: 0.1,
   requiresMeshAndNativeReview: true,
 });
-const output = await fs.mkdtemp("work/map-compile/raised-stair-approach-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/raised-stair-approach-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/review.json`, JSON.stringify(review));
 console.log(JSON.stringify({ output, added: added.length }));

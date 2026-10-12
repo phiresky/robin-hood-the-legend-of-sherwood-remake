@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-ASSETS = ROOT / 'level-editor/work/lincoln-refinement/round-1/assets'
+ASSETS = ROOT / 'level-editor/work/needs-review/lincoln-refinement/round-1/assets'
 RECIPE = str(Path(__file__).resolve().parent / 'refine_keep_north.py')
 GROUND = 'native z = 220 (Blender Z = 268.57), the shared plateau top of the keep plateau and both baileys'
 

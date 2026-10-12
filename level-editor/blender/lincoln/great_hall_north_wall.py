@@ -29,7 +29,7 @@ from pathlib import Path
 import great_hall_geom as G
 
 TRACE = (Path(__file__).resolve().parents[2] /
-         'work/lincoln-refinement/round-1/assets/lincoln-hall-keep-north-wall/inspection/'
+         'work/needs-review/lincoln-refinement/round-1/assets/lincoln-hall-keep-north-wall/inspection/'
          'north-wall-merlon-trace.json')
 GROUND = 420.0
 PERIOD = 21.33

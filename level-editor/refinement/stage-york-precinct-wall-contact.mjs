@@ -99,7 +99,7 @@ edits.push({
   descriptorSha256: index.find((entry) => entry.id === id).descriptor_sha256,
   gameplay,
 });
-const output = await fs.mkdtemp("work/map-compile/york-precinct-wall-contact-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-precinct-wall-contact-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/review.json`, JSON.stringify({ stage, changes }));
 console.log(JSON.stringify({ output, changes }));

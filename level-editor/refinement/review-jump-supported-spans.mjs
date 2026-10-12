@@ -208,7 +208,7 @@ const flightClearance = checkFlight
       },
     )
   : undefined;
-const output = await fs.mkdtemp("work/map-compile/supported-jump-spans-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/supported-jump-spans-");
 const results = [];
 const rejected = [];
 const report = (complete) =>

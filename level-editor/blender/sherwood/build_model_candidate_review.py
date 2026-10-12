@@ -35,7 +35,7 @@ def main(root):
                'Approved grouping and the existing foliage are unchanged. This card reviews the revised wooden structure.',
                'The new bark projection uses reviewed native-mask ownership. This is not the final synthesized texture review.'])
     manifest=root/'gallery-manifest.json';manifest.write_text(json.dumps(dict(map='Sherwood models',review_kind='model',items=[item]),indent=2)+'\n')
-    gallery=EDITOR/'work/sherwood-refinement/model-review/gallery/revisions'
+    gallery=EDITOR/'work/needs-review/sherwood-refinement/model-review/gallery/revisions'
     build(manifest,gallery,map_name='Sherwood models',pending_only=True)
     evidence=json.loads((gallery/'evidence.json').read_text())
     decisions=json.loads((HERE/'model-decisions.json').read_text())['decisions']

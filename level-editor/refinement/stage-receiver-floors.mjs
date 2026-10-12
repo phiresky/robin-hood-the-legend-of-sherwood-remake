@@ -80,7 +80,7 @@ for (const selection of selections) {
     ),
   });
 }
-const output = await fs.mkdtemp("work/map-compile/receiver-floors-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/receiver-floors-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/review.json`, JSON.stringify({ map, stage, changes }));
 console.log(JSON.stringify({ output, floors: changes.length }));

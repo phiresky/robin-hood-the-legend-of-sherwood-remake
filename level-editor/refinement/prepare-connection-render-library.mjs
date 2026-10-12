@@ -43,7 +43,7 @@ const source = {
 };
 const document = roofJumpPlacement(source, rotation, height);
 document.terrain = createTerrainGrid([0, 0, 2500, 2500], 2500, height);
-const output = await fs.mkdtemp("work/map-compile/render-connection-library-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/render-connection-library-");
 await fs.mkdir(`${output}/scenes`);
 for (const directory of ["3d-assets", "game-data"])
   await fs.symlink(path.resolve("library", directory), `${output}/${directory}`, "dir");

@@ -20,7 +20,7 @@ sys.path.insert(0, str(EDITOR/'refinement/blender'))
 from occlusion_constraints import SourceMaskConstraints, evidence_record
 
 DEFAULT_RECIPE = Path(__file__).with_name('source-mask-candidates.json')
-DEFAULT_GROUPING = EDITOR/'work/sherwood-refinement/grouping-review'
+DEFAULT_GROUPING = EDITOR/'work/needs-review/sherwood-refinement/grouping-review'
 NATIVE = EDITOR.parent/'datadirs/fullgame_gog_hackable/Data/Levels/Sherwood.rhp.d/masks/manifest.json'
 SOURCE = EDITOR.parent/'datadirs/fullgame_gog_hackable/Data/Levels/Day/sherwood.map.png'
 

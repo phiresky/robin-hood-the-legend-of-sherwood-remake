@@ -21,7 +21,7 @@ for (const id of ids) {
   );
   assets.get(id).gameplay = edit.gameplay;
 }
-const output = await fs.mkdtemp("work/map-compile/receiver-floor-placements-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/receiver-floor-placements-");
 console.log(output);
 const results = [],
   rejected = [];

@@ -12,7 +12,7 @@ their original membership and names.
 `grouping-candidate.json` is a review candidate, not the published catalog. The
 live library and `refinement/catalogs/sherwood.json` remain the initial publication
 until the revised grouping is reviewed and handed off through normal publication.
-The candidate worker is `work/sherwood-refinement/grouping-review/grouped-source-only.blend`.
+The candidate worker is `work/needs-review/sherwood-refinement/grouping-review/grouped-source-only.blend`.
 Its geometry, UVs, material assignments, transforms and mesh names match the
 corrected source-only worker exactly; only ownership metadata changes.
 
@@ -33,10 +33,10 @@ refinement work; grouping approval does not approve geometry or generated textur
 To reproduce from the valid source-only worker, run from `level-editor`:
 
 ```sh
-/usr/bin/blender --background --threads 2 --python blender/sherwood/inspect_grouping.py -- --worker work/sherwood-refinement/textures/reproject-v2/source-only.blend --output work/sherwood-refinement/grouping-review/geometry.json
-python3 blender/sherwood/regroup_models.py --geometry work/sherwood-refinement/grouping-review/geometry.json --output work/sherwood-refinement/grouping-review
-/usr/bin/blender --background --threads 2 --python blender/sherwood/stage_grouping_review.py -- --root work/sherwood-refinement/grouping-review
-/usr/bin/blender --background --threads 2 --python blender/sherwood/verify_grouping_worker.py -- work/sherwood-refinement/grouping-review
+/usr/bin/blender --background --threads 2 --python blender/sherwood/inspect_grouping.py -- --worker work/needs-review/sherwood-refinement/textures/reproject-v2/source-only.blend --output work/needs-review/sherwood-refinement/grouping-review/geometry.json
+python3 blender/sherwood/regroup_models.py --geometry work/needs-review/sherwood-refinement/grouping-review/geometry.json --output work/needs-review/sherwood-refinement/grouping-review
+/usr/bin/blender --background --threads 2 --python blender/sherwood/stage_grouping_review.py -- --root work/needs-review/sherwood-refinement/grouping-review
+/usr/bin/blender --background --threads 2 --python blender/sherwood/verify_grouping_worker.py -- work/needs-review/sherwood-refinement/grouping-review
 ```
 
 Inspect all four solid and source-textured views for each changed group. Record
@@ -45,8 +45,8 @@ only after that visual check. This enables grouping approval without fabricating
 user approval. Rebuild the parent gallery before the grouping gallery:
 
 ```sh
-python3 blender/sherwood/build_model_review.py --packets work/sherwood-refinement/textures/sunburst --output work/sherwood-refinement/model-review
-python3 blender/sherwood/build_grouping_review.py --root work/sherwood-refinement/grouping-review
+python3 blender/sherwood/build_model_review.py --packets work/needs-review/sherwood-refinement/textures/sunburst --output work/needs-review/sherwood-refinement/model-review
+python3 blender/sherwood/build_grouping_review.py --root work/needs-review/sherwood-refinement/grouping-review
 node blender/sherwood/verify_grouping_gallery.mjs
 python3 -m unittest discover -s blender/sherwood -p 'test_regroup_models.py'
 ```

@@ -61,4 +61,4 @@ python3 level-editor/scripts/synthesize-riverbanks.py /path/to/Data/Levels/Day \
 ```
 
 The script records crop bounds, masks and seeds, and uses one synthesis thread
-for reproducible output. Intermediate donors stay in ignored `work/riverbanks/`.
+for reproducible output. Intermediate donors stay in ignored `work/needs-review/riverbanks/`.

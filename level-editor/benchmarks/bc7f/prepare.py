@@ -9,7 +9,7 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
 map_name = sys.argv[1] if len(sys.argv) > 1 else None
-OUT = ROOT / 'work/bc7f-benchmark' / ('inputs-' + map_name if map_name else 'inputs')
+OUT = ROOT / 'work/needs-review/bc7f-benchmark' / ('inputs-' + map_name if map_name else 'inputs')
 OUT.mkdir(parents=True, exist_ok=True)
 models = [
     'york/york-bridge-square-central-timber-house',

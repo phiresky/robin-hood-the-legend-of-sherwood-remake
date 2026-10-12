@@ -125,7 +125,7 @@ for (let along = 0; along <= 40; along++)
       .filter((z) => z !== undefined);
     samples.push({ point, hits, covered: hits.some((z) => Math.abs(z) < 0.001) });
   }
-const output = await fs.mkdtemp(`work/map-compile/${contact.prefix}-`);
+const output = await fs.mkdtemp(`work/needs-review/map-compile/${contact.prefix}-`);
 await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify({

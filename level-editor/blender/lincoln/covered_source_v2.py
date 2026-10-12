@@ -19,7 +19,7 @@ from PIL import Image
 import revealed_state_sources as RSS
 
 ROOT = Path(__file__).resolve().parents[2]
-WORK = ROOT / 'work/lincoln-refinement'
+WORK = ROOT / 'work/needs-review/lincoln-refinement'
 SOURCE = WORK / 'source-states'
 OUT = WORK / 'source-states-v2'
 

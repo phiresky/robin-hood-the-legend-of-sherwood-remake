@@ -80,7 +80,7 @@ class Builder:
             # The north slope is almost edge-on in the source. Reusing its old
             # atlas stretches a single ridge row across the whole hidden slope.
             # Reflect the observed south thatch across the ridge for fallback.
-            image_path=Path(__file__).resolve().parents[1]/'work/derby-refinement/interior-layers/covered.png'
+            image_path=Path(__file__).resolve().parents[1]/'work/needs-review/derby-refinement/interior-layers/covered.png'
             image=bpy.data.images.load(str(image_path),check_existing=True)
             image.pack()
             width,height=image.size

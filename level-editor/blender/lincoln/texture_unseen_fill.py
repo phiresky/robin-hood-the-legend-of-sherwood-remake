@@ -53,7 +53,7 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 EDITOR = ROOT / 'level-editor'
-WORK = EDITOR / 'work/lincoln-refinement'
+WORK = EDITOR / 'work/needs-review/lincoln-refinement'
 UNSEEN = WORK / 'textures/unseen'
 TARGETS = UNSEEN / 'targets.json'
 DECISIONS = UNSEEN / 'decisions.json'

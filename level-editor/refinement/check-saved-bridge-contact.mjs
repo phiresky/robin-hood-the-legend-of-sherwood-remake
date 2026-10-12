@@ -85,7 +85,7 @@ assert.deepEqual(
   "External bridge banks must share the tested region",
 );
 const { layer, sector } = outside[0].areas[0];
-const output = await fs.mkdtemp("work/map-compile/saved-bridge-contact-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/saved-bridge-contact-");
 const file = "croisement03.level.json";
 await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
 await fs.writeFile(`${output}/contact-report.json`, JSON.stringify({ stage, contacts }, null, 2));

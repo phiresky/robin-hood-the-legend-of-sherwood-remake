@@ -1,12 +1,12 @@
 {
-  "baseline": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/publication-12-approved-recovery/worker.blend",
+  "baseline": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/publication-12-approved-recovery/worker.blend",
   "baseline_sha256": "c52bea9806b84b12d902e26d8d434eb5d48badea03d9216677ff1aea0f0674c5",
-  "output": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/publication-13-second-drawbridge",
+  "output": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/publication-13-second-drawbridge",
   "map_name": "Derby",
   "scene_name": "Derby Refinement",
   "collection_name": "Derby Working",
   "reference_camera": "Derby reference",
-  "catalog": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/publication-13-second-drawbridge.catalog.json",
+  "catalog": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/publication-13-second-drawbridge.catalog.json",
   "hackable_map": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/datadirs/fullgame_gog_hackable/Data/Levels/Derby.rhp.json",
   "allow_supplemental_nodes": [
     "mission-second-drawbridge"
@@ -20,9 +20,9 @@
       "object_names": [
         "East Hall / Entrance landing"
       ],
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/second-drawbridge-landing-source-correction/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/second-drawbridge-landing-source-correction/worker.blend",
       "blend_sha256": "0bf34876d083cb6e20044b05782e2fa044bdab1714bca824bfe2b7eeb87f7a33",
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/publication-13-landing-review.json"
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/publication-13-landing-review.json"
     },
     {
       "asset_id": "derby-second-drawbridge",
@@ -44,9 +44,9 @@
         "profile": "Derby - Pont_levis02",
         "state": "initial"
       },
-      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/sunburst-second-drawbridge-approved-20260923/initial/baked/worker.blend",
+      "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/sunburst-second-drawbridge-approved-20260923/initial/baked/worker.blend",
       "blend_sha256": "7786b58d09d1b46f9199a50098a05a3ff4a20968097e9a2ba464591416757fc0",
-      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/sunburst-second-drawbridge-approved-20260923/initial/views.json"
+      "review_manifest": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/sunburst-second-drawbridge-approved-20260923/initial/views.json"
     }
   ],
   "static_variants": [
@@ -56,7 +56,7 @@
       "states": {
         "applied": {
           "name": "Lowered",
-          "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/derby-refinement/round-2/sunburst-second-drawbridge-approved-20260923/applied/baked/worker.blend",
+          "blend_path": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/derby-refinement/round-2/sunburst-second-drawbridge-approved-20260923/applied/baked/worker.blend",
           "blend_sha256": "6531a022654797c6ea8d4fc91dbd0484597d7f459cf8a9eaf9beeaa5f725ddc4",
           "object_names": [
             "Hinged leaf / seven timber planks",

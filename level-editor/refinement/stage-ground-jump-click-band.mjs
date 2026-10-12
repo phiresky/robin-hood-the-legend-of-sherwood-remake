@@ -39,7 +39,7 @@ assert.equal(union[0].length, 1);
 zone.polygon = union[0][0].map(([x, y]) => [x, y, zone.anchor[2]]);
 validateAssetGameplay(asset.gameplay, asset);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const output = await fs.mkdtemp("work/map-compile/ground-jump-click-band-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/ground-jump-click-band-");
 await fs.writeFile(
   `${output}/edits.json`,
   JSON.stringify([

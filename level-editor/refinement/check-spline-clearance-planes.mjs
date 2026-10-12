@@ -10,7 +10,7 @@ import { sceneToGame } from "../shared/src/geometry.ts";
 
 // Synthetic authored openings: navigation follows the floor, while the physical
 // cutout is thirty units higher. No library or level records are read.
-const output = await fs.mkdtemp("work/map-compile/spline-clearance-planes-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/spline-clearance-planes-");
 const results = [];
 const curved = process.argv.includes("--curved");
 const deck = process.argv.includes("--deck");

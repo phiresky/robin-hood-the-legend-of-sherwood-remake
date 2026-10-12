@@ -28,7 +28,7 @@ import shutil
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/lincoln-refinement'
+WORK = ROOT / 'level-editor/work/needs-review/lincoln-refinement'
 WORKSPACE = WORK / 'round-3/assets/lincoln-southeast-corner-turret'
 ASSET = 'lincoln-southeast-corner-turret'
 CUTOFF = 0.2

@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from east_gate_walls_trace import rasterize, SOURCE  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
-INV = ROOT / 'level-editor/work/lincoln-refinement/mask-review/inventory-v1'
+INV = ROOT / 'level-editor/work/needs-review/lincoln-refinement/mask-review/inventory-v1'
 
 
 def mask_image(indices):

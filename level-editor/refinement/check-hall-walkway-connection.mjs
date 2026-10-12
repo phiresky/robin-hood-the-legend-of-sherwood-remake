@@ -40,7 +40,7 @@ const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 // the compiler receives only ordinary independently placed asset instances.
 const origins = ids.map((id) => sceneToGame(camera, assets.get(id).source_origin_scene));
 const bounds = [0, 0, 5000, 5000];
-const output = await fs.mkdtemp("work/map-compile/hall-walkway-connection-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/hall-walkway-connection-");
 console.log(output);
 const results = [];
 const rotations = [0, 37, 90, 270];

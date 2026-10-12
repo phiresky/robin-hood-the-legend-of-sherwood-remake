@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT/'refinement'))
 from asset_index import write_asset_index
 
 LIB = ROOT/'library/3d-assets'
-STAGE = ROOT/'work/wall-presets/staging/3d-assets'
+STAGE = ROOT/'work/needs-review/wall-presets/staging/3d-assets'
 
 def sha(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -255,7 +255,7 @@ if __name__=='__main__':
     parser.add_argument('--ids',nargs='+',help='Rebuild only these presets, preserving other staged receipts')
     args=parser.parse_args()
     recipes=json.loads((Path(__file__).parent/'recipes.json').read_text());entries={x['id']:x for x in json.loads((LIB/'index.json').read_text())['assets']}
-    receipts=ROOT/'work/wall-presets/segments.json'
+    receipts=ROOT/'work/needs-review/wall-presets/segments.json'
     previous={row['id']:row for row in json.loads(receipts.read_text())} if args.ids else {}
     if args.ids and set(args.ids)-{r['id'] for r in recipes}:raise ValueError('Unknown preset id')
     results=[]
@@ -266,4 +266,4 @@ if __name__=='__main__':
     write_asset_index(STAGE)
     scenes=STAGE.parent/'scenes';scenes.mkdir(exist_ok=True)
     (scenes/'index.json').write_text('[]\n')
-    (ROOT/'work/wall-presets/segments.json').write_text(json.dumps(results,indent=2)+'\n')
+    (ROOT/'work/needs-review/wall-presets/segments.json').write_text(json.dumps(results,indent=2)+'\n')

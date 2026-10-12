@@ -26,8 +26,8 @@ scene structure and node metadata for all twenty outputs. Examples:
 Eight-view comparisons at up to 512 pixels measured mean max-channel error of
 2.85 for the tables, 2.04 for Nottingham's northern state assembly and 1.72 for
 the northwest timber house; worst-view p95 was 7, 7 and 6 respectively (0–255).
-Evidence lives in `work/map-compile/repaired-atlas-validation/` and
-`work/map-compile/publication-table-gutters/`.
+Evidence lives in `work/needs-review/map-compile/repaired-atlas-validation/` and
+`work/needs-review/map-compile/publication-table-gutters/`.
 
 The Nottingham castle assembly requires an approximately 10,946-pixel single
 atlas at the configured density. It retains its separate re-encoded textures
@@ -94,7 +94,7 @@ many projected charts. The 4096 maximum and size/density reports remain in force
 The lossy bookkeeping/precision tests and asset-index tests pass (26 tests).
 Blender rendered eight source/output view pairs for Derby south gatehouse, York
 group 000, and Lincoln south gatehouse. Local evidence and rollback backups are
-under `work/lossy-quality-20260927/`; `gatehouse-comparison.png` shows source,
+under `work/needs-review/lossy-quality-20260927/`; `gatehouse-comparison.png` shows source,
 previous lossy, and fixed lossy. The three verified assets and their previews are
 updated in the local library.
 
@@ -146,7 +146,7 @@ texture-memory cost even where AVIF keeps disk growth modest.
 | Wychford | 1 | 8.76 | 8.76 | 100.0 | 100.0 |
 | york | 461 | 14.90 | 30.07 | 156.7 | 1370.9 |
 
-Local run records are in `work/lossy-quality-full-rebuild-20260927/`:
+Local run records are in `work/needs-review/lossy-quality-full-rebuild-20260927/`:
 `inventory-before.json` records the initial source hashes and sizes, `audit.json`
 contains the final per-asset checks and measurements, and each `shard-N/backup/`
 retains the previous derivative files and receipts. Source files were not edited.
@@ -204,7 +204,7 @@ blender --background --threads 2 --python-exit-code 1 \
 
 The numerical guard was also checked against the actual failed oak GLB: it
 rejects 349,702 collapsed triangles in the first foliage primitive alone.
-The full local trace is in `work/sherwood-refinement/uv-collapse-diagnostic/`.
+The full local trace is in `work/needs-review/sherwood-refinement/uv-collapse-diagnostic/`.
 
 A separate opaque-image bug discarded synthesized RGB by interpreting ownership
 alpha as physical transparency during Blender sampling. Opaque source textures
@@ -269,7 +269,7 @@ The 23 lossy-generator tests and 15 asset-index tests passed. All library
 derivative/preview receipt checks passed after publication.
 `wychford-atlas-measurements.json` records asset hashes, per-asset savings,
 validation metrics and browser measurements. Local images, detailed audits,
-publication records and rollback backups are in `work/wychford-atlas-audit/`.
+publication records and rollback backups are in `work/needs-review/wychford-atlas-audit/`.
 
 Reproduce the read-only audit from `level-editor`:
 
@@ -342,7 +342,7 @@ The diagnostic retains its source-aspect baseline so it can still compare the
 two configurations.
 
 Rebuilt, visually reviewed, and locally published three Wychford assets, including
-previews and receipts, with backups in `work/wychford-square-atlas/publication/`:
+previews and receipts, with backups in `work/needs-review/wychford-square-atlas/publication/`:
 
 | Asset | Old atlas | New atlas | Old / new mean render error | Old / new worst-view p95 |
 | --- | ---: | ---: | ---: | ---: |
@@ -362,7 +362,7 @@ GLB size falls from 2,697,568 to 1,655,408 bytes (39% less); the church tower al
 grows by 1,472 bytes. Source model hashes remain unchanged. The 24 lossy-generator
 tests, 15 asset-index tests, and complete library derivative-receipt verification
 passed. Detailed measurements are in `wychford-square-atlas-measurements.json`;
-local render comparisons are in `work/wychford-square-atlas/`.
+local render comparisons are in `work/needs-review/wychford-square-atlas/`.
 
 Hardware Chromium loaded the updated Wychford scene and passed the BC7 worker,
 sharing, fallback, reupload, and cancellation checks. Compressed texture mip
@@ -379,7 +379,7 @@ the three earlier replacements were already current. The 185 entries refused by
 the existing static checks (including non-rendered regions and transformed
 assemblies) were left alone. Sources were snapshotted, and source hashes checked
 again under the publication lock before replacing derivatives. Previous files
-and the index are backed up in `work/library-square-atlas-v6/publication/`.
+and the index are backed up in `work/needs-review/library-square-atlas-v6/publication/`.
 
 This pass exposed an overly strict fallback introduced after algorithm 2:
 exceeding the desired atlas density at 4096 caused the generator to restore full
@@ -421,7 +421,7 @@ The 27 lossy-generator tests and 15 asset-index tests passed. Tests cover source
 image restoration, convex retry, crop texel-coordinate preservation, shared-image
 bounds and repeat edges. `library-square-atlas-measurements.json` records asset
 hashes, sizes, packing decisions and comparison results. Full local reports and
-staged artifacts are under `work/library-square-atlas-v6/`.
+staged artifacts are under `work/needs-review/library-square-atlas-v6/`.
 
 All 1,005 replacements were published; none were held back. All regenerated
 receipts match the current source hashes and settings, and complete library

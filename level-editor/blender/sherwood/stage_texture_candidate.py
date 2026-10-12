@@ -31,7 +31,7 @@ def main(baseline, candidate, output, selected=None):
     verification=json.loads((candidate/'saved-worker-verification.json').read_text())
     if verification['status']!='PASS_SAVED_TEXTURE_CANDIDATE' or verification['worker_sha256']!=fill['worker_sha256']:
         raise ValueError('Saved texture worker has not passed source preservation checks')
-    plan=json.loads((EDITOR/'work/sherwood-refinement/grouping-review/plan.json').read_text())
+    plan=json.loads((EDITOR/'work/needs-review/sherwood-refinement/grouping-review/plan.json').read_text())
     independent={g['id'] for g in plan['groups'] if not g['changed']}
     available={r['asset'] for r in fill['assets']}
     if {f'sherwood-terrain-{x}-{y}' for x in (1,2) for y in (1,2,3)} <= available:

@@ -155,7 +155,7 @@ for (let along = 0; along <= 40; along++)
 // Explicit per-contact authoring bounds do not relax runtime floor matching.
 const maximumUncoveredDistance = Math.max(...samples.map((s) => s.uncoveredDistance));
 const supported = maximumUncoveredDistance <= contact.meshMargin;
-const output = await fs.mkdtemp("work/map-compile/lincoln-stair-ground-contact-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/lincoln-stair-ground-contact-");
 await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify(

@@ -20,7 +20,7 @@ from rocks_terrain_volumes_notes_r2 import R2  # noqa: E402
 from rocks_terrain_volumes_notes_r3 import R3  # noqa: E402
 from rocks_terrain_volumes_notes_r4 import R4  # noqa: E402
 
-ROOT = HERE.parents[1] / 'work/lincoln-refinement'
+ROOT = HERE.parents[1] / 'work/needs-review/lincoln-refinement'
 RECIPE = HERE / 'refine_rocks_terrain.py'
 
 

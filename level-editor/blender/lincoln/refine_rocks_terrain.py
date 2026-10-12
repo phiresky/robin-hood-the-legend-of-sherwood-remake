@@ -47,7 +47,7 @@ sys.path.insert(0, str(HERE))
 import rocks_terrain_volumes_core as core  # noqa: E402
 
 REPO = HERE.parents[2]
-ROOT = REPO / 'level-editor/work/lincoln-refinement'
+ROOT = REPO / 'level-editor/work/needs-review/lincoln-refinement'
 ASSETS = ROOT / 'round-1/assets'
 INVENTORY = ROOT / 'inventory/inventory.json'
 TOOLING = ROOT / 'tooling/e6b57cb851c7142b'

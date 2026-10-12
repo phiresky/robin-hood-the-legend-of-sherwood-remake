@@ -94,7 +94,7 @@ bridge.gameplay.doors = centers.map((center, i) => {
   };
 });
 for (const asset of [ground, bridge]) validateAssetGameplay(asset.gameplay, asset);
-const output = await fs.mkdtemp("work/map-compile/bridge-ground-ownership-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/bridge-ground-ownership-");
 const reference = document.sceneAssets.find((ref) => ref.id === ground.id);
 const bytes = await fs.readFile(`library/${reference.descriptor}`);
 assert.equal(createHash("sha256").update(bytes).digest("hex"), reference.descriptor_sha256);

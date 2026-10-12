@@ -30,7 +30,7 @@ import sys
 import bpy
 
 ROOT = Path(__file__).resolve().parents[2]
-WORK = ROOT / 'work/lincoln-refinement'
+WORK = ROOT / 'work/needs-review/lincoln-refinement'
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import render_slots  # noqa: E402
 

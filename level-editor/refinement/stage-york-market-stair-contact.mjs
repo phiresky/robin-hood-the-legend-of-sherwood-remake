@@ -108,7 +108,7 @@ for (let i = 0; i <= 40; i++)
       .filter((z) => z !== undefined);
     samples.push({ point, supported: hits.some((z) => Math.abs(z - landingHeight) < 0.1) });
   }
-const output = await fs.mkdtemp("work/map-compile/york-market-stair-contact-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-market-stair-contact-");
 await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify({ stage, modelSha256, before, after, changes, samples }),

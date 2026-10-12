@@ -1,14 +1,14 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, writeFile, mkdir, rm, access } from "node:fs/promises";
 import { chromeEndpoint, socketOpen, evaluate } from "../../app/tests/cdp.mjs";
-const output = "work/wall-presets";
+const output = "work/needs-review/wall-presets";
 const segments = process.argv.includes("--segments");
 const folder = segments ? "segments" : "candidates";
 const url =
   "http://127.0.0.1:5181/tests/wall-audit.html" +
   (segments
     ? "?splines&library=" +
-      encodeURIComponent("/@fs/" + process.cwd() + "/work/wall-presets/staging/")
+      encodeURIComponent("/@fs/" + process.cwd() + "/work/needs-review/wall-presets/staging/")
     : "");
 await mkdir(output + "/" + folder, { recursive: true });
 const wanted = process.argv

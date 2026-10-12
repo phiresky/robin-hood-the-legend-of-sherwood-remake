@@ -24,7 +24,7 @@ def _material(kind):
     if kind=='iron':
         emission.inputs['Color'].default_value=(.032,.027,.017,1)
     else:
-        path=Path(__file__).parent.parent/'work/derby-refinement/interior-layers/covered.png'
+        path=Path(__file__).parent.parent/'work/needs-review/derby-refinement/interior-layers/covered.png'
         source=bpy.data.images.load(str(path),check_existing=True)
         width,height=source.size;pixels=[]
         # The center of the observed timber head excludes the iron rim.

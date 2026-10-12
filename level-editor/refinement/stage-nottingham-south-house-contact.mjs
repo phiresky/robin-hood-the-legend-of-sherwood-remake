@@ -191,7 +191,7 @@ for (let along = 0; along <= 40; along++)
     samples.push({ point, hits });
   }
 const supported = samples.every((s) => s.hits.some((z) => Math.abs(z) < 0.05));
-const output = await fs.mkdtemp(`work/map-compile/${edits[0].asset}-contact-`);
+const output = await fs.mkdtemp(`work/needs-review/map-compile/${edits[0].asset}-contact-`);
 await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify(

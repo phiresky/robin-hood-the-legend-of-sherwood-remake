@@ -18,7 +18,7 @@ def prepare_runtime(ids, *, blender='blender', stage=STAGE):
     subprocess.run([
         blender, '--background', '--threads', '2', '--python-exit-code', '1',
         '--python', str(ROOT / 'refinement/blender/lossy_assets.py'), '--', 'refresh',
-        '--root', str(stage), '--work', str(ROOT / 'work/wall-presets/runtime'),
+        '--root', str(stage), '--work', str(ROOT / 'work/needs-review/wall-presets/runtime'),
         '--assets', *ids,
     ], check=True)
     index = generate_asset_index(stage)
@@ -39,7 +39,7 @@ def prepare_runtime(ids, *, blender='blender', stage=STAGE):
 
 
 def publish(ids=None, *, blender='blender'):
-    rows = json.loads((ROOT / 'work/wall-presets/segments.json').read_text())
+    rows = json.loads((ROOT / 'work/needs-review/wall-presets/segments.json').read_text())
     all_rows = rows
     if ids:
         if set(ids)-{row['id'] for row in rows}:raise ValueError('Unknown preset id')
@@ -48,7 +48,7 @@ def publish(ids=None, *, blender='blender'):
     reviewed = {}
     for row in rows:
         folder = STAGE / row['id']
-        audit = json.loads((ROOT / f"work/wall-presets/segments/{row['id']}.json").read_text())
+        audit = json.loads((ROOT / f"work/needs-review/wall-presets/segments/{row['id']}.json").read_text())
         if audit.get('model_sha256') != sha(folder / 'model.glb') or not audit.get('vertices'):
             raise ValueError(f"Missing or stale visual audit: {row['id']}")
         if any(audit.get(key) != value for key, value in row.items()):

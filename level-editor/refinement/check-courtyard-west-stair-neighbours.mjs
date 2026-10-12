@@ -198,7 +198,7 @@ const centers = gatehouse
         [1500, 1700],
         [3200, 2600],
       ];
-const output = await fs.mkdtemp(`work/map-compile/${stair}-neighbour-placements-`);
+const output = await fs.mkdtemp(`work/needs-review/map-compile/${stair}-neighbour-placements-`);
 const results = [],
   rejected = [];
 const report = (complete) =>

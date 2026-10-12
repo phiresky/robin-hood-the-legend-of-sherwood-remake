@@ -5,7 +5,7 @@ Plain Python, run from the repository root after trees_geometry.py:
     python3 level-editor/blender/lincoln/trees_catalog.py            # LINCOLN_TREES_SCENE=scene-v2 selects a rebuilt scene
     python3 level-editor/blender/lincoln/trees_catalog.py merge <base-catalog.json> <merged.json>
 
-Writes into work/lincoln-refinement/trees/ (never touches grouping/ or mask-review/):
+Writes into work/needs-review/lincoln-refinement/trees/ (never touches grouping/ or mask-review/):
   catalog-trees.json            catalog-v4 + one group per foliage/scenery asset (authored
                                 scenery parts: node foliage-*/scenery-*, no obstacle)
   gallery-catalog.json          the same tree groups only, for a trees-only review gallery
@@ -25,7 +25,7 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[3]
-R = ROOT / 'level-editor/work/lincoln-refinement'
+R = ROOT / 'level-editor/work/needs-review/lincoln-refinement'
 OUT = R / 'trees'
 PROPOSAL = R / 'scratch/trees/inventory/tree-catalog-proposal.json'
 BASE_CATALOG = R / 'grouping/catalog-v4.json'

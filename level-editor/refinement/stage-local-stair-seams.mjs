@@ -373,7 +373,7 @@ if (draftIssues.length) {
   gameplay.draft.issues = [...new Set([...gameplay.draft.issues, ...draftIssues])];
 }
 validateAssetGameplay(gameplay, descriptor);
-const output = await fs.mkdtemp("work/map-compile/local-stair-seams-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/local-stair-seams-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify([{ asset, descriptorSha256, gameplay }]));
 await fs.writeFile(
   `${output}/review.json`,

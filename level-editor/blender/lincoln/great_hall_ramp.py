@@ -15,7 +15,7 @@ from pathlib import Path
 import great_hall_geom as G
 
 TRACE = (Path(__file__).resolve().parents[2] /
-         'work/lincoln-refinement/round-1/assets/lincoln-hall-approach-ramp/inspection/ramp-corner-trace.json')
+         'work/needs-review/lincoln-refinement/round-1/assets/lincoln-hall-approach-ramp/inspection/ramp-corner-trace.json')
 
 GROUND = 300.0
 # Native footprint of 287 (baseline): front (south) face and back face edges.

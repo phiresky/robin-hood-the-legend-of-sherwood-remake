@@ -25,7 +25,7 @@ const ids = args.filter((arg) => !arg.startsWith("--stage=") && !arg.startsWith(
 assert.ok(ids.length && ids.every((id) => !id.startsWith("-")));
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8"));
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const output = await fs.mkdtemp("work/map-compile/asset-jump-exports-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/asset-jump-exports-");
 console.log(output);
 const results = [];
 const save = (complete) =>

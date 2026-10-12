@@ -40,7 +40,7 @@ for (const point of [lower.a, lower.b]) {
 gameplay.draft.issues.push(
   `Unpublished jump contact review: ${inset}-unit platform inset and ${groundOffset}-unit extra ground separation; zone, walking and flight validation required.`,
 );
-const output = await fs.mkdtemp("work/map-compile/watermill-jump-contact-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/watermill-jump-contact-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(
   `${output}/review.json`,

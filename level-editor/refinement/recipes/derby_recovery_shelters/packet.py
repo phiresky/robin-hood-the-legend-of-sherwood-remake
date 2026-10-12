@@ -3,7 +3,7 @@ import json,hashlib,shutil,sys
 from pathlib import Path
 import numpy as np
 from PIL import Image
-base=Path.cwd()/'level-editor/work/derby-refinement/round-2/recovery-shelters-20260923'
+base=Path.cwd()/'level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923'
 asset=sys.argv[1]; work=base/asset
 packet=work/('modified-masked-v2' if (work/'modified-masked-v2/views.json').exists() else 'modified')
 frames=json.loads((packet/'views.json').read_text());out=work/'experiment';out.mkdir();(out/'views').mkdir()

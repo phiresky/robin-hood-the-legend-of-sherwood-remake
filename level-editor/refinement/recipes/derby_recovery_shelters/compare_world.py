@@ -2,7 +2,7 @@ import bpy,json,sys
 from pathlib import Path
 from mathutils import Vector
 from mathutils.kdtree import KDTree
-root=Path.cwd()/'level-editor/work/derby-refinement/round-2/recovery-shelters-20260923'
+root=Path.cwd()/'level-editor/work/needs-review/derby-refinement/round-2/recovery-shelters-20260923'
 bpy.context.window.scene=bpy.data.scenes['Derby Refinement'];bpy.context.view_layer.update()
 report={}
 for file in root.glob('*/approved-geometry.json'):

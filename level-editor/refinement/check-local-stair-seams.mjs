@@ -35,7 +35,7 @@ const reference = {
   resources: descriptor.resources ?? [],
   ...(entry.model_scene ? { model_scene: entry.model_scene } : {}),
 };
-const output = await fs.mkdtemp("work/map-compile/local-stair-placements-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/local-stair-placements-");
 const results = [];
 const gaps = [];
 for (const height of [0, 40])

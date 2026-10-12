@@ -18,7 +18,7 @@ def main(candidate,output):
     candidate=Path(candidate).resolve();output=Path(output).resolve();live=EDITOR/'library'
     fill=json.loads((candidate/'fill.json').read_text());verified=json.loads((candidate/'saved-worker-verification.json').read_text())
     assert verified['status']=='PASS_SAVED_TEXTURE_CANDIDATE' and verified['worker_sha256']==sha(candidate/'candidate.blend')==fill['worker_sha256']
-    plan_path=EDITOR/'work/sherwood-refinement/grouping-review/plan.json';plan=json.loads(plan_path.read_text())
+    plan_path=EDITOR/'work/needs-review/sherwood-refinement/grouping-review/plan.json';plan=json.loads(plan_path.read_text())
     catalog_path=plan_path.with_name('catalog.json');assert sha(catalog_path)==plan['catalog_sha256']
     catalog=json.loads(catalog_path.read_text());assert len(catalog['groups'])==80
     assert len(fill['assets'])==86

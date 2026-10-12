@@ -44,7 +44,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 EDITOR = ROOT / 'level-editor'
-WORK = EDITOR / 'work/lincoln-refinement'
+WORK = EDITOR / 'work/needs-review/lincoln-refinement'
 TEXTURES = WORK / 'textures'
 CATALOG = WORK / 'grouping/catalog-v4.json'
 ASSETS = WORK / 'round-6/assets'

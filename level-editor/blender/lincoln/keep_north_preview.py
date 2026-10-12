@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 from keep_north_geom import SIN, COS, world
 
 ROOT = Path(__file__).resolve().parents[3]
-REF = ROOT / 'level-editor/work/lincoln-refinement/source-states'
+REF = ROOT / 'level-editor/work/needs-review/lincoln-refinement/source-states'
 TOWARD = (0.0, -COS, SIN)
 SUN = (0.5712401270866394, -0.3459553122520447, 0.7443115711212158)
 

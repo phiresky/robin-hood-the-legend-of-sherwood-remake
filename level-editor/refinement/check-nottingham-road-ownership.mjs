@@ -6,7 +6,7 @@ import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 
 const [stage, placements] = process.argv.slice(2);
 assert.ok(stage && placements, "Provide ownership edits and compiled placement directory");
-const output = await fs.mkdtemp("work/map-compile/nottingham-road-ownership-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/nottingham-road-ownership-");
 const results = [];
 const placed = JSON.parse(await fs.readFile(`${placements}/diagnostics.json`, "utf8"));
 assert.equal(placed.complete, true);

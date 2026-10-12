@@ -179,7 +179,7 @@ if (crownNode) {
     );
 }
 validateAssetGameplay(descriptor.gameplay, descriptor);
-const output = await fs.mkdtemp("work/map-compile/wood-gameplay-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/wood-gameplay-");
 console.log(JSON.stringify({ output, caps: retained.length, discardedArea }));
 await fs.writeFile(
   `${output}/review.json`,

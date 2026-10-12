@@ -14,7 +14,7 @@ architecture through the (loose) native silhouette. That see-through carve uses 
 small pixel classifier trained only on reviewed mask interiors far from class
 boundaries; it is a proposal for visual review, never ownership authority.
 
-Outputs (scratch, not frozen evidence) in work/lincoln-refinement/scratch/trees/:
+Outputs (scratch, not frozen evidence) in work/needs-review/lincoln-refinement/scratch/trees/:
   inventory/tree-catalog-proposal.json   per-asset ids, names, masks, footprints, domains
   inventory/domains/<id>.png             full-image-box domain bitmaps (255 = foliage)
   inventory/overview.png                 annotated map overview
@@ -31,7 +31,7 @@ from PIL import Image, ImageDraw, ImageFont
 from scipy import ndimage as nd
 
 ROOT = Path(__file__).resolve().parents[3]
-R = ROOT / 'level-editor/work/lincoln-refinement'
+R = ROOT / 'level-editor/work/needs-review/lincoln-refinement'
 OUT = R / 'scratch/trees/inventory'
 SOURCE = R / 'source-states/covered.png'
 MASKS = R / 'mask-review/source-masks-v5.json'

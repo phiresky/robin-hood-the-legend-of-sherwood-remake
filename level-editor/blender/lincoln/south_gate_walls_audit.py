@@ -26,7 +26,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 HERE = Path(__file__).resolve().parent
-R = HERE.parents[2] / 'level-editor/work/lincoln-refinement'
+R = HERE.parents[2] / 'level-editor/work/needs-review/lincoln-refinement'
 MASKS = R / 'mask-review/inventory-v1'
 H, W = 2176, 2944
 

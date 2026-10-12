@@ -1,6 +1,6 @@
 # Terrain track — design note
 
-The litmus test (`work/leicester-comparison.png`) shows the ground layer is the
+The litmus test (`work/needs-review/leicester-comparison.png`) shows the ground layer is the
 biggest gap: grass, dirt roads, moat/river water, forest edges. None of this is
 extractable as discrete objects; the plan is compose-time synthesis from
 texture swatches plus vector features.

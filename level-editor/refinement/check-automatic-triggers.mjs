@@ -10,7 +10,7 @@ const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", im
 );
 const sightBarriers = process.argv.includes("--sight-barriers");
 const output = await fs.mkdtemp(
-  `work/map-compile/${sightBarriers ? "sight-barriers" : "automatic-triggers"}-`,
+  `work/needs-review/map-compile/${sightBarriers ? "sight-barriers" : "automatic-triggers"}-`,
 );
 console.log(output);
 const results = [];

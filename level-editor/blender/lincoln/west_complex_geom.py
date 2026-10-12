@@ -14,7 +14,7 @@ import math
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-REFINEMENT = ROOT / 'work/lincoln-refinement'
+REFINEMENT = ROOT / 'work/needs-review/lincoln-refinement'
 SINE = math.sin(math.radians(35))
 COSINE = math.cos(math.radians(35))
 PLATEAU_Z = 220.0  # native top of the castle-hill plateau volumes (terrain lane keeps it fixed)

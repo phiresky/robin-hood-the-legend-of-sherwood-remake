@@ -125,7 +125,7 @@ def geometry_adapter(obstacles):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive", type=Path, default=EDITOR.parent / "datadirs/desperados/unisoed/Game/Data/Levels.pac")
-    parser.add_argument("--output", type=Path, default=EDITOR / "work/desperados")
+    parser.add_argument("--output", type=Path, default=EDITOR / "work/needs-review/desperados")
     parser.add_argument("--levels", type=int, nargs="+", default=list(range(1, 26)))
     parser.add_argument("--extract-only", action="store_true")
     args = parser.parse_args()

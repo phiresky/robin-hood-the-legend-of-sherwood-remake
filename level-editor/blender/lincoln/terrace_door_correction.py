@@ -24,7 +24,7 @@ import bpy
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-WORK = HERE.parents[1] / 'work/lincoln-refinement'
+WORK = HERE.parents[1] / 'work/needs-review/lincoln-refinement'
 sys.path.insert(0, str(HERE))
 import render_slots  # noqa: E402
 import global_reproject as G  # noqa: E402

@@ -64,7 +64,7 @@ validateAssetGameplay(edit.gameplay, original);
 const review = JSON.parse(await fs.readFile(`${source}/review.json`, "utf8"));
 review.changes.push({ clearance: clearance.id, after: clearance });
 review.changes.push({ receiver: receiver.id, before: before.projectionVolume, after: receiver });
-const output = await fs.mkdtemp("work/map-compile/west-treehouse-landing-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/west-treehouse-landing-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/review.json`, JSON.stringify(review, null, 2));
 console.log(JSON.stringify({ output, clearance: clearance.polygon }));

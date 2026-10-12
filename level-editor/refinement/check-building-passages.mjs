@@ -14,7 +14,7 @@ assert.ok(
   "only --trap is supported",
 );
 const trap = options.includes("--trap");
-const output = await fs.mkdtemp(`work/map-compile/building-${trap ? "trap-" : ""}passages-`);
+const output = await fs.mkdtemp(`work/needs-review/map-compile/building-${trap ? "trap-" : ""}passages-`);
 console.log(output);
 const results = [];
 const report = (complete) =>

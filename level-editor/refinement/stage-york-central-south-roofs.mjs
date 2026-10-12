@@ -80,7 +80,7 @@ for (const [name, surfaceId, segmentId] of [
   });
   reviews.push({ source, before, after: { roof, edge, surfaces: gameplay.surfaces } });
 }
-const output = await fs.mkdtemp("work/map-compile/york-central-south-roofs-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-central-south-roofs-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(
   `${output}/review.json`,

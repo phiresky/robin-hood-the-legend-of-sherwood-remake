@@ -89,7 +89,7 @@ gameplay.volumes = descriptor.parts.map((part) => {
 gameplay.movementSolids = gameplay.volumes.map((v) => v.id);
 gameplay.draft.issues.push(contact.issue);
 validateAssetGameplay(gameplay, descriptor);
-const output = await fs.mkdtemp("work/map-compile/nottingham-road-clearance-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/nottingham-road-clearance-");
 await fs.mkdir(`${output}/placement`);
 await fs.writeFile(`${output}/placement/edits.json`, JSON.stringify(edits, null, 2));
 await fs.writeFile(`${output}/placement/review.json`, JSON.stringify(review, null, 2));

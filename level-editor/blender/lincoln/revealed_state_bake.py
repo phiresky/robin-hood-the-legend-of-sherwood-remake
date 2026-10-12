@@ -43,7 +43,7 @@ from mathutils.bvhtree import BVHTree
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-WORK = ROOT / 'work/lincoln-refinement'
+WORK = ROOT / 'work/needs-review/lincoln-refinement'
 REVIEW = WORK / 'state-review'
 sys.path.insert(0, str(HERE))
 import render_slots  # noqa: E402

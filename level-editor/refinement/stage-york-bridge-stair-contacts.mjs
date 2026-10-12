@@ -117,7 +117,7 @@ for (const edit of edits) {
   validateAssetGameplay(edit.gameplay, assets.get(edit.asset));
   assets.get(edit.asset).gameplay = edit.gameplay;
 }
-const output = await fs.mkdtemp("work/map-compile/york-bridge-stair-contacts-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-bridge-stair-contacts-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/review.json`, JSON.stringify({ stage, changes }));
 console.log(JSON.stringify({ output, changes }));

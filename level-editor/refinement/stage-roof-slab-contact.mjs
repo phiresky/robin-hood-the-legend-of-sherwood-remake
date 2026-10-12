@@ -125,7 +125,7 @@ for (const { id, asset, surface, indices } of selected) {
     gameplay: asset.gameplay,
   });
 }
-const output = await fs.mkdtemp("work/map-compile/roof-slab-contact-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/roof-slab-contact-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(
   `${output}/review.json`,

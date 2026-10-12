@@ -6,7 +6,7 @@ from PIL import Image,ImageDraw
 from scipy.ndimage import label
 REPO=Path(__file__).resolve().parents[2];OUT=REPO/'work/active/croisement02';ROOT=OUT/'restart6-source-coverage';DEST=ROOT/'source-role132-v1';DEST.mkdir(exist_ok=False)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
-native=Image.open(OUT/'animation-references/composite-frame-0.png').convert('RGB');inventory=json.loads((OUT/'review-mask-inventory.json').read_text())['masks'];residual=json.loads((ROOT/'remaining-inventory-v1/report.json').read_text())['rows'];depth_paths=[REPO/f'work/map-compile/occlusion-depth-all-layers/croisement02.layer-{i}.occlusion-depth.png'for i in range(2)];depths=[np.array(Image.open(p))for p in depth_paths];colors=[(255,70,80),(70,200,255),(255,210,50),(230,80,255),(80,255,130),(255,140,50),(160,150,255)];rows=[]
+native=Image.open(OUT/'animation-references/composite-frame-0.png').convert('RGB');inventory=json.loads((OUT/'review-mask-inventory.json').read_text())['masks'];residual=json.loads((ROOT/'remaining-inventory-v1/report.json').read_text())['rows'];depth_paths=[REPO/f'work/needs-review/map-compile/occlusion-depth-all-layers/croisement02.layer-{i}.occlusion-depth.png'for i in range(2)];depths=[np.array(Image.open(p))for p in depth_paths];colors=[(255,70,80),(70,200,255),(255,210,50),(230,80,255),(80,255,130),(255,140,50),(160,150,255)];rows=[]
 for number,box in[(19,(1574,117,1630,180)),(25,(82,849,160,975)),(95,(1507,747,1548,814))]:
  item=next(r for r in inventory if r['index']==number);coords=next(r['coordinates']for r in residual if r['mask']==number);mask=np.zeros((native.height,native.width),bool)
  for x,y in coords:mask[y,x]=True

@@ -22,7 +22,7 @@ const approachDepth = Math.min(
   ...asset.gameplay.surfaces.filter((s) => s.jump).map((s) => s.jump.landingDepth),
 );
 const output = await fs.mkdtemp(
-  `work/map-compile/prepared-${crouched ? "crouched-" : ""}roof-placements-`,
+  `work/needs-review/map-compile/prepared-${crouched ? "crouched-" : ""}roof-placements-`,
 );
 console.log(output);
 const results = [];

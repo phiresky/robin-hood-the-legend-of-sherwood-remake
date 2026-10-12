@@ -35,7 +35,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-REFINEMENT = HERE.parents[1] / 'work/lincoln-refinement'
+REFINEMENT = HERE.parents[1] / 'work/needs-review/lincoln-refinement'
 # Workspace round: round-1 (default) or round-2 (integrated context); set with
 # --round or the WEST_COMPLEX_ROUND environment variable.
 import os as _os

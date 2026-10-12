@@ -7,7 +7,7 @@ import shutil
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/lincoln-refinement'
+WORK = ROOT / 'level-editor/work/needs-review/lincoln-refinement'
 ASSET = 'lincoln-village-pond-landing-stage'
 # Least-squares fit in source pixels, constrained to perpendicular world axes.
 # The trace distinguishes the top deck from its shadow and thickness below it.

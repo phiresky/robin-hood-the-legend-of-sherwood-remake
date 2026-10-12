@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 import crypto from 'node:crypto';
 import {chromeEndpoint,socketOpen} from '../app/tests/cdp.mjs';
 
-const gallery=resolve(process.argv[2]??'level-editor/work/nottingham-refinement/texture-review/gallery');
+const gallery=resolve(process.argv[2]??'level-editor/work/needs-review/nottingham-refinement/texture-review/gallery');
 const output=resolve(process.argv[3]??join(gallery,'../browser-verification'));
 const origin=process.env.REVIEW_ORIGIN??'http://localhost:5180';
 const url=origin+'/@fs'+gallery+'/index.html';

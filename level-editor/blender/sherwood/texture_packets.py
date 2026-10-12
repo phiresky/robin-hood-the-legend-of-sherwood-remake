@@ -26,7 +26,7 @@ from source_authority import require_validated_source
 
 gr.SCENE, gr.COLLECTION = 'Sherwood Editor Migration', 'Sherwood Working'
 uf.ELEVATIONS = (-45, -15, 15, 35, 55, 75)
-WORK = EDITOR/'work/sherwood-refinement/textures'
+WORK = EDITOR/'work/needs-review/sherwood-refinement/textures'
 ROOT = WORK/'sunburst'
 uf.UNSEEN = ROOT
 PROVIDER = 'openrouter'

@@ -10,7 +10,7 @@ Run from the repository root:
 
     /usr/bin/blender --background --threads 2 --python-exit-code 1 \
         --python level-editor/blender/lincoln/refine_courtyard.py -- \
-        --workspace level-editor/work/lincoln-refinement/round-1/assets/<asset> [--packet]
+        --workspace level-editor/work/needs-review/lincoln-refinement/round-1/assets/<asset> [--packet]
 
 `--packet` regenerates the frozen `modified/` packet afterwards with the
 workspace's pinned tooling (projection is stale after any mesh edit).

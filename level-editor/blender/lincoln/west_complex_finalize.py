@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 # --round or the WEST_COMPLEX_ROUND environment variable.
 import os as _os
 ROUND = int(_os.environ.get('WEST_COMPLEX_ROUND', '1'))
-ASSETS_DIR = HERE.parents[1] / 'work/lincoln-refinement' / f'round-{ROUND}/assets'
+ASSETS_DIR = HERE.parents[1] / 'work/needs-review/lincoln-refinement' / f'round-{ROUND}/assets'
 
 
 def sha(path):

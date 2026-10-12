@@ -28,7 +28,7 @@ from PIL import Image, ImageDraw
 
 S = math.sin(math.radians(35))
 C = math.cos(math.radians(35))
-LINCOLN = Path(__file__).resolve().parents[2] / 'work/lincoln-refinement'
+LINCOLN = Path(__file__).resolve().parents[2] / 'work/needs-review/lincoln-refinement'
 
 
 def sha(path):

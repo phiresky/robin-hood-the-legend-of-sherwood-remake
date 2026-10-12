@@ -15,7 +15,7 @@ const [stage, map = "nottingham", ...surfaceArguments] = process.argv.slice(2);
 assert.ok(stage);
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`));
 const scene = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
-const output = await fs.mkdtemp("work/map-compile/roof-slab-mesh-review-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/roof-slab-mesh-review-");
 const results = [];
 const reviewed = surfaceArguments.length
   ? surfaceArguments.map((argument) => {

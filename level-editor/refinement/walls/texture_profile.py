@@ -55,7 +55,7 @@ def profile(recipe, entries):
         px=int((x-lo[0])*scale)
         draw.line((px,0,px,25),fill='red')
         draw.text((px+2,2),str(x),fill='red')
-    folder=ROOT/'work/wall-presets/profiles';folder.mkdir(exist_ok=True)
+    folder=ROOT/'work/needs-review/wall-presets/profiles';folder.mkdir(exist_ok=True)
     result.save(folder/(recipe['id']+'.png'))
 
 

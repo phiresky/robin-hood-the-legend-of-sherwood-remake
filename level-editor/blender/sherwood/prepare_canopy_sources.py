@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw
 from source_authority import sha
 
 EDITOR=Path(__file__).resolve().parents[2]
-BASE=EDITOR/'work/sherwood-refinement'
+BASE=EDITOR/'work/needs-review/sherwood-refinement'
 
 def main(output):
     output=Path(output).resolve();output.mkdir(parents=True,exist_ok=False)

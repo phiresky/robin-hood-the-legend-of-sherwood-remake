@@ -27,7 +27,7 @@ from mathutils.bvhtree import BVHTree
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 ROOT = HERE.parents[2]
-ASSETS = ROOT / 'level-editor/work/lincoln-refinement/round-1/assets'
+ASSETS = ROOT / 'level-editor/work/needs-review/lincoln-refinement/round-1/assets'
 
 
 def sha(p):

@@ -18,7 +18,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from rocks_terrain_volumes_masks import MASKS  # noqa: E402
 
-ROOT = HERE.parents[1] / 'work/lincoln-refinement'
+ROOT = HERE.parents[1] / 'work/needs-review/lincoln-refinement'
 S35, C35 = math.sin(math.radians(35)), math.cos(math.radians(35))
 
 

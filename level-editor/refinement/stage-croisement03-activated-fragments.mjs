@@ -127,7 +127,7 @@ for (const [suffix, descriptorSha256, modelSha256] of reviewed) {
     partAppearances: { [part.node]: part.appearance },
   });
 }
-const output = await fs.mkdtemp("work/map-compile/croisement03-activated-fragments-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/croisement03-activated-fragments-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 console.log(output);
 const results = [];

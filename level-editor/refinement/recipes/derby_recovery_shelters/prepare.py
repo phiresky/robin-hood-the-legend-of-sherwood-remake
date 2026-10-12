@@ -5,7 +5,7 @@ ROOT=Path.cwd();sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
 from refinement_review import render_review
 from review_sunlight import DEFAULT_LIGHTING
 from refinement_workspace import _geometry
-BASE=ROOT/'level-editor/work/derby-refinement/round-2'
+BASE=ROOT/'level-editor/work/needs-review/derby-refinement/round-2'
 name=sys.argv[sys.argv.index('--')+1]
 old=BASE/name; manifest=json.loads((old/'views.json').read_text())
 dest=BASE/'recovery-shelters-20260923'/manifest['asset_id'];dest.mkdir(parents=True,exist_ok=True)

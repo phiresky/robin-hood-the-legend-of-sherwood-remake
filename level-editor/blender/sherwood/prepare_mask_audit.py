@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import Image,ImageDraw,ImageFont
 
 EDITOR=Path(__file__).resolve().parents[2]
-ROOT=EDITOR/'work/sherwood-refinement/textures/native-mask-audit'
+ROOT=EDITOR/'work/needs-review/sherwood-refinement/textures/native-mask-audit'
 INVENTORY=EDITOR.parent/'datadirs/fullgame_gog_hackable/Data/Levels/Sherwood.rhp.d/masks/manifest.json'
 SOURCE=EDITOR.parent/'datadirs/fullgame_gog_hackable/Data/Levels/Day/sherwood.map.png'
 

@@ -48,7 +48,7 @@ gameplay.draft.issues.push(
   "Scaffold ladder seam corrections retain mesh discrepancies up to 0.711 game units on the flight and 0.537 on the upper landing. Rendered actor integration remains unverified.",
 );
 validateAssetGameplay(gameplay, descriptor);
-const output = await fs.mkdtemp("work/map-compile/york-scaffold-ladder-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/york-scaffold-ladder-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/review.json`, JSON.stringify(review, null, 2));
 console.log(JSON.stringify({ output }));

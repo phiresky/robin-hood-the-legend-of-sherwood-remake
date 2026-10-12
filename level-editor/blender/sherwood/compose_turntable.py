@@ -26,7 +26,7 @@ if args.split and not (args.fast or args.hq):
     parser.error('--split requires --fast or --hq and the matched original baseline passes')
 if args.hq and not comparison:
     parser.error('--hq requires --split or --side-by-side to select the matching render layout')
-OUT = Path(__file__).resolve().parents[3] / 'level-editor/work/sherwood-refinement' / ('turntable-side-by-side' if args.side_by_side else 'turntable-hq' if args.hq else 'turntable-fast' if args.fast else 'turntable')
+OUT = Path(__file__).resolve().parents[3] / 'level-editor/work/needs-review/sherwood-refinement' / ('turntable-side-by-side' if args.side_by_side else 'turntable-hq' if args.hq else 'turntable-fast' if args.fast else 'turntable')
 if args.output_dir:
     OUT = args.output_dir.resolve()
 W, H = (1920, 1080) if args.side_by_side else (1920, 1280) if args.hq else (960, 640) if args.fast else (1440, 1080)

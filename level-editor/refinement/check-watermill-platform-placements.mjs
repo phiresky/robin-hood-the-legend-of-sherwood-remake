@@ -21,7 +21,7 @@ assert.equal(
   source.assetSources.find((s) => s.id === id)?.descriptor_sha256,
 );
 assets.get(id).gameplay = edit.gameplay;
-const output = await fs.mkdtemp("work/map-compile/watermill-platform-placements-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/watermill-platform-placements-");
 console.log(output);
 const results = [];
 const report = (complete) =>

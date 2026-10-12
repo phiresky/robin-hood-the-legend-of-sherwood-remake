@@ -72,7 +72,7 @@ const sides = lines.map((line, side) => {
   }
   return { side, line, zone, faces };
 });
-const output = await fs.mkdtemp("work/map-compile/jump-integer-support-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/jump-integer-support-");
 await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify({

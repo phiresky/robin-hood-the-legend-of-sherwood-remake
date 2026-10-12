@@ -166,7 +166,7 @@ const reference = {
   ...(entry.model_scene ? { model_scene: entry.model_scene } : {}),
 };
 const assets = new Map([descriptor, ...landings].map((asset) => [asset.id, asset]));
-const output = await fs.mkdtemp("work/map-compile/external-stair-landings-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/external-stair-landings-");
 await fs.writeFile(`${output}/fixture-assets.json`, JSON.stringify([...assets]));
 const results = [],
   rejected = [];

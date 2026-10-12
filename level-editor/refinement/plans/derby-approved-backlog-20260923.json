@@ -1,6 +1,6 @@
 {
-  "baseline": "level-editor/work/derby-refinement/round-2/publication-7-approved-north-wall/worker.blend",
-  "output": "level-editor/work/derby-refinement/round-2/publication-8-approved-backlog",
+  "baseline": "level-editor/work/needs-review/derby-refinement/round-2/publication-7-approved-north-wall/worker.blend",
+  "output": "level-editor/work/needs-review/derby-refinement/round-2/publication-8-approved-backlog",
   "map_name": "Derby",
   "scene_name": "Derby Refinement",
   "collection_name": "Derby Working",
@@ -10,69 +10,69 @@
   "imports": [
     {
       "asset_id": "derby-lower-northwest-yard-fence",
-      "blend_path": "level-editor/work/derby-refinement/round-2/publication5-bake-northwest-yard-fence/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-northwest-yard-fence-approved/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/publication5-bake-northwest-yard-fence/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-northwest-yard-fence-approved/views.json"
     },
     {
       "asset_id": "derby-east-hall-stair",
-      "blend_path": "level-editor/work/derby-refinement/round-2/publication5-bake-stone-trough/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-stone-trough-approved/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/publication5-bake-stone-trough/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-stone-trough-approved/views.json"
     },
     {
       "asset_id": "derby-south-approach-stone",
-      "blend_path": "level-editor/work/derby-refinement/round-2/publication5-bake-south-approach-stone/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-south-approach-stone-approved/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/publication5-bake-south-approach-stone/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-south-approach-stone-approved/views.json"
     },
     {
       "asset_id": "derby-lower-east-supplies",
-      "blend_path": "level-editor/work/derby-refinement/round-2/publication5-bake-supply-cart/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-supply-cart-approved/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/publication5-bake-supply-cart/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-supply-cart-approved/views.json"
     },
     {
       "asset_id": "derby-east-bailey-yard-prop",
-      "blend_path": "level-editor/work/derby-refinement/round-2/publication5-bake-chopping-block/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-chopping-block-approved/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/publication5-bake-chopping-block/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-chopping-block-approved/views.json"
     },
     {
       "asset_id": "derby-east-bailey-well",
-      "blend_path": "level-editor/work/derby-refinement/round-2/publication5-bake-east-bailey-well/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-east-bailey-well-approved/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/publication5-bake-east-bailey-well/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-east-bailey-well-approved/views.json"
     },
     {
       "asset_id": "derby-lower-northwest-wash-tub",
-      "blend_path": "level-editor/work/derby-refinement/round-2/publication5-bake-northwest-tub-wood-retry/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-northwest-tub-wood-retry-approved/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/publication5-bake-northwest-tub-wood-retry/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-northwest-tub-wood-retry-approved/views.json"
     },
     {
       "asset_id": "derby-east-courtyard-north-shelter",
-      "blend_path": "level-editor/work/derby-refinement/round-2/publication5-bake-north-shelter/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-north-shelter-approved/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/publication5-bake-north-shelter/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-north-shelter-approved/views.json"
     },
     {
       "asset_id": "derby-east-bailey-crate",
-      "blend_path": "level-editor/work/derby-refinement/round-2/publication5-bake-lying-barrel-simple/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-lying-barrel-simple-approved/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/publication5-bake-lying-barrel-simple/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-lying-barrel-simple-approved/views.json"
     },
     {
       "asset_id": "derby-east-bailey-stacked-timber",
-      "blend_path": "level-editor/work/derby-refinement/round-2/publication5-bake-timber-bucket/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-timber-bucket-approved/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/publication5-bake-timber-bucket/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-timber-bucket-approved/views.json"
     },
     {
       "asset_id": "derby-upper-east-curtain",
-      "blend_path": "level-editor/work/derby-refinement/round-2/publication5-bake-upper-east-curtain/worker.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/sunburst-upper-east-curtain-approved/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/publication5-bake-upper-east-curtain/worker.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/sunburst-upper-east-curtain-approved/views.json"
     },
     {
       "asset_id": "derby-lower-courtyard-prop",
-      "blend_path": "level-editor/work/derby-refinement/round-2/assets/derby-lower-courtyard-prop/model.blend",
-      "review_manifest": "level-editor/work/derby-refinement/round-2/assets/derby-lower-courtyard-prop/inspection/masked-approval-with-ground-pail/views.json"
+      "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/assets/derby-lower-courtyard-prop/model.blend",
+      "review_manifest": "level-editor/work/needs-review/derby-refinement/round-2/assets/derby-lower-courtyard-prop/inspection/masked-approval-with-ground-pail/views.json"
     }
   ],
   "ground_texture_handoff": {
     "requires_asset_id": "derby-lower-courtyard-prop",
-    "blend_path": "level-editor/work/derby-refinement/round-2/lower-well-ground-cleanup/manual-pail-v2/worker.blend",
-    "proof": "level-editor/work/derby-refinement/round-2/lower-well-ground-cleanup/manual-pail-v2/cleanup.json",
+    "blend_path": "level-editor/work/needs-review/derby-refinement/round-2/lower-well-ground-cleanup/manual-pail-v2/worker.blend",
+    "proof": "level-editor/work/needs-review/derby-refinement/round-2/lower-well-ground-cleanup/manual-pail-v2/cleanup.json",
     "baseline_atlas_sha256": "9b93c2b82fb260bfb9edea87a7c78db5dcf1419401d79793be2f841903e24f6a"
   }
 }

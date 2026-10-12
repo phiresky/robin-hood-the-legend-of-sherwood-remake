@@ -233,7 +233,7 @@ writes reviewed-owner candidates in local 3D coordinates and an explicit gap
 report; it does not publish incomplete metadata as valid gameplay:
 
 ```sh
-pnpm --filter pipeline exec node src/recover-asset-gameplay.ts --map ../library/scenes/derby.rhlos-map.json --source ../../datadirs/fullgame_gog_hackable/Data/Levels/Derby.rhp.json --out ../work/map-compile/derby-asset-recovery
+pnpm --filter pipeline exec node src/recover-asset-gameplay.ts --map ../library/scenes/derby.rhlos-map.json --source ../../datadirs/fullgame_gog_hackable/Data/Levels/Derby.rhp.json --out ../work/needs-review/map-compile/derby-asset-recovery
 ```
 
 The resulting `*.gameplay-authoring.json` files are drafts requiring review and
@@ -288,11 +288,11 @@ descriptor into runtime sight/motion data and reads the map, minimap and depth
 through the engine's terrain loaders.
 
 To test a fresh browser archive without replacing the checked-in fixture, set
-`TEST_BAKE_ZIP=work/map-compile/browser-bake-contract.zip` on the browser command.
+`TEST_BAKE_ZIP=work/needs-review/map-compile/browser-bake-contract.zip` on the browser command.
 Then, from the repository root:
 
 ```sh
-ROBIN_EDITOR_BAKE_CONTRACT_ZIP="$PWD/level-editor/work/map-compile/browser-bake-contract.zip" RUST_MIN_STACK=33554432 cargo test -p robin_rs -j 1 --test editor_mod_export fresh_browser_bake_contract_loads_without_base_datadir -- --ignored
+ROBIN_EDITOR_BAKE_CONTRACT_ZIP="$PWD/level-editor/work/needs-review/map-compile/browser-bake-contract.zip" RUST_MIN_STACK=33554432 cargo test -p robin_rs -j 1 --test editor_mod_export fresh_browser_bake_contract_loads_without_base_datadir -- --ignored
 ```
 
 Both contract paths construct live navigation geometry in addition to decoding
@@ -382,7 +382,7 @@ Check every saved scene, including custom scenes which reuse assets from other
 maps, against its pinned asset definitions:
 
 ```sh
-pnpm --filter pipeline exec node src/audit-map-compilation.ts --out ../work/map-compile/all-maps-audit.json
+pnpm --filter pipeline exec node src/audit-map-compilation.ts --out ../work/needs-review/map-compile/all-maps-audit.json
 ```
 
 The check calls the actual gameplay compiler, reports each map separately, and
@@ -393,7 +393,7 @@ geometry compilation; it does not certify rendered output or gameplay parity.
 The separately authorized one-time recovery can process all source-map scenes:
 
 ```sh
-pnpm --filter pipeline exec node src/recover-library-gameplay.ts --sources ../../datadirs/fullgame_gog_hackable/Data/Levels --out ../work/map-compile/all-map-recovery
+pnpm --filter pipeline exec node src/recover-library-gameplay.ts --sources ../../datadirs/fullgame_gog_hackable/Data/Levels --out ../work/needs-review/map-compile/all-map-recovery
 ```
 
 This writes per-asset authoring drafts and a library-wide recovery report.

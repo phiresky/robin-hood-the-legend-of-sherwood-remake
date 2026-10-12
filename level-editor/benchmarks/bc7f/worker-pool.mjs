@@ -10,7 +10,7 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const app = path.resolve(dir, "../../app");
 const require = createRequire(path.join(app, "package.json"));
 const { createServer } = await import(require.resolve("vite"));
-const output = path.resolve(dir, "../../work/bc7f-benchmark/worker-pool");
+const output = path.resolve(dir, "../../work/needs-review/bc7f-benchmark/worker-pool");
 await fs.mkdir(output, { recursive: true });
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

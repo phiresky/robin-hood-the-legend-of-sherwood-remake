@@ -125,7 +125,7 @@ def main():
 
     references = []
     for name in ['leicester-southeast-cottage-tree', 'leicester-moat-bank-tree']:
-        path = pin(ROOT / f'level-editor/work/leicester-refinement/parallel-wave-2/audit-images/{name}.jpg')
+        path = pin(ROOT / f'level-editor/work/needs-review/leicester-refinement/parallel-wave-2/audit-images/{name}.jpg')
         references.append({'path': str(path), 'sha256': sha(path), 'use': 'Construction and crown articulation only; no RGB copied.'})
     canonical = ROOT / 'level-editor/library/3d-assets/croisement03/croisement03-tree-18/asset.json'
     if canonical.exists():

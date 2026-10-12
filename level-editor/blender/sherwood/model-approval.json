@@ -3,7 +3,7 @@
   "status": "MODELS_APPROVED",
   "user_statement": "models: all approved",
   "scope": "All current Sherwood models; generated textures remain unapproved",
-  "worker": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/sherwood-refinement/models-approved/worker.blend",
+  "worker": "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/sherwood-refinement/models-approved/worker.blend",
   "worker_sha256": "06699515ea5bc496029567799c540e6d2fa7de91d9f6738ecab95f17e797c0a1",
   "grouped_worker_sha256": "c721935d88c6d02a8e4497069734b4c39701f91c8b632079caf5d25f60b5b321",
   "asset_ids": [
@@ -280,12 +280,12 @@
   ],
   "unrendered_packet_approvals": "Covered only by the user blanket approval of the current worker; no per-packet review is claimed.",
   "evidence": {
-    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/sherwood-refinement/grouping-review/catalog.json": "367f0a44b73f859302a35137a0b75e2c0a4bed97b9d338bb9a727ca1a1d64cc3",
-    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/sherwood-refinement/grouping-review/plan.json": "15784b7dd1e20cee3b343d3d26cda261d3e30178123cc449f8d820a0c1d114a4",
-    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/sherwood-refinement/grouping-review/grouping-approval.json": "f5fca913d35717f433a2ea61bf79c413feabc861ac692808dcbdfa1280a18478",
-    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/sherwood-refinement/northeast-oak-review/stage.json": "2386cdd81b082651580ae1e16d355e1d0104d701d3b73c7404fd3237bec77d47",
-    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/sherwood-refinement/northeast-oak-review/saved-worker-verification.json": "273c09a6144179a4606fe3f0723eff13c7c6529b9eed0bf2380e90df97c1b30d",
-    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/sherwood-refinement/models-approved/remaining-evidence.json": "c7184d1c49e3a756734f0e17a0c12185a2868b742eddccaac6ee729e8bef5561",
-    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/sherwood-refinement/models-approved/revised-oak-evidence.json": "eeb0c4d386fa7220075708ac4dbe9e59e0a39528398c2fd8814af55331409136"
+    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/sherwood-refinement/grouping-review/catalog.json": "367f0a44b73f859302a35137a0b75e2c0a4bed97b9d338bb9a727ca1a1d64cc3",
+    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/sherwood-refinement/grouping-review/plan.json": "15784b7dd1e20cee3b343d3d26cda261d3e30178123cc449f8d820a0c1d114a4",
+    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/sherwood-refinement/grouping-review/grouping-approval.json": "f5fca913d35717f433a2ea61bf79c413feabc861ac692808dcbdfa1280a18478",
+    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/sherwood-refinement/northeast-oak-review/stage.json": "2386cdd81b082651580ae1e16d355e1d0104d701d3b73c7404fd3237bec77d47",
+    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/sherwood-refinement/northeast-oak-review/saved-worker-verification.json": "273c09a6144179a4606fe3f0723eff13c7c6529b9eed0bf2380e90df97c1b30d",
+    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/sherwood-refinement/models-approved/remaining-evidence.json": "c7184d1c49e3a756734f0e17a0c12185a2868b742eddccaac6ee729e8bef5561",
+    "/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/work/needs-review/sherwood-refinement/models-approved/revised-oak-evidence.json": "eeb0c4d386fa7220075708ac4dbe9e59e0a39528398c2fd8814af55331409136"
   }
 }

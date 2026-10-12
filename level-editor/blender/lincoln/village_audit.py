@@ -29,7 +29,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
-ROOT = REPO / 'level-editor/work/lincoln-refinement'
+ROOT = REPO / 'level-editor/work/needs-review/lincoln-refinement'
 sys.path.insert(0, str(HERE))
 
 import bpy  # noqa: E402

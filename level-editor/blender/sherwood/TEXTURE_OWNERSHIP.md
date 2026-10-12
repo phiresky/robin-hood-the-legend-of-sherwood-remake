@@ -108,7 +108,7 @@ approval does not claim that missing packets were rendered or inspected.
 The original grouping worker and historical rejection records remain unchanged.
 
 For subsequent mask passes, compile with
-`--models work/sherwood-refinement/models-approved/approval.json` and a new output
+`--models work/needs-review/sherwood-refinement/models-approved/approval.json` and a new output
 directory. The compiler validates the model receipt and freezes a recipe copy;
 the Day audit opens the exact approved worker named in that coverage report.
 This model approval does not resolve the remaining source masks or approve

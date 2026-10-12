@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 bench_dir="$(cd -- "$(dirname -- "$0")" && pwd)"
-work_dir="$bench_dir/../../work/bc7f-benchmark"
+work_dir="$bench_dir/../../work/needs-review/bc7f-benchmark"
 basis_dir="$work_dir/basis_universal"
 revision=99f52d63aa6799cbdaecfe977111dc5ec3b31d47
 if [[ "$(git -C "$basis_dir" rev-parse HEAD)" != "$revision" ]]; then

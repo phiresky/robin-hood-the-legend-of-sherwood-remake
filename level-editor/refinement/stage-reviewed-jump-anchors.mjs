@@ -81,7 +81,7 @@ for (const id of ids) {
   edits.push({ asset: id, descriptorSha256: hash(bytes), modelSha256, gameplay });
   reviews.push({ asset: id, ...review });
 }
-const output = await fs.mkdtemp("work/map-compile/reviewed-jump-anchors-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/reviewed-jump-anchors-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/review.json`, JSON.stringify(reviews));
 console.log(output);

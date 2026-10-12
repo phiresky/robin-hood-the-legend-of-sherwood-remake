@@ -20,7 +20,7 @@ def verify(stage,check_live=True):
     if check_live:
         for path,digest in handoff['before'].items():assert sha(live/path)==digest,('Changed live input',path)
     for path,digest in handoff['protected_files'].items():assert sha(path)==digest,('Changed source',path)
-    document=read(stage/'sherwood.rhlos-map.json');catalog=read(EDITOR/'work/sherwood-refinement/grouping-review/catalog.json')
+    document=read(stage/'sherwood.rhlos-map.json');catalog=read(EDITOR/'work/needs-review/sherwood-refinement/grouping-review/catalog.json')
     expected={g['id'] for g in catalog['groups']};assert len(expected)==80
     assert {r['id'] for r in document['assetSources']}==expected
     assert [r['id'] for r in document['sceneAssets']]==['sherwood-terrain']
@@ -54,7 +54,7 @@ def verify(stage,check_live=True):
                 assert len(actual['points'])==len(original['points'])
                 for a,b in zip(actual['points'],original['points']):
                     for key,offset in [('x',pivot[0]),('y',-pivot[1]*sin),('z_bottom',pivot[2]*cos),('z_top',pivot[2]*cos)]:assert abs(a[key]+offset-b[key])<1e-8
-    plan=read(EDITOR/'work/sherwood-refinement/grouping-review/plan.json')
+    plan=read(EDITOR/'work/needs-review/sherwood-refinement/grouping-review/plan.json')
     assert components==set(plan['assignments'])
     expected_native={p['obstacle'] for g in catalog['groups'] for p in g['parts'] if 'obstacle' in p}
     assert native==expected_native

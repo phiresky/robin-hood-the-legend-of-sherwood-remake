@@ -40,9 +40,9 @@ volume data and does not export the refined GLB geometry into game artwork.
 Older 270-part scenes remain compatible with the expanded catalog.
 
 Current evidence and full-map images are in
-`level-editor/work/derby-refinement/round-2/publication-13-second-drawbridge/`.
+`level-editor/work/needs-review/derby-refinement/round-2/publication-13-second-drawbridge/`.
 The pending-only review gallery remains at
-`level-editor/work/derby-refinement/round-2/review-gallery-14/index.html`.
+`level-editor/work/needs-review/derby-refinement/round-2/review-gallery-14/index.html`.
 
 ## Earlier progress log (superseded by the current status above)
 
@@ -59,7 +59,7 @@ source-only (East Bailey west curtain, Lower West access stair, Lower West
 wall turret, Lower Bailey well). Continuous wall-walk node045 is an additional
 unfilled component. Parallel recovery is active. Existing interior source-only
 materials are classified separately. See the local work report at
-`level-editor/work/derby-refinement/round-2/completion-audit-20260923/report.md`.
+`level-editor/work/needs-review/derby-refinement/round-2/completion-audit-20260923/report.md`.
 No pending geometry decisions remain, but Derby is not100% complete.
 
 Completion audit correction: Derby is not yet fully complete. East Bailey west
@@ -157,7 +157,7 @@ Latest user feedback: both replacement curtains still have incorrect battlement
 alignment. Geometry approval is withheld. A manual corner editor is available
 at http://localhost:5182 with both walls, original artwork, optional actual-mesh
 edges, ordered editable pixel corners and persistent saves. Project directory:
-`level-editor/work/derby-refinement/round-2/battlement-editor/`.
+`level-editor/work/needs-review/derby-refinement/round-2/battlement-editor/`.
 Use `edited-corners.json` for the next geometry pass once the user saves it.
 Reusable workflow: `level-editor/refinement/CORNER_EDITOR.md`.
 
@@ -281,8 +281,8 @@ declare those limitations resolved. North Tower remains withheld for boundary
 and nonmanifold-edge checks. East Hall and both Lower West sections remain in
 revision; their older gallery images are explicitly marked as needing fixes.
 
-Gallery: `level-editor/work/derby-refinement/round-2/review-gallery-14/index.html`.
-Manifest: `level-editor/work/derby-refinement/round-2/review-candidates-14.json`.
+Gallery: `level-editor/work/needs-review/derby-refinement/round-2/review-gallery-14/index.html`.
+Manifest: `level-editor/work/needs-review/derby-refinement/round-2/review-candidates-14.json`.
 Use `publish_traced_reviews.py` in that round directory for this revision's
 manifest refresh; the older `refresh_revision_gallery.py` restores stale paths.
 
@@ -497,7 +497,7 @@ covered/revealed context plus solid/source-textured closeups before declaring an
 interior building reviewed; exterior eight-view sheets alone are insufficient.
 
 **Second full-scene refinement pass is active.** The immutable starting snapshot
-is `work/derby-refinement/round-2/source.blend`. A fresh grouping review confirmed
+is `work/needs-review/derby-refinement/round-2/source.blend`. A fresh grouping review confirmed
 34 logical assets and 270 canonical parts; each asset will receive its own worker
 in scheduled waves. Twelve reviewed recipes are now integrated and published:
 terrain/background, rock relief, Great Keep, Upper Bailey Gatehouse, South
@@ -526,7 +526,7 @@ means the geometry is included in the latest map export, not that all defects
 are resolved. West Cottage now includes the approved `d01d438af` geometry and its
 new generated bake. Generated hidden details remain inferred.
 
-Latest map publication: `work/derby-refinement/round-2/publication-4/derby.scene.glb`
+Latest map publication: `work/needs-review/derby-refinement/round-2/publication-4/derby.scene.glb`
 to `library/scenes/derby-volumes.scene.glb`, with matching document fingerprint.
 It contains 39 groups, 270 canonical parts, 320 meshes and 155 modeled steps.
 All 39 standalone assets match staging byte-for-byte. Browser acceptance passed:
@@ -570,7 +570,7 @@ Updated full-Derby 1920×2752 renders:
 `round-2/publication-4/full-map/reference-textured.png`.
 Keep/Hall and other recorded limitations remain; publication is not completion.
 
-Paths below are relative to `level-editor/work/derby-refinement/`.
+Paths below are relative to `level-editor/work/needs-review/derby-refinement/`.
 Reusable geometry recipes are in `level-editor/blender/derby_asset_*.py`.
 
 New integration published: reviewed ownership now has 34 groups (Hall

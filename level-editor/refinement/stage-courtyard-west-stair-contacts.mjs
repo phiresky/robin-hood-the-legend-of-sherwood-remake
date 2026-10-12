@@ -39,7 +39,7 @@ const lifts = compiled.lifts.filter((l) =>
 );
 assert.equal(lifts.length, 1);
 const floor = lifts[0].physical_navigation;
-const output = await fs.mkdtemp("work/map-compile/nottingham-castle-west-stair-contacts-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/nottingham-castle-west-stair-contacts-");
 const changes = [];
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 function meshHeight(p, [a, b, c]) {

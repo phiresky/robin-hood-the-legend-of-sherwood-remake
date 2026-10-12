@@ -16,7 +16,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from rocks_terrain_volumes_notes import NOTES, COMMON_LIMITATIONS  # noqa: E402
 
-ROOT = HERE.parents[1] / 'work/lincoln-refinement'
+ROOT = HERE.parents[1] / 'work/needs-review/lincoln-refinement'
 RECIPE = HERE / 'refine_rocks_terrain.py'
 
 

@@ -145,7 +145,7 @@ for (const clearance of candidate.data.movementClearances) {
 assert.equal(changes.filter((change) => change.surface).length, 8);
 assert.equal(changes.filter((change) => change.door).length, 7);
 assert.equal(changes.filter((change) => change.clearance).length, 3);
-const output = await fs.mkdtemp("work/map-compile/keep-component-seams-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/keep-component-seams-");
 const edits = sources.map((source) => {
   validateAssetGameplay(source.next, source.data);
   return { asset: source.entry.id, descriptorSha256: source.sha256, gameplay: source.next };

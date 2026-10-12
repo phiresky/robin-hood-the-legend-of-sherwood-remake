@@ -19,7 +19,7 @@ from modeling import EYE, ROOT, DATA, SIN, COS, collection, game_point
 
 NAME='10 Animated foliage - curved canopy shells'
 c=collection(NAME)
-records=json.loads((ROOT/'level-editor/work/sherwood-refinement/animation-references/manifest.json').read_text())['assets']
+records=json.loads((ROOT/'level-editor/work/needs-review/sherwood-refinement/animation-references/manifest.json').read_text())['assets']
 references=bpy.data.collections['07 Reference only - authored animated sprites']
 level=json.loads((DATA/'Levels/Sherwood.rhp.json').read_text())
 # Sprite elevation establishes draw placement, not the crown's ground depth.

@@ -19,7 +19,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[3]
-SOURCE = ROOT / 'level-editor/work/lincoln-refinement/source-states/covered.png'
+SOURCE = ROOT / 'level-editor/work/needs-review/lincoln-refinement/source-states/covered.png'
 S = math.sin(math.radians(35))
 C = math.cos(math.radians(35))
 SUN = np.array([0.5712401270866394, -0.3459553122520447, 0.7443115711212158])

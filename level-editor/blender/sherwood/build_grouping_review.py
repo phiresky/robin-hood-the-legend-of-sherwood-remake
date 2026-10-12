@@ -50,7 +50,7 @@ def main(root):
     manifest=root/'gallery-manifest.json';manifest.write_text(json.dumps(dict(map='Sherwood',review_kind='grouping',items=items,approved=approved,
         status_counts={'pending grouping reviews':len(items),'approved groups':len(approved),'unchanged groups':sum(not g['changed'] for g in plan['groups']),
                        'selectable assets after regrouping':plan['candidate_groups']}),indent=2)+'\n')
-    gallery=EDITOR/'work/sherwood-refinement/model-review/gallery/grouping'
+    gallery=EDITOR/'work/needs-review/sherwood-refinement/model-review/gallery/grouping'
     build(manifest,gallery,map_name='Sherwood',pending_only=True)
     page=gallery/'index.html'
     summary='<details><summary>Unchanged assets checked in this audit</summary><ul>'+''.join(

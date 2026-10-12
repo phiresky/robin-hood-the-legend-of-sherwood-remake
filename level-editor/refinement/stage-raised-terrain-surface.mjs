@@ -99,7 +99,7 @@ for (const [id, { gameplay }] of changed) {
   );
   validateAssetGameplay(gameplay, assets.get(id));
 }
-const output = await fs.mkdtemp("work/map-compile/raised-terrain-surface-");
+const output = await fs.mkdtemp("work/needs-review/map-compile/raised-terrain-surface-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify([...changed.values()]));
 await fs.writeFile(
   `${output}/review.json`,
