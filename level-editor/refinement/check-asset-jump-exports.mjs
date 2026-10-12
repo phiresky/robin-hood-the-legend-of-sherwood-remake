@@ -6,7 +6,12 @@ import { compileMap } from "../app/src/map-compile.ts";
 import { insertProjectionAsset } from "../app/src/asset-commands.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 
-const ids = process.argv.slice(2);
+const args = process.argv.slice(2);
+const stages = args.filter((arg) => arg.startsWith("--stage="));
+assert.ok(stages.length <= 1, "Supply at most one staged gameplay directory");
+const stage = stages[0]?.slice("--stage=".length);
+const edits = stage ? JSON.parse(await fs.readFile(`${stage}/edits.json`, "utf8")) : [];
+const ids = args.filter((arg) => !arg.startsWith("--stage="));
 assert.ok(ids.length && ids.every((id) => !id.startsWith("-")));
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8"));
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -18,6 +23,7 @@ const save = (complete) =>
     `${output}/diagnostics.json`,
     JSON.stringify({
       scope: "static-geometry-only-not-gameplay-parity",
+      ...(stage ? { gameplayStage: stage } : {}),
       complete,
       results,
     }),
@@ -39,6 +45,12 @@ for (const id of ids) {
     model_scene: entry.model_scene,
     resources: descriptor.resources ?? [],
   };
+  const edit = edits.find((edit) => edit.asset === id);
+  if (edit) {
+    assert.equal(edit.descriptorSha256, reference.descriptor_sha256);
+    assert.equal(edit.modelSha256, reference.model_sha256);
+    descriptor.gameplay = edit.gameplay;
+  }
   for (const elevation of [0, 40])
     for (const rotation of [0, 37, 90, 180]) {
       const empty = {

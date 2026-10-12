@@ -6,6 +6,33 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Authorized jump starts, hidden clicks and York traversal (2026-10-12)
 
+Follow-up placement experiments remain **unpublished**:
+
+- `stump-connection-probe-yaGO3Y` isolates the cross-asset connection, translates
+  both assets together, and tests rotations 0/37/90/180/270 at elevations 0/40.
+  Its baseline has four approach stalls and four click-overlay misses in 100
+  attempts. Moving the stump socket by one local X/Y unit removes all four
+  stalls; the four 90-degree overlay misses remain. This is 96/100 successful
+  candidate routes, not a complete repair.
+- York's scaffolded corner house binds `jump-pair-49`'s roof edge to
+  `building-137-walk-0` through the shared zone anchor, while the edge actually
+  lies over `building-138-walk-0`. In the full export these are respectively
+  sector/layer 263/81 and 236/57. The existing asset-local surfaces suffice to
+  identify the error without source-level data.
+- `york-receiver-probe-8VzhJx` moves that zone anchor onto the actual ledge face.
+  Eight staged exports (`asset-jump-exports-QvuMfB`) load natively. The candidate
+  has 36/80 passing click routes; the unchanged asset (`asset-jump-exports-03NYnl`)
+  has zero passing routes and omits the pair in two of its eight placements.
+  The candidate's 44 failures comprise 20 unavailable starting boxes, ten
+  missing landing receivers, ten unavailable destinations and four post-flight
+  stalls. At 90 degrees the projected roof navigation region is extremely
+  narrow. Correcting its anchor alone therefore does not establish usable
+  navigation at arbitrary rotations. No candidate has changed the library.
+
+The isolated asset exporter accepts a hash-guarded `--stage=` directory for
+these comparisons and records it in its diagnostics. Staged descriptors are
+test inputs, not published editable-ZIP round trips.
+
 Click probes now authorize their synthetic starting movement box, use the
 authorized destination for ledge selection, and record both requested and actual
 positions/connection IDs. Full movement still has to finish on the expected

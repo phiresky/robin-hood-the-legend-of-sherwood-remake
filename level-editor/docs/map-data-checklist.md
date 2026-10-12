@@ -36,6 +36,9 @@ route samples, but its click sweep still has 54 failures, including missing
 receivers and stalled approaches (655 traversals pass; 11 clicks are occluded).
 These results do not establish
 full parity; see [the current evidence](map-compilation-evidence.md).
+An asset-local York anchor correction and a Croisement01 socket inset are staged
+for review. Both improve sampled traversal, but rotated click/receiver failures
+remain; neither candidate is published.
 
 **Mask binding update:** coverage-based layer binding restores Croisement02 shrub
 77's missing mask. The fresh 53-mask export loads natively and changes only masks
