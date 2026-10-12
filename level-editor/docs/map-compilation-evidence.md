@@ -17,9 +17,16 @@ The full browser fixture reports a successful Nottingham editor ZIP round trip:
 2304 by 3520 pixels, 694 sight obstacles, 57,942,452 ZIP bytes, matching reopened
 gameplay and rendered color/depth. This run uses the boundary-fix compiler after
 its development-server reloads; it is not proof for the earlier compiler.
-Archive transfer from Chromium is still pending, so native loading of that ZIP
-has not yet been verified. An attempted native check before transfer finished
-failed because the archive file did not yet exist; that is not a map-load result.
+Archive transfer completed and
+`full_editor_archive_constructs_native_map_without_base_datadir` passes in
+7.90 seconds. The artifact is
+`saved-map-exports-HsTUwy/editor-nottingham-roundtrip.zip`; it uses the new
+compiler despite its directory also containing the older descriptor audit.
+The native check exercises packaged resource loading and engine construction
+without a base data directory. The extracted map PNG was visually inspected.
+This does not establish every gameplay route or visual equivalence to another
+map source. An earlier attempt before archive transfer finished failed because
+the file did not yet exist and supplies no map-load evidence.
 
 The fresh ten-map export batch `saved-map-exports-MqNblp` is still processing
 Wychford. It is not completed evidence for any map in that batch.

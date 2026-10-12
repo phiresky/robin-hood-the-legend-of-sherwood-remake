@@ -19,6 +19,13 @@ native integration tests pass, as does the game build. Fresh ten-map checks
 are pending. No per-tick geometry solver is added. See
 [the boundary evidence](map-compilation-evidence.md#receiver-coverage-at-compiled-floor-boundaries-2026-10-12).
 
+**Nottingham ZIP verified (2026-10-12):** the full 57,942,452-byte archive reopens
+with identical gameplay, color and depth, and loads through native mod/resource
+loading without a base data directory. Fresh gameplay data passes 184 ordinary
+route samples and retains 355/380 successful jump clicks. The remaining 25
+findings are not resolved by the ZIP verification. See
+[the fresh Nottingham checks](map-compilation-evidence.md#fresh-nottingham-boundary-fix-regression-checks-2026-10-12).
+
 **Current export repairs (2026-10-12):** four split York assets now have published
 gameplay bindings and updated saved-scene pins. Thirty-two moved/rotated exports
 load natively, and both storehouses pass eight complete-character enter/exit
