@@ -145,6 +145,20 @@ clicks, 576 gate-search checks and prepared traversal/denial checks. Detailed
 revised mesh contact review and rendered archive checks remain pending for this
 candidate; audit duration is not a per-tick performance measurement.
 
+Mesh review of the three revised plateau regions samples 21,039, 1,908 and 3,902
+points respectively. Many quantized boundary probes fall just outside a triangle,
+but their maximum horizontal gaps are 0.000572, 0.000265 and 0.000531 units;
+maximum supported height differences are 0.0584, 0.4347 and 0.3204 units. These
+measurements do not establish animated character compositing or every bank contact.
+Both revised bridge decks retain their previous zero-gap sampled coverage.
+
+Private fixture `lincoln-rendered-library-Nqcny3` contains the staged descriptors,
+updated scene/catalog pins and hardlinked unchanged models. Source descriptor and
+scene hashes were verified unchanged. Full browser archive validation is running;
+no archive result is yet claimed. The initial symlink-based private fixture was
+rejected by the HTTP library's containment check and was replaced without changing
+that server restriction.
+
 The follow-up `lincoln-drawbridge-disconnections-QrZQte` removes or raises the
 plateau in only the first copy across the same eight placements. All sixteen
 exports omit the three unsupported plateau entrances and retain three supported
