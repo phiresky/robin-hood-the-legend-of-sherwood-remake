@@ -26,8 +26,11 @@ successful exports and one Croisement03 fallen-log cap failure. An offline log
 repair passes ten placement loads and 17,880 sampled sight/projectile queries;
 full-scene re-export then exposes an equivalent timber-bridge cap failure.
 The bridge repair passes ten placement loads and 26,800 sampled queries with
-its deck and connection definitions unchanged. Full-scene validation remains
-pending. Copied-roof
+its deck and connection definitions unchanged. Both repairs are published;
+fresh full Croisement03 now compiles and passes native geometry construction.
+Its ordinary-sector route sampler also passes; rendered ZIP and full traversal
+verification remain pending. Native batch loading now exposes a Lincoln passage
+with no receiving floor (door 47, layer 3, sector 153). Copied-roof
 flight-clearance rejection remains unresolved; bypassed diagnostic flights are
 not evidence of a safe production export.
 

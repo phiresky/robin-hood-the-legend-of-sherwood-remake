@@ -15,6 +15,18 @@ walkable surfaces, navigation joins, placement rules and every retained volume
 are unchanged. All ten placement exports load natively, and all 26,800 directed
 mesh-derived sight/projectile queries pass. Full-map validation remains pending.
 
+Both repairs are published with guarded backups. Fresh full Croisement03 scene
+`saved-map-exports-iDNUEE` compiles in about 41 seconds and passes native geometry
+construction (0.51 seconds). The earlier bridge failure is resolved. This is
+gameplay-data construction evidence, not a rendered ZIP or traversal proof.
+Its ordinary-sector route sampler also passes (0.62 seconds).
+
+Native batch snapshot `completed-nine-map-audit-l4lf8_x9` loads Wychford,
+Croisement01, Croisement02, Derby and Leicester, then fails on Lincoln: compiled
+passage door 47 has no receiving floor at `[1935,1559]`, layer 3, sector 153.
+Nottingham, Sherwood and York are not reached by that check. Thus successful
+export of the nine baseline scenes is not evidence that all nine load natively.
+
 The baseline ten-map batch `saved-map-exports-MqNblp` has finished: nine saved
 scenes compile, while Croisement03 fails on fallen-log volume `wood-90`. That
 fragment has nearly coincident edges which collapse at native float precision.
