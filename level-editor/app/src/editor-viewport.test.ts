@@ -2007,3 +2007,34 @@ test("source cover uses the existing placed roof control, with no second patch U
   assert.equal(internal.loopClocks.ready, false);
   f.viewport.dispose();
 });
+
+test("disabling actor preview retains the selected physical source-camera composition", () => {
+  const { viewport } = fixture();
+  const internal = viewport as unknown as {
+    nativeArt: { ready: boolean };
+    nativeSurface:
+      | { setActorPreview(value: boolean): void; update(value: unknown): void }
+      | undefined;
+  };
+  const native = internal.nativeArt;
+  const composite = { width: 1, height: 1, data: new Uint8Array([1, 2, 3, 255]) };
+  let shown: unknown, actorFlag: boolean | undefined;
+  const sample = viewport.nativePreviewPixels;
+  viewport.nativePreviewPixels = () => composite;
+  internal.nativeArt = { ready: true };
+  internal.nativeSurface = {
+    setActorPreview(value) {
+      actorFlag = value;
+    },
+    update(value) {
+      shown = value;
+    },
+  };
+  viewport.clearNativeActorPreview();
+  assert.equal(actorFlag, false);
+  assert.equal(shown, composite);
+  internal.nativeArt = native;
+  internal.nativeSurface = undefined;
+  viewport.nativePreviewPixels = sample;
+  viewport.dispose();
+});

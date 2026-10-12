@@ -663,7 +663,7 @@ export class EditorViewport {
     this.actorPreviewReceipt = undefined;
     this.nativeSurface?.setActorPreview(false);
     if (this.nativeSurface && this.currentNativeArt.ready)
-      this.nativeSurface.update(this.currentNativeArt.pixels());
+      this.nativeSurface.update(this.nativePreviewPixels());
   }
   currentActorFrames() {
     return {
