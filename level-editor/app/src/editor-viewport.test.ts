@@ -2086,3 +2086,47 @@ test("native loop viewport passes explicit immutable startup context through the
   assert.equal(art.ready, false);
   f.viewport.dispose();
 });
+
+test("candidate GPU preparation uses final display sampling and cancels on viewport disposal", async () => {
+  const { viewport } = fixture();
+  const texture = new THREE.Texture();
+  const asset = new THREE.Mesh(
+    new THREE.BoxGeometry(),
+    new THREE.MeshBasicMaterial({ map: texture }),
+  );
+  let uploads = 0,
+    resourceDisposals = 0;
+  texture.addEventListener("dispose", () => resourceDisposals++);
+  const renderer = {
+    capabilities: { getMaxAnisotropy: () => 4 },
+    initTexture: (value: THREE.Texture) => {
+      uploads++;
+      assert.equal(value, texture);
+      assert.equal(value.magFilter, THREE.NearestFilter);
+      setTimeout(() => viewport.dispose(), 0);
+    },
+    dispose() {},
+    forceContextLoss() {},
+    domElement: { remove() {} },
+  };
+  (viewport as unknown as { renderer: unknown }).renderer = renderer;
+  viewport.setTextureDisplay(false, true);
+  await assert.rejects(
+    viewport.prepareMapTextures(
+      asset,
+      null,
+      new Map(),
+      new AbortController().signal,
+      () => true,
+      () => {},
+    ),
+    { name: "AbortError" },
+  );
+  assert.equal(uploads, 1);
+  // The detached candidate is still owned by the load, never by the disposed viewport.
+  assert.equal(resourceDisposals, 0);
+  texture.dispose();
+  asset.geometry.dispose();
+  asset.material.dispose();
+  assert.equal(resourceDisposals, 1);
+});

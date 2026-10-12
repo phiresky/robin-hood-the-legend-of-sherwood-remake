@@ -771,6 +771,16 @@ export default function Editor3D(props: EditorProps) {
         suspects: nextSuspects,
       } = candidate;
       const d = importedMission ? { ...baseDocument, mission: importedMission } : baseDocument;
+      await viewport.prepareMapTextures(
+        preparedAsset,
+        nextGround,
+        nextSources,
+        loadAbort.signal,
+        () => current() && session.isCurrent(generation),
+        (completed, total) => {
+          if (current()) setMapLoadProgress({ completed, total, phase: "Preparing textures" });
+        },
+      );
       if (
         disposed ||
         !session.isCurrent(generation) ||

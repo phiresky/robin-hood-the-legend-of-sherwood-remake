@@ -100,6 +100,7 @@ import {
 import type { SceneEntities } from "./population-view.ts";
 import type { Selection } from "./document-commands.ts";
 import { disposeObjectResources } from "./resources.ts";
+import { prepareGpuTextures } from "./prepare-gpu-textures.ts";
 import { TextureDisplay } from "./texture-display.ts";
 import { PatchDisplay, applyPlacementPatches } from "./patch-display.ts";
 import { setViewportRay, visibleSurface } from "./viewport-picking.ts";
@@ -311,7 +312,9 @@ export class EditorViewport {
     }));
   }
   private readonly textureDisplay = new TextureDisplay();
+  private textureDisplayVersion = 0;
   setTextureDisplay(smooth: boolean, synthesized: boolean) {
+    this.textureDisplayVersion++;
     this.textureDisplay.smooth = smooth;
     this.textureDisplay.synthesized.value = synthesized;
     this.refreshTextureDisplay();
@@ -1636,6 +1639,31 @@ export class EditorViewport {
   private animationFrame = 0;
   private controls: { dispose(): void }[] = [];
   private disposed = false;
+
+  async prepareMapTextures(
+    asset: THREE.Object3D,
+    ground: THREE.Object3D | null,
+    sources: ReadonlyMap<string, THREE.Object3D>,
+    signal: AbortSignal,
+    current: () => boolean,
+    progress: (completed: number, total: number) => void,
+  ) {
+    const renderer = this.renderer;
+    const check = () => {
+      signal.throwIfAborted();
+      if (this.disposed || !renderer || this.renderer !== renderer || !current())
+        throw new DOMException("Map preparation superseded", "AbortError");
+    };
+    check();
+    const roots = [...new Set([asset, ...(ground ? [ground] : []), ...sources.values()])];
+    // Apply display ownership before uploading; preferences may change during a yield.
+    for (;;) {
+      const displayVersion = this.textureDisplayVersion;
+      for (const root of roots) this.refreshTextureDisplay(root);
+      await prepareGpuTextures(roots, renderer!, check, progress);
+      if (displayVersion === this.textureDisplayVersion) return;
+    }
+  }
 
   replaceMap(
     asset: THREE.Object3D,
