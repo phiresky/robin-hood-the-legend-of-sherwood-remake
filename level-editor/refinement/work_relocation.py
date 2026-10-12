@@ -53,6 +53,13 @@ class RelocationMap:
         self.historical: dict[tuple[str, str], str] = {}
         self.operational: dict[tuple[str, str], tuple[str, str]] = {}
         self.changes: list[dict] = []
+        self.pin_pairs = []
+        for pair in manifest.get("pin_pairs", []):
+            if (not isinstance(pair, list) or len(pair) != 2
+                    or not all(isinstance(k, str) and k for k in pair)
+                    or pair[0] == pair[1]):
+                raise ValueError("pin_pairs must contain distinct [path_key, hash_key] names")
+            self.pin_pairs.append(tuple(pair))
         for row in manifest.get("path_mappings", []):
             old, new = _path(row["old_prefix"]), _path(row["new_prefix"])
             if old in self.prefixes or old == new:
@@ -142,6 +149,7 @@ class RelocationMap:
         pairs = [(k, "sha256") for k in ("path", "file")]
         pairs += [(k, k + "_sha256") for k in value]
         pairs += [(k, k[:-5] + "_sha256") for k in value if k.endswith("_path")]
+        pairs += self.pin_pairs
         for path_key, hash_key in pairs:
             if (path_key in paired or hash_key in paired or path_key == hash_key
                     or not isinstance(value.get(path_key), str)
@@ -154,6 +162,10 @@ class RelocationMap:
             output[path_key], output[hash_key] = self._pinned(old, value[hash_key])
             paired.update((path_key, hash_key))
         for key, item in value.items():
+            if key not in paired and isinstance(item, str):
+                for (old_path, old_hash) in self.operational:
+                    if item == old_path and old_hash in value.values():
+                        raise ValueError(f"Declare pin_pairs for operational path field: {key}")
             if key in paired:
                 continue
             new_key = self.translate_path(key)

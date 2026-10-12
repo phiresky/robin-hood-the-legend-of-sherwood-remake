@@ -87,6 +87,19 @@ class RelocationTests(unittest.TestCase):
         self.put('work/evidence/child.json', b'corrupted approval')
         self.assertRaises(ValueError, m.verify)
 
+    def test_nonstandard_hash_fields_require_explicit_pair(self):
+        old = self.put('work/evidence/child', b'old')
+        new = self.put('work/active/map/child', b'new')
+        self.manifest['historical_files'].append({'old_path': 'work/old/child',
+            'sha256': old, 'preserved_path': 'work/evidence/child'})
+        self.manifest['operational_files'].append({'old_path': 'work/old/child',
+            'old_sha256': old, 'new_path': 'work/active/map/child', 'new_sha256': new})
+        value = {'source_model': 'work/old/child', 'model_sha256': old}
+        self.assertRaises(ValueError, self.mapping().translate_json, value)
+        self.manifest['pin_pairs'] = [['source_model', 'model_sha256']]
+        self.assertEqual(self.mapping().translate_json(value),
+            {'source_model': 'work/active/map/child', 'model_sha256': new})
+
     def test_compatibility_symlink_is_rejected_in_parent_directory(self):
         h = self.put('elsewhere/a', b'data')
         (self.root / 'work/active').mkdir(parents=True)
