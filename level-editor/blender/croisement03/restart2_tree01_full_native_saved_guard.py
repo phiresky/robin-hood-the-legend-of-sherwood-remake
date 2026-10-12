@@ -4,7 +4,7 @@ Run through the repository heavy-job queue, never directly from CPU preparation:
 blender --background --python this.py -- --model /absolute/worker.blend --output /new/folder
 No model save, rendering, source-domain edits or geometry corrections are performed.
 """
-import argparse,hashlib,json,math,sys
+import argparse,hashlib,json,math,sys,shutil
 from pathlib import Path
 R=Path(__file__).resolve().parents[3];W=R/'level-editor/work/croisement03-refinement/restart2'
 OMIT=('Tree01 observed native frame0 provisional cells','Tree01 observed native proposed static samples')
@@ -25,8 +25,12 @@ def main():
  frames=[]
  for row in source['raw_frame_conversion_proof']:
   rawpath=pin(Path(row['raw_path']));normalpath=pin(Path(row['normalized_path']));assert sha(rawpath)==row['raw_sha256'] and sha(normalpath)==row['normalized_sha256'];raw=np.array(Image.open(rawpath).convert('RGBA'));normal=np.array(Image.open(normalpath).convert('RGBA'));key=np.all(raw[:,:,:3]==[0,251,0],axis=2);raw[key]=0;assert np.array_equal(raw,normal);assert row['native_source_box']==[0,0,456,265] and row['map_offset_xy']==[0,0];frames.append(normal)
- assert len(frames)==14;union=np.logical_or.reduce([im[:,:,3]>0 for im in frames]);modelhash=sha(pin(a.model));acquire(slots=2)
+ assert len(frames)==14;union=np.logical_or.reduce([im[:,:,3]>0 for im in frames]);modelhash=sha(pin(a.model))
+ def resources():
+  memory={line.split(':')[0]:int(line.split()[1])*1024 for line in Path('/proc/meminfo').read_text().splitlines()};assert memory['MemAvailable']>=6*1024**3,'Need6GiB available memory';assert shutil.disk_usage(R).free>=10*1024**3,'Need10GiB free disk'
+ resources();acquire(slots=2)
  try:
+  resources()
   bpy.ops.wm.open_mainfile(filepath=str(a.model));scene=bpy.context.scene
   def fingerprint(o):
    m=o.data;return hashlib.sha256(json.dumps({'matrix':[list(v)for v in o.matrix_world],'vertices':[list(v.co)for v in m.vertices],'polygons':[list(p.vertices)for p in m.polygons],'material_indices':[p.material_index for p in m.polygons]},separators=(',',':')).encode()).hexdigest()
@@ -98,14 +102,17 @@ def main():
      probe=hit-ray*epsilon
     else:raise AssertionError(('alpha traversal exhausted',row['name'],int(x),int(y)))
    hits.sort(key=lambda h:-h['card_distance_minus_hit_distance']);cached[(int(x),int(y))]=hits
-  a.output.mkdir();phase_reports=[]
+  phase_reports=[];outputs={};shared=[{'source_xy':list(xy),'hits':hits}for xy,hits in cached.items()if hits];shared_index={tuple(r['source_xy']):i for i,r in enumerate(shared)};outputs['shared-conflict-hits.json']=json.dumps(shared,separators=(',',':'))+'\n'
   for i,im in enumerate(frames):
    conflicts=[]
    for y,x in np.argwhere(im[:,:,3]>0):
     hits=cached[(int(x),int(y))]
-    if hits:conflicts.append({'source_xy':[int(x),int(y)],'native_rgba':im[y,x].tolist(),'hits':hits})
-   packet={'phase':i,'native_actual_alpha_pixels':int((im[:,:,3]>0).sum()),'conflicts':conflicts,'conflict_pixels':len(conflicts),'render_visible_conflict_pixels':sum(any(not h['original_hide_render']for h in q['hits'])for q in conflicts)};(a.output/f'phase-{i:02}.json').write_text(json.dumps(packet,separators=(',',':'))+'\n');phase_reports.append({k:v for k,v in packet.items()if k!='conflicts'})
+    if hits:conflicts.append([int(x),int(y),im[y,x].tolist(),shared_index[(int(x),int(y))]])
+   packet={'phase':i,'native_actual_alpha_pixels':int((im[:,:,3]>0).sum()),'conflicts':conflicts,'conflict_pixels':len(conflicts),'render_visible_conflict_pixels':sum(any(not h['original_hide_render']for h in shared[q[3]]['hits'])for q in conflicts)};outputs[f'phase-{i:02}.json']=json.dumps(packet,separators=(',',':'))+'\n';phase_reports.append({k:v for k,v in packet.items()if k!='conflicts'})
   after={o.name:fingerprint(o)for o in scene.objects if o.type=='MESH'};assert before==after and sha(a.model)==modelhash
-  report={'status':'HOLD_EDITOR_PLANE_CONFLICTS'if any(p['conflict_pixels']for p in phase_reports)else'PASS_SCOPED_EDITOR_PLANE_NO_CONFLICTS','pins':pins,'model_sha256':modelhash,'blender_version':bpy.app.version_string,'numpy_version':np.__version__,'omitted_in_ray_test_only':omitted,'all_mesh_geometry_material_indices_transforms_unchanged':True,'geometry_fingerprints':before,'tested_objects':[{'name':r['name'],'original_hide_render':r['original_hide_render'],'triangles':len(r['triangles'])}for r in rows],'materials':material_records,'textures':{k:{key:value for key,value in v.items()if key!='pixels'}for k,v in textures.items()},'phases':phase_reports,'union_pixels_tested':len(cached),'max_alpha_traversal_steps':max_steps,'ray_step_and_plane_tolerance_world':epsilon,'coplanar_ambiguities':coplanar,'native_card_world_y':-300/S,'limits':['Exact full shared native alpha at current editor plane300; not original display-polyline sorting proof or physical tree ownership.','All saved mesh receivers included even if hidden; original visibility recorded to distinguish diagnostic context conflicts. Missing neighboring scene geometry is not certified.','Two observed cell objects omitted only from ray receiver list; no saved or in-memory mesh edits. Inferred crown, wood and native pixels retained exactly.','Partial nonzero opacity counts conservatively as conflict; unsupported materials/modifiers fail explicitly. No alpha-mask complement or nearest-color ownership inference.','Each affected source pixel reported for every phase; each object contributes its nearest nontransparent hit before/touching native card.','Any conflict is a placement/runtime diagnostic; never delete native pixels or distort geometry merely to satisfy this plane.']};(a.output/'receipt.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps({'status':report['status'],'phases':phase_reports}));assert sha(a.model)==modelhash
+  report={'status':'HOLD_EDITOR_PLANE_CONFLICTS'if any(p['conflict_pixels']for p in phase_reports)else'PASS_SCOPED_EDITOR_PLANE_NO_CONFLICTS','pins':pins,'model_sha256':modelhash,'blender_version':bpy.app.version_string,'numpy_version':np.__version__,'omitted_in_ray_test_only':omitted,'all_mesh_geometry_material_indices_transforms_unchanged':True,'geometry_fingerprints':before,'tested_objects':[{'name':r['name'],'original_hide_render':r['original_hide_render'],'triangles':len(r['triangles'])}for r in rows],'materials':material_records,'textures':{k:{key:value for key,value in v.items()if key!='pixels'}for k,v in textures.items()},'phases':phase_reports,'union_pixels_tested':len(cached),'max_alpha_traversal_steps':max_steps,'ray_step_and_plane_tolerance_world':epsilon,'coplanar_ambiguities':coplanar,'conflict_encoding':'Each phase conflict=[sourceX,sourceY,nativeRGBA,shared-conflict-hits.json index]; shared records retain all per-object firsthits. No phase or pixel evidence discarded.','native_card_world_y':-300/S,'limits':['Exact full shared native alpha at current editor plane300; not original display-polyline sorting proof or physical tree ownership.','All saved mesh receivers included even if hidden; original visibility recorded to distinguish diagnostic context conflicts. Missing neighboring scene geometry is not certified.','Two observed cell objects omitted only from ray receiver list; no saved or in-memory mesh edits. Inferred crown, wood and native pixels retained exactly.','Partial nonzero opacity counts conservatively as conflict; unsupported materials/modifiers fail explicitly. No alpha-mask complement or nearest-color ownership inference.','Each affected source pixel reported for every phase; each object contributes its nearest nontransparent hit before/touching native card.','Any conflict is a placement/runtime diagnostic; never delete native pixels or distort geometry merely to satisfy this plane.']};outputs['receipt.json']=json.dumps(report,indent=2)+'\n';total=sum(len(v.encode())for v in outputs.values());assert total<=32*1024**2,('output budget exceeded before writing',total);a.output.mkdir()
+  for name,contents in outputs.items():(a.output/name).write_text(contents)
+  assert sum(p.stat().st_size for p in a.output.iterdir())<=32*1024**2
+  print(json.dumps({'status':report['status'],'phases':phase_reports}));assert sha(a.model)==modelhash
  finally:release()
 if __name__=='__main__':main()
