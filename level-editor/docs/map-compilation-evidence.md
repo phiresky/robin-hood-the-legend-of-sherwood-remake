@@ -116,6 +116,44 @@ jumps (lines 1 and 3) fly, then stall after landing. These are unresolved parity
 failures exposed by checking the complete assets. In-game actor/depth compositing
 and rendered traversal remain unverified.
 
+### Staged level spans for the lane's internal jump
+
+At 180 degrees, internal pair 56 has projected edge vectors `[76,-49]` and
+`[-76,19]`. Distance transfer therefore lands a midpoint return roughly fifteen
+units off the destination line. The lower edge belongs to the asset's sloping
+receiver `building-088`, which the original walking-mesh-only diagnostic omitted.
+`review-jump-edge-mesh.mjs` now supports `--pair-side=0|1` and includes explicitly
+linked receiver meshes. Review `jump-edge-mesh-review-AmirOm` confirms that the
+lower edge has mesh support, with heights 0.317–0.746 units above its old edge.
+The earlier walking-only result `nYQeyK` does not establish missing ownership.
+
+Terrain-ledges experiment `york-lane-generated-landing-stage-2n_pr3wf` is rejected:
+it replaces a real receiver and emits no replacement internal jump. Its matrix
+`connected-jump-placements-wHeUeh` contains only the two external connections.
+The new `--terrain-offset` diagnostic controls receiving terrain independently
+of asset elevation; it does not change compiler defaults.
+
+`stage-york-lane-level-jump.mjs` instead derives a constant-height tangent from
+the existing lower receiver plane, retains both authored edge centers, and
+places matching three-unit spans on the upper and lower surfaces. The upper
+walkway is narrow, so this intentionally replaces the broad skewed span rather
+than extending beyond physical support. Stage `york-lane-level-jump-1A5IJ5` is
+exactly equal to tested candidate `york-lane-level-edges-stage-c154ffp9`.
+Lower mesh review `jump-edge-mesh-review-CARxLA` measures only 0.020–0.0215 units
+of height difference across the new span.
+
+With `--include-internal`, matrices `connected-jump-placements-Q1Hj80` and
+`connected-jump-placements-uWAwNQ` retain all four pairs per two-copy assembly.
+All eighteen native descriptors load. Internal offset probes pass **360/360**;
+the external pairs retain their 56 prior failures, for 664/720 successes overall.
+Interior subsets `interior-jump-clicks-pTIFej` and `interior-jump-clicks-4YkyrM`
+pass **144/144** directions without unavailable probes. This is nine rotations
+and two elevations, not all possible placements or click positions.
+
+Full York candidate `saved-map-exports-Bwpp17` is still compiling. The lane edit
+remains unpublished pending that regression check; broader click-zone coverage,
+traffic behavior for the narrower span and a rendered round trip remain open.
+
 `check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,
 ordered by distance to the takeoff edge. Each point must pass static corridor
 clearance against both native and precise floor contours with an additional

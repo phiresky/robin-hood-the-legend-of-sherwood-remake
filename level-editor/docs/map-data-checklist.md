@@ -36,6 +36,12 @@ jumps stall after landing (6/8 directions pass, including all four repaired
 cross-asset directions). These additional failures remain open; the isolated
 72-click result does not cover every jump owned by the two assets.
 
+A staged correction to those internal jumps now passes 360/360 internal offset
+probes and 144/144 complete-asset interior clicks across nine rotations and two
+elevations. It derives matching level spans from the lane's existing receiving
+surfaces; no runtime change or replacement terrain is involved. Full York
+regression checks are running, so this lane correction is not published yet.
+
 **Subpixel rotated floors (2026-10-12):** simple folded floors now receive
 walking clearance before integer normalization can erase them. York's copied
 two-house fixture retains both jump connections at all eight placements,

@@ -11,7 +11,17 @@ import { sceneToGame, gltfToScene } from "../shared/src/geometry.ts";
 const { Triangle, Vector3 } = createRequire(new URL("../shared/package.json", import.meta.url))(
   "three",
 );
-const [map, assetId, segmentId, stage] = process.argv.slice(2);
+const pairSideArgument = process.argv
+  .slice(2)
+  .find((argument) => argument.startsWith("--pair-side="));
+const pairSide =
+  pairSideArgument === undefined
+    ? undefined
+    : Number(pairSideArgument.slice("--pair-side=".length));
+assert.ok(pairSide === undefined || pairSide === 0 || pairSide === 1, "Pair side must be 0 or 1");
+const [map, assetId, segmentId, stage] = process.argv
+  .slice(2)
+  .filter((argument) => !argument.startsWith("--pair-side="));
 assert.ok(
   map && assetId && segmentId,
   "Supply map, asset ID, external jump segment ID and optional stage",
@@ -30,10 +40,22 @@ if (stage) {
   assert.equal(edit.modelSha256, source.model_sha256);
   descriptor.gameplay = edit.gameplay;
 }
-const segment = descriptor.gameplay.jumpSegments.find((segment) => segment.id === segmentId);
-assert.ok(segment, "External jump segment must exist");
+const pair = descriptor.gameplay.jumpPairs?.find((pair) => pair.id === segmentId);
+const segment =
+  pairSide === undefined
+    ? descriptor.gameplay.jumpSegments?.find((segment) => segment.id === segmentId)
+    : pair && { id: pair.id, node: pair.node, long: pair.long, edge: pair.edges[pairSide] };
+assert.ok(segment, "Requested jump segment or pair side must exist");
 const model = await loadSceneModel("library", source);
-const nodes = [...new Set(descriptor.gameplay.surfaces.map((surface) => surface.node))];
+const nodes = [
+  ...new Set([
+    ...descriptor.gameplay.surfaces.map((surface) => surface.node),
+    ...(descriptor.gameplay.projectionReceivers ?? []).flatMap((receiver) => [
+      receiver.node,
+      receiver.volume ?? receiver.node,
+    ]),
+  ]),
+];
 const meshes = nodes.map((node) => ({
   node,
   mesh: maskRecoveryMesh(model, node, (point) => sceneToGame(scene.camera, gltfToScene(point))),
@@ -72,6 +94,7 @@ await fs.writeFile(
     map,
     assetId,
     segmentId,
+    pairSide,
     stage,
     source,
     segment,

@@ -10,6 +10,19 @@ import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 import { compileMap } from "../app/src/map-compile.ts";
 
 const diagnosticPrecision = process.argv.includes("--diagnostic-precision");
+const includeInternal = process.argv.includes("--include-internal");
+assert.ok(
+  !includeInternal || !diagnosticPrecision,
+  "Precision diagnostic only supports isolated external pairs",
+);
+const terrainArguments = process.argv
+  .slice(2)
+  .filter((argument) => argument.startsWith("--terrain-offset="));
+assert.ok(terrainArguments.length <= 1, "Supply at most one terrain offset");
+const terrainOffset = terrainArguments.length
+  ? Number(terrainArguments[0].slice("--terrain-offset=".length))
+  : 0;
+assert.ok(Number.isFinite(terrainOffset));
 const rotationArguments = process.argv
   .slice(2)
   .filter((argument) => argument.startsWith("--rotations="));
@@ -25,7 +38,11 @@ assert.equal(new Set(rotations).size, rotations.length, "Rotations must be uniqu
 const [map, pair, assetList, stage] = process.argv
   .slice(2)
   .filter(
-    (argument) => argument !== "--diagnostic-precision" && !argument.startsWith("--rotations="),
+    (argument) =>
+      argument !== "--diagnostic-precision" &&
+      argument !== "--include-internal" &&
+      !argument.startsWith("--rotations=") &&
+      !argument.startsWith("--terrain-offset="),
   );
 assert.ok(
   map && pair && assetList,
@@ -44,12 +61,13 @@ for (const edit of edits) {
 }
 for (const id of ids) {
   const gameplay = assets.get(id).gameplay;
-  gameplay.jumpPairs = [];
+  if (!includeInternal) gameplay.jumpPairs = [];
   gameplay.jumpSegments = (gameplay.jumpSegments ?? []).filter((segment) =>
     [pair + "-side-0", pair + "-side-1"].includes(segment.id),
   );
   assert.equal(gameplay.jumpSegments.length, 1, `${id}: expected one connection endpoint`);
   const zones = new Set(gameplay.jumpSegments.map((segment) => segment.edge.zone));
+  for (const pair of gameplay.jumpPairs ?? []) for (const edge of pair.edges) zones.add(edge.zone);
   gameplay.jumpZones = gameplay.jumpZones.filter((zone) => zones.has(zone.id));
 }
 const objects = saved.objects.filter((part) =>
@@ -85,6 +103,8 @@ const save = (complete) =>
       complete,
       scope: "static-geometry-only-not-gameplay-parity",
       stage,
+      terrainOffset,
+      includeInternal,
       results,
     }),
   );
@@ -92,7 +112,7 @@ await save(false);
 for (const rotation of rotations)
   for (const height of [0, 40]) {
     const document = roofJumpPlacement(source, rotation, height);
-    document.terrain = createTerrainGrid([0, 0, 2500, 2500], 2500, height);
+    document.terrain = createTerrainGrid([0, 0, 2500, 2500], 2500, height + terrainOffset);
     const compiled = compileMap(
       document,
       [0, 0, 2500, 2500],
