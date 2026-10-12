@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { nativeEffectCamera, renderPhysicalEffect } from "./native-physical-effect-preview.ts";
+import {
+  nativeEffectCamera,
+  renderPhysicalEffect,
+  validateNativeEffectMaterial,
+} from "./native-physical-effect-preview.ts";
 
 test("native effect camera preserves source pixel registration at multiple physical heights", () => {
   const box = new THREE.Box3(new THREE.Vector3(820, -3, 1500), new THREE.Vector3(890, 42, 1600));
@@ -242,4 +246,107 @@ test("full refined receiver camera retains source origin and image extent indepe
   assert.ok(Math.abs(origin.y - 1) < 1e-8);
   assert.equal(v.width, 1792);
   assert.equal(v.height, 1152);
+});
+
+function sourceEmissiveMaterial() {
+  const texture = new THREE.Texture();
+  const material = new THREE.MeshStandardMaterial({
+    map: texture,
+    emissiveMap: texture,
+    emissive: 0xffffff,
+    metalness: 0,
+    alphaTest: 0.5,
+    vertexColors: true,
+  });
+  Object.assign(material.userData, {
+    foliage_physical_opacity: true,
+    opacity_semantics: "physical-coverage",
+    source_ownership_semantics: "separate-mask",
+    source_ownership_channel: "vertex-color-r",
+    foliage_card_sides: "paired-one-sided",
+  });
+  return material;
+}
+
+test("source-emissive foliage keeps its exact material on the sampled root clone", async () => {
+  const { TextureDisplay } = await import("./texture-display.ts");
+  const material = sourceEmissiveMaterial();
+  new TextureDisplay().material(material);
+  const root = new THREE.Mesh(new THREE.BufferGeometry(), material);
+  const clone = root.clone(true);
+  assert.equal(clone.material, material);
+  assert.doesNotThrow(() => validateNativeEffectMaterial(clone.material));
+});
+
+test("emissive qualification rejects unsupported lighting, UV, alpha and shader state", () => {
+  const alterations: Array<(m: THREE.MeshStandardMaterial) => void> = [
+    (m) => {
+      m.emissiveIntensity = 2;
+    },
+    (m) => {
+      m.emissive.setRGB(1, 0.9, 1);
+    },
+    (m) => {
+      m.emissiveMap = new THREE.Texture();
+    },
+    (m) => {
+      m.emissiveMap = m.map!.clone();
+      m.emissiveMap.offset.x = 0.1;
+    },
+    (m) => {
+      m.emissiveMap = m.map!.clone();
+      m.emissiveMap.channel = 1;
+    },
+    (m) => {
+      m.emissiveMap = m.map!.clone();
+      m.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+    },
+    (m) => {
+      m.envMap = new THREE.Texture();
+    },
+    (m) => {
+      m.normalMap = new THREE.Texture();
+    },
+    (m) => {
+      m.transparent = true;
+    },
+    (m) => {
+      m.alphaTest = 0.1;
+    },
+    (m) => {
+      m.alphaToCoverage = true;
+    },
+    (m) => {
+      m.alphaHash = true;
+    },
+    (m) => {
+      m.userData = {};
+    },
+    (m) => {
+      m.onBeforeCompile = () => {};
+    },
+    (m) => {
+      m.customProgramCacheKey = () => "untrusted";
+    },
+  ];
+  for (const alter of alterations) {
+    const material = sourceEmissiveMaterial();
+    alter(material);
+    assert.throws(() => validateNativeEffectMaterial(material));
+  }
+  assert.throws(() => validateNativeEffectMaterial(new THREE.MeshStandardMaterial()));
+  assert.throws(() => validateNativeEffectMaterial(new THREE.MeshPhysicalMaterial()));
+  assert.doesNotThrow(() => validateNativeEffectMaterial(new THREE.MeshBasicMaterial()));
+});
+
+test("ownership display hook cannot launder prior or subsequently changed shader callbacks", async () => {
+  const { TextureDisplay } = await import("./texture-display.ts");
+  const before = sourceEmissiveMaterial();
+  before.onBeforeCompile = () => {};
+  new TextureDisplay().material(before);
+  assert.throws(() => validateNativeEffectMaterial(before));
+  const after = sourceEmissiveMaterial();
+  new TextureDisplay().material(after);
+  after.onBeforeCompile = () => {};
+  assert.throws(() => validateNativeEffectMaterial(after));
 });

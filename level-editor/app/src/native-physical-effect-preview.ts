@@ -1,10 +1,80 @@
 import * as THREE from "three";
+import { hasQualifiedSourceDisplayShader } from "./texture-display.ts";
 import type { NativeLoopDrawSnapshot, NativePixels } from "./native-state-presentation.ts";
 import type { MissionStateContract } from "../../shared/src/mission-state.ts";
 import {
   nativePresentationFrame,
   type NativeStatePresentationContract,
 } from "../../shared/src/native-state-presentation.ts";
+
+/** Source-emissive exports are sampled without lights or an environment. */
+export function validateNativeEffectMaterial(material: THREE.Material) {
+  if (material instanceof THREE.MeshBasicMaterial) return;
+  if (
+    !(material instanceof THREE.MeshStandardMaterial) ||
+    material instanceof THREE.MeshPhysicalMaterial
+  )
+    throw new Error(
+      "Physical native preview requires unlit or qualified source-emissive materials",
+    );
+  const map = material.map,
+    emissive = material.emissiveMap;
+  if (map?.matrixAutoUpdate) map.updateMatrix();
+  if (emissive?.matrixAutoUpdate) emissive.updateMatrix();
+  const sameTexture =
+    map &&
+    emissive &&
+    map.source === emissive.source &&
+    map.channel === emissive.channel &&
+    map.matrix.equals(emissive.matrix) &&
+    map.mapping === emissive.mapping &&
+    map.wrapS === emissive.wrapS &&
+    map.wrapT === emissive.wrapT &&
+    map.magFilter === emissive.magFilter &&
+    map.minFilter === emissive.minFilter &&
+    map.anisotropy === emissive.anisotropy &&
+    map.flipY === emissive.flipY &&
+    map.colorSpace === emissive.colorSpace &&
+    map.premultiplyAlpha === emissive.premultiplyAlpha;
+  if (
+    !hasQualifiedSourceDisplayShader(material) ||
+    !sameTexture ||
+    !material.emissive.equals(new THREE.Color(1, 1, 1)) ||
+    material.emissiveIntensity !== 1 ||
+    !material.color.equals(new THREE.Color(1, 1, 1)) ||
+    material.metalness !== 0 ||
+    !material.vertexColors ||
+    material.side !==
+      (material.userData.foliage_card_sides === "paired-one-sided"
+        ? THREE.FrontSide
+        : THREE.DoubleSide) ||
+    material.opacity !== 1 ||
+    material.transparent ||
+    material.alphaHash ||
+    material.alphaToCoverage ||
+    material.blending !== THREE.NormalBlending ||
+    material.premultipliedAlpha ||
+    material.alphaTest !== 0.5 ||
+    material.alphaMap ||
+    material.envMap ||
+    material.lightMap ||
+    material.aoMap ||
+    material.normalMap ||
+    material.bumpMap ||
+    material.displacementMap ||
+    material.metalnessMap ||
+    material.roughnessMap ||
+    material.wireframe ||
+    material.flatShading ||
+    material.clippingPlanes?.length ||
+    (material.defines && Object.keys(material.defines).some((k) => k !== "STANDARD")) ||
+    material.userData.foliage_physical_opacity !== true ||
+    material.userData.opacity_semantics !== "physical-coverage" ||
+    material.userData.source_ownership_semantics !== "separate-mask" ||
+    material.userData.source_ownership_channel !== "vertex-color-r"
+  )
+    throw new Error("Physical native preview rejected unsupported source-emissive material");
+}
 
 export interface PhysicalEffectBinding {
   object: THREE.Object3D;
@@ -124,14 +194,13 @@ export class NativePhysicalEffectPreview {
           return { ...draw, pixels: { width: 1, height: 1, data: new Uint8Array(4) } };
         root.updateWorldMatrix(true, true);
         root.traverseVisible((node) => {
+          if (node instanceof THREE.Light)
+            throw new Error("Physical native preview requires a light-free source effect");
           if (!(node instanceof THREE.Mesh)) return;
-          if (
-            node instanceof THREE.SkinnedMesh ||
-            (Array.isArray(node.material) ? node.material : [node.material]).some(
-              (m) => !(m instanceof THREE.MeshBasicMaterial),
-            )
-          )
-            throw new Error("Physical native preview requires unlit, unskinned source effects");
+          if (node instanceof THREE.SkinnedMesh)
+            throw new Error("Physical native preview requires unskinned source effects");
+          for (const material of Array.isArray(node.material) ? node.material : [node.material])
+            validateNativeEffectMaterial(material);
         });
         const clone = root.clone(true);
         clone.matrixAutoUpdate = false;

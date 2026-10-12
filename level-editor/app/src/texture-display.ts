@@ -1,5 +1,22 @@
 import * as THREE from "three";
 
+const sourceDisplayHooks = new WeakMap<
+  THREE.Material,
+  {
+    compile: THREE.Material["onBeforeCompile"];
+    key: THREE.Material["customProgramCacheKey"];
+  }
+>();
+
+/** Accept only the standard shader or the exact ownership-only display hook. */
+export function hasQualifiedSourceDisplayShader(material: THREE.Material): boolean {
+  const known = sourceDisplayHooks.get(material);
+  return known
+    ? material.onBeforeCompile === known.compile && material.customProgramCacheKey === known.key
+    : material.onBeforeCompile === THREE.Material.prototype.onBeforeCompile &&
+        material.customProgramCacheKey === THREE.Material.prototype.customProgramCacheKey;
+}
+
 /** Display preferences do not change the source atlas or the saved map. */
 export class TextureDisplay {
   smooth = true;
@@ -36,6 +53,7 @@ export class TextureDisplay {
         );
     } else if (material.userData.source_ownership_fill !== "synthesized") return;
     this.configured.add(material);
+    const qualifiedShader = hasQualifiedSourceDisplayShader(material);
     const previous = material.onBeforeCompile.bind(material);
     material.onBeforeCompile = (shader, renderer) => {
       previous(shader, renderer);
@@ -68,6 +86,11 @@ export class TextureDisplay {
       ? `foliage-ownership-color-r-v1:${material.userData.source_ownership_backface}:${material.userData.foliage_backface_fill}`
       : "source-ownership-display-v1";
     material.customProgramCacheKey = () => `${previousKey}:${contractKey}`;
+    if (qualifiedShader)
+      sourceDisplayHooks.set(material, {
+        compile: material.onBeforeCompile,
+        key: material.customProgramCacheKey,
+      });
     material.needsUpdate = true;
   }
 
