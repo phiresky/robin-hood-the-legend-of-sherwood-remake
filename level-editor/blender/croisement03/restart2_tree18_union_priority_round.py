@@ -21,7 +21,7 @@ def main():
             originals.append((module, module.release))
             module.release = lambda: False
         render_slots.release = lambda: False
-        phaseout = union.B / 'tree01-bark-source-432-projection-v1/full-native-plane-diagnostic-v2'
+        phaseout = union.B / 'tree01-bark-source-432-projection-v1/full-native-plane-diagnostic-v3'
         sys.argv = ['resume-tree01-primary-rays', '--', '--model', str(union.B / 'tree01-bark-source-432-projection-v1/worker.blend'), '--output', str(phaseout)]
         tree01_phases.main()
         sys.argv = ['tree18-union-priority-round', '--review']
