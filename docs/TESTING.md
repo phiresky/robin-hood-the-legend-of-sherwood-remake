@@ -921,6 +921,15 @@ cannot establish their correctness; retain fresh-start regression coverage.
 
 ## Browser map archive round trips
 
+To snapshot a complete saved map, run
+`node refinement/stage-saved-map-browser.mjs derby` from `level-editor/`.
+It prints a new fixture directory containing the unchanged scene and links to
+the library resources, with a scene digest in `preparation.json`. It rejects
+authored mission content instead of silently removing it. Set `EDITOR_LIBRARY`
+to that fixture's absolute path when starting Vite and use the fixture as the
+runner's output directory. Pinned descriptor/model validation still runs in the
+browser; staging alone does not establish export success.
+
 With the editor Vite server running against the intended library, run from
 `level-editor/` (create a dedicated output directory first):
 
