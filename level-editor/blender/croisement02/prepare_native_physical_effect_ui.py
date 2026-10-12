@@ -4,7 +4,7 @@ from pathlib import Path
 R=Path.cwd();LIB=R/'level-editor/library'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def dump(p,v):p.write_text(json.dumps(v,indent=2)+'\n')
-def prepare(out,refined=False,receiver_assets=None):
+def prepare(out,refined=False,receiver_assets=None,crops=False):
  old=R/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1/canonical-postinstall-smoke-v2'
  reqpath=R/'level-editor/work/croisement02-refinement/restart217-butterfly05-private-contract-v1/request.json';req=json.loads(reqpath.read_text())
  for row in [req['contract'],req['model'],*req['source_files']]:assert sha(Path(row['path']))==row['sha256'],row
@@ -35,13 +35,14 @@ def prepare(out,refined=False,receiver_assets=None):
  dump(out/'runtime-inputs.json',{**snap,**pins})
  for name in ['editor.tsx','observe-library.js']:shutil.copy2(old/name,out/name)
  shutil.copy2(R/'level-editor/blender/croisement02/native_physical_effect_ui_proof.js',out/'check.js')
- contract=json.loads(Path(req['contract']['path']).read_text());dump(out/'check-config.json',{'entry':req['entry'],'focus':contract['focus_element_id'],'refined':refined,'boundedReceiver':receiver_assets is not None,'receiverAssets':receiver_assets})
+ contract=json.loads(Path(req['contract']['path']).read_text());dump(out/'check-config.json',{'entry':req['entry'],'focus':contract['focus_element_id'],'refined':refined,'boundedReceiver':receiver_assets is not None,'receiverAssets':receiver_assets,'cropRegion':{'x':888,'y':900,'width':96,'height':108} if crops else None,'sourceOrigin':contract['native']['origin']})
  run=(old/'run.mjs').read_text().replace(str(old.relative_to(R)),str(out.relative_to(R)))
  run=run.replace('const privateRoutes=new Map();','const privateRoutes=new Map(Object.entries('+json.dumps(routes)+'));')
- run=run.replace("if(p.stage.name!=='canonical-source-camera')throw Error('Unexpected capture');", "if(!/^b05-(physical-over-art|original-art|refined-map)-tick[0-9]+$/.test(p.stage.name))throw Error('Unexpected capture');")
+ run=run.replace("if(p.stage.name!=='canonical-source-camera')throw Error('Unexpected capture');", "if(!/^b05-(physical-over-art|original-art|refined-map|comparison-crop)-tick[0-9]+$/.test(p.stage.name))throw Error('Unexpected capture');")
  run=run.replace("await evaluate('window.scatterCaptures[\"canonical-source-camera\"]=true')", "await evaluate('window.scatterCaptures['+JSON.stringify(p.stage.name)+']=true')")
  run=run.replace("await readFile(join(privateLibrary,path))", "await readFile(privateRoutes.get('/library/'+path)??join(privateLibrary,path))")
  run=run.replace("if(s?.startsWith('FAIL'))throw Error(s);", "await writeFile(join(out,'readiness.json'),JSON.stringify({at:Date.now(),status:s}));if(s?.startsWith('FAIL'))throw Error(s);")
+ run=run.replace("await writeFile(join(out,'canonical-checkpoint.json'),JSON.stringify(result,null,2));", "await writeFile(join(out,'canonical-checkpoint.json'),JSON.stringify(result,null,2));const crops=await evaluate('window.nativeEffectCrops??[]');for(const row of crops){if(!/^b05-crop-(original-art|physical-over-art|refined-map)-tick(0|74)$/.test(row.name))throw Error('Unexpected crop');await writeFile(join(out,row.name+'.png'),Buffer.from(row.png.split(',')[1],'base64'));delete row.png;}await writeFile(join(out,'source-pixel-crops.json'),JSON.stringify(crops,null,2));")
  (out/'run.mjs').write_text(run)
  for p in out.iterdir():
   if p.is_file():pins[str(p)]=sha(p)
@@ -49,4 +50,4 @@ def prepare(out,refined=False,receiver_assets=None):
  dump(out/'request.json',{'status':'PREPARED_NOT_LAUNCHED','run':str(out/'run.mjs'),'run_sha256':sha(out/'run.mjs'),'scope':('Bounded receiver subset; full canonical scene proof remains required. ' if receiver_assets is not None else '')+'Actual editor UI physical-effects/native-art prototype, normal frame seek and loop restoration. Original camera. No geometry approval or whole-map completion.','input_request':str(reqpath),'input_sha256':sha(reqpath)})
  print(out)
 if __name__=='__main__':
- p=argparse.ArgumentParser();p.add_argument('--out',type=Path,required=True);p.add_argument('--refined',action='store_true');p.add_argument('--receiver-assets',nargs='*',default=None);a=p.parse_args();prepare(a.out.resolve(),a.refined,a.receiver_assets)
+ p=argparse.ArgumentParser();p.add_argument('--out',type=Path,required=True);p.add_argument('--refined',action='store_true');p.add_argument('--receiver-assets',nargs='*',default=None);p.add_argument('--crops',action='store_true');a=p.parse_args();prepare(a.out.resolve(),a.refined,a.receiver_assets,a.crops)

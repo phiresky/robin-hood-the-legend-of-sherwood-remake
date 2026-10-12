@@ -501,7 +501,14 @@ export default function StatePreview(props: {
               loopContract()?.physical?.targets.some((t) => t.source_kind === "map-animation")
             }
           >
-            <label>
+            <label
+              style={{
+                display: "flex",
+                "align-items": "center",
+                gap: "0.35rem",
+                "margin-block": "0.35rem",
+              }}
+            >
               <input
                 type="checkbox"
                 aria-label="3D effects over original artwork"
@@ -523,7 +530,14 @@ export default function StatePreview(props: {
             </label>
           </Show>
           <Show when={mode() === "art" && physicalEffects()}>
-            <label>
+            <label
+              style={{
+                display: "flex",
+                "align-items": "center",
+                gap: "0.35rem",
+                "margin-block": "0.35rem",
+              }}
+            >
               <input
                 type="checkbox"
                 aria-label="Refined map background"

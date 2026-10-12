@@ -40,6 +40,33 @@
    receiver.click();check('Original receiver restores exact bytes',!v.physicalNativeReceiverEnabled&&await digest(v.nativePreviewPixels())===beforeImage);
  }
 
+ if(cfg.cropRegion){
+   const r=cfg.cropRegion, origin=cfg.sourceOrigin;
+   check('Source crop coordinates are explicit',origin[0]===0&&origin[1]===0&&r.x===888&&r.y===900&&r.width===96&&r.height===108,{region:r,origin,camera:v.bindings.document().camera});
+   window.nativeEffectCrops=[];
+   const receiver=document.querySelector('[aria-label="Refined map background"]');
+   for(const tick of [0,74]){
+     v.seekNativeArt(tick,focus);
+     const images=[];
+     for(const presentation of ['original-art','physical-over-art','refined-map']){
+       if(presentation==='original-art'){if(checkbox.checked)checkbox.click();}
+       else {if(!checkbox.checked)checkbox.click();const input=document.querySelector('[aria-label="Refined map background"]');const refined=presentation==='refined-map';if(input.checked!==refined)input.click();}
+       const pixels=v.nativePreviewPixels(), data=new Uint8ClampedArray(r.width*r.height*4);
+       check('Crop inside actual buffer '+presentation+' '+tick,r.x-origin[0]>=0&&r.y-origin[1]>=0&&r.x-origin[0]+r.width<=pixels.width&&r.y-origin[1]+r.height<=pixels.height);
+       for(let y=0;y<r.height;y++){const start=((r.y-origin[1]+y)*pixels.width+r.x-origin[0])*4;data.set(pixels.data.subarray(start,start+r.width*4),y*r.width*4);}
+       const canvas=document.createElement('canvas');canvas.width=r.width;canvas.height=r.height;canvas.getContext('2d').putImageData(new ImageData(data,r.width,r.height),0,0);
+       const row={name:'b05-crop-'+presentation+'-tick'+tick,tick,presentation,region:r,origin,camera:v.bindings.document().camera,buffer:{width:pixels.width,height:pixels.height,sha256:await digest(pixels)},crop_sha256:await digest({data}),png:canvas.toDataURL('image/png')};
+       window.nativeEffectCrops.push(row);images.push(row);
+     }
+     const panel=document.createElement('div');panel.style.cssText='position:fixed;inset:0;z-index:99999;background:#202020;color:white;padding:16px;box-sizing:border-box;font:14px sans-serif';
+     const title=document.createElement('p');title.textContent='Actual source-camera buffer crops · tick '+tick+' · source pixels (888,900), 96×108 · 3× nearest-neighbor';panel.append(title);
+     const columns=document.createElement('div');columns.style.cssText='display:flex;gap:12px';panel.append(columns);
+     for(const row of images){const col=document.createElement('div'),label=document.createElement('p'),img=document.createElement('img');label.textContent=row.presentation;img.src=row.png;img.style.cssText='width:288px;height:324px;image-rendering:pixelated';col.append(label,img);columns.append(col);await img.decode();}
+     document.body.append(panel);await capture('b05-comparison-crop-tick'+tick);panel.remove();
+   }
+   const input=document.querySelector('[aria-label="Refined map background"]');if(input.checked)input.click();
+ }
+
  v.seekNativeArt(0,focus);checkbox.click();check('Checkbox disables substitution',!v.physicalNativeEffectsEnabled&&await digest(v.nativePreviewPixels())===art);
  await capture('b05-original-art-tick0');
  select('State preview view','initial');await wait(()=>v.statePresentationMode==='physical','ordinary physical mode');
