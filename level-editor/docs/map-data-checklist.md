@@ -114,9 +114,13 @@ variation. Its first-ranked candidate passes **160/160 offset traversals and
 288/288 interior clicks** across four rotations, two elevations and two copies
 using the published central-south assets. This improves the isolated published
 baseline of 68/160 offset traversals without requiring the staged roof edits.
-The search remains a diagnostic tool: production integration still needs complete
-span/flight-clearance checks, changing-receiver guards and regression checks on
-all connections. See [the search evidence](map-compilation-evidence.md#supported-integer-jump-span-search-2026-10-12).
+The search remains a diagnostic tool. Complete-span and motion-state guards
+are now implemented and tested, and flight checks include every solid state
+while retaining inactive receiving planes. The flight audit reports solid roof contact
+on fifteen of 24 reviewed candidates; nine others have sloped heights it cannot
+verify. Movement success alone does not clear those findings. Flight clearance,
+production integration and regression checks on all connections remain open.
+See [the search evidence](map-compilation-evidence.md#supported-integer-jump-span-search-2026-10-12).
 
 The published west-lane roof correction passes all **72 interior-click traversals**
 across nine angles, two elevations and two copies. It restores the mesh-supported

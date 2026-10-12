@@ -12,9 +12,9 @@ pairs opposite equal screen-space spans, retains the existing jump zones and
 rejects endpoints that cannot contain the full upright 6-by-3 half-footprint in
 the movement contour after subtracting every obstacle state. It ranks nearby
 spans with less endpoint height variation first. This is an authoring investigation,
-not a production compiler pass: continuous-span clearance, changing receiver
-states, flight obstruction and preservation of other connections still require
-guards before integration. It modifies neither published assets nor runtime code.
+not a production compiler pass. Continuous-span and state checks were added in
+the follow-up below; flight obstruction and preservation of other connections
+remain unresolved before integration. It modifies neither published assets nor runtime code.
 
 The first search ranked by distance only (`supported-jump-spans-Y1d3vo`) passes
 311/432 interior clicks (`interior-jump-clicks-UMXOY0`). Preferring less height
@@ -46,6 +46,24 @@ to endpoint preparation; the unpublished roof edits are not required for these
 results. Native verification used the existing `b232173b1aef353f` engine test
 binary and complete RobinTown sprite. No engine source was changed or rebuilt
 for this experiment.
+
+The next guard pass adds complete segment containment through concave receiver
+boundaries, a swept full-footprint check across movement holes/gaps, and exclusion
+of non-default motion states. Inactive receiving planes remain available, matching
+the native distinction between plane lookup and physical volume activity; flight
+checks include solids from every potentially active state. Eleven focused
+support/audit tests pass. The guarded first 180-degree candidate is structurally
+identical to the previously tested descriptor, preserving that traversal evidence.
+
+However, `--flight-clearance` exposes an unresolved limitation. Review
+`supported-jump-spans-0MjJXZ` flags solid contact on fifteen of the 24 candidates;
+the other nine have sloped endpoint heights unsupported by the existing flight
+audit. The first candidate reports contact with roof volumes on both assets.
+These are continuous-envelope findings, not proof of an observed rendered
+collision, but they prevent claiming complete flight clearance from successful
+movement tests. The tool now records bounded contact summaries for inspection.
+Normal export still does not apply these endpoint replacements. Resolving the
+roof contacts and integrating verified preparation remain open.
 
 ## Great hall rotation failures (2026-10-12)
 

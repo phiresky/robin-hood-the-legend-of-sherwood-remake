@@ -5,17 +5,27 @@ import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { pointInGameplayPolygon as inside } from "../shared/src/navigation-anchor.ts";
 import { createRequire } from "node:module";
 import { supportedFootprintCenters } from "../shared/src/supported-footprint-centers.ts";
+import {
+  jumpSpanInsideReceiver,
+  jumpSpanHasFootprint,
+  jumpFlightObstacles,
+} from "../shared/src/jump-span-support.ts";
+import { createJumpClearance } from "../shared/src/jump-clearance.ts";
+import { auditCompiledJump } from "../shared/src/audit-compiled-jump.ts";
 
 const clipping = createRequire(new URL("../shared/package.json", import.meta.url))(
   "polygon-clipping",
 );
 
 const args = process.argv.slice(2);
+const checkFlight = args.includes("--flight-clearance");
 const limitArguments = args.filter((argument) => argument.startsWith("--limit="));
 assert.ok(limitArguments.length <= 1);
 const limit = limitArguments.length ? Number(limitArguments[0].slice(8)) : 24;
 assert.ok(Number.isInteger(limit) && limit >= 1 && limit <= 24);
-const [file, pairArgument = "0"] = args.filter((argument) => !argument.startsWith("--limit="));
+const [file, pairArgument = "0"] = args.filter(
+  (argument) => !argument.startsWith("--limit=") && argument !== "--flight-clearance",
+);
 assert.ok(file, "Supply an exported descriptor and optional jump pair index");
 const pairIndex = Number(pairArgument);
 assert.ok(Number.isInteger(pairIndex) && pairIndex >= 0);
@@ -27,6 +37,7 @@ const lines = [pair.line1, pair.line2];
 const zones = lines.map((_, side) => geometry.jump_zones[lines[1 - side].jump_zone_index]);
 const centers = lines.map((line) => line.point_a.map((v, axis) => (v + line.point_b[axis]) / 2));
 const worldCenters = centers.map(([x, y, z]) => [x, y + z, z]);
+const freeAreas = [];
 const motionAreas = new Map();
 let sector = 0;
 for (const [layer, entries] of geometry.motion_data.layers.entries())
@@ -40,8 +51,10 @@ const sides = lines.map((_, side) => {
   const points = new Map();
   const motion = motionAreas.get(`${zone.sector}/${zone.layer}`);
   assert.ok(motion);
+  if (motion.state_id !== 0) return points;
   const contour = motion.precise_polygon ?? motion.polygon.points;
   const free = clipping.difference([contour], ...motion.obstacles.map((o) => [o.polygon.points]));
+  freeAreas[side] = free;
   const supportedCenters = supportedFootprintCenters([[contour]], free, [6, 3]);
   for (const [receiverIndex, receiver] of geometry.sight_obstacles.entries()) {
     if (
@@ -137,9 +150,57 @@ for (const [key, entries] of vectors) {
     }
 }
 candidates.sort((a, b) => a.score - b.score);
+const supported = [];
+for (const candidate of candidates) {
+  if (
+    !candidate.endpoints.every(
+      ([a, b], side) =>
+        jumpSpanInsideReceiver(a.world.slice(0, 2), b.world.slice(0, 2), a.boundary) &&
+        jumpSpanHasFootprint(a.screen.slice(0, 2), b.screen.slice(0, 2), freeAreas[side], [6, 3]),
+    )
+  )
+    continue;
+  supported.push(candidate);
+  if (supported.length === limit) break;
+}
+let flightContacts = new Map();
+const flightObstacles = jumpFlightObstacles(geometry);
+const flightClearance = checkFlight
+  ? createJumpClearance(
+      flightObstacles,
+      new Map(
+        zones.map((zone, side) => [
+          String(side),
+          {
+            topology: { sector: zone.sector, layer: zone.layer },
+            motionPolygon:
+              motionAreas.get(`${zone.sector}/${zone.layer}`).precise_polygon ??
+              motionAreas.get(`${zone.sector}/${zone.layer}`).polygon.points,
+          },
+        ]),
+      ),
+      ({ obstacle, range, reverse, points, paddingAxes }) => {
+        const receiver = flightObstacles.indexOf(obstacle);
+        const key = `${receiver}/${reverse}`,
+          previous = flightContacts.get(key);
+        if (previous) {
+          previous.count++;
+          previous.parameterBounds[0] = Math.min(previous.parameterBounds[0], range[0]);
+          previous.parameterBounds[1] = Math.max(previous.parameterBounds[1], range[1]);
+        } else
+          flightContacts.set(key, {
+            receiver,
+            reverse,
+            count: 1,
+            parameterBounds: [...range],
+            sample: { range, points, paddingAxes },
+          });
+      },
+    )
+  : undefined;
 const output = await fs.mkdtemp("work/map-compile/supported-jump-spans-");
 const results = [];
-for (const [index, candidate] of candidates.slice(0, limit).entries()) {
+for (const [index, candidate] of supported.entries()) {
   const document = structuredClone(descriptor);
   document.asset_geometry.jump_zones = zones;
   document.asset_geometry.jump_line_pairs = [
@@ -159,7 +220,17 @@ for (const [index, candidate] of candidates.slice(0, limit).entries()) {
   ];
   const name = `candidate-${index}.level.json`;
   await fs.writeFile(`${output}/${name}`, JSON.stringify(document));
-  results.push({ file: name, score: candidate.score, endpoints: candidate.endpoints });
+  flightContacts = new Map();
+  const flightIssues = flightClearance
+    ? auditCompiledJump(document.asset_geometry.jump_line_pairs[0], flightClearance)
+    : undefined;
+  results.push({
+    file: name,
+    score: candidate.score,
+    endpoints: candidate.endpoints,
+    flightIssues,
+    flightContacts: checkFlight ? [...flightContacts.values()] : undefined,
+  });
 }
 assert.ok(results.length, "No representable integer span candidates near this connection");
 await fs.writeFile(
@@ -169,6 +240,7 @@ await fs.writeFile(
     scope: "static-geometry-only-not-gameplay-parity",
     source: file,
     pairIndex,
+    checkFlight,
     candidates: candidates.length,
     pointCounts: sides.map((points) => points.size),
     results,
