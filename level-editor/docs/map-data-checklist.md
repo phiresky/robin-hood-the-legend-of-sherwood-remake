@@ -139,6 +139,10 @@ lighting receivers now produce explicit warnings in best-effort mode instead
 of aborting these exports. The baseline full Lincoln browser archive also passes
 reopening/rebaking and native loading without base data; it excludes these staged
 drawbridge changes.
+The staged browser fixture required a correction to its catalog's embedded
+gameplay definitions; the earlier run baked baseline gameplay and is not staged
+parity evidence. Corrected fixture `lincoln-rendered-library-9FBLqH` has matching
+embedded definitions, descriptor bytes and pins; its rendered roundtrip is pending.
 
 The unpublished south-wall step stair candidate passes 32 directed player-click
 routes across four rotations and two elevations without navigation-preparation

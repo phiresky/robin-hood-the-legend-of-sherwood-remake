@@ -160,8 +160,9 @@ Both revised bridge decks retain their previous zero-gap sampled coverage.
 
 Private fixture `lincoln-rendered-library-Nqcny3` contains the staged descriptors,
 updated scene/catalog pins and hardlinked unchanged models. Source descriptor and
-scene hashes were verified unchanged. Full browser archive validation is running;
-no archive result is yet claimed. The initial symlink-based private fixture was
+scene hashes were verified unchanged. This fixture was subsequently invalidated
+by stale embedded catalog gameplay, as described below; it is not evidence for
+the staged candidate. The initial symlink-based private fixture was
 rejected by the HTTP library's containment check and was replaced without changing
 that server restriction.
 
@@ -169,7 +170,20 @@ The first staged browser run was interrupted by a concurrent editor source edit:
 hot reload restarted the page during the second bake. Its partial transfer is not
 a usable archive or passing roundtrip. `refinement/serve-map-bake-fixture.mjs`
 now serves this fixture with file watching and hot reload disabled. The restarted
-roundtrip remains pending; this is test isolation, not an editor behavior change.
+roundtrip was later cancelled after finding the catalog issue below; this is test
+isolation, not an editor behavior change.
+
+The browser reads gameplay from the catalog's embedded `editor` descriptor.
+Updating descriptor files and their pins alone left baseline gameplay in that
+catalog, so the first no-watch run was baking the baseline despite loading the
+staged scene. Neither its partial ZIP transfer nor its traversal counts establish
+staged parity. The staging helper now updates embedded gameplay alongside the
+descriptor bytes and pins. Corrected fixture `lincoln-rendered-library-9FBLqH`
+verifies that both representations match, both scene/catalog hashes match the
+descriptor bytes, and source-library descriptors remain unchanged. It contains
+the two drawbridge receiving surfaces and three plateau regions. A fresh no-watch
+browser roundtrip is running against that fixture; no completed ZIP result is
+claimed yet.
 
 `lincoln-drawbridge-disconnections-GHKqj4` repeats all sixteen missing/raised
 neighbour cases against the three-region plateau. Each rejects the three

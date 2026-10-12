@@ -43,6 +43,8 @@ if (gameplayStage) {
     source.descriptor_sha256 = hash(replacement);
     const entry = catalog.assets.find((entry) => entry.id === edit.asset);
     assert.ok(entry, `Missing catalog entry: ${edit.asset}`);
+    assert.ok(entry.editor, `Missing embedded editor descriptor: ${edit.asset}`);
+    entry.editor.gameplay = structuredClone(edit.gameplay);
     entry.descriptor_sha256 = source.descriptor_sha256;
     stagedAssets.push({
       id: edit.asset,
