@@ -3,10 +3,13 @@ import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { readStoredMap, pinnedDescriptors } from "../pipeline/src/stored-map.ts";
 import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
+import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
 const mode = process.argv[2] ?? "support";
-assert.ok(["support", "edges", "both", "inset", "faces"].includes(mode));
+assert.ok(
+  ["support", "edges", "both", "inset", "faces", "takeoff", "takeoff-plane"].includes(mode),
+);
 const scene = await readStoredMap("library/scenes/york.rhlos-map.json", "library");
 const assets = await pinnedDescriptors("library", scene.assetSources, scene.sceneAssets);
 const edits = [];
@@ -28,11 +31,18 @@ for (const [name, surfaceId, segmentId] of [
   const footprint = roof.projectionMaterials.footprint;
   assert.ok(footprint.length >= 3);
   assert.ok(footprint.every(([x, y, z]) => Math.abs(z - planeHeight(plane, [x, y])) < 0.001));
-  if (mode !== "edges") {
+  if (["support", "both", "inset", "faces"].includes(mode)) {
     roof.polygon = footprint.map(([x, y]) => [x, y]);
     roof.height = roof.polygon.map((point) => planeHeight(plane, point));
   }
-  if (mode !== "support" && mode !== "faces") {
+  if (mode.startsWith("takeoff") && name === "red") {
+    for (const point of [edge.a, edge.b]) {
+      point[0] += 1;
+      point[1] -= 1;
+      assert.ok(pointInGameplayPolygon(point, roof.polygon, true), "Takeoff leaves its roof");
+    }
+  }
+  if (["edges", "both", "inset", "takeoff-plane"].includes(mode)) {
     if (mode === "inset") {
       const center = [0, 1].map((axis) =>
         footprint.reduce((sum, point) => sum + point[axis] / footprint.length, 0),

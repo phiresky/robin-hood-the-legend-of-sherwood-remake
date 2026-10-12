@@ -617,6 +617,38 @@ image was inspected; this does not establish rendered character contact or
 sprite depth compositing. The offset-coverage failures and previously measured
 airborne anchor/solid contacts remain recorded, not excused by these routes.
 
+### Central-roof takeoff placement review (2026-10-13)
+
+The published central-roof endpoint heights sit below their local receiving
+planes by 0.18–0.92 units. Stage `york-central-south-roofs-rpza9T` changes only
+those heights to the planes. Its zero-degree, two-copy, two-elevation export
+`connected-jump-placements-dJYMrg` passes forty clicks, but the recorded airborne
+anchors still intersect solids eight times, with maximum penetration 1.972561.
+Plane agreement alone therefore does not repair the flight.
+
+Moving the red-house endpoint one local unit in X and minus one in Y, together
+with those height corrections, clears all 520 recorded airborne samples at zero
+degrees (`connected-jump-placements-pEhcoj`). Both edge endpoints remain inside
+the roof footprint. The four-angle extension `connected-jump-placements-O5TxQs`
+regresses to 84/160 offset clicks and 252/288 interior clicks
+(`interior-jump-clicks-KtXtU8`); it is not published.
+
+Preserving the authored heights with the same shift gives 108/160 offset clicks
+in `connected-jump-placements-kNORJZ` and 288/288 interior clicks in
+`interior-jump-clicks-AvHj7P`. Its 4,428 recorded airborne anchors contain 72 solid
+contacts, with maximum penetration 3.090648. Fresh tracing of the unchanged
+published interior fixture `interior-jump-clicks-zX6jIx` also passes 288/288:
+4,464 airborne anchors, 72 contacts, maximum penetration 2.920922. The candidate
+contacts occur at 37 and 90 degrees. These counts use each export's generated
+interior probes, not identical click inputs, and are not rendered sprite-volume
+measurements. They reject the shift as a general clearance fix.
+
+The authoring helper's `takeoff` and `takeoff-plane` modes retain these bounded
+experiments for reproduction. `takeoff` reproduces the tested staged gameplay
+exactly. Neither mode modifies the library or compiler. Any further endpoint
+preparation must verify the final rotated integer geometry and movement, rather
+than promote a change solely because the original orientation becomes clear.
+
 ## Nottingham helper routes with all map overlays (2026-10-12)
 
 Fresh `saved-map-exports-mog5ON` compiles in 62.228 seconds and is identical
