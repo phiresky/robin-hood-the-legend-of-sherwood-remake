@@ -2583,6 +2583,19 @@ function compileAssetGameplayAttempt(
     transitions.flatMap((transition) => [...transition.initialSight, ...transition.appliedSight]),
   );
   const jumpReceivers = new Map<string, JumpReceivingSurface>(generatedLandings);
+  const motionBySector = new Map<number, (typeof layers)[number][number]>();
+  let motionSector = 0;
+  for (const layer of layers)
+    for (const area of layer) {
+      motionBySector.set(motionSector, area);
+      motionSector += 1 + area.obstacles.length;
+    }
+  const takeoffBoundary = (sector: number) => {
+    const area = motionBySector.get(sector)!;
+    // Elevation bonds are prepared against the exported precise contour when
+    // present. Integer navigation outlines can introduce fictitious ground strips.
+    return area.precise_polygon?.length ? area.precise_polygon : area.polygon.points;
+  };
   const flightObstacles = sight.map((shape, index) =>
     changingSight.has(index) && shape.initial_active === false
       ? { ...shape, initial_active: true }
@@ -2618,7 +2631,7 @@ function compileAssetGameplayAttempt(
         jumpReceivers.set(edge.zone, {
           ...jumpReceivers.get(edge.zone),
           topology: { sector: area.sector, layer: area.layer },
-          motionPolygon: area.polygon,
+          motionPolygon: takeoffBoundary(area.sector),
         });
       }
       return mergeIntervals([...flightClearance!(edges, long, body), ...walkingClearance(edges)]);
@@ -2682,7 +2695,7 @@ function compileAssetGameplayAttempt(
     jumpReceivers.set(zone.id, {
       ...jumpReceivers.get(zone.id),
       topology: { sector: area.sector, layer: area.layer },
-      motionPolygon: area.polygon,
+      motionPolygon: takeoffBoundary(area.sector),
     });
     return {
       polygon: { points: zone.polygon },
@@ -2821,13 +2834,6 @@ function compileAssetGameplayAttempt(
       label,
     );
   };
-  const motionBySector = new Map<number, (typeof layers)[number][number]>();
-  let motionSector = 0;
-  for (const layer of layers)
-    for (const area of layer) {
-      motionBySector.set(motionSector, area);
-      motionSector += 1 + area.obstacles.length;
-    }
   const passageJobs = postureConnections.map(({ connection, fromCrouched, toCrouched }) => {
     const root = assembledNavigation.identities.get(connection.from.region)!;
     const members = (crouched: boolean) =>

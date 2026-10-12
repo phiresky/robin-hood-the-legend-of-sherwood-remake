@@ -11,12 +11,20 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**Moved-roof takeoffs repaired (2026-10-12):** clearance now uses the precise
+exported motion contour used for elevation-boundary preparation. This removes
+fictitious ground drops without bypassing collision checks. Eight copied,
+rotated and raised fixture ZIPs round-trip exactly; native upright, sword,
+approach and player-click checks each pass 120/120 traversals. The 90-degree
+layout remains too narrow and correctly emits no jumps. See
+[the takeoff evidence](map-compilation-evidence.md#precise-roof-takeoff-boundaries-2026-10-12).
+
 **Jump partitioning (2026-10-12):** export now splits roof-crossing jump spans
 and their clickable landing zones by receiving face. Fresh Nottingham passes
 367/390 click cases: all 20 cases for the split connection pass, while the
 other 370 outcomes are unchanged. Twenty-three failures remain. All 239
-compiler/export tests pass. A wider copied-roof fixture currently generates no
-jumps and fails native verification; this is an open issue, not parity evidence.
+compiler/export tests passed at that stage. The subsequent copied-roof failure
+is repaired and verified above; full-map jump failures remain under review.
 See [partition verification](map-compilation-evidence.md#compiled-jump-receiving-face-partitions-2026-10-12).
 
 Fresh Wychford gameplay data loads natively and passes 96 sampled ordinary
@@ -35,9 +43,8 @@ and, in best-effort mode, warns and omits the malformed passage. Fresh Lincoln
 from the published library loads natively; restoring that passage remains open.
 An asset-local endpoint candidate remains unpublished because collision still
 blocks its crossing. Nottingham, Sherwood and York also pass native construction.
-Copied-roof
-flight-clearance rejection remains unresolved; bypassed diagnostic flights are
-not evidence of a safe production export.
+Earlier bypassed roof-flight diagnostics are superseded by the production
+clearance verification above.
 
 **Boundary repair under validation (2026-10-12):** static export/load corrections
 bring the upper-red-house eight-placement jump fixture from 50/80 to 70/80,

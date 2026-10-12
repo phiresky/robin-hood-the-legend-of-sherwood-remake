@@ -52,6 +52,24 @@ import { pointInGameplayPolygon } from "./navigation-anchor.ts";
 import { parseLevel3D, parseProjectionAssetDescriptor } from "./validation.ts";
 import nearEdgeOnStair from "../test-fixtures/near-edge-on-placed-stair.json" with { type: "json" };
 import rotatedTerrainBridge from "../test-fixtures/rotated-terrain-bridge-seam.json" with { type: "json" };
+import completeRoofJumps from "../test-fixtures/complete-roof-jumps.json" with { type: "json" };
+import { roofJumpPlacement } from "../test-fixtures/roof-jump-placements.ts";
+
+test("copied roof takeoffs follow precise floor contours without fictitious ground drops", () => {
+  const source = parseLevel3D(completeRoofJumps.document);
+  const asset = parseProjectionAssetDescriptor(completeRoofJumps.asset);
+  for (const rotation of [0, 37, 180]) {
+    const document = roofJumpPlacement(source, rotation, 40);
+    const compiled = compileAssetGameplay(
+      document,
+      new Map([[asset.id, asset]]),
+      [0, 0, 2000, 2000],
+      { bestEffort: true },
+    );
+    assert.equal(compiled.jump_line_pairs.length, 2, `rotation ${rotation}`);
+    assert.ok(compiled.motion_data.layers.flat().some((area) => area.precise_polygon?.length));
+  }
+});
 
 test("forced crouching remains local to authored floors with working passages", () => {
   const { document, hut, assets } = forcedCrouchCompilerFixture();

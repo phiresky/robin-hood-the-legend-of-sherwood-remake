@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Precise roof takeoff boundaries (2026-10-12)
+
+Diagnostic `roof-contact-bounds-KCAFHm` identifies the copied-roof rejection:
+the compiler predicts four transitions from an elevated receiving roof to
+height zero, generating 1,830 blocked flight ribbons. The takeoff checker uses
+an integer outline displaced by about 0.36 units from the precise motion
+contour actually exported for elevation-boundary preparation. The apparent
+ground strip does not exist in the native prepared geometry.
+
+Takeoff clearance now selects the exported sector's `precise_polygon`, falling
+back to its integer polygon only when no precise contour exists. Both generated
+and explicitly authored jump checks use it. Diagnostic `roof-contact-bounds-e6MMU1`
+then has zero ground drops, zero blocked ribbons and two generated connections.
+No collision tolerance, flight family, runtime solver or engine code changes.
+
+Production fixture `prepared-roof-placements-4uMHG6` exports and reopens eight
+ZIPs with identical embedded editor scenes and gameplay. Rotations 0, 37 and
+180 degrees retain both independent copied connections at elevations 0 and 40;
+the existing 90-degree narrow-layout exception retains no connections. Native
+checks pass 120/120 upright animation/landing cases, 120/120 sword cases,
+120/120 walk-jump-walk cases and 120/120 player-click routes. These are sampled
+gameplay checks, not rendered appearance certification.
+
+All 237 compiler/export tests and 33 flight/clearance tests pass, including thin
+obstacles and legitimate in-area ground transitions. Type checking, targeted
+lint and formatting pass. A fresh Nottingham regression export is underway;
+the earlier 23 full-map click failures are not declared resolved by this fixture.
+
 ## Elevated passage export validation (2026-10-12)
 
 Compilation now checks that each elevated ordinary passage endpoint has a
