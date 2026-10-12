@@ -159,6 +159,20 @@ no archive result is yet claimed. The initial symlink-based private fixture was
 rejected by the HTTP library's containment check and was replaced without changing
 that server restriction.
 
+`lincoln-drawbridge-disconnections-GHKqj4` repeats all sixteen missing/raised
+neighbour cases against the three-region plateau. Each rejects the three
+unsupported entrances, and the untouched copy passes the complete native
+control/click audit in 43.09 seconds.
+
+`review-drawbridge-passage-mesh.mjs` samples 4,032 exported approach centerline
+points across all eight placements. 3,920 have direct mesh support within a
+0.5-unit height tolerance. The remaining 112 samples lie at the three
+plateau/deck seams, with maximum horizontal distance 0.956 game units from mesh
+at the intended height. Thus the continuous-mesh diagnostic fails, while native
+passage traversal succeeds. These explicit ordinary passages span short seams;
+the result must not be reported as continuous mesh support or animated visual
+verification. The report includes the responsible coordinates and nearby heights.
+
 The follow-up `lincoln-drawbridge-disconnections-QrZQte` removes or raises the
 plateau in only the first copy across the same eight placements. All sixteen
 exports omit the three unsupported plateau entrances and retain three supported
