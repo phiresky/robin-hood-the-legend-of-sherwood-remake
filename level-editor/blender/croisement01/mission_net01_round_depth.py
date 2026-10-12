@@ -1,11 +1,12 @@
 """Refine source-owned wood faces for a rounded, silhouette-preserving depth profile."""
-import json
+import argparse,json
 from pathlib import Path
 import numpy as np
 ROOT=Path(__file__).resolve().parents[3]
 OUT=ROOT/'level-editor/work/croisement01-refinement/mission-net01-oct12-v1'
 def main():
- domains=json.loads((OUT/'domains.json').read_text())
+ ap=argparse.ArgumentParser();ap.add_argument('--input',default='domains.json');ap.add_argument('--output',default='domains-rounded-v1.json');args=ap.parse_args()
+ domains=json.loads((OUT/args.input).read_text())
  for key,row in domains.items():
   if not key.endswith('weight'):continue
   for part in row['parts']:
@@ -22,5 +23,5 @@ def main():
     part[name]=refined[0] if name=='exterior' else refined
    part['triangles']=triangles.tolist()
   row['depth_profile']='Rounded posterior from distance to observed outline; thin outer fibers, unchanged source projection.'
- (OUT/'domains-rounded-v1.json').write_text(json.dumps(domains)+'\n')
+ (OUT/args.output).write_text(json.dumps(domains)+'\n')
 if __name__=='__main__':main()
