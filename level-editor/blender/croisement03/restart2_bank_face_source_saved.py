@@ -17,7 +17,7 @@ def main():
  if '--out' in sys.argv:OUT=Path(sys.argv[sys.argv.index('--out')+1]).resolve()
  assert not OUT.exists();guard.resources();guard.acquire(slots=2)
  try:
-  guard.resources();OUT.mkdir();model=INPUT/'worker.blend';input_model_digest=sha(model);bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene
+  guard.resources();OUT.mkdir();model=INPUT/'worker.blend';input_model_digest=sha(model);bpy.ops.wm.open_mainfile(filepath=str(model));bpy.context.view_layer.update();scene=bpy.context.scene
   sourcepath=B.parent/'baseline/covered.png';source=np.array(Image.open(sourcepath).convert('RGBA'));old=np.array(Image.open(B/'bank-exposed-rock-proposal-v1/candidate-rock-seeds.png'))>0;proposal=np.array(Image.open(B/'bank-face-source-proposal-v1/proposed-native-stone.png'))>0
   # Thin isolated color matches remain unassigned even inside a reviewed stone region.
   broad=binary_opening(proposal,structure=np.ones((3,3),bool));faces=json.loads((B/'bank-visible-face-traces-v1/faces.json').read_text())['faces'];expected={};perface=[]
@@ -103,7 +103,7 @@ def main():
   if extra_proof:
    previous=json.loads((B/'bank-convex-source-saved-v1/projection.json').read_text());assert {tuple(p)for p in previous['accepted_pixels']}<={tuple(p)for p in accepted},'Previously retained stone sample lost'
   bpy.context.preferences.filepaths.save_version=0;bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'worker.blend'));assert (OUT/'worker.blend').stat().st_size<8*1024**2
-  bpy.ops.wm.open_mainfile(filepath=str(OUT/'worker.blend'))
+  bpy.ops.wm.open_mainfile(filepath=str(OUT/'worker.blend'));bpy.context.view_layer.update()
   for name,(verts,faces0)in geometry.items():
    obj=bpy.context.scene.objects[name];assert [list(obj.matrix_world@v.co)for v in obj.data.vertices]==verts;assert [list(p.vertices)for p in obj.data.polygons]==faces0
   assert sha(model)==input_model_digest;assert len(oldhits)==3446

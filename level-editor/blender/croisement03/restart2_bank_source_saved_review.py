@@ -14,7 +14,7 @@ def main():
  if '--folder' in sys.argv:source.OUT=Path(sys.argv[sys.argv.index('--folder')+1]).resolve()
  source.guard.resources();source.guard.acquire(slots=2)
  try:
-  source.guard.resources();folder=source.OUT;receipt=json.loads((folder/'projection.json').read_text());model=folder/'worker.blend';assert source.sha(model)==receipt['model_sha256'];bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.context.scene;rows=[];images={}
+  source.guard.resources();folder=source.OUT;receipt=json.loads((folder/'projection.json').read_text());model=folder/'worker.blend';assert source.sha(model)==receipt['model_sha256'];bpy.ops.wm.open_mainfile(filepath=str(model));bpy.context.view_layer.update();scene=bpy.context.scene;rows=[];images={}
   for obj in scene.objects:
    if obj.type!='MESH':continue
    obj.data.calc_loop_triangles();tri=list(obj.data.loop_triangles);verts=[obj.matrix_world@v.co for v in obj.data.vertices];rows.append((obj,BVHTree.FromPolygons(verts,[list(t.vertices)for t in tri],all_triangles=True),tri,verts))
