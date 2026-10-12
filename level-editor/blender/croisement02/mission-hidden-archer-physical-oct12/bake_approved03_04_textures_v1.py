@@ -24,14 +24,15 @@ def observed(o):
     if o.get('inferred_support'):return None
     m=o.data;mat=m.materials[0]
     return dict(faces=[p.index for p in m.polygons if p.material_index==0],material=mat.name,images={n.image.name:image_hash(n.image) for n in mat.node_tree.nodes if n.type=='TEX_IMAGE' and n.image},uv=[[tuple(u.data[i].uv) for p in m.polygons if p.material_index==0 for i in p.loop_indices] for u in m.uv_layers if u.name!='Generated inferred projection'])
-def preflight(state):
-    exp=BASE/'experiments-v2'/state/'experiment';review=read_record(exp/GEN/'generation-review.json')
+def preflight(state,experiment=None):
+    exp=Path(experiment) if experiment is not None else BASE/'experiments-v2'/state/'experiment'
+    review=json.loads((exp/GEN/'generation-review.json').read_text()) if experiment is not None else read_record(exp/GEN/'generation-review.json')
     for p,h in review['pins'].items():assert sha(p)==h,p
     assert review['ready_for_bake'];return exp,review
 
-def main(state):
-    exp,review=preflight(state);dest=BASE/'baked-v1'/state;assert not dest.exists();dest.mkdir(parents=True)
-    manifest=read_record(exp/'views.json');b.bpy.ops.wm.open_mainfile(filepath=str(exp/'approved-model.blend'));scene=b.bpy.context.scene
+def main(state,experiment=None,destination=None):
+    exp,review=preflight(state,experiment);dest=Path(destination) if destination is not None else BASE/'baked-v1'/state;assert not dest.exists();dest.mkdir(parents=True)
+    manifest=json.loads((exp/'views.json').read_text()) if experiment is not None else read_record(exp/'views.json');b.bpy.ops.wm.open_mainfile(filepath=str(exp/'approved-model.blend'));scene=b.bpy.context.scene
     allobjects=[o for o in scene.objects if o.type=='MESH'];targets=[scene.objects[n] for n in manifest['object_names']]
     before={o.name:geometry(o) for o in allobjects};known_before={o.name:observed(o) for o in allobjects}
     original_indices={o.name:[p.material_index for p in o.data.polygons] for o in allobjects}

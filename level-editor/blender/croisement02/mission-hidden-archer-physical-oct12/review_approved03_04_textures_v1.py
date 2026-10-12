@@ -6,8 +6,8 @@ import build_models as b
 from bake_approved03_04_textures_v1 import BASE,sha,write,available,geometry
 from render_slots import acquire,release
 
-def main(state):
-    folder=BASE/'baked-v1'/state;report=json.loads((folder/'bake-validation.json').read_text())
+def main(state,folder=None):
+    folder=Path(folder) if folder is not None else BASE/'baked-v1'/state;report=json.loads((folder/'bake-validation.json').read_text())
     model=folder/'model.blend';assert sha(model)==report['model_sha256'];dest=folder/'saved-review-v2';assert not dest.exists();dest.mkdir();b.DEST=dest
     b.bpy.ops.wm.open_mainfile(filepath=str(model));objects=[o for o in b.bpy.context.scene.objects if o.type=='MESH']
     assert {o.name:geometry(o) for o in objects}==report['geometry']
