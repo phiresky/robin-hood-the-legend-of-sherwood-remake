@@ -41,13 +41,17 @@ protected = {o.name: foliage.geometry_hash(o) for o in wood_objects}
 # Seeds follow visible source clusters, not another tree's layout.
 foliage.CONFIG[94] = dict(mask=94, ground=412., canopy_bottom=343,
     seeds=[(780,90),(825,130),(884,155),(725,165),(795,205),(915,215),(720,235),(850,285)])
-source_packet = base/'tree14-native-crown-animation-source-v2/source-partition.json'
+source_packet = base/'tree14-native-crown-animation-source-v3/source-partition.json'
 evidence = json.loads(source_packet.read_text())
 assert evidence['native_animation'] == 1 and evidence['native_frame'] == 0
 assert evidence['canopy_pixels'] == 16719
+assert evidence['all_fourteen_frame_rgba_unions_exact']
+assert evidence['animated_union_pixels'] == 19393
 for lobe in evidence['lobes']:
     for field in ('source','unknown'):
         assert sha(Path(lobe[field])) == lobe[field+'_sha256']
+    for frame in lobe['frames']:
+        assert sha(Path(frame['path'])) == frame['sha256']
 for frame in evidence['frame_records']:
     assert sha(ROOT/frame['path']) == frame['sha256']
 (out/'source-partition.json').write_text(json.dumps(evidence,indent=2)+'\n')
