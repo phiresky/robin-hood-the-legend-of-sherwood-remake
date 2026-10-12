@@ -16,7 +16,7 @@ acquire(slots=2)
 assert shutil.disk_usage(OUT).free>10*1024**3+512*1024**2
 available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024
 assert available>6*1024**3
-base=OUT/'restart2';dest=base/'tree14-wood-v10';dest.mkdir(exist_ok=False)
+base=OUT/'restart2';dest=base/'tree14-wood-v11';dest.mkdir(exist_ok=False)
 bank=base/'tree05-regional-banks-v18/assets/croisement01-tree-05/model.blend'
 assert sha(bank)=='7926500e407950bd66b78d13e0ce65b3829dd2263d7db4ba5c57a7ece5dbc818'
 bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.preferences.filepaths.save_version=0
@@ -44,10 +44,13 @@ for branch,profile in profiles.items():
  original=trace[branch];xy=np.array([row[:2] for row in original],float);lengths=np.linalg.norm(np.diff(xy,axis=0),axis=1);distance=np.r_[0,np.cumsum(lengths)];samples=profile['samples'];new=[]
  for row in samples:
   along=row['along'];center=np.array([np.interp(along,distance,xy[:,axis]) for axis in range(2)]);measured=np.array([row['x'],row['y']]);shift=measured-center;norm=np.linalg.norm(shift)
-  limit=6 if branch in ('left_main','right_tip') else 2
+  limit=6 if (branch=='left_main' and center[0]<=760) or branch=='right_tip' else 2
   if norm>limit:shift*=limit/norm
   radius=row['smoothed_radius']+.35
-  if along<.2*distance[-1] or branch not in ('left_main','right_tip'):radius=min(radius,float(np.interp(along,distance,[v[2] for v in original])))
+  observed_radius=float(np.interp(along,distance,[v[2] for v in original]));allowance=0.
+  if branch=='left_main':allowance=4. if 725<=center[0]<=760 else 1.5
+  elif branch=='right_tip':allowance=1.
+  radius=min(radius,observed_radius+allowance)
   new.append([*(center+shift),max(.4,radius)])
  for axis in range(3):
   values=np.array([row[axis] for row in new]);smoothed=np.convolve(np.pad(values,(2,2),mode='edge'),[.1,.2,.4,.2,.1],mode='valid')
