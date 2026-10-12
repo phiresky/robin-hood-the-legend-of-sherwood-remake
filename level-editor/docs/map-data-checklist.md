@@ -84,8 +84,11 @@ See [interior-click evidence](map-compilation-evidence.md#york-interior-jump-cli
 A fresh export exposed a receiving-plane error in joined-stair preparation:
 volume vertices beyond the three native plane anchors were incorrectly required
 to be coplanar. The exporter now uses the native receiving-plane definition;
-eleven focused geometry tests pass. Full York recompilation is pending, so the
-earlier traversal counts do not certify the latest compiler. Central-south roof
+eleven focused geometry tests pass. Fresh York export `saved-map-exports-Q7aNRO`
+now completes and constructs natively: 162 areas, 1,234 receiving obstacles,
+254 doors, 72 jump pairs and 269,206 grid blocks. All 130 stair player-click
+routes and 286 ordinary route samples pass. The 720 jump outcomes exactly match
+the earlier audit, including its thirteen failures. Central-south roof
 experiments remain unpublished: an inset improves isolated offset clicks from
 68/160 to 104/160, but 90/180-degree cases still need investigation.
 Its interior-click sweep passes 256/288 probes; all 32 failures are at 180 degrees,
@@ -94,6 +97,16 @@ that rotation (world-to-screen plane determinant approximately -0.001856), makin
 integer endpoint rounding significant. Replacing endpoints with unsnapped values
 alone still fails all forty offset probes at that rotation; this does not justify
 a format change or a runtime solver.
+
+Receiver review `jump-integer-support-mom6hU` finds zero of five sampled points
+on the rotated edge supported by either assigned receiver. Fifteen diagnostic
+integer-span replacements (`york-integer-span-diagnostic-ns72f47a`) retain the
+existing format and engine. Five pass all eight sampled interior-click routes
+in both directions (`interior-jump-clicks-CeCWKa`); overall 100/120 pass. Only
+11/150 perpendicular-offset probes pass, so these are representation experiments,
+not a publishable fix. They establish that integer endpoints can represent a
+working connection here. Automatic selection, clearance checks and broader
+placement verification remain necessary before changing export behavior.
 
 The published west-lane roof correction passes all **72 interior-click traversals**
 across nine angles, two elevations and two copies. It restores the mesh-supported
