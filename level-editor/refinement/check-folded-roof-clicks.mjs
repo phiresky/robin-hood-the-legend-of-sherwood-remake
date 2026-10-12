@@ -12,8 +12,16 @@ const results = [];
 for (const entry of manifest.results) {
   const bytes = await fs.readFile(path.join(directory, entry.file));
   const geometry = JSON.parse(bytes).asset_geometry;
-  assert.equal(geometry.jump_line_pairs.length, 2, "Two independent copied jumps");
-  const click_probes = geometry.jump_line_pairs.flatMap((pair, index) => {
+  const pairs = geometry.jump_line_pairs
+    .map((pair, index) => ({ pair, index }))
+    .filter(({ pair }) => {
+      const zone = geometry.jump_zones[pair.line2.jump_zone_index];
+      return geometry.doors.some(
+        (door) => door.sector_out === zone.sector && door.layer_out === zone.layer,
+      );
+    });
+  assert.equal(pairs.length, 2, "Two independent slab jumps with ordinary approach passages");
+  const click_probes = pairs.flatMap(({ pair, index }) => {
     const zone = geometry.jump_zones[pair.line2.jump_zone_index];
     const passages = geometry.doors.filter(
       (door) => door.sector_out === zone.sector && door.layer_out === zone.layer,

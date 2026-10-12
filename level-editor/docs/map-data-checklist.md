@@ -19,9 +19,13 @@ degrees and two elevations. Native checks pass 120/120 ordinary jump clicks at
 (hidden selection on the covered return side). The perpendicular-offset probes
 still fall outside the narrow folded projection; they are not reclassified as
 passing. Full Nottingham retains its prior 375/390 ordinary-click outcomes.
-All 267 selected compiler/export tests pass. Roof metadata remains staged;
-rendered input and fresh ZIP round trips are still unverified. No production
+All 267 selected compiler/export tests pass. The roof metadata is now published.
+Eight placement ZIPs reopen and recompile identically; a separate browser bake
+preserves actual rendered color/depth through reopening and rebaking. Its four
+native click routes pass with all published jump overlays retained. Full-map
+rendered input and in-game visual verification remain open. No production
 engine changes are involved. See the
+[publication and ZIP evidence](map-compilation-evidence.md#published-roof-metadata-and-rendered-zip-round-trip-2026-10-12) and
 [compiler evidence](map-compilation-evidence.md#export-time-folded-floor-preparation-2026-10-12).
 
 **Moved-roof takeoffs repaired (2026-10-12):** clearance now uses the precise
@@ -49,7 +53,7 @@ The revised roof-slab candidate fixes its ten full-map samples. The receiving
 seam export fix plus asset-local sloped click zones pass all 120 moved/copy
 checks at 0/37/180 degrees. The earlier 90-degree export omitted its connection;
 the folded-floor preparation above now connects it and passes supported-floor
-click routes. The roof metadata remains unpublished pending visual and ZIP
+click routes. The roof metadata has since been published after mesh and ZIP
 review; see the [candidate evidence](map-compilation-evidence.md#unpublished-roof-slab-connection-candidate-2026-10-12).
 The published southeast-house ground click-band repair removes its click-zone
 misses and passes 160/160 moved cases. Four apparent stalls were audit errors
@@ -61,8 +65,8 @@ The combined ground/roof candidate now loads natively and passes 375/390 ordinar
 clicks. Its remaining five covered-roof samples pass hidden-selection traversal;
 the ten helper-required samples have a passing posture-aware fixture that isolates
 their jump overlays. The deeper endpoint-click audit passes 356/390 and retains
-34 failures for investigation. The roof assets remain unpublished pending
-visual and ZIP review of the folded-floor compiler output. See the
+34 failures for investigation. The roof assets are now published, with the
+additional folded-floor and rendered ZIP evidence above. See the
 [combined candidate evidence](map-compilation-evidence.md#combined-nottingham-candidate-and-endpoint-clicks-2026-10-12).
 Five of those ordinary-click failures hit an overlapping higher roof. Hidden
 selection finds the intended jump in all five cases. Retaining that selection

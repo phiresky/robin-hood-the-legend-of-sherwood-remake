@@ -2,14 +2,24 @@
 // Other jump overlays are isolated out; all physical asset geometry is retained.
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { readStoredMap, pinnedDescriptors } from "../pipeline/src/stored-map.ts";
 import { groupCentroid, groupParts } from "../shared/src/level3d.ts";
 import { roofJumpPlacement } from "../shared/test-fixtures/roof-jump-placements.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
-import { compileMap } from "../app/src/map-compile.ts";
+import { compileMap, packageCompiledMap } from "../app/src/map-compile.ts";
+import { parseStoredMap, serializeStoredMap } from "../shared/src/index.ts";
 
-const [stage, rotationArgument] = process.argv.slice(2);
-assert.ok(stage, "Supply the staged asset gameplay directory");
+const zipRoundtrip = process.argv.includes("--zip-roundtrip");
+const published = process.argv.includes("--published");
+const arguments_ = process.argv
+  .slice(2)
+  .filter((value) => !["--zip-roundtrip", "--published"].includes(value));
+const [stage, rotationArgument] = published ? [undefined, ...arguments_] : arguments_;
+const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", import.meta.url))(
+  "fflate",
+);
+assert.ok(stage || published, "Supply a staged asset gameplay directory or --published");
 const rotations =
   rotationArgument === undefined ? [0, 37, 90, 180] : rotationArgument.split(",").map(Number);
 assert.ok(rotations.length && rotations.every(Number.isFinite));
@@ -20,7 +30,7 @@ const ids = [
 ];
 const saved = await readStoredMap("library/scenes/nottingham.rhlos-map.json", "library");
 const assets = await pinnedDescriptors("library", saved.assetSources, saved.sceneAssets);
-const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`));
+const edits = stage ? JSON.parse(await fs.readFile(`${stage}/edits.json`)) : [];
 for (const edit of edits) {
   assert.ok(ids.includes(edit.asset));
   assert.equal(
@@ -70,7 +80,9 @@ const save = (complete) =>
     JSON.stringify({
       complete,
       scope: "static-geometry-only-not-gameplay-parity",
-      gameplayStage: stage,
+      zip_roundtrip: zipRoundtrip,
+      rendered_pixels: false,
+      gameplayStage: stage ?? "published-library",
       rotations,
       results,
     }),
@@ -88,7 +100,35 @@ for (const rotation of rotations)
     );
     const pairs = compiled.descriptor.asset_geometry.jump_line_pairs ?? [];
     const file = `roof-slab-${rotation}-${height}.level.json`;
-    await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
+    let descriptor = compiled.descriptor;
+    if (zipRoundtrip) {
+      // Placeholder pixels test packaging and editor reopening, not rendered fidelity.
+      const archive = await packageCompiledMap(compiled, {
+        color: new Uint8Array(2500 * 2500 * 4),
+        depth: new Uint16Array(2500 * 2500),
+      });
+      const files = unzipSync(archive);
+      const read = (name) => {
+        assert.ok(files[name], `ZIP omitted ${name}`);
+        return JSON.parse(strFromU8(files[name]));
+      };
+      descriptor = read(`Data/Levels/${compiled.name}.level.json`);
+      assert.deepEqual(descriptor, JSON.parse(JSON.stringify(compiled.descriptor)));
+      const report = read("compile-report.json");
+      assert.deepEqual(report.warnings, compiled.warnings);
+      const reopened = parseStoredMap(read(report.editor_document), assets);
+      assert.deepEqual(serializeStoredMap(reopened, assets), serializeStoredMap(document, assets));
+      assert.deepEqual(
+        JSON.parse(
+          JSON.stringify(
+            compileMap(reopened, [0, 0, 2500, 2500], assets, { bestEffort: true }).descriptor,
+          ),
+        ),
+        descriptor,
+      );
+      await fs.writeFile(`${output}/${file}.zip`, archive);
+    }
+    await fs.writeFile(`${output}/${file}`, JSON.stringify(descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
     assert.equal(
       pairs.length,

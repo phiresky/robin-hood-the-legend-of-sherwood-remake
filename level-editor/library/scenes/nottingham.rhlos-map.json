@@ -391,7 +391,7 @@
       "model": "3d-assets/nottingham/nottingham-north-stone-house/model.glb",
       "model_sha256": "2c98374ffed78b104d15b19a1b1e0957fffe2c49a6a1a72ad0ef22ae9c1ef4ca",
       "descriptor": "3d-assets/nottingham/nottingham-north-stone-house/asset.json",
-      "descriptor_sha256": "fc13cae2a54b7c65693cd2b273a6cf7f3228eae5f1296b7563831f50a0075cfa",
+      "descriptor_sha256": "0e4816a9f58eaee412018ee7ca687d080c54a97f3a8030f3829a17d4af61c45e",
       "id": "nottingham-north-stone-house"
     },
     {
@@ -405,7 +405,7 @@
       "model": "3d-assets/nottingham/nottingham-north-street-roof-edge-slab/model.glb",
       "model_sha256": "9a6fef90c9ab4fb52d57b249bcecb6c4606d2ce8e1f9ccaecffe681493861031",
       "descriptor": "3d-assets/nottingham/nottingham-north-street-roof-edge-slab/asset.json",
-      "descriptor_sha256": "eb0495075ae48b9e8c0c8e46a515e2d00f70e7ae3cc3110f71ba26d2ae7fad17",
+      "descriptor_sha256": "63f22666702a7daf826b175e5b9a345b560dd2d83ac1f3529e78fcbbd4160d63",
       "id": "nottingham-north-street-roof-edge-slab"
     },
     {
@@ -608,7 +608,7 @@
       "model": "3d-assets/nottingham/nottingham-upper-green-house/model.glb",
       "model_sha256": "f03f7daa4c4a7fd8beddfa6adaca6cf24d810469149be42d7093709ae610a7f8",
       "descriptor": "3d-assets/nottingham/nottingham-upper-green-house/asset.json",
-      "descriptor_sha256": "40f29045317efc6a4b7b46ad7e0f7bd1f4077bafab4660a6b4b9708c3f401fcc",
+      "descriptor_sha256": "e7a35536efed48ef2cf85e3d95fe6c49b5f772d4f7908780110c4956657dbc8c",
       "id": "nottingham-upper-green-house"
     },
     {

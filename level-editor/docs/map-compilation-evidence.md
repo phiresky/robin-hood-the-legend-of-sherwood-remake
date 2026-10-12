@@ -4,6 +4,37 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published roof metadata and rendered ZIP round trip (2026-10-12)
+
+The slab, north stone house and upper green house definitions are published.
+`roof-jump-zone-planes-vyKK7C/publication/report.json` records `applied: true`,
+descriptor/model hash guards and Nottingham's updated scene pins. Models and
+placements are unchanged. The mesh review `roof-slab-mesh-review-K6b2dW` compares
+17 samples along each gameplay boundary edge with the pinned GLB triangles:
+the slab's maximum nearest-mesh distance is 0.741 map units (previously 0.401);
+the other two reviewed boundaries are unchanged. World/projected overlays were
+visually inspected. This boundary check is separate from texture/render fidelity.
+
+`check-roof-slab-placements.mjs --published --zip-roundtrip` produces eight
+placement ZIPs in `roof-slab-placements-JH06Eg`. All preserve the descriptor,
+warnings and editor document, reopen, and recompile identically. Their descriptors
+are byte-identical to the preceding native-validated rotation matrix. These
+eight packaging fixtures explicitly use placeholder pixels. Fresh full Nottingham
+`saved-map-exports-m0XSWH`, compiled without staged overrides, is byte-identical
+to the native-validated `saved-map-exports-t6ftGw` candidate.
+
+The separate browser fixture `published-roof-render-library-nPBNUL` uses the
+published models and complete gameplay definitions for two copied 90-degree
+assemblies. Its real 2500×2500 color/depth bake produces a 14,221,830-byte ZIP.
+The browser verifies lossless PNG packaging, pinned editor-document reopening,
+identical rebaked color/depth, gameplay, warnings and appearance data. The baked
+color image was inspected, and the ZIP's extracted descriptor loads natively.
+Unlike the isolated placement fixture, this export retains two additional jump
+pairs. `folded-supported-clicks-FBB5cZ` tests the relevant four complete click
+routes with those overlays intact; all pass, using hidden selection on return.
+This is browser-rendered export plus native movement validation, not an in-game
+rendered-scene or all-map parity certificate.
+
 ## Export-time folded floor preparation (2026-10-12)
 
 The diagnostic correction is now implemented in the compiler. Join orientation
