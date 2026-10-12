@@ -11,6 +11,15 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**Fresh cross-map checks (2026-10-12):** Derby passes native construction, 144
+ordinary route samples, 28 complete-sprite stair routes and all twenty
+posture-aware jump clicks. Leicester loads and passes 162 ordinary route samples,
+but only 140/230 offset jump-click probes pass. All ninety failures involve the
+great keep's internal connections. Thirty-two available interior-click probes
+pass; fourteen other directions have no conservative supported probe and remain
+unverified. These are traversal findings, not a new rendered ZIP certification.
+See [the fresh checks](map-compilation-evidence.md#fresh-derby-and-leicester-traversal-checks-2026-10-12).
+
 **York jump checks (2026-10-12):** the current full-map audit has 696 successful
 traversals, eleven occluded lower-click cases and thirteen failures out of 720.
 The remaining failures are lines 5, 57 and 65. All ten selected interior-click

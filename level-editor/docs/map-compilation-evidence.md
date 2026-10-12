@@ -202,7 +202,32 @@ subset `required-jump-postures-DNGfVT` passes all twenty assisted-ascent/upright
 descent cases, retaining physical geometry but isolating the helper overlays.
 The full hidden-click audit passes all five line-62 covered-roof cases; it also
 records eight failures on lines 7 (five) and 53 (three). These checks do not
-certify every overlay, placement or input mode. Full Derby re-export is next.
+certify every overlay, placement or input mode.
+
+### Fresh Derby and Leicester traversal checks (2026-10-12)
+
+Full Derby `saved-map-exports-ciuuxP` compiles in 4.42 seconds and passes native
+construction, 144 sampled ordinary routes, 28 complete-sprite stair routes using
+gate discovery, and all twenty posture-aware jump clicks. The latter uses the
+full exported jump overlay set. The ordinary upright-only sweep passes ten
+descents and rejects ten helper-required ascents; those rejections are expected,
+not repaired navigation failures. This refresh checks descriptors and traversal,
+not a new rendered ZIP.
+
+Fresh Leicester `saved-map-exports-SV09VK` compiles in 48.54 seconds and passes
+native construction and 162 sampled ordinary routes. Its wider jump-click sweep
+passes only 140/230 cases. All ninety failures are missing authorized starting
+or arrival positions on lines 4–21, belonging to the great keep's internal pairs
+5–13. No helper-required vertical pairs are present, so helper posture does not
+explain these failures.
+
+The conservative interior probe generator `interior-jump-clicks-pn5JE9` finds
+32 usable directed probes, all of which traverse successfully. It explicitly
+records fourteen unavailable directions (lines 4–17), including both endpoints
+of lines 14/15. Those missing probes are not passes; the generator exits with
+failure. This isolates the next investigation to the keep's narrow receiving
+and movement surfaces and their jump zones. It does not yet establish whether
+the defect is in asset metadata, compiler preparation or probe placement.
 
 `check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,
 ordered by distance to the takeoff edge. Each point must pass static corridor
