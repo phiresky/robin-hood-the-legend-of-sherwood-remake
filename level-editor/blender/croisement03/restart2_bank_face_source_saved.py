@@ -102,7 +102,7 @@ def main():
    prior_path=Path(sys.argv[sys.argv.index('--retained-projection')+1]).resolve();prior=json.loads(prior_path.read_text());missing={tuple(p)for p in prior['accepted_pixels']}-{tuple(p)for p in accepted};retained_proof={'path':str(prior_path),'sha256':sha(prior_path),'samples':len(prior['accepted_pixels']),'missing':sorted(missing)};assert not missing,('Previously assigned exact-source interiors lost',retained_proof)
   if extra_proof:
    previous=json.loads((B/'bank-convex-source-saved-v1/projection.json').read_text());assert {tuple(p)for p in previous['accepted_pixels']}<={tuple(p)for p in accepted},'Previously retained stone sample lost'
-  bpy.context.preferences.filepaths.save_version=0;bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'worker.blend'));assert (OUT/'worker.blend').stat().st_size<8*1024**2
+  bpy.context.preferences.filepaths.save_version=0;bpy.ops.wm.save_as_mainfile(filepath=str(OUT/'worker.blend'),compress=True);assert (OUT/'worker.blend').stat().st_size<8*1024**2
   bpy.ops.wm.open_mainfile(filepath=str(OUT/'worker.blend'));bpy.context.view_layer.update()
   for name,(verts,faces0)in geometry.items():
    obj=bpy.context.scene.objects[name];assert [list(obj.matrix_world@v.co)for v in obj.data.vertices]==verts;assert [list(p.vertices)for p in obj.data.polygons]==faces0
