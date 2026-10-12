@@ -145,6 +145,12 @@ clicks, 576 gate-search checks and prepared traversal/denial checks. Detailed
 revised mesh contact review and rendered archive checks remain pending for this
 candidate; audit duration is not a per-tick performance measurement.
 
+Additional `saved-map-exports-7Eod57` regressions pass all eight complete climb
+routes (1.33 seconds) and apply/reset of all eleven native controls (1.17 seconds).
+The control audit checks the exported geometry/state bindings; it does not replace
+the pending rendered appearance test. The omitted south-wall step remains a
+separate asset-contact issue and is not resolved by the plateau/drawbridge edits.
+
 Mesh review of the three revised plateau regions samples 21,039, 1,908 and 3,902
 points respectively. Many quantized boundary probes fall just outside a triangle,
 but their maximum horizontal gaps are 0.000572, 0.000265 and 0.000531 units;
