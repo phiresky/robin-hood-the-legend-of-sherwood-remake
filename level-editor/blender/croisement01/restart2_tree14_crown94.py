@@ -2,11 +2,12 @@
 import json
 import shutil
 import sys
+import math
 from pathlib import Path
 
 import bpy
 from PIL import Image
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT/'level-editor/refinement'), str(ROOT/'level-editor/refinement/blender'),
@@ -23,7 +24,7 @@ assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlin
                 if x.startswith('MemAvailable:')))*1024 > 6*1024**3
 base = ROOT/'level-editor/work/croisement01-refinement/restart2'
 wood = base/'tree14-wood-v13-projected/assets/croisement01-tree-14'
-out = base/'tree14-crown94-geometry-v1'
+out = base/'tree14-crown94-geometry-v2'
 assert not out.exists()
 out.mkdir()
 model = wood/'model.blend'
@@ -48,6 +49,39 @@ crown['source_node'] = 'foliage-tree14-crown94'
 crown['projection_component'] = 'crown'
 crown['ownership_status'] = 'PROVISIONAL mixed foliage and branch source, requires joint first-hit classification'
 report = foliage.refine_crown(crown,94,evidence)
+# Put the paired patches on one rounded envelope. Giving each small patch the
+# whole crown's depth makes elongated tubes instead of a coherent leaf volume.
+center=Vector((814.5,-412/foliage.SINE,(412-193)/foliage.COSINE))
+radii=Vector((185.,195.,185.))
+ray=foliage.RAY
+def surface(x,y,front):
+    plane=Vector((x,-412/foliage.SINE,(412-y)/foliage.COSINE))
+    delta=plane-center
+    aa=sum((ray[i]/radii[i])**2 for i in range(3))
+    bb=2*sum(delta[i]*ray[i]/radii[i]**2 for i in range(3))
+    cc=sum((delta[i]/radii[i])**2 for i in range(3))-1
+    discriminant=max(0.,bb*bb-4*aa*cc)
+    depth=(-bb+(1 if front else -1)*math.sqrt(discriminant))/(2*aa)
+    return plane+ray*depth
+cursor=0
+for lobe in evidence['lobes']:
+    x0,y0,x1,y1=lobe['bbox_source']
+    for front in (True,False):
+        for j in range(9):
+            for i in range(9):
+                crown.data.vertices[cursor].co=surface(x0+(x1-x0)*i/8,y0+(y1-y0)*j/8,front)
+                cursor+=1
+    assert not lobe.get('front_unknown')
+    for side in (-1,1):
+        for v in (0.,1.):
+            for u in (0.,1.):
+                x=(x0+x1)/2+side*.1;y=y0+(y1-y0)*v
+                crown.data.vertices[cursor].co=surface(x,y,bool(u))
+                cursor+=1
+assert cursor==len(crown.data.vertices)
+crown.data.update()
+report['after_geometry_sha256']=foliage.geometry_hash(crown)
+report['envelope_radii']=list(radii)
 assert protected == {o.name: foliage.geometry_hash(o) for o in wood_objects}
 points = [crown.matrix_world@v.co for v in crown.data.vertices]
 extent = [max(p[i] for p in points)-min(p[i] for p in points) for i in range(3)]
