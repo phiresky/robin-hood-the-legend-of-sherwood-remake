@@ -23,6 +23,20 @@ The independent hidden-click sweep on the preceding descriptor passes 11 of
 67 selected probes; its 56 failures remain unresolved. Hidden selection alone
 does not establish the missing York traversal coverage.
 
+`review-jump-edge-mesh.mjs york york-east-bridge-street-central-timber-house
+jump-pair-62-side-0` records pinned asset-local mesh evidence in
+`jump-edge-mesh-review-ce2zJQ`. Nearest-triangle distance is only 0.019 units,
+but that triangle belongs to the vertical side. The nonvertical mesh at the
+edge's XY is `building-658`, height 213.0523, between 1.0533 and 2.0533 units
+above the edge. Nearest-mesh distance alone therefore cannot establish support.
+
+Diagnostic `york-edge-height-diagnostic-4dbuarkz` changes only the compiled
+pair-32 first edge to roof height with a one-unit horizontal extent. Failures
+drop from 28 to 26 with no passing-case regressions; line 65's middle and
+three-quarter probes now pass. This is not an asset publication or proof of
+rotated placement. Its remaining end probe also requires reviewing the audit's
+use of the source-edge offset on a destination edge of a different length.
+
 ## Published roof metadata and rendered ZIP round trip (2026-10-12)
 
 The slab, north stone house and upper green house definitions are published.
