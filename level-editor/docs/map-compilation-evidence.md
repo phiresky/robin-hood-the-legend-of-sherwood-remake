@@ -21,6 +21,14 @@ loader. The corrected loader alone passes 60/80 on the old
 all twenty receiver-loss failures are resolved. Ten descending click-overlay
 misses remain at 90 degrees, across both elevations; these are still failures.
 The current combined report is in `asset-jump-exports-ghZsl4`.
+Directly dispatched assisted ascents and upright descents also pass all 80
+cases (`actor-jump-vertical-report.json` in that directory). That verifies the
+connections themselves, not mouse selection. For each of the five failed
+90-degree click positions, descriptor inspection finds both the ground jump
+polygon and another roof face covering the screen coordinate. The roof belongs
+to sector 2, while the launch roof belongs to sector 3, so the existing
+source-platform-only occlusion check does not classify it. These clicks remain
+reported as failures pending broader click-target verification.
 
 All 159 compiler tests, 91 level-data tests, 203 movement tests and 72 native
 map integration tests pass. External-data tests remain ignored in the ordinary
