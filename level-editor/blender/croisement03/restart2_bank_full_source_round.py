@@ -24,7 +24,7 @@ def main():
         for module in (projection.guard, native.guard, contact):
             originals.append((module,module.release))
             module.release=lambda: False
-        sys.argv=['bank-full-source-round','--','--input',str(B/'bank-coupled-left-saved-v1'),'--out',str(OUT),'--extra-proposal',str(B/'bank-left-exposed-stone-proposal-v1/proposal.json'),'--retained-projection',str(B/'bank-main-masses-source-v1/projection.json'),'--unresolved-receivers',str(B/'bank53-source-retention-v1/receipt.json'),'--full-source-proposal',str(B/'bank-full-visible-stone-audit-v3')]
+        sys.argv=['bank-full-source-round','--','--input',str(B/'bank-coupled-left-saved-v1'),'--out',str(OUT),'--extra-proposal',str(B/'bank-left-exposed-stone-proposal-v1/proposal.json'),'--retained-projection',str(B/'bank-main-masses-source-v1/projection.json'),'--unresolved-receivers',str(B/'bank53-source-retention-v1/receipt.json'),'--full-source-proposal',str(B/'bank-full-visible-stone-audit-v3'),'--residual-source-selection',str(B/'bank-residual-approved-selection-v1')]
         projection.main()
         sys.argv=['bank-full-source-round','--','--folder',str(OUT),'--exact-coupled-traces']
         review.main()
