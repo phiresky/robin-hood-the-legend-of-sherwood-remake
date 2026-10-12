@@ -1240,7 +1240,7 @@ function compileAssetGameplayAttempt(
     surfaces.splice(0, surfaces.length, ...placed, ...replacement);
     // Explicit exterior sockets can attach directly to the ground beside them.
     // Ordinary door boundaries remain separate; no locked doorway is bypassed.
-    for (const join of assembleNavigationJoins(navigationJoins).unmatched) {
+    for (const join of assembleNavigationJoins(navigationJoins, options).unmatched) {
       const [a, b] = join.edge,
         dx = b[0] - a[0],
         dy = b[1] - b[2] - (a[1] - a[2]);
@@ -1301,7 +1301,8 @@ function compileAssetGameplayAttempt(
     if (!(error instanceof UnavailableLiftJoin) || !options.bestEffort) throw error;
     throw new UnavailableLiftPlacement(error.segments[0]!, error.message, false, error.segments);
   }
-  const assembledNavigation = assembleNavigationJoins(navigationJoins);
+  const assembledNavigation = assembleNavigationJoins(navigationJoins, options);
+  warnings.push(...assembledNavigation.warnings);
   const postureFlags = new Map<string, Set<boolean>>();
   for (const surface of surfaces) {
     if (!surface.navigationRegion || surface.lift) continue;

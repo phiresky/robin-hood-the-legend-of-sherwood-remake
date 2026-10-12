@@ -34,8 +34,8 @@ compiler/export tests passed at that stage. The subsequent copied-roof failure
 is repaired and verified above; full-map jump failures remain under review.
 The revised roof-slab candidate fixes its ten full-map samples. The receiving
 seam export fix plus asset-local sloped click zones pass all 120 moved/copy
-checks at 0/37/180 degrees. The 90-degree join remains unresolved; bypassing
-its rejection diagnostically still fails all forty traversals. It remains
+checks at 0/37/180 degrees. The 90-degree join remains unresolved: best-effort
+export now warns and preserves the map, but all forty traversals still fail. It remains
 unpublished; see the [candidate evidence](map-compilation-evidence.md#unpublished-roof-slab-connection-candidate-2026-10-12).
 See [partition verification](map-compilation-evidence.md#compiled-jump-receiving-face-partitions-2026-10-12).
 

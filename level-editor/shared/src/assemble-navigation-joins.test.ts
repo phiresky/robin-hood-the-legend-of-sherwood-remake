@@ -72,6 +72,33 @@ test("navigation sockets reject ambiguous, overlapping and same-owner connection
   assert.equal(assembleNavigationJoins([a, raised]).unmatched.length, 2);
 });
 
+test("best effort rejects only ambiguous sockets and retains independent floors and other joins", () => {
+  const edge: [Vec3, Vec3] = [
+    [10, 0, 5],
+    [10, 100, 5],
+  ];
+  const a: PlacedNavigationJoin = { owner: "a", region: "a/roof", edge };
+  const b: PlacedNavigationJoin = { owner: "b", region: "b/roof", edge };
+  const c: PlacedNavigationJoin = {
+    owner: "c",
+    region: "c/roof",
+    edge: [
+      [20, 0, 5],
+      [20, 100, 5],
+    ],
+  };
+  const d: PlacedNavigationJoin = { owner: "d", region: "d/roof", edge: [c.edge[1], c.edge[0]] };
+  assert.throws(() => assembleNavigationJoins([a, b, c, d]), /overlapping join/);
+  const result = assembleNavigationJoins([a, b, c, d], { bestEffort: true });
+  assert.equal(result.connections.length, 1);
+  assert.equal(result.identities.get(a.region), a.region);
+  assert.equal(result.identities.get(b.region), b.region);
+  assert.equal(result.identities.get(c.region), result.identities.get(d.region));
+  assert.equal(result.unmatched.length, 0, "rejected sockets must not reconnect to ground");
+  assert.equal(result.warnings.length, 1);
+  assert.match(result.warnings[0]!, /connection omitted/);
+});
+
 test("projected seams require both assets to explicitly allow their height step", () => {
   const a: PlacedNavigationJoin = {
     owner: "platform",

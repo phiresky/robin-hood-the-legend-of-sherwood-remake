@@ -4,6 +4,23 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Unavailable joins no longer abort best-effort export (2026-10-12)
+
+Best-effort navigation assembly now rejects ambiguous/overlapping sockets with
+a warning while preserving floor geometry and unrelated valid connections.
+Rejected sockets are excluded from automatic ground attachment; their region
+identities remain available. Strict compilation still rejects the invalid join.
+The assembly retries after removing conflicting sockets so an earlier valid
+merge cannot leak from an unsuccessful attempt. No runtime code changed.
+
+The formerly aborting 90-degree roof assembly now exports both elevations
+(`roof-slab-placements-JdiO1E`), retaining both copied jump pairs and reporting
+the unavailable slab/roof connection for each copy. Both descriptors construct
+natively. All forty native click traversals still fail, so this is export
+availability, not completion of the folded roof's gameplay connection. The
+staged asset repair remains unpublished. All 244 join/compiler/export tests,
+app typecheck and targeted lint pass.
+
 ## Roof jump zones follow their receiving planes (2026-10-12)
 
 The remaining 37/180-degree click failures came from asset click-zone vertices

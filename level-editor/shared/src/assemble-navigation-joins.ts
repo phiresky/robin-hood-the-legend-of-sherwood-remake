@@ -51,7 +51,37 @@ export function orientNavigationJoin(polygon: Vec3[], edge: NavigationJoin): Nav
 
 /** Exact sockets retain their endpoint contract. Opted-in sockets may share a
  * shorter span, with height checked along the complete overlap. */
-export function assembleNavigationJoins(joins: PlacedNavigationJoin[]) {
+export function assembleNavigationJoins(
+  joins: PlacedNavigationJoin[],
+  options: { bestEffort?: boolean } = {},
+) {
+  let available = joins;
+  const warnings: string[] = [];
+  for (;;) {
+    try {
+      const result = assembleAvailableNavigationJoins(available);
+      // Rejected sockets do not erase their floors or become ground sockets.
+      for (const join of joins)
+        if (!result.identities.has(join.region)) result.identities.set(join.region, join.region);
+      return { ...result, warnings };
+    } catch (error) {
+      if (!options.bestEffort || !(error instanceof UnavailableNavigationConnection)) throw error;
+      const rejected = new Set(error.joins);
+      available = available.filter((join) => !rejected.has(join));
+      warnings.push(`${error.message}; connection omitted, floor geometry is retained.`);
+    }
+  }
+}
+
+class UnavailableNavigationConnection extends Error {
+  readonly joins: PlacedNavigationJoin[];
+  constructor(region: string, joins: PlacedNavigationJoin[]) {
+    super(`Navigation region ${region}: ambiguous or overlapping join`);
+    this.joins = joins;
+  }
+}
+
+function assembleAvailableNavigationJoins(joins: PlacedNavigationJoin[]) {
   const identities = new Map(joins.map((join) => [join.region, join.region]));
   const root = (id: string): string => {
     const parent = identities.get(id)!;
@@ -106,7 +136,10 @@ export function assembleNavigationJoins(joins: PlacedNavigationJoin[]) {
           .some((b) => Math.min(a.end, b.end) - Math.max(a.start, b.start) > 1e-4),
       )
     )
-      throw new Error(`Navigation region ${join.region}: ambiguous or overlapping join`);
+      throw new UnavailableNavigationConnection(join.region, [
+        join,
+        ...matches.map(({ other }) => other),
+      ]);
     if (!matches.length) {
       unmatched.push(join);
       continue;
