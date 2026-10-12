@@ -16,6 +16,7 @@ def main():
  mapping=dict(version=1,path_mappings=[dict(old_prefix=old,new_prefix=new),dict(old_prefix=str(ROOT/old),new_prefix=str(ROOT/new))],historical_files=[],operational_files=[])
  r=RelocationMap(mapping,ROOT);records={};models=[]
  candidates=[BASE/'approved03-04-textures-v1/generation-batch.json',BASE/'approved03-04-textures-v1/prepared-batch.json',BASE/'actual-canopy05-compositions-v1/report.json',BASE/'actual-canopy05-compositions-v1/source-route-correction-v1.json']
+ candidates += [BASE/n for n in ['qualification.json','profile01-native-loop-composition-v1/report.json','profile02-native-loop-composition-v1/report.json']]
  for state in STATES:
   exp=BASE/'approved03-04-textures-v1/experiments-v2'/state/'experiment'
   candidates += [exp/n for n in ['views.json','approval.json','preparation.json','auxiliary-references.json',GEN+'/generation-review.json',GEN+'/generation.json'] if (exp/n).is_file()]

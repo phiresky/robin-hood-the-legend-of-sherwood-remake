@@ -4,14 +4,15 @@ from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
 HERE=Path(__file__).resolve().parent;sys.path.insert(0,str(HERE));import qualify as q
+from operational_records import read_record
 ROOT=q.ROOT;DEST=q.OUT/'actual-canopy05-compositions-v1'
 SAMPLES=ROOT/'.worktrees/native-editor-delivery/work/canopy05-domain-v1/sampler-packet-v2/browser-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
     assert not DEST.exists();DEST.mkdir()
     manifest=json.loads((SAMPLES/'manifest.json').read_text());assert manifest['owner']==dict(kind='map-animation',index=5)
-    source=json.loads((q.OUT/'profile02-native-loop-composition-v1/report.json').read_text())
-    qualification=json.loads((q.OUT/'qualification.json').read_text());frames=manifest['rows'][0]['frames'];assert len(frames)==len(source['loop_frames'])==14
+    source=read_record(q.OUT/'profile02-native-loop-composition-v1/report.json')
+    qualification=read_record(q.OUT/'qualification.json');frames=manifest['rows'][0]['frames'];assert len(frames)==len(source['loop_frames'])==14
     pins={str(SAMPLES/'manifest.json'):sha(SAMPLES/'manifest.json')};physical=[]
     for f in frames:
         p=SAMPLES/f['color']['path'];assert sha(p)==f['color']['sha256'];pins[str(p)]=sha(p)
@@ -20,7 +21,7 @@ def main():
     all_records=[]
     for n in [1,2]:
         row=qualification['rows'][n-1]
-        crop=json.loads((q.OUT/'profile01-native-loop-composition-v1/report.json').read_text())['crop'] if n==1 else [411,0,641,136]
+        crop=read_record(q.OUT/'profile01-native-loop-composition-v1/report.json')['crop'] if n==1 else [411,0,641,136]
         w,h=crop[2]-crop[0],crop[3]-crop[1];bg=Image.open(ROOT/qualification['background']['path']).convert('RGBA').crop(crop)
         native_layers=[];physical_layers=[]
         for nf,pf in zip(source['loop_frames'],physical):
