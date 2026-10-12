@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
 from scipy.optimize import minimize
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement02-refinement';BOX=(130,940,198,1020);SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement02';BOX=(130,940,198,1020);SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))
 
 def construct(parameters,fit):
  points=np.asarray(fit['vertices']).copy();faces=[tuple(f) for f in fit['faces']]

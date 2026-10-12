@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement02-refinement';dest=OUT/'restart5-initial-nets/source';dest.mkdir(parents=True,exist_ok=True)
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement02';dest=OUT/'restart5-initial-nets/source';dest.mkdir(parents=True,exist_ok=True)
 records=[]
 for key,anchor,offset,ground_y,rope_x in [('00',[1334,1081],[-45,-143],146,80),('01',[1641,629],[-68,-170],176,122)]:
  path=OUT/f'state-target-evidence/profiles/Trapcr02-{key}/action-0-direction-0-frame-000.png';rgba=np.array(Image.open(path).convert('RGBA'));h,w=rgba.shape[:2];y,x=np.indices((h,w));alpha=rgba[:,:,3]>0

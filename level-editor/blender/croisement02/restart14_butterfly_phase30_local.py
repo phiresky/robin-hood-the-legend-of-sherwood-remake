@@ -7,7 +7,7 @@ from scipy.optimize import differential_evolution
 from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
 from matplotlib.path import Path as Poly
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies';O=B/'phase30-local-cpu-v1';O.mkdir(exist_ok=True)
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement02/restart14-butterflies';O=B/'phase30-local-cpu-v1';O.mkdir(exist_ok=True)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();fp=B/'rig-joint-trial-v1/fit.json';d=json.loads(fp.read_text());row=d['poses'][30];p0=np.array(row['parameters']);wing=np.array(d['wing_outline']);ti=np.argmin(wing[:,1]);body=np.array([[.36*math.sin(a)*math.cos(t),4.5*math.cos(a),.55*math.sin(a)*math.sin(t)] for a in np.linspace(0,math.pi,13) for t in np.linspace(0,math.tau,25)[:-1]])
 im=Image.open(row['source']['source']).convert('RGBA');rgba=np.array(im);mask=rgba[:,:,3]>0;ys,xs=np.nonzero(mask);center=np.array([xs.mean()+.5,ys.mean()+.5]);gy,gx=np.mgrid[-4:im.height+4,-4:im.width+4];q=np.c_[gx.ravel()+.5,gy.ravel()+.5];target=np.pad(mask,4).ravel();neighbors=[np.array(d['poses'][i]['parameters']) for i in [29,31]]
 def evaluate(p,swap=False):

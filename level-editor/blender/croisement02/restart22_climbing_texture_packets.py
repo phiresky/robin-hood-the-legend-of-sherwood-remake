@@ -6,7 +6,7 @@ from PIL import Image
 HERE=Path(__file__).resolve().parent;ROOT=HERE.parents[2]
 sys.path.insert(0,str(HERE.parents[1]/'refinement'))
 from prepare_texture_packet import prepare
-BASE=ROOT/'level-editor/work/croisement02-refinement';SOURCE=BASE/'restart14-hidden-archer/climbing-v21-edge';INPUT=BASE/'restart14-hidden-archer/climbing-texture-inputs-v1';DEST=BASE/'restart14-hidden-archer/climbing-texture-experiments-v1'
+BASE=ROOT/'level-editor/work/active/croisement02';SOURCE=BASE/'restart14-hidden-archer/climbing-v21-edge';INPUT=BASE/'restart14-hidden-archer/climbing-texture-inputs-v1';DEST=BASE/'restart14-hidden-archer/climbing-texture-experiments-v1'
 APPROVAL=BASE/'restart3-review-batches/next-climbing-shed-v2/user-approval.json'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')

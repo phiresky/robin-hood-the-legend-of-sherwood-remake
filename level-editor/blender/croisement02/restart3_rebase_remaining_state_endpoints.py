@@ -1,6 +1,6 @@
 from pathlib import Path
 import hashlib,json,struct
-r=Path('level-editor/work/croisement02-refinement/restart2-state');out=r/'remaining-local-origins-v1';sha=lambda b:hashlib.sha256(b).hexdigest();manifests={n:json.loads((r/n/'manifest.json').read_text())for n in ['approved-physical-endpoint-exports-v1','approved-physical-endpoint-exports-v2']};records=[]
+r=Path('level-editor/work/active/croisement02/restart2-state');out=r/'remaining-local-origins-v1';sha=lambda b:hashlib.sha256(b).hexdigest();manifests={n:json.loads((r/n/'manifest.json').read_text())for n in ['approved-physical-endpoint-exports-v1','approved-physical-endpoint-exports-v2']};records=[]
 for name,m in manifests.items():
  for row in m['records']:
   if name.endswith('v1')and row['id']!='croisement02-net-piege01-occupied-final-0':continue

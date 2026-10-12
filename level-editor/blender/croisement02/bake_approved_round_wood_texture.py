@@ -15,7 +15,7 @@ from render_multiview_asset import render
 from refinement_review import _tile
 from project_reviewed_texture import _read
 read=lambda p:json.loads(p.read_text());sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
-exp=ROOT/f'level-editor/work/croisement02-refinement/approved-round-wood-textures-oct11-v1/tree{number}/experiment';out=exp/'original-atlas-bake-v2';meta=read(exp/'views.json');source=exp/'approved-model.blend';gen=exp/'generation-short-no-mask-with-lighting-openrouter-with-auxiliary/generated-preserved.png';maskpath=exp/'mask.png'
+exp=ROOT/f'level-editor/work/active/croisement02/approved-round-wood-textures-oct11-v1/tree{number}/experiment';out=exp/'original-atlas-bake-v2';meta=read(exp/'views.json');source=exp/'approved-model.blend';gen=exp/'generation-short-no-mask-with-lighting-openrouter-with-auxiliary/generated-preserved.png';maskpath=exp/'mask.png'
 assert sha(source)=={32:'3c34560c616fb4d6802ff517aa2fc3ccd5fbb8b0abbce162e4f6481558c8db1f',38:'f4ddf84fe18ca6933301066258bc5e733f6d7ebe4737fa8434b5e6d4c215358a'}[number]
 assert shutil.disk_usage(ROOT).free>10*1024**3
 protected=np.array(Image.open(maskpath).convert('RGBA'))[:,:,3]>0

@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from scipy.optimize import differential_evolution
-r=Path(__file__).resolve().parents[2]/'work/croisement02-refinement';a=np.array(Image.open(r/'state-target-evidence/profiles/chariot03-10/action-160-direction-0-frame-099.png'));yy,xx=np.mgrid[100:135,99:135];x=xx+.5;y=yy+.5;src=a[100:135,99:135];truth=src[:,:,3]>0;bright=src[:,:,:3].max(axis=2)>65
+r=Path(__file__).resolve().parents[2]/'work/active/croisement02';a=np.array(Image.open(r/'state-target-evidence/profiles/chariot03-10/action-160-direction-0-frame-099.png'));yy,xx=np.mgrid[100:135,99:135];x=xx+.5;y=yy+.5;src=a[100:135,99:135];truth=src[:,:,3]>0;bright=src[:,:,:3].max(axis=2)>65
 # Strong evidence: transparent spoke holes, opaque warm timber. Very dark outer
 # pixels may be cast shadow or timber and contribute only weakly.
 weight=np.where(truth,np.where(bright,1.0,.15),1.5);weight[(yy<107)&(xx<121)]=0;weight[(xx<104)&(yy>116)]=.05

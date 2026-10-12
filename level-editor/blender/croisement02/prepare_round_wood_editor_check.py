@@ -2,16 +2,16 @@
 from pathlib import Path
 import hashlib,json,shutil
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1'
+BASE=ROOT/'level-editor/work/active/croisement02/approved-round-wood-integration-oct11-v1'
 STAGE=BASE/'publication/stage-v2'
 OUT=BASE/'editor-check-v2'
-TEMPLATE=ROOT/'level-editor/work/croisement01-refinement/restart2/tree02-browser-private-v2'
+TEMPLATE=ROOT/'level-editor/work/active/croisement01/restart2/tree02-browser-private-v2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def dump(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main():
  OUT.mkdir(exist_ok=False)
  old=str(TEMPLATE.relative_to(ROOT));new=str(OUT.relative_to(ROOT))
- run=(TEMPLATE/'run.mjs').read_text().replace(old,new).replace('level-editor/work/croisement01-refinement/restart2/tree02-publication-plan-v1/browser-private-library-v2',str((STAGE/'library').relative_to(ROOT))).replace("==='croisement01'","==='croisement02'").replace('level-editor/work/croisement01-refinement/restart2/tree02-browser-private-v1/reload-check.js',new+'/reload-check.js')
+ run=(TEMPLATE/'run.mjs').read_text().replace(old,new).replace('level-editor/work/active/croisement01/restart2/tree02-publication-plan-v1/browser-private-library-v2',str((STAGE/'library').relative_to(ROOT))).replace("==='croisement01'","==='croisement02'").replace('level-editor/work/active/croisement01/restart2/tree02-browser-private-v1/reload-check.js',new+'/reload-check.js')
  start=run.index(' const bytes=await readFile(authority.index.path)');end=run.index('\n}',start)
  run=run[:start]+''' const bytes=await readFile(authority.index.path),hash=createHash('sha256').update(bytes).digest('hex');
  if(hash!==authority.index.initial_sha256)throw Error('Frozen private catalog drift');

@@ -1,7 +1,7 @@
 """Independently audit frozen staged publication against live bytes without mutations."""
 from pathlib import Path
 import json,hashlib,mmap,datetime
-R=Path.cwd();L=R/'level-editor/library';B=R/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1';S=B/'publication/stage-v3-current';O=B/'prepublication-audit-oct12-v1'
+R=Path.cwd();L=R/'level-editor/library';B=R/'level-editor/work/active/croisement02/approved-round-wood-integration-oct11-v1';S=B/'publication/stage-v3-current';O=B/'prepublication-audit-oct12-v1'
 def sha(p):
  if not p.exists():return None
  h=hashlib.sha256()

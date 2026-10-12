@@ -9,7 +9,7 @@ from render_slots import acquire,release
 from refinement_workspace import _geometry
 from tree_geometry import SIN,COS
 from restart14_tree42_dense_prototype import sample_field
-BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation';DEST=BASE/'tree42-motion-v5';MIB=2**20;FLOOR=10*2**30;CAP=256*MIB;MODEL_CAP=80*MIB;sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+BASE=ROOT/'level-editor/work/active/croisement02/restart14-canopy-animation';DEST=BASE/'tree42-motion-v5';MIB=2**20;FLOOR=10*2**30;CAP=256*MIB;MODEL_CAP=80*MIB;sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def usage():return sum(p.stat().st_size for p in DEST.rglob('*')if p.is_file())+sum(p.stat().st_size for p in BASE.glob('tree42-v5-*.log'))
 def guard(expected=4*MIB):
  free=shutil.disk_usage(BASE).free;used=usage();assert free-expected>=FLOOR,('Bounded trial free-space floor',free,expected);assert used+expected<=CAP,('Bounded trial output cap',used,expected)

@@ -3,7 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 
-OUT = Path(__file__).resolve().parents[2]/'work/croisement02-refinement'
+OUT = Path(__file__).resolve().parents[2]/'work/active/croisement02'
 ROOT = OUT/'restart9-hole-endpoints'
 
 

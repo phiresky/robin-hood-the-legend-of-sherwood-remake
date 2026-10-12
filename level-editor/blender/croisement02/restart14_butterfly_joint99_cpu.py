@@ -13,7 +13,7 @@ from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
 from matplotlib.path import Path as PolygonPath
 from restart14_butterfly_landmark_fit import LANDMARKS
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies';OUT=BASE/'joint99-cpu-v1'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-butterflies';OUT=BASE/'joint99-cpu-v1'
 ANCHORS={**LANDMARKS,
 0:{'tips':[[1.5,2.],[6.5,1.]],'center':[4.5,5.5],'axis':[0,1]},
 2:{'tips':[[1.5,2.5],[10.5,1.5]],'center':[6.5,5.5],'axis':[0,1]},

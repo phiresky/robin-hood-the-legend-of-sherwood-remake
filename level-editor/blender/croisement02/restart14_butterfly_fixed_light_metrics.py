@@ -3,7 +3,7 @@ from pathlib import Path
 import json,hashlib
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies';O=B/'fixed-light-trial-v1';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement02/restart14-butterflies';O=B/'fixed-light-trial-v1';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def linear(a):
  a=a.astype(float)/255;return np.where(a<=.04045,a/12.92,((a+.055)/1.055)**2.4)
 def measure(folder):

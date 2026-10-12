@@ -2,7 +2,7 @@
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
-const base=resolve('level-editor/work/croisement02-refinement/restart2-state');
+const base=resolve('level-editor/work/active/croisement02/restart2-state');
 const stage=join(base,'remaining-seven-package-v2');
 const json=async p=>JSON.parse(await readFile(p,'utf8'));
 const sha=b=>createHash('sha256').update(b).digest('hex');

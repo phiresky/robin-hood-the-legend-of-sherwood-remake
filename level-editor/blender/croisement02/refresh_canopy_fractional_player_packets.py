@@ -1,7 +1,7 @@
 """Freeze fresh player bundles without replacing any candidate or older evidence."""
 from pathlib import Path
 import hashlib,json,shutil,subprocess,argparse
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+R=Path.cwd();B=R/'level-editor/work/active/croisement02';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 parser=argparse.ArgumentParser();parser.add_argument('--player-commit',required=True);args=parser.parse_args();player=R/'level-editor/app/src/state-appearance-player.ts';expected=subprocess.check_output(['git','show',args.player_commit+':level-editor/app/src/state-appearance-player.ts']);assert hashlib.sha256(expected).hexdigest()==sha(player),'Player changed after reviewed fix'
 def pins_in(value):
  if isinstance(value,dict):

@@ -10,7 +10,7 @@ def sha(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-base = Path('level-editor/work/croisement02-refinement')
+base = Path('level-editor/work/active/croisement02')
 stage = base / 'restart2-textures/batch10-private-level3d-exact-v2'
 pins_path = stage / 'placement-evidence/static-placement-pins.json'
 pins = json.loads(pins_path.read_text())

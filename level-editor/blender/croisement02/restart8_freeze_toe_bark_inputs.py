@@ -1,7 +1,7 @@
 """Freeze exact approved-model bark input scope for grouped review."""
 from pathlib import Path
 import json,hashlib
-O=Path.cwd()/'level-editor/work/croisement02-refinement';B=O/'restart8-toe-bark-fill-v1';h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text());items=[];cards=[]
+O=Path.cwd()/'level-editor/work/active/croisement02';B=O/'restart8-toe-bark-fill-v1';h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text());items=[];cards=[]
 for n in (19,25):
  D=B/f'tree-{n}-input-v1';proof=read(D/'input-review.json');model=Path(proof['model']);assert h(model)==proof['model_sha256'];refs=read(D/'auxiliary-references.json')['references'];assert len(refs)==2
  root=dict(status='PASS concrete texture input scope for grouped V16',authority='Root personally reviewed both native-first input sheets and provenance self-review',model_sha256=proof['model_sha256'],input_sha256=h(D/'input.png'),scope='Exact approved geometry unchanged; prior inferred material replacement inside gray input only. No generated appearance approval.',user_input_approval='pending grouped V16')

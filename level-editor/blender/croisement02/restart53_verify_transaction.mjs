@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {parseStoredMap} from '../../shared/src/stored-level.ts';
 import {loadMissionStatePreview,parseMissionStateCatalog} from '../../app/src/mission-state-catalog.ts';
 import {verifyStateApertureReceivers} from '../../app/src/state-aperture-loader.ts';
-const base=resolve('level-editor/work/croisement02-refinement/restart53-hole-mound-transaction-v1'),lib=resolve('level-editor/library'),stage=join(base,'library');
+const base=resolve('level-editor/work/active/croisement02/restart53-hole-mound-transaction-v1'),lib=resolve('level-editor/library'),stage=join(base,'library');
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const transaction=JSON.parse(await readFile(join(base,'transaction.json')));
 async function checked(p){const raw=await readFile(p.path);assert.equal(sha(raw),p.sha256,p.path);return raw}

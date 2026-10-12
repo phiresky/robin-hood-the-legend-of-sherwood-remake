@@ -8,7 +8,7 @@ from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
 from scipy.ndimage import distance_transform_edt
 from matplotlib.path import Path as PolygonPath
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies';OUT=BASE/'rig-v1';OUT.mkdir(exist_ok=True)
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-butterflies';OUT=BASE/'rig-v1';OUT.mkdir(exist_ok=True)
 source=json.loads((BASE/'source-audit-v1/report.json').read_text())['sequences'][0]
 # One fixed outline per side: forewing and hindwing lobes are intentionally modest.
 outline=np.array([[0,-2.2],[1.0,-3.5],[4.7,-5.6],[6.1,-5.8],[6.5,-3.2],[5.6,-.2],[3.7,1.2],[4.2,3.6],[2.0,4.8],[.3,2.4],[0,1.3]],float)

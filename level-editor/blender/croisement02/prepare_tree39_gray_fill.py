@@ -9,7 +9,7 @@ from refinement_review import render_review,_tile
 from render_multiview_asset import render
 from PIL import Image
 from array import array
-B=R/'level-editor/work/croisement02-refinement';OUT=B/'tree39-gray-fill-input-oct12-v2';A='croisement02-tree-39';LIVE=R/'level-editor/library/3d-assets/croisement02'/A/'model.glb'
+B=R/'level-editor/work/active/croisement02';OUT=B/'tree39-gray-fill-input-oct12-v2';A='croisement02-tree-39';LIVE=R/'level-editor/library/3d-assets/croisement02'/A/'model.glb'
 EXPECTED='58751ea1cf7068043e608e694a780f491a8473e1c6923a2b318a7b55b7d53b51';PIVOT=(1699,-1110,0);GRAY_COUNT=3;CLOSE=B/'restart6-five-bark-fill-v1/tree-39-fill-v1/shader-restored-v3/close-views.json'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def dump(p,x):p.write_text(json.dumps(x,indent=2)+'\n')

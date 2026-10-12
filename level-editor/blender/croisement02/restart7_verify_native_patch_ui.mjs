@@ -5,7 +5,7 @@ import {spawn} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {chromeEndpoint,socketOpen} from '../../app/tests/cdp.mjs';
 import {stateProofCommand} from './restart6_verify_remaining_state_editor.mjs';
-const root=resolve('.'),base=join(root,'level-editor/work/croisement02-refinement/restart7-source-patch-delivery'),out=join(base,'ui-proof-v3');await mkdir(out,{recursive:true});
+const root=resolve('.'),base=join(root,'level-editor/work/active/croisement02/restart7-source-patch-delivery'),out=join(base,'ui-proof-v3');await mkdir(out,{recursive:true});
 const {createServer}=await import('../../app/node_modules/vite/dist/node/index.js');
 const {default:solid}=await import('../../app/node_modules/@solidjs/vite-plugin/dist/esm/index.mjs');
 const source=await readFile(join(root,'level-editor/blender/croisement02/restart7_native_patch_ui_fixture.tsx'));

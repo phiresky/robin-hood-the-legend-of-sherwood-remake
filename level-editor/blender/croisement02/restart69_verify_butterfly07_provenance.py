@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from restart64_butterfly07_source_ownership import ROOT,prepare,sha,metrics,WING
-BASE=ROOT/'level-editor/work/croisement02-refinement'
+BASE=ROOT/'level-editor/work/active/croisement02'
 FIT=BASE/'restart66-butterfly07-global-bright-fit-v1/fit.json';ATLAS=BASE/'restart67-butterfly07-wing-observations-v1'
 def main():
  fit=json.loads(FIT.read_text());parent=json.loads((BASE/'restart14-butterflies/butterfly07-v3-baseline-contacts-v1/joined-fit.json').read_text());assert fit['fixed_geometry']==parent['fixed_geometry'];assert len(fit['rows'])==99

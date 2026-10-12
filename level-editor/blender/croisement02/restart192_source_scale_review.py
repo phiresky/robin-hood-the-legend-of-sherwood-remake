@@ -6,7 +6,7 @@ from PIL import Image,ImageDraw
 from scipy.spatial import ConvexHull
 from matplotlib.path import Path as Polygon
 from scipy.spatial.transform import Rotation
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement02-refinement';parser=argparse.ArgumentParser();parser.add_argument('--candidate',type=Path,default=B/'restart169-butterfly03-rounded-candidate-v1');parser.add_argument('--output',type=Path,default=B/'restart192-butterfly03-source-scale-v1');args=parser.parse_args();P=args.candidate;O=args.output;O.mkdir(exist_ok=False)
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement02';parser=argparse.ArgumentParser();parser.add_argument('--candidate',type=Path,default=B/'restart169-butterfly03-rounded-candidate-v1');parser.add_argument('--output',type=Path,default=B/'restart192-butterfly03-source-scale-v1');args=parser.parse_args();P=args.candidate;O=args.output;O.mkdir(exist_ok=False)
 f=json.loads((P/'fit.json').read_text());assert not f.get('geometry_helper_sha256') or hashlib.sha256((P/'geometry.py').read_bytes()).hexdigest()==f['geometry_helper_sha256'];spec=importlib.util.spec_from_file_location('geo',P/'geometry.py');g=importlib.util.module_from_spec(spec);spec.loader.exec_module(g);rows=[];cards=[]
 for row in f['rows']:
  assert hashlib.sha256(Path(row['source']['source']).read_bytes()).hexdigest()==row['source']['sha256']

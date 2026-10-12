@@ -5,7 +5,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 R=Path(__file__).resolve().parents[3];sys.path.insert(0,str(R/'level-editor/refinement/blender'))
 from lossy_assets import read_glb,accessor_array
-O=R/'level-editor/work/croisement02-refinement';B=O/'restart8-five-bark-approved-export-v1';OLD=O/'restart2-textures/post-batch15-static-candidate-v6/map-assets/3d-assets/croisement02'
+O=R/'level-editor/work/active/croisement02';B=O/'restart8-five-bark-approved-export-v1';OLD=O/'restart2-textures/post-batch15-static-candidate-v6/map-assets/3d-assets/croisement02'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def image_hash(path,d,b,i):
  im=d['images'][i]

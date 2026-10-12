@@ -6,7 +6,7 @@ import shutil
 import subprocess
 
 ROOT=Path.cwd()
-BASE=ROOT/'level-editor/work/croisement02-refinement/native-effect-production-oct12-v1'
+BASE=ROOT/'level-editor/work/active/croisement02/native-effect-production-oct12-v1'
 OLD=BASE/'full-map-baseline8-v4'
 OUT=BASE/'full-map-baseline8-v5'
 COMMIT='3835cf3f7'

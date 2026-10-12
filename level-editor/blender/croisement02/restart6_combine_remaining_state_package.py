@@ -2,7 +2,7 @@
 import hashlib,json,os
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement/restart2-state'
+BASE=ROOT/'level-editor/work/active/croisement02/restart2-state'
 LIVE=ROOT/'level-editor/library'
 OUT=BASE/'remaining-seven-package-v2'
 def digest(p): return hashlib.sha256(p.read_bytes()).hexdigest()

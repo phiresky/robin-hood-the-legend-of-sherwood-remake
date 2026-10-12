@@ -3,7 +3,7 @@ from pathlib import Path
 import collections,hashlib,json
 import numpy as np
 from PIL import Image
-B=Path('level-editor/work/croisement02-refinement'); P=B/'restart7-source-patch-delivery/contracts-v1'; O=B/'restart7-source-patch-delivery/physical-scope-v3';O.mkdir(exist_ok=True)
+B=Path('level-editor/work/active/croisement02'); P=B/'restart7-source-patch-delivery/contracts-v1'; O=B/'restart7-source-patch-delivery/physical-scope-v3';O.mkdir(exist_ok=True)
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 manifest=json.loads((P/'manifest.json').read_text());resources={r['path']:Path(r['source']) for r in manifest['resources']}; grouped=collections.defaultdict(list)
 static=B/'restart2-textures/post-batch15-static-candidate-v2/croisement02.rhlos-map.json';scene=json.loads(static.read_text())

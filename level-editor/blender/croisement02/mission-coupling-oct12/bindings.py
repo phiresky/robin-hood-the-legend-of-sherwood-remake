@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[4]
-WORK=ROOT/'level-editor/work/croisement02-refinement'
+WORK=ROOT/'level-editor/work/active/croisement02'
 OUT=WORK/'mission-coupling-oct12-v1'
 DATA=ROOT/'datadirs/fullgame_gog_hackable/Data'
 REQUIREMENTS=WORK/'restart333-remaining-patch-coupling-requirements-v1/report.json'

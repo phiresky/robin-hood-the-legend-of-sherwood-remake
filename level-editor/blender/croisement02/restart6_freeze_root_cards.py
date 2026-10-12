@@ -1,7 +1,7 @@
 """Freeze the two independently reviewed continuous-root geometry decisions."""
 import json,hashlib
 from pathlib import Path
-REPO=Path(__file__).resolve().parents[3];ROOT=REPO/'level-editor/work/croisement02-refinement/restart6-source-coverage'
+REPO=Path(__file__).resolve().parents[3];ROOT=REPO/'level-editor/work/active/croisement02/restart6-source-coverage'
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def write(path,value):path.write_text(json.dumps(value,indent=2)+'\n')
 def main():

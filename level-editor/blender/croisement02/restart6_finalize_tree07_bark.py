@@ -8,7 +8,7 @@ from render_slots import acquire,release
 from render_multiview_asset import render
 from bake_texture_candidate import snapshot
 from restart6_tree07_restore_native import restore_atlas
-O=R/'level-editor/work/croisement02-refinement';B=O/'restart6-tree07-bark-fill-v1';E=B/'experiment';S=B/'bake-v1';D=B/'native-restored-v1';G=O/'restart6-tree07-native-atlas-guard-v1/guard.json';W=O/'root-stem-round-2/assets/croisement02-tree-07';h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text());expected='8bcb2ea9a6c40f920e15590569934f18c3bb3c002c26bb8160a6903605f107df'
+O=R/'level-editor/work/active/croisement02';B=O/'restart6-tree07-bark-fill-v1';E=B/'experiment';S=B/'bake-v1';D=B/'native-restored-v1';G=O/'restart6-tree07-native-atlas-guard-v1/guard.json';W=O/'root-stem-round-2/assets/croisement02-tree-07';h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text());expected='8bcb2ea9a6c40f920e15590569934f18c3bb3c002c26bb8160a6903605f107df'
 def pixels(im):
  a=np.empty(len(im.pixels),np.float32);im.pixels.foreach_get(a);return a.reshape(im.size[1],im.size[0],4)
 def atlas(ob):return next((m,next(n.image for n in m.node_tree.nodes if n.type=='TEX_IMAGE' and n.image))for m in ob.data.materials if m and m.get('source_ownership_label')=='exterior')

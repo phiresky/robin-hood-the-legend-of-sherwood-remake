@@ -6,7 +6,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial import cKDTree
 from continuous_wood_field import collar,collar_quality
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement02-refinement/wood-sweep-cpu-review'
+OUT=ROOT/'level-editor/work/active/croisement02/wood-sweep-cpu-review'
 
 def loop_data(points,normals):
     p=np.asarray(points,float);n=np.asarray(normals,float)

@@ -3,7 +3,7 @@ from pathlib import Path
 import json,struct,hashlib
 import numpy as np
 from audit_canopy_static_clearance import primitives
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';SOURCE=B/'canopy-current-static-clearance-oct12-v1/audit.json';O=B/'canopy-current-static-clearance-refined-oct12-v1';O.mkdir(exist_ok=False);report=json.loads(SOURCE.read_text());scene=json.loads((R/'level-editor/library/scenes/croisement02.rhlos-map.json').read_text());static=report['static_primitives'];boxes=np.asarray([x['bounds']for x in static]);results=[]
+R=Path.cwd();B=R/'level-editor/work/active/croisement02';SOURCE=B/'canopy-current-static-clearance-oct12-v1/audit.json';O=B/'canopy-current-static-clearance-refined-oct12-v1';O.mkdir(exist_ok=False);report=json.loads(SOURCE.read_text());scene=json.loads((R/'level-editor/library/scenes/croisement02.rhlos-map.json').read_text());static=report['static_primitives'];boxes=np.asarray([x['bounds']for x in static]);results=[]
 for item in report['crowns']:
  path=Path(item['candidate_pin']['path']);raw=path.read_bytes();assert hashlib.sha256(raw).hexdigest()==item['candidate_pin']['sha256'];n=struct.unpack_from('<I',raw,12)[0];doc=json.loads(raw[20:20+n]);data=raw[28+n:];assert len(doc['buffers'])==1
  def read(i):

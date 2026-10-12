@@ -5,7 +5,7 @@ from collections import Counter
 import numpy as np
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement02-refinement'
+OUT=ROOT/'level-editor/work/active/croisement02'
 DEST=OUT/'restart3-northern-source-audit'
 
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()

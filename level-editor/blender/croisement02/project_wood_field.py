@@ -133,7 +133,7 @@ def main():
         source_manifest.write_text(json.dumps(revised,indent=2)+'\n')
     acquire()
     try:
-        receiver_path = ROOT/'level-editor/work/croisement02-refinement/ground-receiver-review-v5/model.blend'
+        receiver_path = ROOT/'level-editor/work/active/croisement02/ground-receiver-review-v5/model.blend'
         receiver_hash = 'efed22896d8c4075bb0ed346bf6a36234d28762574b5b083c546b23d09c0c0bf'
         if sha(receiver_path) != receiver_hash: raise ValueError('Pinned actual ground receiver changed')
         bpy.ops.wm.open_mainfile(filepath=str(receiver_path))

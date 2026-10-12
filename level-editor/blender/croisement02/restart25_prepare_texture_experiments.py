@@ -6,7 +6,7 @@ from pathlib import Path
 HERE=Path(__file__).resolve().parent
 sys.path[:0]=[str(HERE.parents[1]/'refinement')]
 from prepare_texture_packet import prepare
-ROOT=HERE.parents[2];BASE=ROOT/'level-editor/work/croisement02-refinement'
+ROOT=HERE.parents[2];BASE=ROOT/'level-editor/work/active/croisement02'
 OUT=BASE/'restart25-approved-state-materialization-v1'
 APPROVAL=BASE/'restart3-review-batches/pending-v17-v23-plus-two-hub-v1/user-approval.json'
 EXPECTED='ca25ba9362b26dfb8ac1239f7acd7b56929463498b125bed0f42dcd98ec628f4'

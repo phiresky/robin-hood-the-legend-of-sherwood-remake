@@ -7,7 +7,7 @@ from mathutils import Vector
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(Path(__file__).parent)]
 from render_slots import acquire,release
 from tree_geometry import SIN,RAY
-OUT=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation';BASE=OUT/('tree42-motion-v5'if '--bounded-trial'in sys.argv else 'tree42-motion-v4'if '--coherent'in sys.argv else 'tree42-motion-v3'if '--smooth'in sys.argv else 'tree42-motion-v2'if '--dense'in sys.argv else 'tree42-motion-v1');DEST=BASE/'native-phases-v1';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+OUT=ROOT/'level-editor/work/active/croisement02/restart14-canopy-animation';BASE=OUT/('tree42-motion-v5'if '--bounded-trial'in sys.argv else 'tree42-motion-v4'if '--coherent'in sys.argv else 'tree42-motion-v3'if '--smooth'in sys.argv else 'tree42-motion-v2'if '--dense'in sys.argv else 'tree42-motion-v1');DEST=BASE/'native-phases-v1';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  if '--bounded-trial'in sys.argv:
   from restart14_tree42_bounded_trial import guard,install_write_guards,finish

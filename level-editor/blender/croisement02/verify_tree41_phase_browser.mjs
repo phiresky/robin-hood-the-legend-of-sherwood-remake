@@ -4,7 +4,7 @@ import {readFile,writeFile,mkdtemp,rm} from 'node:fs/promises';
 import {createServer} from 'node:http';
 import {resolve,join,extname} from 'node:path';
 import {chromeEndpoint,socketOpen,evaluate} from '../../app/tests/cdp.mjs';
-const repo=resolve('.'),output=resolve('level-editor/work/croisement02-refinement/tree41-phase-appearance-proof-v2');
+const repo=resolve('.'),output=resolve('level-editor/work/active/croisement02/tree41-phase-appearance-proof-v2');
 const server=createServer(async(req,res)=>{try{const pathname=decodeURIComponent(new URL(req.url,'http://local').pathname);const file=pathname.startsWith('/@fs/')?pathname.slice(5):join(output,pathname==='/'?'index.html':pathname);if(!resolve(file).startsWith(repo+'/'))throw Error('Outside workspace');const types={'.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.json':'application/json','.glb':'model/gltf-binary','.png':'image/png'};res.setHeader('Content-Type',types[extname(file)]??'application/octet-stream');res.end(await readFile(file));}catch(e){res.writeHead(404);res.end(String(e))}});
 await new Promise(r=>server.listen(0,'127.0.0.1',r));const port=server.address().port,profile=await mkdtemp('/tmp/tree41-proof-browser-');
 const chrome=spawn('/usr/lib/chromium/chromium',['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--enable-unsafe-swiftshader','--use-angle=swiftshader','--window-size=1000,900','--remote-debugging-port=0','--user-data-dir='+profile,`http://127.0.0.1:${port}/`],{stdio:['ignore','ignore','pipe']});let logs='';chrome.stderr.on('data',d=>{logs+=d.toString()});const closed=new Promise(r=>chrome.on('close',r));let ws,id=0;

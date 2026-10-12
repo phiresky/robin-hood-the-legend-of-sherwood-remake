@@ -2,7 +2,7 @@
 import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import crypto from 'node:crypto';
 import {parseStoredMap} from '../../shared/src/stored-level.ts';
 import {partMatrix} from '../../shared/src/level3d.ts';
-const base=path.resolve('level-editor/work/croisement02-refinement');const stage=path.join(base,'restart2-textures/post-batch15-static-candidate-v1');const out=path.join(base,'restart4-gameplay-migration-v4');if(!fs.existsSync(out))fs.mkdirSync(out);assert(!fs.existsSync(path.join(out,'frame-inventory.json')));
+const base=path.resolve('level-editor/work/active/croisement02');const stage=path.join(base,'restart2-textures/post-batch15-static-candidate-v1');const out=path.join(base,'restart4-gameplay-migration-v4');if(!fs.existsSync(out))fs.mkdirSync(out);assert(!fs.existsSync(path.join(out,'frame-inventory.json')));
 const read=(p:string)=>JSON.parse(fs.readFileSync(p,'utf8'));const sha=(p:string)=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');const pins:Record<string,string>={};
 function descriptors(root:string){const index=path.join(root,'index.json');pins[index]=sha(index);return new Map(read(index).assets.filter((e:any)=>e.source_map?.toLowerCase()==='croisement02').map((e:any)=>{const f=path.resolve(root,e.descriptor);pins[f]=sha(f);return[e.id,{file:f,value:read(f)}];}));}
 const old=descriptors(path.resolve('level-editor/library/3d-assets'));const newer=descriptors(path.join(stage,'map-assets/3d-assets'));const oldMap=path.resolve('level-editor/library/scenes/croisement02.rhlos-map.json'),newMap=path.join(stage,'croisement02.rhlos-map.json');pins[oldMap]=sha(oldMap);pins[newMap]=sha(newMap);

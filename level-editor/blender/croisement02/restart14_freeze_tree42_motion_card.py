@@ -1,7 +1,7 @@
 """Freeze one representative canopy-motion decision with explicit residuals."""
 from pathlib import Path
 import hashlib,json,os,shutil
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation';TRIAL=BASE/'tree42-motion-v5';DEST=TRIAL/'scoped-motion-card-v1'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-canopy-animation';TRIAL=BASE/'tree42-motion-v5';DEST=TRIAL/'scoped-motion-card-v1'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  assert not DEST.exists();assert shutil.disk_usage(BASE).free-131072>=10*2**30

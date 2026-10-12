@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[3]
-B = ROOT / 'level-editor/work/croisement02-refinement/restart14-butterflies'
+B = ROOT / 'level-editor/work/active/croisement02/restart14-butterflies'
 sha = lambda p: hashlib.sha256(p.read_bytes()).hexdigest()
 
 

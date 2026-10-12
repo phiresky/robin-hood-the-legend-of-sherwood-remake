@@ -2,7 +2,7 @@
 import hashlib,json,os,shutil
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1'
+BASE=ROOT/'level-editor/work/active/croisement02/approved-round-wood-integration-oct11-v1'
 OLD=BASE/'editor-check-v2'
 OUT=BASE/'editor-reload-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()

@@ -12,7 +12,7 @@ from scipy.ndimage import gaussian_filter
 from restart14_tree42_dense_motion import solve, warp
 from forest_layout import CROWNS
 
-BASE=Path(__file__).resolve().parents[2]/'work/croisement02-refinement'
+BASE=Path(__file__).resolve().parents[2]/'work/active/croisement02'
 MANIFEST=BASE/'animation-references/manifest.json'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 

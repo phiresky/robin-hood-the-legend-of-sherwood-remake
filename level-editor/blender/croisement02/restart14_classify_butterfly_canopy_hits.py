@@ -5,7 +5,7 @@ from collections import Counter
 import numpy as np
 from PIL import Image
 from restart14_butterfly_canopy_provenance import ROOT,LIB,BASE,DEST,sha
-INPUT=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies/canopy22-alpha-audit-v2/report.json'
+INPUT=ROOT/'level-editor/work/active/croisement02/restart14-butterflies/canopy22-alpha-audit-v2/report.json'
 def main():
  registry=json.loads((DEST/'material-registry.json').read_text());report=json.loads(INPUT.read_text());models={};observed={};images={}
  for r in registry['assets']:

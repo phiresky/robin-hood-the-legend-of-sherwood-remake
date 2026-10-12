@@ -6,7 +6,7 @@ import bpy
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-OUT=ROOT/'level-editor/work/croisement02-refinement'
+OUT=ROOT/'level-editor/work/active/croisement02'
 
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def stats(values):

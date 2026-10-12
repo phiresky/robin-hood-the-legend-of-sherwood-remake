@@ -6,16 +6,16 @@ sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from prepare_texture_packet import prepare
 from PIL import Image
 import numpy as np
-BASE=ROOT/'level-editor/work/croisement02-refinement/mission-hidden-archer-physical-oct12-v1'
+BASE=ROOT/'level-editor/work/active/croisement02/mission-hidden-archer-physical-oct12-v1'
 DEST=BASE/'approved03-04-textures-v1'
-APPROVAL=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/next23-review-hub-oct12-v1/user-approval.json'
+APPROVAL=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/next23-review-hub-oct12-v1/user-approval.json'
 PADDING=dict(version=1,kind='bottom-padding',width=1024,height=640,content_box=dict(left=0,top=0,width=1024,height=512))
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main():
     batch=json.loads((DEST/'prepared-batch.json').read_text());assert sha(APPROVAL)==batch['user_approval_sha256']
     user=json.loads(APPROVAL.read_text());assert user['status']=='approved';commands=[];results=[]
-    refs=ROOT/'level-editor/work/croisement02-refinement/texture-fill-round-3/croisement02-tree-11/native-front-preparation/experiment/material-references'
+    refs=ROOT/'level-editor/work/active/croisement02/texture-fill-round-3/croisement02-tree-11/native-front-preparation/experiment/material-references'
     for row in batch['rows']:
         worker=Path(row['worker']);d=json.loads((worker/'derivation.json').read_text());assert sha(worker/'model.blend')==d['prepared_model_sha256']==row['model_sha256']
         frames=json.loads((worker/'modified/views.json').read_text());asset=frames['asset_id'];card=d['source_user_decision'];assert card['decision']=='approved'

@@ -6,7 +6,7 @@ R=Path.cwd();sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/
 from render_slots import acquire,release
 from refinement_review import render_review
 from refinement_workspace import _geometry
-B=R/'level-editor/work/croisement02-refinement';A=B/'restart3-review-batches/three-tree-geometry-oct11-v1/user-approval.json'
+B=R/'level-editor/work/active/croisement02';A=B/'restart3-review-batches/three-tree-geometry-oct11-v1/user-approval.json'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def read(p):return json.loads(p.read_text())
 def main(n):

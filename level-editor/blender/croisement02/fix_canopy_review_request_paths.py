@@ -1,7 +1,7 @@
 """Create a new fixture with absolute /@fs resources; retain failed evidence."""
 from pathlib import Path
 import json,hashlib,subprocess,shutil
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';OLD=B/'canopy04-complete-review-playerfix-oct12-v1';O=B/'canopy04-complete-review-playerfix-http-v2';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();O.mkdir(exist_ok=False)
+R=Path.cwd();B=R/'level-editor/work/active/croisement02';OLD=B/'canopy04-complete-review-playerfix-oct12-v1';O=B/'canopy04-complete-review-playerfix-http-v2';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();O.mkdir(exist_ok=False)
 def walk(value):
  if isinstance(value,dict):
   if isinstance(value.get('path'),str)and isinstance(value.get('sha256'),str):

@@ -1,6 +1,6 @@
 from pathlib import Path
 import json,hashlib,fcntl,os
-r=Path('level-editor/work/croisement02-refinement');p=r/'restart2-state/mission-state-package-v1';lib=Path('level-editor/library');m=json.loads((p/'manifest.json').read_text());sha=lambda b:hashlib.sha256(b).hexdigest();proof=r/'restart2-state/full-editor-state-preview-v4/verification.json';assert json.loads(proof.read_text())['status']=='PASS'
+r=Path('level-editor/work/active/croisement02');p=r/'restart2-state/mission-state-package-v1';lib=Path('level-editor/library');m=json.loads((p/'manifest.json').read_text());sha=lambda b:hashlib.sha256(b).hexdigest();proof=r/'restart2-state/full-editor-state-preview-v4/verification.json';assert json.loads(proof.read_text())['status']=='PASS'
 with (p/'install.lock').open('a')as lock:
  fcntl.flock(lock,fcntl.LOCK_EX)
  for x in m['resources']:

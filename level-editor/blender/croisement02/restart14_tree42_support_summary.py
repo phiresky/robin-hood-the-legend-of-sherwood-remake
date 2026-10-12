@@ -4,7 +4,7 @@ import json,hashlib,sys
 import numpy as np
 from scipy.ndimage import distance_transform_edt
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-canopy-animation'
 def main():
  version=sys.argv[1];work=BASE/f'tree42-motion-{version}'/'native-phases-v1';report=json.loads((work/'report.json').read_text());source=json.loads((BASE/'source-reconciliation-v1/report.json').read_text())['groups'][1];rows=[]
  for i,f in enumerate(source['frames']):

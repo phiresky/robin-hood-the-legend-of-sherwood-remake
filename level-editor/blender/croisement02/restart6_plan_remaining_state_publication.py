@@ -2,7 +2,7 @@
 from pathlib import Path
 import hashlib,json
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement/restart2-state'
+BASE=ROOT/'level-editor/work/active/croisement02/restart2-state'
 STAGE=BASE/'remaining-seven-package-v2'
 OUT=BASE/'remaining-seven-publication-v1'
 LIB=ROOT/'level-editor/library'
@@ -15,7 +15,7 @@ assert len(old['entries'])==34 and len(new['entries'])==41
 assert new['entries'][:34]==old['entries'] and new['entries'][34:]==manifest['entries']
 for row in manifest['files']+[manifest['private_index']]:assert sha(STAGE/'library'/row['path'])==row['sha256']
 for row in manifest['reused']:assert sha(LIB/row['path'])==row['sha256']
-static=ROOT/'level-editor/work/croisement02-refinement/restart2-textures/batch10-private-level3d-exact-v2'
+static=ROOT/'level-editor/work/active/croisement02/restart2-textures/batch10-private-level3d-exact-v2'
 mapfile=static/'croisement02.rhlos-map.json';mapdata=read(mapfile)
 assert sha(mapfile)==manifest['static_map_sha256']
 pins=static/'placement-evidence/static-placement-pins.json';assert sha(pins)==manifest['static_placement_pins_sha256']

@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 REPO=Path(__file__).resolve().parents[3]
-OUT=REPO/'level-editor/work/croisement02-refinement'
+OUT=REPO/'level-editor/work/active/croisement02'
 ROOT=OUT/'restart10-physical-signs'
 
 

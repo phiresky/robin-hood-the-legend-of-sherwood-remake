@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.optimize import minimize,LinearConstraint,Bounds
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/croisement02-refinement';B=W/'restart14-butterflies';O=B/'flight-path-constraints-v1';O.mkdir(exist_ok=True)
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/croisement02';B=W/'restart14-butterflies';O=B/'flight-path-constraints-v1';O.mkdir(exist_ok=True)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();depth=json.loads((B/'all7-depth-audit-v2/report.json').read_text());plan=json.loads((B/'all7-context-plan-v1/plan.json').read_text());sourcepath=W/'baseline/Croisement02.rhp.json';source=json.loads(sourcepath.read_text());layerspath=W/'source-states/layers.json';layers=json.loads(layerspath.read_text());sin=math.sin(math.radians(35));cos=math.cos(math.radians(35));fit=json.loads((B/'fixed-light-trial-v1/fit.json').read_text());rows=[];D=np.roll(np.eye(99),-1,axis=1)-np.eye(99);DD=D@D;patches=[]
 for patch in layers['mission_patches']:
  key=(patch['name'],tuple(patch['state']['element_fx']['sprite'].values()))

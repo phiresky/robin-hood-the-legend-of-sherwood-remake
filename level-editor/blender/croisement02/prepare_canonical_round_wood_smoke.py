@@ -2,13 +2,13 @@
 from pathlib import Path
 import argparse,hashlib,json,shutil
 from audit_smoke_catalog_authority import published_authority
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1';OLD=B/'editor-check-v3';LIB=R/'level-editor/library'
+R=Path.cwd();B=R/'level-editor/work/active/croisement02/approved-round-wood-integration-oct11-v1';OLD=B/'editor-check-v3';LIB=R/'level-editor/library'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def dump(p,x):p.write_text(json.dumps(x,indent=2)+'\n')
 def prepare(plan_path,out):
  plan=json.loads(plan_path.read_text())
  catalog_audit=published_authority(plan,LIB)
- state_packet=R/'level-editor/work/croisement02-refinement/restart136-installed-state-ui-inputs-v1/inputs.json';states=json.loads(state_packet.read_text())
+ state_packet=R/'level-editor/work/active/croisement02/restart136-installed-state-ui-inputs-v1/inputs.json';states=json.loads(state_packet.read_text())
  for pin in states['pins']:assert sha(Path(pin['path']))==pin['sha256'],pin['path']
  out.mkdir(exist_ok=False)
  dump(out/'current-catalog-audit.json',catalog_audit)
@@ -29,7 +29,7 @@ def prepare(plan_path,out):
  runtime=dict(snapshot);runtime.update(inputs);dump(out/'runtime-inputs.json',runtime)
  shutil.copy2(OLD/'observe-library.js',out/'observe-library.js');shutil.copy2(OLD/'editor.tsx',out/'editor.tsx')
  check=R/'level-editor/blender/croisement02/canonical_round_wood_smoke.js';shutil.copy2(check,out/'check.js')
- cfg=json.loads((OLD/'check-config.json').read_text());cfg['states']=[dict(row,kind='climbing')for row in json.loads((R/'level-editor/work/croisement02-refinement/restart79-climbing-tree42-ui-browser-v1/climbing-config.json').read_text())['rows']];cfg['states'].append(dict(json.loads((R/'level-editor/work/croisement02-refinement/restart79-climbing-tree42-ui-browser-v1/tree42-config.json').read_text()),kind='tree42'));dump(out/'check-config.json',cfg)
+ cfg=json.loads((OLD/'check-config.json').read_text());cfg['states']=[dict(row,kind='climbing')for row in json.loads((R/'level-editor/work/active/croisement02/restart79-climbing-tree42-ui-browser-v1/climbing-config.json').read_text())['rows']];cfg['states'].append(dict(json.loads((R/'level-editor/work/active/croisement02/restart79-climbing-tree42-ui-browser-v1/tree42-config.json').read_text()),kind='tree42'));dump(out/'check-config.json',cfg)
  old=str(OLD.relative_to(R));new=str(out.relative_to(R));run=(OLD/'run-v4.mjs').read_text().replace(old,new).replace(new+'/browser-v4',new+'/browser-v1').replace(str((B/'publication/stage-v3-current/library').relative_to(R)),str(LIB.relative_to(R)))
  start=run.index(' const statePacket=');end=run.index(' await Promise.all(modulePending);',start)
  run=run[:start]+''' await writeFile(join(out,'canonical-map-ready.json'),JSON.stringify(await evaluate('({groups:window.reviewViewport.bindings.document().groups.length,sources:window.reviewViewport.bindings.document().assetSources})'),null,2));

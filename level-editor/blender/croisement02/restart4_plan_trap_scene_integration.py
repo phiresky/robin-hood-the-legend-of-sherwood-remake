@@ -1,7 +1,7 @@
 """Pin private scene authorities and exact per-mission metadata differences."""
 from pathlib import Path
 import json,hashlib
-r=Path('level-editor/work/croisement02-refinement');lib=Path('level-editor/library');source=r/'restart2-state/trap-mission-package-v1';out=r/'restart2-state/trap-scene-integration-plan-v1';out.mkdir(exist_ok=True)
+r=Path('level-editor/work/active/croisement02');lib=Path('level-editor/library');source=r/'restart2-state/trap-mission-package-v1';out=r/'restart2-state/trap-scene-integration-plan-v1';out.mkdir(exist_ok=True)
 read=lambda p:json.loads(p.read_text());sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();package=read(source/'manifest.json');original=read(lib/'game-data/Data/Levels/Emb05_FoB_MP.rhm.json');level=read(lib/'game-data/Data/Levels/Croisement02.rhp.json');rows=[]
 for row in package['entries']:
  mission=read(lib/'game-data/Data/Levels'/(row['mission']+'.rhm.json'));contract=read(source/'library'/row['entry']['contract']['path']);base=read(lib/'mission-states/croisement02/contracts'/(row['family']+'.json'));parts=[]

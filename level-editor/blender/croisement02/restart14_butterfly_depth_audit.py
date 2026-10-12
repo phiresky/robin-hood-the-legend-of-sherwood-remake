@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 from scipy.spatial.transform import Rotation
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/croisement02-refinement';B=W/'restart14-butterflies';O=B/'all7-depth-audit-v2';LIB=ROOT/'level-editor/library'
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/croisement02';B=W/'restart14-butterflies';O=B/'all7-depth-audit-v2';LIB=ROOT/'level-editor/library'
 SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def guard():assert shutil.disk_usage(ROOT).free>=10*1024**3,'10GiB extraction floor'
 def main():

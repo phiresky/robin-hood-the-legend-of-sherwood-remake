@@ -8,7 +8,7 @@ from restart5_initial_net_unseen import occupancy
 from restart8_bake_toe_bark import pixels,read,h
 from bake_texture_candidate import snapshot
 from render_slots import acquire,release
-O=Path.cwd()/'level-editor/work/croisement02-refinement';B=O/'restart8-toe-bark-fill-v1'
+O=Path.cwd()/'level-editor/work/active/croisement02';B=O/'restart8-toe-bark-fill-v1'
 def main(n):
  assert shutil.disk_usage(O).free>25*1024**3
  D=B/f'tree-{n}-fill-v1/shader-restored-v1';out=D.parent/('unseen-complete-v3' if len(sys.argv)>sys.argv.index('--')+2 else 'unseen-complete-v2');limit=float(sys.argv[sys.argv.index('--')+2]) if len(sys.argv)>sys.argv.index('--')+2 else 8;out.mkdir(exist_ok=False);proof=read(D/'preservation.json');assert h(D/'worker.blend')==proof['model_sha256'];bpy.ops.wm.open_mainfile(filepath=str(D/'worker.blend'));scene=bpy.context.scene;names=set(proof['active_receivers']);before=snapshot(scene,names);original={im.name:hbytes(im)for im in bpy.data.images if im.packed_file};rows=[];changed=set()

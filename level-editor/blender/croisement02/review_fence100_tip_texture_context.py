@@ -8,7 +8,7 @@ from refinement_workspace import _geometry
 from render_slots import acquire,release
 from render_multiview_asset import render
 from refinement_review import _tile
-B=R/'level-editor/work/croisement02-refinement';D=B/'approved-fence100-tip-texture-oct11-v2';E=D/'experiment';BASE=B/'static-terrain-closure-oct11-v1/fence100-tip-candidate-v2'
+B=R/'level-editor/work/active/croisement02';D=B/'approved-fence100-tip-texture-oct11-v2';E=D/'experiment';BASE=B/'static-terrain-closure-oct11-v1/fence100-tip-candidate-v2'
 def main():
  acquire(slots=2)
  try:

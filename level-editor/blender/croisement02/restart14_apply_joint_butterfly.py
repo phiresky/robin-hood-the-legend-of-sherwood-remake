@@ -6,7 +6,7 @@ new model before reviewing it. No fitting is performed here.
 """
 from pathlib import Path
 import argparse,copy,hashlib,json,shutil,sys
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies';SOURCE=BASE/'joint99-cpu-v2';OUT=BASE/'rig-joint-trial-v1'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-butterflies';SOURCE=BASE/'joint99-cpu-v2';OUT=BASE/'rig-joint-trial-v1'
 REVIEW_PHASES=[0,2,18,27,28,29,30,47];MIN_FREE_GIB=10;MAX_OUTPUT_MIB=20
 FROZEN_PROPOSAL='184b93b9ee7c822ce1aa90e2a1565be441db1ecec6953efbe778421738134ac1'
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()

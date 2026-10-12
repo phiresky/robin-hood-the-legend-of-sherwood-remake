@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from skimage.measure import marching_cubes
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement02'
 
 def main():
     out=OUT/'restart2-wood/tree31-sdf-v4';out.mkdir(exist_ok=False)

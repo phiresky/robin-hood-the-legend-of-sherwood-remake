@@ -4,7 +4,7 @@ import json,hashlib,sys
 import numpy as np
 from PIL import Image,ImageDraw
 from scipy.ndimage import gaussian_filter,map_coordinates,zoom
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation';DEST=BASE/('tree42-smooth-correspondence-v1'if '--smooth'in sys.argv else 'tree42-dense-correspondence-v1')
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-canopy-animation';DEST=BASE/('tree42-smooth-correspondence-v1'if '--smooth'in sys.argv else 'tree42-dense-correspondence-v1')
 def warp(a,flow):
  yy,xx=np.mgrid[:a.shape[0],:a.shape[1]];coords=[yy+flow[:,:,1],xx+flow[:,:,0]];return np.stack([map_coordinates(a[:,:,c],coords,order=1,mode='constant',cval=0)for c in range(a.shape[2])],axis=2)
 def solve(a,b):

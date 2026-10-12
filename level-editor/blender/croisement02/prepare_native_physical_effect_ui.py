@@ -5,8 +5,8 @@ R=Path.cwd();LIB=R/'level-editor/library'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def dump(p,v):p.write_text(json.dumps(v,indent=2)+'\n')
 def prepare(out,refined=False,receiver_assets=None,crops=False,decode_workers=None,source_from=None,actor_plan=None):
- old=R/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1/canonical-postinstall-smoke-v2'
- reqpath=R/'level-editor/work/croisement02-refinement/restart217-butterfly05-private-contract-v1/request.json';req=json.loads(reqpath.read_text())
+ old=R/'level-editor/work/active/croisement02/approved-round-wood-integration-oct11-v1/canonical-postinstall-smoke-v2'
+ reqpath=R/'level-editor/work/active/croisement02/restart217-butterfly05-private-contract-v1/request.json';req=json.loads(reqpath.read_text())
  for row in [req['contract'],req['model'],*req['source_files']]:assert sha(Path(row['path']))==row['sha256'],row
  out.mkdir(exist_ok=False)
  catalog=json.loads((LIB/'mission-states/index.json').read_text());assert not any(e['id']==req['entry']['id'] for e in catalog['entries']);catalog['entries'].append(req['entry']);dump(out/'candidate-catalog.json',catalog)

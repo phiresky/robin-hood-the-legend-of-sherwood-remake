@@ -10,7 +10,7 @@ from render_slots import acquire,release
 from refinement_review import _tree
 from tree_geometry import SIN,COS,RAY
 from restart14_tree42_dense_prototype import sample_field
-OUT=ROOT/'level-editor/work/croisement02-refinement';BASE=OUT/'restart14-canopy-animation';DEST=BASE/('tree42-alpha-neighbors-coherent-v1'if '--coherent'in sys.argv else 'tree42-alpha-neighbors-smooth-v1'if '--smooth'in sys.argv else 'tree42-alpha-neighbors-leaf-cluster-v1'if '--cluster'in sys.argv else 'tree42-alpha-neighbors-dense-roles-v1'if '--roles'in sys.argv else 'tree42-alpha-neighbors-dense-v1'if '--dense'in sys.argv else 'tree42-alpha-neighbors-v5');LIB=ROOT/'level-editor/library';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+OUT=ROOT/'level-editor/work/active/croisement02';BASE=OUT/'restart14-canopy-animation';DEST=BASE/('tree42-alpha-neighbors-coherent-v1'if '--coherent'in sys.argv else 'tree42-alpha-neighbors-smooth-v1'if '--smooth'in sys.argv else 'tree42-alpha-neighbors-leaf-cluster-v1'if '--cluster'in sys.argv else 'tree42-alpha-neighbors-dense-roles-v1'if '--roles'in sys.argv else 'tree42-alpha-neighbors-dense-v1'if '--dense'in sys.argv else 'tree42-alpha-neighbors-v5');LIB=ROOT/'level-editor/library';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 IDS=['croisement02-tree-42','croisement02-tree-31','croisement02-tree-32','croisement02-tree-30','croisement02-south-field-haystack','croisement02-south-field-wattle-fence','croisement02-southwest-path-wattle-fence','croisement02-shrub-69','croisement02-shrub-76']
 def main():
  global DEST

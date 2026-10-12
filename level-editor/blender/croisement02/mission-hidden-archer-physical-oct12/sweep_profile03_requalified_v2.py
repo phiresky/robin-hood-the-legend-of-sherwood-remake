@@ -8,7 +8,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import qualify as q
 
-transaction = q.ROOT / 'level-editor/work/croisement02-refinement/recovery-fence100-tip-publication-v1/transaction-v1/root-install-v1/transaction'
+transaction = q.ROOT / 'level-editor/work/active/croisement02/recovery-fence100-tip-publication-v1/transaction-v1/root-install-v1/transaction'
 journal_path = transaction / 'journal.json'
 journal = json.loads(journal_path.read_text())
 qualification = json.loads((q.OUT / 'qualification.json').read_text())

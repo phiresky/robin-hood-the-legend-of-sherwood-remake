@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from tree_geometry import RAY,SIN
 from mathutils.bvhtree import BVHTree
-OUT=ROOT/'level-editor/work/croisement02-refinement';BASE=OUT/('restart14-canopy-animation/tree42-motion-v5'if '--bounded-trial'in sys.argv else 'restart14-canopy-animation/tree42-motion-v4'if '--coherent'in sys.argv else 'restart14-canopy-animation/tree42-motion-v3'if '--smooth'in sys.argv else 'restart14-canopy-animation/tree42-motion-v2'if '--dense'in sys.argv else 'restart14-canopy-animation/tree42-motion-v1');DEST=BASE/'review-v3';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+OUT=ROOT/'level-editor/work/active/croisement02';BASE=OUT/('restart14-canopy-animation/tree42-motion-v5'if '--bounded-trial'in sys.argv else 'restart14-canopy-animation/tree42-motion-v4'if '--coherent'in sys.argv else 'restart14-canopy-animation/tree42-motion-v3'if '--smooth'in sys.argv else 'restart14-canopy-animation/tree42-motion-v2'if '--dense'in sys.argv else 'restart14-canopy-animation/tree42-motion-v1');DEST=BASE/'review-v3';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  if '--bounded-trial'in sys.argv:
   from restart14_tree42_bounded_trial import guard,install_write_guards,finish

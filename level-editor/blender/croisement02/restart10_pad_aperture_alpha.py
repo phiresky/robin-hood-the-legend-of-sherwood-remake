@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 from scipy.ndimage import distance_transform_edt
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement/restart10-hole-aperture'
+BASE=ROOT/'level-editor/work/active/croisement02/restart10-hole-aperture'
 source=BASE/'export-v1/receivers-and-endpoints.glb'
 out=BASE/'export-padding-v2';out.mkdir(exist_ok=True)
 sha=lambda data:hashlib.sha256(data).hexdigest()

@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 WORK = ROOT / 'level-editor/work'
-OUT = WORK / 'croisement02-refinement/restart3-review-batches/next-pool-v19'
+OUT = WORK / 'active/croisement02/restart3-review-batches/next-pool-v19'
 
 
 def sha(path):
@@ -19,7 +19,7 @@ def write(path, value):
 def main():
     if OUT.exists():
         raise ValueError('Keep existing frozen adapters unchanged')
-    base = WORK / 'croisement02-refinement/restart8-hidden-archer-leaf-trial-v3'
+    base = WORK / 'active/croisement02/restart8-hidden-archer-leaf-trial-v3'
     author_path = base / 'author-review-v1.json'
     review_path = base / 'root-review-v1.json'
     author = json.loads(author_path.read_text())
@@ -56,7 +56,7 @@ def main():
                           asset_ids=[f'croisement02-hidden-archer-{profile:02d}-{state}'
                                      for state in ('initial', 'applied')]))
 
-    source = WORK / 'york-refinement/restart2/jamb-textures-v1/gallery-freeze.json'
+    source = WORK / 'active/york/restart2/jamb-textures-v1/gallery-freeze.json'
     jamb = json.loads(source.read_text())
     for item in jamb['items']:
         for filename, expected in item['evidence'].items():

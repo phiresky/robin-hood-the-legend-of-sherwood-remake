@@ -1,7 +1,7 @@
 """Prepare strict-origin continuation of the retained original OPFS profile."""
 from pathlib import Path
 import json,hashlib,os,shutil
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1';OLD=B/'editor-check-v3';PRIOR=OLD/'browser-v4';O=B/'editor-retained-reload-v1'
+R=Path.cwd();B=R/'level-editor/work/active/croisement02/approved-round-wood-integration-oct11-v1';OLD=B/'editor-check-v3';PRIOR=OLD/'browser-v4';O=B/'editor-retained-reload-v1'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def dump(p,x):p.write_text(json.dumps(x,indent=2)+'\n')
 O.mkdir(exist_ok=False);before=json.loads((PRIOR/'pre-reload-checkpoint.json').read_text());expected=before['evidence']['reloadExpectation'];reloaded=json.loads((PRIOR/'reloaded-document.json').read_text());assert reloaded['groups']==expected['groups']and reloaded['objects']==expected['objects']

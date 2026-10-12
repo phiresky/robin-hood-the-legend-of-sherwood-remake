@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 from forest_layout import CROWNS
 
-BASE = Path(__file__).resolve().parents[2] / 'work/croisement02-refinement'
+BASE = Path(__file__).resolve().parents[2] / 'work/active/croisement02'
 MANIFEST = BASE / 'animation-references/manifest.json'
 OFFSETS = np.array([(dx, dy) for dy in range(-6, 7) for dx in range(-6, 7)])
 RADIUS = 6

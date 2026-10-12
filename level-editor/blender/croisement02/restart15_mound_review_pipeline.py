@@ -3,7 +3,7 @@ from pathlib import Path
 import json,subprocess,time,shutil
 HERE=Path(__file__).resolve().parent
 ROOT=HERE.parents[1]
-WORK=ROOT/'work/croisement02-refinement/restart15-hiding-mounds/all-placements-v1'
+WORK=ROOT/'work/active/croisement02/restart15-hiding-mounds/all-placements-v1'
 def run():
  deadline=time.monotonic()+14400
  while not(WORK/'validation.json').exists():

@@ -3,7 +3,7 @@ import hashlib,json,struct
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 LIB=ROOT/'level-editor/library'
-OUT=ROOT/'level-editor/work/croisement02-refinement/tree-gray-material-audit-oct12-v1'
+OUT=ROOT/'level-editor/work/active/croisement02/tree-gray-material-audit-oct12-v1'
 def sha(p):
  h=hashlib.sha256()
  with p.open('rb')as f:

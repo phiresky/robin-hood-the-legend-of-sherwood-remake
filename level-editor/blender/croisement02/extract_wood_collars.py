@@ -10,7 +10,7 @@ from mathutils import Vector
 ROOT=Path(__file__).resolve().parents[3]
 sys.path[:0]=[str(ROOT/'level-editor/refinement')]
 from render_slots import acquire,release
-OUT=ROOT/'level-editor/work/croisement02-refinement'
+OUT=ROOT/'level-editor/work/active/croisement02'
 INPUTS={32:('root-stem-round-3/assets/croisement02-tree-32','00ab00761141d7c4c564331745ae680afef0fd20edd40e110c9301ec986f185b','building-080',[105.,115.,125.,135.]),38:('root-stem-round-2/assets/croisement02-tree-38','b245e87e24341e78415567d31327f353d575bb988da597ae34b8a06178fab054','building-094',[115.,125.,135.,145.])}
 MAX_VERTICES_PER_CUT=4096
 MAX_OUTPUT_BYTES=8*1024*1024

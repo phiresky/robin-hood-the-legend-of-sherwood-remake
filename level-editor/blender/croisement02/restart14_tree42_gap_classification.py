@@ -5,7 +5,7 @@ import json,hashlib
 import numpy as np
 from PIL import Image,ImageDraw
 from scipy.ndimage import distance_transform_edt,gaussian_filter,map_coordinates
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation';WORK=BASE/'tree42-motion-v4';DEST=BASE/'tree42-gap-classification-v2';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-canopy-animation';WORK=BASE/'tree42-motion-v4';DEST=BASE/'tree42-gap-classification-v2';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def sample(a,x,y):
  scalar=np.ndim(x)==0;x=np.atleast_1d(x);y=np.atleast_1d(y)
  if a.ndim==2:return map_coordinates(a,[y,x],order=1,mode='constant')

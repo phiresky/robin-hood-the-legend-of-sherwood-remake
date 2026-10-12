@@ -4,7 +4,7 @@ import json,hashlib
 import numpy as np
 from scipy.optimize import least_squares
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies/side-color-audit-v1'
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement02/restart14-butterflies/side-color-audit-v1'
 def main():
  report=json.loads((OUT/'report.json').read_text());a=np.array(json.loads((OUT/'samples.json').read_text()),float);phase_data=report['phase_white_ratio'];phases=sorted(map(int,phase_data));target=np.array([phase_data[str(k)]['ratio'] for k in phases]);interior=np.array([phase_data[str(k)]['interior_fraction'] for k in phases]);normals=[a[(a[:,0]==k)&(a[:,17]>0),14:17] for k in phases];models={}
  def prediction(params,filtered):

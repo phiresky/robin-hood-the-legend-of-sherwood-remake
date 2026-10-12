@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 ROOT = Path.cwd()
-STATE = ROOT / 'level-editor/work/croisement02-refinement/restart2-state'
+STATE = ROOT / 'level-editor/work/active/croisement02/restart2-state'
 OLD = STATE / 'installed41-normal-http-chunk-1-v1'
 PLAN = STATE / 'restart17-initial-context-publication-v3'
 OUT = STATE / 'restart20-initial-context-browser-v6'

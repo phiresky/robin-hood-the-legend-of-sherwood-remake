@@ -11,7 +11,7 @@ R=Path.cwd();sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/
 from render_slots import acquire,release
 from source_projection_bake import bake
 from refinement_workspace import _geometry
-n=int(sys.argv[sys.argv.index('--')+1]);assert n in (32,38);B=R/'level-editor/work/croisement02-refinement';E=B/f'approved-round-wood-textures-oct11-v1/tree{n}/experiment';D=E/'source-authority-v2';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text())
+n=int(sys.argv[sys.argv.index('--')+1]);assert n in (32,38);B=R/'level-editor/work/active/croisement02';E=B/f'approved-round-wood-textures-oct11-v1/tree{n}/experiment';D=E/'source-authority-v2';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text())
 def pixels(im):
  p=np.empty(len(im.pixels),np.float32);im.pixels.foreach_get(p);return p
 acquire(slots=2)

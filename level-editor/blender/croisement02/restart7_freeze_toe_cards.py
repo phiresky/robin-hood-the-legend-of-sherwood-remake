@@ -2,7 +2,7 @@
 import json,hashlib
 from pathlib import Path
 from PIL import Image
-OUT=Path(__file__).resolve().parents[2]/'work/croisement02-refinement';ROOT=OUT/'restart6-source-coverage';DEST=ROOT/'toe-ready-v15-v2';DEST.mkdir(exist_ok=False)
+OUT=Path(__file__).resolve().parents[2]/'work/active/croisement02';ROOT=OUT/'restart6-source-coverage';DEST=ROOT/'toe-ready-v15-v2';DEST.mkdir(exist_ok=False)
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 items=[];cards=[]

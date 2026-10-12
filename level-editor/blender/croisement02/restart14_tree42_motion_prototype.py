@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from refinement_workspace import _geometry
 from tree_geometry import SIN,COS,RAY
-OUT=ROOT/'level-editor/work/croisement02-refinement';BASE=OUT/'restart2-textures/approved6-canopy-fill-v1/croisement02-tree-42/native-front-preparation-v2/experiment/bake-v1/worker.blend';DEST=OUT/'restart14-canopy-animation/tree42-motion-v1'
+OUT=ROOT/'level-editor/work/active/croisement02';BASE=OUT/'restart2-textures/approved6-canopy-fill-v1/croisement02-tree-42/native-front-preparation-v2/experiment/bake-v1/worker.blend';DEST=OUT/'restart14-canopy-animation/tree42-motion-v1'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  DEST.mkdir(exist_ok=True);assert sha(BASE)=='8c89650bc54509823ece450fa41109bfbf19f891743bb556175fd02928b849e5'

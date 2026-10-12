@@ -2,7 +2,7 @@
 import hashlib,json,shutil
 from pathlib import Path
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';DEST=BASE/'restart27-orphan-delivery-v1';LIB=ROOT/'level-editor/library'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02';DEST=BASE/'restart27-orphan-delivery-v1';LIB=ROOT/'level-editor/library'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def pin(p):return {'path':str(p),'sha256':sha(p)}
 def read(p):return json.loads(Path(p).read_text())

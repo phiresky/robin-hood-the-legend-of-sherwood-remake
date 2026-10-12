@@ -4,7 +4,7 @@ from pathlib import Path
 from prepare_native_physical_effect_ui import prepare, sha, dump, R, LIB
 
 def main(out):
- stage=R/'level-editor/work/croisement02-refinement/tree42-all-mission-contracts-oct12-v2'
+ stage=R/'level-editor/work/active/croisement02/tree42-all-mission-contracts-oct12-v2'
  plan=json.loads((stage/'draft-plan.json').read_text())
  prepare(out,receiver_assets=['croisement02-tree-42'])
  routes={'/library/'+row['destination']:row['staged']['path'] for row in plan['files']}

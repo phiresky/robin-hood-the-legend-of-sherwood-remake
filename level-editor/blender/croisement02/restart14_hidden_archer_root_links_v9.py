@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial import cKDTree
 from scipy.ndimage import gaussian_filter1d
-BASE=Path(__file__).resolve().parents[2]/'work/croisement02-refinement/restart14-hidden-archer';OUT=BASE/'skeleton-v9-cpu/root-attachment-final-centers.json';RAY=np.array([0,-math.cos(math.radians(35)),math.sin(math.radians(35))])
+BASE=Path(__file__).resolve().parents[2]/'work/active/croisement02/restart14-hidden-archer';OUT=BASE/'skeleton-v9-cpu/root-attachment-final-centers.json';RAY=np.array([0,-math.cos(math.radians(35)),math.sin(math.radians(35))])
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def intersections(a,b,triangles):
  # Two-sided segment/triangle test, including endpoints except explicit epsilon.

@@ -5,7 +5,7 @@ import bpy
 R=Path.cwd();sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from bake_reviewed_asset import stage
-B=R/'level-editor/work/croisement02-refinement';D=B/'approved-fence100-tip-texture-oct11-v2';E=D/'experiment';G=E/'generation-short-no-mask-with-lighting-openrouter-with-auxiliary'
+B=R/'level-editor/work/active/croisement02';D=B/'approved-fence100-tip-texture-oct11-v2';E=D/'experiment';G=E/'generation-short-no-mask-with-lighting-openrouter-with-auxiliary'
 def main():
  acquire(slots=2)
  try:

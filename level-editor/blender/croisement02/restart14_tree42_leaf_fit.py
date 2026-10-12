@@ -4,7 +4,7 @@ import json,hashlib
 import numpy as np
 from PIL import Image
 from scipy.ndimage import uniform_filter,gaussian_filter,map_coordinates
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation';DEST=BASE/'tree42-leaf-correspondence-v1';OFFSETS=[(x,y)for y in range(-3,4)for x in range(-3,4)]
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-canopy-animation';DEST=BASE/'tree42-leaf-correspondence-v1';OFFSETS=[(x,y)for y in range(-3,4)for x in range(-3,4)]
 def match(a,b):
  h,w=a.shape[:2];scores=[]
  for dx,dy in OFFSETS:

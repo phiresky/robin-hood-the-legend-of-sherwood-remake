@@ -13,7 +13,7 @@ from PIL import Image
 from scipy.ndimage import binary_dilation
 ROOT=b.q.ROOT; BASE=b.q.OUT
 DEST=BASE/'approved03-04-textures-v1'
-APPROVAL=ROOT/'level-editor/work/croisement02-refinement/restart3-review-batches/next23-review-hub-oct12-v1/user-approval.json'
+APPROVAL=ROOT/'level-editor/work/active/croisement02/restart3-review-batches/next23-review-hub-oct12-v1/user-approval.json'
 PHASES=['initial','transition-0','transition-1','applied']
 
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()

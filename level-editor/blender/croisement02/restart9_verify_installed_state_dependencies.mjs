@@ -3,7 +3,7 @@ import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {parseStoredMap} from '../../shared/src/stored-level.ts';
 import {verifyStaticStateReplacements} from '../../shared/src/state-delivery.ts';
-const sha=b=>createHash('sha256').update(b).digest('hex'),base=resolve('level-editor/work/croisement02-refinement'),library=resolve('level-editor/library'),stage=join(base,'restart2-state/remaining-seven-package-v2'),candidate=join(base,'restart2-textures/post-batch15-static-candidate-v6'),out=join(base,'restart2-state/installed-static-seven-gate-v1');
+const sha=b=>createHash('sha256').update(b).digest('hex'),base=resolve('level-editor/work/active/croisement02'),library=resolve('level-editor/library'),stage=join(base,'restart2-state/remaining-seven-package-v2'),candidate=join(base,'restart2-textures/post-batch15-static-candidate-v6'),out=join(base,'restart2-state/installed-static-seven-gate-v1');
 const read=async p=>JSON.parse(await readFile(p,'utf8')),mapPath=join(library,'scenes/croisement02.rhlos-map.json'),mapBytes=await readFile(mapPath),map=JSON.parse(mapBytes),manifestBytes=await readFile(join(stage,'manifest.json')),manifest=JSON.parse(manifestBytes);
 if(sha(mapBytes)!=='7722076d8dfc15f9361c2a3f0a7de0d5d144dccd2f04b2e65578df8baa0ead0b')throw Error('Installed static selection changed');
 const sources=map.assetSources.concat(map.sceneAssets),descriptors=new Map();for(const source of sources){const bytes=await readFile(join(library,source.descriptor));if(sha(bytes)!==source.descriptor_sha256)throw Error('Descriptor changed '+source.id);descriptors.set(source.id,JSON.parse(bytes));}

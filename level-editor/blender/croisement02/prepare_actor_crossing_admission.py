@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 ROOT=Path.cwd()
-BASE=ROOT/'level-editor/work/croisement02-refinement/native-effect-production-oct12-v1'
+BASE=ROOT/'level-editor/work/active/croisement02/native-effect-production-oct12-v1'
 PACKET=BASE/'actor-crossing-ui-v1'
 OUT=BASE/'actor-crossing-admission-v1'
 TEMPLATE=BASE/'full-map-baseline8-v5/admit.py'

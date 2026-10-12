@@ -3,7 +3,7 @@ import json,hashlib,html
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement02-refinement';D=OUT/'restart4-floor-closure-input-v1'
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement02';D=OUT/'restart4-floor-closure-input-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  p=json.loads((D/'proposal.json').read_text());base=Image.open(OUT/'restart4-remaining-floor-bake-v1/composite.png');source=Image.open(OUT/'source-states/covered.png');proposal=Image.open(D/'proposed-appearance.png');pts=[v for v in p['phase_pixels'] if v['native_return']];assert len(pts)==13

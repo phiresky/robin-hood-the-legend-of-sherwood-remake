@@ -3,7 +3,7 @@ import json,math
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement02-refinement';src=OUT/'restart3-kindling/outline-v1/geometry.json';dest=OUT/'restart3-kindling/outline-v2';dest.mkdir(exist_ok=False)
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement02';src=OUT/'restart3-kindling/outline-v1/geometry.json';dest=OUT/'restart3-kindling/outline-v2';dest.mkdir(exist_ok=False)
 d=json.loads(src.read_text());v=np.array(d['vertices']);changes=[]
 for j,lift in [(24,7.),(25,11.),(26,8.)]:
  v[j*20+10:j*20+20,2]+=lift;changes.append(dict(stick=j,top_height_added=lift))

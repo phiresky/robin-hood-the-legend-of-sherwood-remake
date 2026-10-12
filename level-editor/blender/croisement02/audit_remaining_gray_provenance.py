@@ -3,7 +3,7 @@ import hashlib,json,math,struct
 from pathlib import Path
 import numpy as np
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement'
+BASE=ROOT/'level-editor/work/active/croisement02'
 def sha(p):
  h=hashlib.sha256()
  with p.open('rb') as f:

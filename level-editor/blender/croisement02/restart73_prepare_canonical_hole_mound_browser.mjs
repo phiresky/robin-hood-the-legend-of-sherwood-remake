@@ -2,7 +2,7 @@
 import {readFile,writeFile,mkdir,readdir,copyFile} from 'node:fs/promises';
 import {resolve,join,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
-const root=resolve('.'),old='level-editor/work/croisement02-refinement/restart63-hole-mound-current-runtime-browser-v1',out='level-editor/work/croisement02-refinement/restart73-hole-mound-canonical-browser-v1';
+const root=resolve('.'),old='level-editor/work/active/croisement02/restart63-hole-mound-current-runtime-browser-v1',out='level-editor/work/active/croisement02/restart73-hole-mound-canonical-browser-v1';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');const read=async p=>JSON.parse(await readFile(p));const pin=async p=>({path:resolve(p),sha256:hash(await readFile(p))});const save=async(p,d)=>writeFile(p,JSON.stringify(d,null,2)+'\n',{flag:'wx'});
 await mkdir(out);
 for(const name of ['editor.tsx','check-config.json','check-v3.js'])await copyFile(join(old,name),join(out,name));
@@ -15,7 +15,7 @@ await save(join(out,'source-snapshot.json'),snapshot);
 authority.membership=Object.keys(snapshot).sort();authority.status='CANONICAL_POSTINSTALL_HOLE_MOUND_RUNTIME_FROZEN';authority.runtime_commit='ee3694cd4';
 const indexBytes=await readFile(authority.index.path),index=JSON.parse(indexBytes);const stable=v=>Array.isArray(v)?v.map(stable):v&&typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,stable(v[k])])):v;const subset=index.assets.filter(a=>a.source_map?.toLowerCase()==='croisement02').sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);authority.index.initial_sha256=hash(indexBytes);authority.index.c02_sha256=hash(JSON.stringify(stable(subset)));authority.index.c02_count=subset.length;await save(join(out,'runtime-authority.json'),authority);
 const runtime={};for(const p of Object.keys(await read(join(old,'runtime-inputs.json'))))runtime[p]=snapshot[p]??hash(await readFile(p));Object.assign(runtime,snapshot);await save(join(out,'runtime-inputs.json'),runtime);
-const installed='level-editor/work/croisement02-refinement/restart58-hole-mound-publication-v1/root-scoped-apply-v3';
+const installed='level-editor/work/active/croisement02/restart58-hole-mound-publication-v1/root-scoped-apply-v3';
 const plan=await read(join(installed,'plan.json')),journal=await read(join(installed,'transaction/journal.json'));
 if(journal.phase!=='INSTALLED_LIVE_BROWSER_PENDING')throw Error('Installed transaction incomplete');
 for(const row of plan.records)if(hash(await readFile(row.target))!==row.new_sha256)throw Error('Installed target drift '+row.target);

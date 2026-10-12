@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3];LIVE=ROOT/'level-editor/library'
 expected,name=sys.argv[1:]
 subprocess.run([sys.executable,str(Path(__file__).with_name('restart12_prepare_seven_visual_proof.py')),expected,name],check=True)
-b=ROOT/'level-editor/work/croisement02-refinement/restart2-state'/name;snap=b/'snapshot/library';snap.mkdir(parents=True)
+b=ROOT/'level-editor/work/active/croisement02/restart2-state'/name;snap=b/'snapshot/library';snap.mkdir(parents=True)
 def sha(p):
  with p.open('rb')as f:return hashlib.file_digest(f,'sha256').hexdigest()
 def freeze(src,dst):
@@ -25,7 +25,7 @@ index=json.loads((snap/'3d-assets/index.json').read_text())
 for entry in index['assets']:assert sha(snap/'3d-assets'/entry['descriptor'])==entry['descriptor_sha256'],entry['id']
 (snap/'scenes/index.json').write_text(json.dumps(sorted(p.name for p in(snap/'scenes').glob('*.rhlos-map.json')))+'\n')
 shutil.copyfile(snap/'mission-states/index.json',b/'snapshot/installed34-index.json')
-pkg=ROOT/'level-editor/work/croisement02-refinement/restart2-state/remaining-seven-package-v2';manifest=json.loads((pkg/'manifest.json').read_text())
+pkg=ROOT/'level-editor/work/active/croisement02/restart2-state/remaining-seven-package-v2';manifest=json.loads((pkg/'manifest.json').read_text())
 for row in manifest['files']+[manifest['private_index']]:
  src=pkg/'library'/row['path'];assert sha(src)==row['sha256'];dst=snap/row['path'];dst.parent.mkdir(parents=True,exist_ok=True)
  if dst.exists():
@@ -36,7 +36,7 @@ for row in manifest['files']+[manifest['private_index']]:
 p=b/'contacts/manifest.json';s=p.read_text().replace(str(pkg/'library'),str(snap)).replace(str(LIVE),str(snap));p.write_text(s)
 p=b/'editor.tsx';p.write_text(p.read_text().replace('await openHttpGameData()','await openHttpGameData("/seven-library/game-data/")'))
 p=b/'states.mjs';s=p.read_text().replace("readFile('level-editor/library/mission-states/index.json')",'readFile('+json.dumps(str(b/'snapshot/installed34-index.json'))+')');p.write_text(s)
-p=b/'run.mjs';s=p.read_text();s=s.replace("const stateRoot=join(root,'level-editor/work/croisement02-refinement/restart2-state/remaining-seven-package-v2/library');",'const stateRoot='+json.dumps(str(snap))+';')
+p=b/'run.mjs';s=p.read_text();s=s.replace("const stateRoot=join(root,'level-editor/work/active/croisement02/restart2-state/remaining-seven-package-v2/library');",'const stateRoot='+json.dumps(str(snap))+';')
 s=s.replace("const manifest=JSON.parse(await readFile(join(stateRoot,'../manifest.json'),'utf8'));\nconst overlay=new Set(manifest.files.map(row=>row.path));overlay.add('mission-states/index.json');",'')
 s=s.replace("if(!overlay.has(relative)){res.writeHead(307,{Location:'/library/'+relative}).end();return}","// Every library read is snapshot-only; absent resources never fall back to mutable live files.")
 s=s.replace("readFile(join(stateRoot,relative)).then(bytes=>{", "readFile(join(stateRoot,relative)).then(async bytes=>{await writeFile(join(out,'served-snapshot.jsonl'),JSON.stringify({path:relative,sha256:sha(bytes)})+'\\n',{flag:'a'});")

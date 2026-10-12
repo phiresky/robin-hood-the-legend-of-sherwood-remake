@@ -4,7 +4,7 @@ import hashlib,json
 import numpy as np
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement02-refinement'
+OUT=ROOT/'level-editor/work/active/croisement02'
 LIB=ROOT/'level-editor/library'
 DEST=OUT/'restart14-canopy-animation/source-reconciliation-v1'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()

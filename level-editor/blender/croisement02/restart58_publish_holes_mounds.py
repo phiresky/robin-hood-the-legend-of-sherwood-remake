@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 LIB = ROOT / 'level-editor/library'
-BASE = ROOT / 'level-editor/work/croisement02-refinement'
+BASE = ROOT / 'level-editor/work/active/croisement02'
 STAGE = BASE / 'restart53-hole-mound-transaction-v1'
 RUNS = BASE / 'restart58-hole-mound-publication-v1'
 HELPER = ROOT / 'level-editor/blender/york/restart44_static_transaction.py'

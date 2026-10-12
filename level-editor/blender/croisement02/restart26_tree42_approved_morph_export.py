@@ -3,7 +3,7 @@ import hashlib,json,math,struct,sys
 from pathlib import Path
 import numpy as np
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement02-refinement'
+OUT=ROOT/'level-editor/work/active/croisement02'
 BASE=OUT/'restart14-canopy-animation/tree42-motion-v5'
 DEST=BASE/'approved-morph-export-v1'
 MODEL=BASE/'prototype.blend'

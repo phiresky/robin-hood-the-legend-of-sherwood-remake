@@ -13,7 +13,7 @@ from scipy.sparse import coo_matrix
 from scipy.sparse.linalg import spsolve
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/croisement02-refinement'
+OUT = ROOT / 'level-editor/work/active/croisement02'
 DEST = OUT / 'terrain-review'
 # Source-artwork reservations, deliberately broad pending relief ownership.
 BANK = [(0, 0), (1792, 0), (1792, 295), (1680, 280), (1580, 250),

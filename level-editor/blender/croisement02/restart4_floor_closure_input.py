@@ -3,7 +3,7 @@ import json,hashlib,shutil
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement02-refinement';D=OUT/'restart4-floor-closure-input-v1'
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement02';D=OUT/'restart4-floor-closure-input-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def read(p):return json.loads(p.read_text())
 def write(p,v):p.write_text(json.dumps(v,indent=2)+'\n')

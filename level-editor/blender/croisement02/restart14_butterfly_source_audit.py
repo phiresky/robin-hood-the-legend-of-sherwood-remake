@@ -4,7 +4,7 @@ import json,hashlib
 import numpy as np
 from PIL import Image,ImageDraw
 from scipy.ndimage import label
-ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[3];WORK=ROOT/'level-editor/work/active/croisement02'
 source=WORK/'restart10-ambient-source-audit-v1/report.json';out=WORK/'restart14-butterflies/source-audit-v1';out.mkdir(parents=True,exist_ok=True)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();rows=[]
 for a in json.loads(source.read_text())['animations']:

@@ -5,7 +5,7 @@ import bpy
 from mathutils import Vector
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-BASE=ROOT/'level-editor/work/croisement02-refinement';OUT=BASE/'restart68-butterfly07-solid-review-v1';MODEL=BASE/'restart67-butterfly07-fullpath-export-v1/butterfly07-fullpath.glb'
+BASE=ROOT/'level-editor/work/active/croisement02';OUT=BASE/'restart68-butterfly07-solid-review-v1';MODEL=BASE/'restart67-butterfly07-fullpath-export-v1/butterfly07-fullpath.glb'
 def main():
  assert not OUT.exists();OUT.mkdir();bpy.ops.wm.read_factory_settings(use_empty=True);s=bpy.context.scene;s.render.fps=25;bpy.ops.import_scene.gltf(filepath=str(MODEL));root=bpy.data.objects['Butterfly07 full inferred flight path'];s.frame_set(5)
  mat=bpy.data.materials.new('Solid geometry review');mat.use_nodes=True;mat.node_tree.nodes['Principled BSDF'].inputs['Base Color'].default_value=(.6,.6,.6,1)

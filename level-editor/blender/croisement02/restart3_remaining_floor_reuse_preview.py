@@ -4,7 +4,7 @@ import json,hashlib
 import numpy as np
 from PIL import Image,ImageDraw
 from scipy import ndimage
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement02-refinement';D=OUT/'restart3-remaining-floor-reuse-review-v1'
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement02';D=OUT/'restart3-remaining-floor-reuse-review-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  D.mkdir(exist_ok=False);audit=OUT/'restart3-remaining-floor-audit-v1';report=json.loads((audit/'completion-proposal.json').read_text());domain=np.array(Image.open(audit/'proposed-inferred-floor-union.png').convert('L'))>0;assert domain.sum()==14876

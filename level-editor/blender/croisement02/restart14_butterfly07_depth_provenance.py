@@ -2,7 +2,7 @@
 import hashlib,json,math
 from pathlib import Path
 import numpy as np
-ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/croisement02-refinement';B=W/'restart14-butterflies';OUT=B/'butterfly07-depth-provenance-v1'
+ROOT=Path(__file__).resolve().parents[3];W=ROOT/'level-editor/work/active/croisement02';B=W/'restart14-butterflies';OUT=B/'butterfly07-depth-provenance-v1'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 
 def main():

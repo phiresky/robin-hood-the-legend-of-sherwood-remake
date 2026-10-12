@@ -1,7 +1,7 @@
 """Prepare explicit diagnostic materials and calibrated native-plane views privately."""
 from pathlib import Path
 import json,hashlib,subprocess
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';OLD=B/'canopy00-complete-review-oct12-v1';O=B/'canopy00-junction-diagnostics-oct12-v1'
+R=Path.cwd();B=R/'level-editor/work/active/croisement02';OLD=B/'canopy00-complete-review-oct12-v1';O=B/'canopy00-junction-diagnostics-oct12-v1'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 assert not (O/'handoff.json').exists();O.mkdir(exist_ok=True)
 request=json.loads((OLD/'request.json').read_text());request['scope']='Supplemental diagnostic-only materials and source-bbox camera; original34appearance renders remain authoritative appearance evidence.';(O/'request.json').write_text(json.dumps(request,indent=2)+'\n')

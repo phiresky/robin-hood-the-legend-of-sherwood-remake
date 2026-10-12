@@ -5,7 +5,7 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation,Slerp
 from restart21_butterfly07_geometry_v2 import WING,HINGES
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';OUT=BASE/'restart67-butterfly07-browser-request-v1'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02';OUT=BASE/'restart67-butterfly07-browser-request-v1'
 def main():
  assert not OUT.exists();OUT.mkdir();fitp=BASE/'restart66-butterfly07-global-bright-fit-v1/fit.json';fit=json.loads(fitp.read_text());d=json.loads((BASE/'restart14-butterflies/butterfly07-v3-global-corridor-v2-actual-audit/report.json').read_text())['continuous_height_curve'];depth=CubicSpline(d['times'],d['heights'],bc_type='periodic');s=math.sin(math.radians(35));c=math.cos(math.radians(35));b=np.array([[1,0,0],[0,-s,-c],[0,-c,s]]);convert=np.array([[1,0,0],[0,0,1],[0,-1,0]]);rows=[]
  for tick in range(198):

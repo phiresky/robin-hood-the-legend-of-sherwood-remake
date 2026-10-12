@@ -4,7 +4,7 @@ import json,hashlib
 import numpy as np
 from scipy.optimize import minimize,Bounds,LinearConstraint
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies';O=B/'footprint-path-proposal-v2';O.mkdir(exist_ok=True);fp=B/'all7-footprint-audit-v2/report.json';audit=json.loads(fp.read_text());prior=json.loads((B/'flight-path-constraints-v1/proposal.json').read_text());D=np.roll(np.eye(99),-1,axis=1)-np.eye(99);DD=D@D;rows=[];sheet=Image.new('RGB',(1120,840),'#252525');dr=ImageDraw.Draw(sheet)
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement02/restart14-butterflies';O=B/'footprint-path-proposal-v2';O.mkdir(exist_ok=True);fp=B/'all7-footprint-audit-v2/report.json';audit=json.loads(fp.read_text());prior=json.loads((B/'flight-path-constraints-v1/proposal.json').read_text());D=np.roll(np.eye(99),-1,axis=1)-np.eye(99);DD=D@D;rows=[];sheet=Image.new('RGB',(1120,840),'#252525');dr=ImageDraw.Draw(sheet)
 for j,seq in enumerate(range(8,15)):
  f=[r for r in audit['phase_records']if r['sequence']==seq];old=prior['rows'][j];lower=np.array([max(10,r['maximum_noncanopy_receiver_height']+r['z_extent']+8)for r in f]);dist=np.minimum(abs(np.arange(99)[:,None]-np.arange(99)),99-abs(np.arange(99)[:,None]-np.arange(99)));start=np.max(lower[None,:]-3*dist,axis=1)
  result=minimize(lambda h:float(h.mean()+.3*np.sum((DD@h)**2)),start,jac=lambda h:np.ones(99)/99+.6*DD.T@(DD@h),method='SLSQP',bounds=Bounds(lower,np.full(99,400)),constraints=[LinearConstraint(D,-3,3)],options={'maxiter':400,'ftol':1e-8});assert result.success;h=result.x;conflicts=[];above=[]

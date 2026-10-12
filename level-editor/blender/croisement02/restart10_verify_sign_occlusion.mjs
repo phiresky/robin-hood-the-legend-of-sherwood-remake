@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {createServer} from '../../app/node_modules/vite/dist/node/index.js';
 import {chromeEndpoint,socketOpen,evaluate} from '../../app/tests/cdp.mjs';
 
-const repo=resolve('.'),root=resolve('level-editor/work/croisement02-refinement/restart10-physical-signs');
+const repo=resolve('.'),root=resolve('level-editor/work/active/croisement02/restart10-physical-signs');
 const input=join(root,'input-occlusion-v1'),output=join(root,'occlusion-v1');
 await mkdir(output);await mkdir(join(output,'profile'));
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');

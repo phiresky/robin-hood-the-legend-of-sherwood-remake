@@ -6,7 +6,7 @@ from mathutils import Vector
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-BASE=ROOT/'level-editor/work/croisement02-refinement';MODEL=BASE/'restart66-butterfly07-fullpath-export-v3/butterfly07-fullpath.glb';OUT=BASE/'restart66-butterfly07-import-review-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+BASE=ROOT/'level-editor/work/active/croisement02';MODEL=BASE/'restart66-butterfly07-fullpath-export-v3/butterfly07-fullpath.glb';OUT=BASE/'restart66-butterfly07-import-review-v1';S=math.sin(math.radians(35));C=math.cos(math.radians(35));sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  assert not OUT.exists();assert shutil.disk_usage(ROOT).free>10*1024**3;OUT.mkdir();bpy.ops.wm.read_factory_settings(use_empty=True);s=bpy.context.scene;s.render.fps=25;bpy.ops.import_scene.gltf(filepath=str(MODEL));root=bpy.data.objects['Butterfly07 full inferred flight path'];owned=list(bpy.context.scene.objects)
  s.render.engine='CYCLES';s.cycles.samples=4;s.cycles.use_denoising=False;s.render.threads_mode='FIXED';s.render.threads=2;s.render.resolution_percentage=100;s.render.image_settings.file_format='PNG';s.render.image_settings.color_mode='RGBA';s.render.film_transparent=True;s.view_settings.view_transform='Standard';s.view_settings.look='None';s.world=bpy.data.worlds.new('Neutral');s.world.use_nodes=True;s.world.node_tree.nodes['Background'].inputs[0].default_value=(.3,.3,.3,1)

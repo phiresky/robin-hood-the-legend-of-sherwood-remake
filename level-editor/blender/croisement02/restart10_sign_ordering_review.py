@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement02-refinement'
+OUT=ROOT/'level-editor/work/active/croisement02'
 BASE=OUT/'restart10-physical-signs'
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def pin(p):return {'file':str(p),'sha256':sha(p)}

@@ -2,7 +2,7 @@ from pathlib import Path
 import json,hashlib
 import numpy as np
 from PIL import Image,ImageDraw
-r=Path('level-editor/work/croisement02-refinement');out=r/'restart2-state/underlay-aggregate-audit-v3';prep=r/'restart2-ground-completion/preparation-v1';load=lambda p:np.array(Image.open(p).convert('L'))>0;deferred=load(prep/'deferred_state_floor.png');known=load(prep/'known.png');relief=load(prep/'separate_relief.png');fence=np.zeros(deferred.shape,bool);fence[811:963,1018:1170]=True;prior=np.zeros(deferred.shape,bool)
+r=Path('level-editor/work/active/croisement02');out=r/'restart2-state/underlay-aggregate-audit-v3';prep=r/'restart2-ground-completion/preparation-v1';load=lambda p:np.array(Image.open(p).convert('L'))>0;deferred=load(prep/'deferred_state_floor.png');known=load(prep/'known.png');relief=load(prep/'separate_relief.png');fence=np.zeros(deferred.shape,bool);fence[811:963,1018:1170]=True;prior=np.zeros(deferred.shape,bool)
 for x,y in [(329,366),(332,370),(334,372),(294,376),(337,376),(292,377),(290,378),(286,380),(284,381),(282,382),(280,383),(276,385),(274,386),(272,387)]:prior[y,x]=True
 levelpath=Path('level-editor/library/game-data/Data/Levels/Croisement02.rhp.json');level=json.loads(levelpath.read_text());
 base=np.array(Image.open(r/'restart3-fence-receiver/terminal-v3/base-atlas.png').convert('RGBA'));rawpath=r/'restart2-ground-completion/approved-fill-retry-v2/generation-short-no-mask-with-lighting-openrouter-with-auxiliary/generated-raw.png';raw=np.array(Image.open(rawpath).convert('RGBA'));records=[];combined=np.zeros(deferred.shape,bool);sheet=Image.new('RGB',(1200,1400),'#242424');draw=ImageDraw.Draw(sheet)

@@ -2,7 +2,7 @@
 import hashlib,json
 from pathlib import Path
 from PIL import Image
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';OUT=B/'four-gray-wood-inputs-oct12-v1'
+R=Path.cwd();B=R/'level-editor/work/active/croisement02';OUT=B/'four-gray-wood-inputs-oct12-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  OUT.mkdir(exist_ok=True);cards=[];pins={}

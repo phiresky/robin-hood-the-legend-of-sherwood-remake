@@ -1,7 +1,7 @@
 """Prepare a retained-profile reload with durable assertions before UI capture."""
 from pathlib import Path
 import hashlib,json,os,shutil
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1';OLD=B/'editor-retained-reload-v1';O=B/'editor-retained-reload-v2';profile=B/'editor-check-v3/browser-v4/disposable-profile'
+R=Path.cwd();B=R/'level-editor/work/active/croisement02/approved-round-wood-integration-oct11-v1';OLD=B/'editor-retained-reload-v1';O=B/'editor-retained-reload-v2';profile=B/'editor-check-v3/browser-v4/disposable-profile'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def dump(p,x):p.write_text(json.dumps(x,indent=2)+'\n')
 O.mkdir(exist_ok=False)

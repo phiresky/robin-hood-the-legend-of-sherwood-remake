@@ -1,8 +1,8 @@
 # Croisement02 refinement
 
-Reproducible geometry candidates live in `level-editor/work/croisement02-refinement/`.
+Reproducible geometry candidates live in `level-editor/work/active/croisement02/`.
 The published library is not changed by these recipes. The review gallery is
-`work/croisement02-refinement/gallery/index.html` (relative to `level-editor/`).
+`work/active/croisement02/gallery/index.html` (relative to `level-editor/`).
 
 ## Tree constraints
 
@@ -45,7 +45,7 @@ existing baseline/grouped files. These commands assume the archived native volum
 scene and extracted full-game data are already available.
 
 ```sh
-node level-editor/pipeline/src/export-interior-layers.ts Croisement02 level-editor/work/croisement02-refinement/source-states
+node level-editor/pipeline/src/export-interior-layers.ts Croisement02 level-editor/work/active/croisement02/source-states
 /usr/bin/blender --background --threads 2 --python-exit-code 1 --python level-editor/blender/croisement02/setup_scene.py
 python3 level-editor/blender/croisement02/source_evidence.py
 python3 level-editor/blender/croisement02/survey.py

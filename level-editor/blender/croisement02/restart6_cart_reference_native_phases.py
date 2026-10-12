@@ -2,7 +2,7 @@ from pathlib import Path
 import json,hashlib,math
 import numpy as np
 from PIL import Image
-b=Path("level-editor/work/croisement02-refinement/restart2-state/cart-contract-preparation-v2");lib=Path('level-editor/library');manifest=json.loads((b/'manifest.json').read_text());resources={r['path']:Path(r['source']) for r in manifest['resources']};images={}
+b=Path("level-editor/work/active/croisement02/restart2-state/cart-contract-preparation-v2");lib=Path('level-editor/library');manifest=json.loads((b/'manifest.json').read_text());resources={r['path']:Path(r['source']) for r in manifest['resources']};images={}
 def image(f):
  p=f['path']
  if p not in images:
@@ -54,7 +54,7 @@ def paint(dst,f,pos,origin):
  if partial.any():
   a=s[partial,3].astype(float);remaining=d[partial,3]*(255-a)/255;combined=a+remaining;d[partial,:3]=np.floor((s[partial,:3]*a[:,None]+d[partial,:3]*remaining[:,None])/combined[:,None]+.5);d[partial,3]=np.floor(combined+.5)
 records=[]
-root=Path('level-editor/work/croisement02-refinement')
+root=Path('level-editor/work/active/croisement02')
 initial=json.loads((root/'restart2-state/cart-initial-action-audit-v1/report.json').read_text())['records']
 def source_frame(f):
  return {'path': 'mission-states/croisement02/resources/'+f['image_sha256']+'.png', 'sha256':f['image_sha256'],'offset':f['offset'],'delay':f['delay']}

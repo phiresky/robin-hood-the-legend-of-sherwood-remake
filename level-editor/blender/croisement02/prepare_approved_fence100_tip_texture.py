@@ -6,7 +6,7 @@ R=Path.cwd();sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/
 from render_slots import acquire,release
 from refinement_review import render_review
 from PIL import Image
-B=R/'level-editor/work/croisement02-refinement';A=B/'restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json';D=B/'approved-fence100-tip-texture-oct11-v2';BASE=B/'static-terrain-closure-oct11-v1/fence100-tip-candidate-v2';ASSET='croisement02-southwest-field-wattle-fence'
+B=R/'level-editor/work/active/croisement02';A=B/'restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json';D=B/'approved-fence100-tip-texture-oct11-v2';BASE=B/'static-terrain-closure-oct11-v1/fence100-tip-candidate-v2';ASSET='croisement02-southwest-field-wattle-fence'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  assert sha(A)=='d435a76b08eb3ac616f1ae2ffcdf19a7875969e515dd01f65de1871ca886ef1d'

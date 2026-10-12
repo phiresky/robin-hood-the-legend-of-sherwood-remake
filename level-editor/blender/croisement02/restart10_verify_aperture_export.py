@@ -2,7 +2,7 @@
 import json,struct,hashlib
 from pathlib import Path
 import numpy as np
-ROOT=Path(__file__).resolve().parents[2]/'work/croisement02-refinement/restart10-hole-aperture'
+ROOT=Path(__file__).resolve().parents[2]/'work/active/croisement02/restart10-hole-aperture'
 f=ROOT/'export-v1/receivers-and-endpoints.glb';raw=f.read_bytes();size=struct.unpack_from('<I',raw,12)[0];doc=json.loads(raw[20:20+size]);blob=raw[28+size:]
 packet=json.loads((ROOT/'packet-v1/packet.json').read_text());phase=json.loads((ROOT.parent/'restart9-hole-endpoints/source-plan-v1/plan.json').read_text())
 known={i['packed_sha256']for m in packet['meshes']for mat in m['materials']for i in mat['images']if i['packed_sha256']}|{p['sha256']for p in phase['phases']}

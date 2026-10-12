@@ -12,7 +12,7 @@ def triangle_distance(point,tri):
  return np.sqrt(np.maximum(best,0))
 
 def main():
- parser=argparse.ArgumentParser();parser.add_argument('--group',type=int,default=0);args=parser.parse_args();R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';src=B/(f'canopy{args.group:02}-complete-installed-oct12-v1/report.json'if args.group in [3,4]else f'restart99-canopy{args.group:02}-combined-v1/report.json');O=B/f'canopy{args.group:02}-branch-neighborhoods-oct12-v1';O.mkdir(exist_ok=False);bundle=json.loads(src.read_text());results=[]
+ parser=argparse.ArgumentParser();parser.add_argument('--group',type=int,default=0);args=parser.parse_args();R=Path.cwd();B=R/'level-editor/work/active/croisement02';src=B/(f'canopy{args.group:02}-complete-installed-oct12-v1/report.json'if args.group in [3,4]else f'restart99-canopy{args.group:02}-combined-v1/report.json');O=B/f'canopy{args.group:02}-branch-neighborhoods-oct12-v1';O.mkdir(exist_ok=False);bundle=json.loads(src.read_text());results=[]
  for member in bundle['assets']:
   path=Path(member['source_model']['path']);raw=path.read_bytes();assert hashlib.sha256(raw).hexdigest()==member['source_model']['sha256'];n=struct.unpack_from('<I',raw,12)[0];doc=json.loads(raw[20:20+n]);data=raw[28+n:]
   def read(i):

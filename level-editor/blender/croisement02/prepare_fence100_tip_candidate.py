@@ -6,7 +6,7 @@ from mathutils import Vector
 R=Path.cwd();sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from refinement_review import render_review
-B=R/'level-editor/work/croisement02-refinement';O=B/'static-terrain-closure-oct11-v1/fence100-tip-candidate-v2';A='croisement02-southwest-field-wattle-fence'
+B=R/'level-editor/work/active/croisement02';O=B/'static-terrain-closure-oct11-v1/fence100-tip-candidate-v2';A='croisement02-southwest-field-wattle-fence'
 MODEL=B/'texture-fill-round-1'/A/'experiment/bake-v1/worker.blend'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():

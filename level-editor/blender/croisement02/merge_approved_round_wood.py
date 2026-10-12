@@ -2,7 +2,7 @@
 import copy,json,hashlib,struct,sys
 from pathlib import Path
 import numpy as np
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1'
+R=Path.cwd();B=R/'level-editor/work/active/croisement02/approved-round-wood-integration-oct11-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def load(p):
  raw=p.read_bytes();n=struct.unpack_from('<I',raw,12)[0];return json.loads(raw[20:20+n]),raw[28+n:]

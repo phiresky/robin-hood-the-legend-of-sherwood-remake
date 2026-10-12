@@ -4,7 +4,7 @@ os.environ.setdefault('OPENBLAS_NUM_THREADS','1')
 import json
 from pathlib import Path
 import restart14_butterfly07_anatomy_contacts as audit
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02'
 def main():
  prior=json.loads((audit.B/'butterfly07-v3-global-corridor-v2-actual-audit/report.json').read_text());helper=Path(__file__).with_name('restart21_butterfly07_geometry_v2.py');audit.OUT=BASE/'restart67-butterfly07-selected-contacts-v1'
  # An explicit selected-branch pool excludes the unchosen mirrored hypothesis.

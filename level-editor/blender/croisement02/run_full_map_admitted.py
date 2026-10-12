@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 POOL = ROOT / 'level-editor/work/lincoln-refinement/render-slots'
 # Current heavy-job admission explicitly uses acquire(2), not the module default.
 ACTIVE_SLOTS = 2
-BASE = ROOT / 'level-editor/work/croisement02-refinement/native-effect-production-oct12-v1'
+BASE = ROOT / 'level-editor/work/active/croisement02/native-effect-production-oct12-v1'
 RUNNERS = {
     'serial1': ('full-map-serial1-v4', '14b39592c733a21d1b5b598342540c8c78228fc3ad26faad44dca83b66c46a43'),
     'baseline8': ('full-map-baseline8-v4', '14946b65099eab90d9189af4447a89effb452bd99ac8fda5e30a0c7a13ca2e0f'),

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/croisement02-refinement'
+WORK = ROOT / 'level-editor/work/active/croisement02'
 LIB = ROOT / 'level-editor/library'
 
 def sha(path):
@@ -76,7 +76,7 @@ def main():
         (out / 'contacts' / filename).write_bytes((old / filename).read_bytes())
     (out / 'contacts/manifest.json').write_text(json.dumps(contact, indent=2)+'\n')
     capture = (ROOT / 'level-editor/blender/croisement02/restart6_capture_state_contacts.mjs').read_text()
-    capture = capture.replace("resolve('level-editor/work/croisement02-refinement/restart2-state/remaining-seven-contact-v1')", 'resolve('+json.dumps(str(out / 'contacts'))+')')
+    capture = capture.replace("resolve('level-editor/work/active/croisement02/restart2-state/remaining-seven-contact-v1')", 'resolve('+json.dumps(str(out / 'contacts'))+')')
     capture = capture.replace("'./restart6_verify_remaining_state_editor.mjs'", json.dumps((ROOT / 'level-editor/blender/croisement02/restart6_verify_remaining_state_editor.mjs').as_uri()))
     (out / 'capture.mjs').write_text(capture)
     for path in out.rglob('*'):

@@ -2,7 +2,7 @@
 from pathlib import Path
 import argparse,fcntl,hashlib,json,os,tempfile
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement/restart2-state'
+BASE=ROOT/'level-editor/work/active/croisement02/restart2-state'
 PLAN=BASE/'remaining-seven-publication-v1'
 STAGE=BASE/'remaining-seven-package-v2/library'
 LIB=ROOT/'level-editor/library'

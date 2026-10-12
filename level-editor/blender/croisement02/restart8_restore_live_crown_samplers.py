@@ -4,7 +4,7 @@ import copy,hashlib,json,struct,sys
 R=Path(__file__).resolve().parents[3];sys.path[:0]=[str(Path(__file__).parent),str(R/'level-editor/refinement/blender')]
 from restart8_audit_live_crowns import material
 from lossy_assets import read_glb
-B=R/'level-editor/work/croisement02-refinement/restart8-five-bark-approved-export-v1'
+B=R/'level-editor/work/active/croisement02/restart8-five-bark-approved-export-v1'
 def sha(b):return hashlib.sha256(b).hexdigest()
 def unpack(raw):
  n,k=struct.unpack_from('<II',raw,12);assert k==0x4e4f534a

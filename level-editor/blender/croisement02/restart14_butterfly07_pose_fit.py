@@ -9,7 +9,7 @@ from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
 from matplotlib.path import Path as Polygon
 ROOT=Path(__file__).resolve().parents[3]
-B=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies'
+B=ROOT/'level-editor/work/active/croisement02/restart14-butterflies'
 OUT=B/'butterfly07-pose-fit-v1'
 PHASES=[18,19,20,21,22,91,92,93]
 SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))

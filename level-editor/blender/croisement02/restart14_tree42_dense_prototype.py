@@ -7,7 +7,7 @@ ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/re
 from render_slots import acquire,release
 from refinement_workspace import _geometry
 from tree_geometry import SIN,COS,RAY
-OUT=ROOT/'level-editor/work/croisement02-refinement';BASE=OUT/'restart2-textures/approved6-canopy-fill-v1/croisement02-tree-42/native-front-preparation-v2/experiment/bake-v1/worker.blend';DEST=OUT/('restart14-canopy-animation/tree42-motion-v4'if '--coherent'in sys.argv else 'restart14-canopy-animation/tree42-motion-v3'if '--smooth'in sys.argv else 'restart14-canopy-animation/tree42-motion-v2');sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+OUT=ROOT/'level-editor/work/active/croisement02';BASE=OUT/'restart2-textures/approved6-canopy-fill-v1/croisement02-tree-42/native-front-preparation-v2/experiment/bake-v1/worker.blend';DEST=OUT/('restart14-canopy-animation/tree42-motion-v4'if '--coherent'in sys.argv else 'restart14-canopy-animation/tree42-motion-v3'if '--smooth'in sys.argv else 'restart14-canopy-animation/tree42-motion-v2');sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def sample_field(field,points,bbox):
  x=points[:,0]-bbox[0]-.5;y=points[:,1]-bbox[1]-.5;h,w=field.shape[:2];ok=(x>=0)&(y>=0)&(x<w-1)&(y<h-1);ix=np.clip(np.floor(x).astype(int),0,w-2);iy=np.clip(np.floor(y).astype(int),0,h-2);fx=np.clip(x-ix,0,1)[:,None];fy=np.clip(y-iy,0,1)[:,None];v=field[iy,ix]*(1-fx)*(1-fy)+field[iy,ix+1]*fx*(1-fy)+field[iy+1,ix]*(1-fx)*fy+field[iy+1,ix+1]*fx*fy;v[~ok]=0;return v
 

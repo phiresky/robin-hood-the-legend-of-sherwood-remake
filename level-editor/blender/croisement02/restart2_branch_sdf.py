@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from skimage.measure import marching_cubes
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement02'
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('index',type=int,choices=[43,45,46]);index=parser.parse_args().index

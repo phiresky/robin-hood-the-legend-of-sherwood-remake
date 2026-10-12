@@ -5,7 +5,7 @@ import numpy as np
 R=Path.cwd();sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/refinement/blender'),str(Path(__file__).parent)]
 import lossy_assets as la
 from merge_approved_round_wood import pack
-B=R/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1'
+B=R/'level-editor/work/active/croisement02/approved-round-wood-integration-oct11-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def image_bytes(path,d,b,im):
  if'uri'in im:return(path.parent/im['uri']).resolve().read_bytes()

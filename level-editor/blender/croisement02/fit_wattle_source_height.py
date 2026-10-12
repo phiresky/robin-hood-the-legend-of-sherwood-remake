@@ -8,7 +8,7 @@ from scipy.optimize import minimize
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
 from evidence_io import sha,write_json
-OUT=ROOT/'level-editor/work/croisement02-refinement';SIN,COS=math.sin(math.radians(35)),math.cos(math.radians(35))
+OUT=ROOT/'level-editor/work/active/croisement02';SIN,COS=math.sin(math.radians(35)),math.cos(math.radians(35))
 
 def main():
  base=OUT/'mixed-wood-audit/boundary-roles76-93-v1';members=json.loads((base/'post-geometry.json').read_text());dst=base/'height-fit-v1';dst.mkdir(exist_ok=False);crop=(526,741,792,1026);left,top,right,bottom=crop;size=(right-left,bottom-top)

@@ -3,9 +3,9 @@ import hashlib,json,subprocess,sys
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
 REPO=HERE.parents[1]
-OUT=REPO/'work/croisement02-refinement'
+OUT=REPO/'work/active/croisement02'
 CLIMB=OUT/'restart14-hidden-archer/climbing-v21-edge'
-YORK=REPO/'work/york-refinement/restart2/shed-texture-baked-v1'
+YORK=REPO/'work/active/york/restart2/shed-texture-baked-v1'
 BATCH=OUT/'restart3-review-batches'
 INPUT=BATCH/'next-climbing-shed-v1-inputs'
 DEST=BATCH/'next-climbing-shed-v1'

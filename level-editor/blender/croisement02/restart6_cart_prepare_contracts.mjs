@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {validateStateDelivery} from '../../shared/src/state-delivery.ts';
 import {verifyNativePresentationSource} from '../../app/src/native-state-presentation.ts';
 import {placementHeight} from '../../app/src/entity-projection.ts';
-const b=resolve('level-editor/work/croisement02-refinement'),lib=resolve('level-editor/library'),out=join(b,'restart2-state/cart-contract-preparation-v2');
+const b=resolve('level-editor/work/active/croisement02'),lib=resolve('level-editor/library'),out=join(b,'restart2-state/cart-contract-preparation-v2');
 const read=async p=>JSON.parse(await readFile(p,'utf8')),sha=b=>createHash('sha256').update(b).digest('hex'),hash=x=>sha(JSON.stringify(x));
 const instances=(await read(join(b,'state-target-evidence/manifest.json'))).instances,initial=(await read(join(b,'restart2-state/cart-initial-action-audit-v1/report.json'))).records,ends=await read(join(b,'restart2-state/remaining-local-origins-v1/manifest.json')),level=await read(join(lib,'game-data/Data/Levels/Croisement02.rhp.json')),resources=new Map(),records=[];
 await mkdir(join(out,'contracts'),{recursive:true});

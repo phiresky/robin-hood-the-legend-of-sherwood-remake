@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / "level-editor/work/croisement02-refinement"
+WORK = ROOT / "level-editor/work/active/croisement02"
 
 
 def sha(path):

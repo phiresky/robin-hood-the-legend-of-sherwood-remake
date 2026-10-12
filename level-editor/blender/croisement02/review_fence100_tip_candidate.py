@@ -6,7 +6,7 @@ from mathutils import Vector,Matrix
 R=Path.cwd();sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from refinement_review import render_review,_tree
-B=R/'level-editor/work/croisement02-refinement';D=B/'static-terrain-closure-oct11-v1/fence100-tip-candidate-v2';A='croisement02-southwest-field-wattle-fence'
+B=R/'level-editor/work/active/croisement02';D=B/'static-terrain-closure-oct11-v1/fence100-tip-candidate-v2';A='croisement02-southwest-field-wattle-fence'
 def main():
  acquire(slots=2)
  try:

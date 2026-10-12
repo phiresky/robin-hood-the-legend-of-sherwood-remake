@@ -2,7 +2,7 @@
 import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';import crypto from 'node:crypto';
 import {parseStoredMap} from '../../shared/src/stored-level.ts';
 import {compileAssetGameplay} from '../../shared/src/compile-asset-gameplay.ts';
-const root=path.resolve('level-editor/work/croisement02-refinement/restart4-gameplay-migration-v4');const stage=path.resolve(process.argv[2]??'level-editor/work/croisement02-refinement/restart2-textures/post-batch15-static-candidate-v1');const folder=path.join(root,process.argv[3]??'runtime-compile-v1');assert(!fs.existsSync(folder));fs.mkdirSync(folder);
+const root=path.resolve('level-editor/work/active/croisement02/restart4-gameplay-migration-v4');const stage=path.resolve(process.argv[2]??'level-editor/work/active/croisement02/restart2-textures/post-batch15-static-candidate-v1');const folder=path.join(root,process.argv[3]??'runtime-compile-v1');assert(!fs.existsSync(folder));fs.mkdirSync(folder);
 const read=(p:string)=>JSON.parse(fs.readFileSync(p,'utf8'));const hash=(s:string)=>crypto.createHash('sha256').update(s).digest('hex');
 function descriptors(root:string){return new Map(read(path.join(root,'index.json')).assets.filter((e:any)=>e.source_map?.toLowerCase()==='croisement02').map((e:any)=>[e.id,read(path.join(root,e.descriptor))]));}
 const old=descriptors(path.resolve('level-editor/library/3d-assets')),next=descriptors(path.join(stage,'map-assets/3d-assets'));const plan=read(path.join(root,'publication-handoff.json'));const expected=new Map(plan.descriptor_updates.map((r:any)=>[r.id,read(r.candidate_descriptor)]));

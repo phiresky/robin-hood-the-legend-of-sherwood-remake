@@ -4,12 +4,12 @@ from pathlib import Path
 import bpy,numpy as np
 from PIL import Image
 HERE=Path(__file__).resolve().parent;ROOT=HERE.parents[2]
-sys.path[:0]=[str(HERE),str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender'),str(ROOT/'level-editor/work/croisement02-refinement/restart2-textures')]
+sys.path[:0]=[str(HERE),str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender'),str(ROOT/'level-editor/work/active/croisement02/restart2-textures')]
 from render_slots import acquire,release
 from exact_composite_export_v2 import convert,finalize_document
 from bake_texture_candidate import snapshot
 import lossy_assets as la
-BASE=ROOT/'level-editor/work/croisement02-refinement';DEST=BASE/'restart38-approved-hole-export-v1'
+BASE=ROOT/'level-editor/work/active/croisement02';DEST=BASE/'restart38-approved-hole-export-v1'
 RECEIPT=BASE/'restart3-review-batches/next-ground-storehouse-hole-v1/user-approval-partial.json';RECEIPT_SHA='db55badd3a8f9545ecbf381f6dc6014d344f8a773e573e055e17bfb7eec5a675'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def image_digest(data):
@@ -57,7 +57,7 @@ def main(state):
    textures.append(dict(channel=key,uv=best,uv_error=scores[best],image=image,sampler=sampler))
   guards.append(dict(material=mat['name'],slot=slot,triangles=len(xyz),maximum_position_error=error,textures=textures))
  assert seen==set(expected);assert sha(source)==member['model_sha256']and sha(RECEIPT)==RECEIPT_SHA
- report=dict(status='PRIVATE_APPROVED_EXPORT_NUMERIC_PASS_BROWSER_PENDING',state=state,source_model=str(source),source_model_sha256=sha(source),approval=str(RECEIPT),approval_sha256=RECEIPT_SHA,model=str(target),model_sha256=sha(target),model_scene='endpoint-'+state,derivative=str(derivative),derivative_sha256=sha(derivative),source_geometry=before,conversion_records=records,primitive_guards=guards,source_images=original_images,embedded_images=actual_images,source_worker_unchanged=True,complementary_surface_and_original_uvs_exact=True,recipe_sha256=sha(__file__),converter_sha256=sha(ROOT/'level-editor/work/croisement02-refinement/restart2-textures/exact_composite_export_v2.py'),limitations=['Complementary binary masks preserve the two approved image branches on coincident surfaces; no surface displacement.','Private export only; browser appearance, receiver aperture and binding integration remain separate.'])
+ report=dict(status='PRIVATE_APPROVED_EXPORT_NUMERIC_PASS_BROWSER_PENDING',state=state,source_model=str(source),source_model_sha256=sha(source),approval=str(RECEIPT),approval_sha256=RECEIPT_SHA,model=str(target),model_sha256=sha(target),model_scene='endpoint-'+state,derivative=str(derivative),derivative_sha256=sha(derivative),source_geometry=before,conversion_records=records,primitive_guards=guards,source_images=original_images,embedded_images=actual_images,source_worker_unchanged=True,complementary_surface_and_original_uvs_exact=True,recipe_sha256=sha(__file__),converter_sha256=sha(ROOT/'level-editor/work/active/croisement02/restart2-textures/exact_composite_export_v2.py'),limitations=['Complementary binary masks preserve the two approved image branches on coincident surfaces; no surface displacement.','Private export only; browser appearance, receiver aperture and binding integration remain separate.'])
  (dest/'export.json').write_text(json.dumps(report,indent=2)+'\n');print(json.dumps(dict(state=state,model_sha256=sha(target),triangles=sum(r['triangles']for r in guards))),flush=True)
 if __name__=='__main__':
  acquire()

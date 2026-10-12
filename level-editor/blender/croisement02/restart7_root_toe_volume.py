@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from skimage.measure import marching_cubes
-OUT=Path(__file__).resolve().parents[2]/'work/croisement02-refinement';ROOT=OUT/'restart6-source-coverage';number=int(sys.argv[1]);out=ROOT/f'tree{number}-toe-volume-v1';out.mkdir(exist_ok=False);paths=next(r['paths']for r in json.load(open(OUT/'wood-traces.json'))if r['mask']==number);sin=np.sin(np.deg2rad(35));cos=np.cos(np.deg2rad(35));ground=150 if number==19 else 956.4;limit=50 if number==19 else 78
+OUT=Path(__file__).resolve().parents[2]/'work/active/croisement02';ROOT=OUT/'restart6-source-coverage';number=int(sys.argv[1]);out=ROOT/f'tree{number}-toe-volume-v1';out.mkdir(exist_ok=False);paths=next(r['paths']for r in json.load(open(OUT/'wood-traces.json'))if r['mask']==number);sin=np.sin(np.deg2rad(35));cos=np.cos(np.deg2rad(35));ground=150 if number==19 else 956.4;limit=50 if number==19 else 78
 if number==19:paths[-1]=paths[-1]+[[1605.5,154.0,3.0]]
 else:paths[-3]=paths[-3]+[[109.0,945.0,3.5]]
 nodes=[]

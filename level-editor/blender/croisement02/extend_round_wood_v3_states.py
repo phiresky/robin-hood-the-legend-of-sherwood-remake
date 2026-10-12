@@ -1,7 +1,7 @@
 """Add independent installed-state checks to the fresh private tree-map proof."""
 from pathlib import Path
 import json,hashlib
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';O=B/'approved-round-wood-integration-oct11-v1/editor-check-v3';P=B/'restart136-installed-state-ui-inputs-v1/inputs.json'
+R=Path.cwd();B=R/'level-editor/work/active/croisement02';O=B/'approved-round-wood-integration-oct11-v1/editor-check-v3';P=B/'restart136-installed-state-ui-inputs-v1/inputs.json'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def dump(p,x):p.write_text(json.dumps(x,indent=2)+'\n')
 p=json.loads(P.read_text());inputs=json.loads((O/'inputs.json').read_text())

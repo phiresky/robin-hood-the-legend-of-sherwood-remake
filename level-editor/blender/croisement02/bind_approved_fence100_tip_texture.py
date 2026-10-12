@@ -3,7 +3,7 @@ from pathlib import Path
 import json,hashlib,sys
 R=Path.cwd();sys.path.insert(0,str(R/'level-editor/refinement'))
 from prepare_texture_packet import prepare
-B=R/'level-editor/work/croisement02-refinement';D=B/'approved-fence100-tip-texture-oct11-v2';P=D/'packet';A=B/'restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json';ASSET='croisement02-southwest-field-wattle-fence'
+B=R/'level-editor/work/active/croisement02';D=B/'approved-fence100-tip-texture-oct11-v2';P=D/'packet';A=B/'restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json';ASSET='croisement02-southwest-field-wattle-fence'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 derivation=json.loads((D/'derivation.json').read_text());assert sha(A)==derivation['approval_sha256'];decision=derivation['original_geometry_decision'];model=Path(decision['model']);assert sha(model)==decision['model_sha256']

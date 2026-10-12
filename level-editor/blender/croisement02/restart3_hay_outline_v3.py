@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
 from scipy.ndimage import gaussian_filter1d,label,binary_opening
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement02-refinement';DEST=OUT/'restart3-hay/outline-v1';BOX=(860,930,1050,1110);SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement02';DEST=OUT/'restart3-hay/outline-v1';BOX=(860,930,1050,1110);SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))
 
 def raster(parts):
  image=Image.new('L',(570,540));draw=ImageDraw.Draw(image)

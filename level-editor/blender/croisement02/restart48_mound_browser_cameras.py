@@ -6,7 +6,7 @@ from pathlib import Path
 import struct
 import numpy as np
 
-BASE = Path(__file__).resolve().parents[2] / 'work/croisement02-refinement'
+BASE = Path(__file__).resolve().parents[2] / 'work/active/croisement02'
 OUT = BASE / 'restart48-mound-browser-cameras-v1'
 MODELS = BASE / 'restart47-explicit-rgb-sampling-v1/mounds'
 TEMPLATE = BASE / 'restart25-approved-state-materialization-v1/mound-filled-all-sites-v5/isolated-review-v1/views.json'

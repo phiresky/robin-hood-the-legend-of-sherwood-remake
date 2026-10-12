@@ -3,7 +3,7 @@ import hashlib,json,shutil
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 LIB=ROOT/'level-editor/library'
-BASE=ROOT/'level-editor/work/croisement02-refinement'
+BASE=ROOT/'level-editor/work/active/croisement02'
 SOURCE=BASE/'restart28-approved-climbing-integration-v3'
 OUT=BASE/'restart59-climbing-catalog-stage-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()

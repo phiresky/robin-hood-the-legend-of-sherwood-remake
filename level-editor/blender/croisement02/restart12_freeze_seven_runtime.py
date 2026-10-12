@@ -1,7 +1,7 @@
 """Derive a frozen-code seven-state proof from an immutable private library snapshot."""
 import hashlib,json,os,shutil,subprocess,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];old=Path(sys.argv[1]).resolve();b=old.with_name(sys.argv[2]);assert not b.exists();assert old.parent==ROOT/'level-editor/work/croisement02-refinement/restart2-state'
+ROOT=Path(__file__).resolve().parents[3];old=Path(sys.argv[1]).resolve();b=old.with_name(sys.argv[2]);assert not b.exists();assert old.parent==ROOT/'level-editor/work/active/croisement02/restart2-state'
 def sha(p):
  with p.open('rb')as f:return hashlib.file_digest(f,'sha256').hexdigest()
 for directory,dirs,files in os.walk(old):

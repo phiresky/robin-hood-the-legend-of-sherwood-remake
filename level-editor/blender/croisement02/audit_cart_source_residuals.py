@@ -5,13 +5,13 @@ import numpy as np
 from PIL import Image, ImageDraw
 from scipy.ndimage import label, find_objects
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement'/(sys.argv[sys.argv.index('--candidate')+1] if '--candidate' in sys.argv else 'north-cart-initial-candidate-v3')
+BASE=ROOT/'level-editor/work/active/croisement02'/(sys.argv[sys.argv.index('--candidate')+1] if '--candidate' in sys.argv else 'north-cart-initial-candidate-v3')
 
 def sha(path): return hashlib.sha256(path.read_bytes()).hexdigest()
 
 def main():
     dest=BASE/'source-residual-audit';dest.mkdir(exist_ok=False)
-    source=ROOT/'level-editor/work/croisement02-refinement/state-target-evidence/profiles/chariot03-10/action-160-direction-0-frame-000.png'
+    source=ROOT/'level-editor/work/active/croisement02/state-target-evidence/profiles/chariot03-10/action-160-direction-0-frame-000.png'
     rgba=np.array(Image.open(source).convert('RGBA'))
     domain=np.array(Image.open(BASE/'cart-source-domain.png'))>0
     actual=np.array(Image.open(BASE/'source-actual.png').convert('RGBA'))

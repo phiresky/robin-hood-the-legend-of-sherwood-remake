@@ -1,7 +1,7 @@
 """Stage verified mission variants and retain every installed resource unchanged."""
 from pathlib import Path
 import hashlib,json
-root=Path('level-editor');work=root/'work/croisement02-refinement';source=work/'restart2-state/trap-mission-variants-v1';out=work/'restart2-state/trap-mission-package-v1';library=root/'library';out.mkdir(exist_ok=True)
+root=Path('level-editor');work=root/'work/active/croisement02';source=work/'restart2-state/trap-mission-variants-v1';out=work/'restart2-state/trap-mission-package-v1';library=root/'library';out.mkdir(exist_ok=True)
 sha=lambda data:hashlib.sha256(data).hexdigest()
 manifest=json.loads((source/'manifest.json').read_text());index_path=library/'mission-states/index.json';index=json.loads(index_path.read_text());installed_entries=json.loads(index_path.read_text())['entries'];files={};reused={};rows=[]
 def put(path,data):

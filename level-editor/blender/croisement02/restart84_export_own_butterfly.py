@@ -6,7 +6,7 @@ from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
 from scipy.interpolate import CubicSpline
 import argparse
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 S=math.sin(math.radians(35));C=math.cos(math.radians(35));B=np.array([[1,0,0],[0,-S,-C],[0,-C,S]]);E=np.array([[1,0,0],[0,0,1],[0,-1,0]]);Q=E@B
 

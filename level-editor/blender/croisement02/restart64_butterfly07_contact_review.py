@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import restart14_butterfly07_anatomy_contacts as audit
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement'
+BASE=ROOT/'level-editor/work/active/croisement02'
 FIT=BASE/'restart64-butterfly07-pose-refinement-v1/fit.json'
 OUT=BASE/'restart64-butterfly07-contact-review-v1'
 def main():

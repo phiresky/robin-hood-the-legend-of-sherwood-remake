@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation,Slerp
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();pin=lambda p:dict(path=str(p),sha256=sha(p))
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();pin=lambda p:dict(path=str(p),sha256=sha(p))
 def main():
  p=argparse.ArgumentParser();p.add_argument('--numbers',nargs='+',type=int,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args();a.output.mkdir(exist_ok=False);requests=[];s=np.sin(np.radians(35));c=np.cos(np.radians(35));B=np.array([[1,0,0],[0,-s,-c],[0,-c,s]]);E=np.array([[1,0,0],[0,0,1],[0,-1,0]])
  for n in a.numbers:

@@ -8,7 +8,7 @@ from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
 from scipy.ndimage import distance_transform_edt,gaussian_filter1d
 from matplotlib.path import Path as PolygonPath
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies';OUT=BASE/'rig-full-v1';OUT.mkdir(exist_ok=True)
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-butterflies';OUT=BASE/'rig-full-v1';OUT.mkdir(exist_ok=True)
 source=json.loads((BASE/'source-audit-v1/report.json').read_text())['sequences'][0];ref=json.loads((BASE/'rig-v1/fit.json').read_text());wing=np.array(ref['wing_outline']);body=np.array([[.36*math.sin(a)*math.cos(t),4.5*math.cos(a),.55*math.sin(a)*math.sin(t)] for a in np.linspace(0,math.pi,13) for t in np.linspace(0,math.tau,25)[:-1]])
 anchors={r['phase']:r for r in ref['poses']}
 rollkeys=np.array([[0,-10.85],[2,-8.31],[18,-29.13],[29,0],[37,30],[53,0],[65,35],[75,-5],[84,-35],[98,-10.85]])

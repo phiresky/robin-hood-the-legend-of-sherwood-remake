@@ -6,7 +6,7 @@ from mathutils import Vector,Matrix
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-OUT=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies/rig-v1';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));B=np.array([[1,0,0],[0,-SIN,-COS],[0,-COS,SIN]])
+OUT=ROOT/'level-editor/work/active/croisement02/restart14-butterflies/rig-v1';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));B=np.array([[1,0,0],[0,-SIN,-COS],[0,-COS,SIN]])
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def rot(axis,angle):
  a=math.radians(angle);c=math.cos(a);s=math.sin(a)

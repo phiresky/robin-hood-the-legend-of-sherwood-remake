@@ -17,7 +17,7 @@ from continuous_wood_field import thickness_field, shell, cut_shell_below, bound
 from fit_wood_collars_cpu import fit
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/croisement02-refinement'
+OUT = ROOT / 'level-editor/work/active/croisement02'
 STUDY = OUT / 'wood-sweep-cpu-review'
 CONFIG = {32: (115., 125., (1030, 610, 1141, 757)),
           38: (105., 115., (1550, 585, 1611, 714))}

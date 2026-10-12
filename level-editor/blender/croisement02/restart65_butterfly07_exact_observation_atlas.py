@@ -6,8 +6,8 @@ from PIL import Image
 from matplotlib.path import Path as Polygon
 from scipy.spatial import ConvexHull
 from restart64_butterfly07_source_ownership import prepare,sha,ROOT,WING,geometry
-FIT=ROOT/'level-editor/work/croisement02-refinement/restart64-butterfly07-pose-refinement-v1/fit.json'
-OUT=ROOT/'level-editor/work/croisement02-refinement/restart65-butterfly07-exact-observation-atlas-v1'
+FIT=ROOT/'level-editor/work/active/croisement02/restart64-butterfly07-pose-refinement-v1/fit.json'
+OUT=ROOT/'level-editor/work/active/croisement02/restart65-butterfly07-exact-observation-atlas-v1'
 
 def main():
     assert not OUT.exists();OUT.mkdir();fit=json.loads(FIT.read_text());w,h=64,96

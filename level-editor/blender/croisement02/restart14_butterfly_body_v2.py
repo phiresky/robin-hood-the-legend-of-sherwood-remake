@@ -3,7 +3,7 @@ from pathlib import Path
 import json,math,hashlib
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies';OUT=BASE/'prototype-v2';OUT.mkdir(exist_ok=True)
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-butterflies';OUT=BASE/'prototype-v2';OUT.mkdir(exist_ok=True)
 p=json.loads((BASE/'prototype-v1/packet.json').read_text());sin=math.sin(math.radians(35));cos=math.cos(math.radians(35));R=np.array([0,-cos,sin]);D=np.array([0,-sin,-cos]);X=np.array([1,0,0]);proof=[]
 for f in p['frames']:
  a=np.array(Image.open(f['source']));m=a[:,:,3]>0;h,w=m.shape;cx,cy=f['centroid_local'];axis=np.array([math.sin(f['body_axis_radians']),math.cos(f['body_axis_radians'])]);side=np.array([axis[1],-axis[0]])

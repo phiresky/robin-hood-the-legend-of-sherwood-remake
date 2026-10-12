@@ -1,7 +1,7 @@
 """Bind current receiver caps to exact focused hole contracts privately."""
 import json,hashlib
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';DEST=BASE/'restart39-current-hole-apertures-v1';END=BASE/'restart38-approved-hole-export-v1'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02';DEST=BASE/'restart39-current-hole-apertures-v1';END=BASE/'restart38-approved-hole-export-v1'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def pin(p):return dict(path=str(p),sha256=sha(p))
 def read(p):return json.loads(Path(p).read_text())

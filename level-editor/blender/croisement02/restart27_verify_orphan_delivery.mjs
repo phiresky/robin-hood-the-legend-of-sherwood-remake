@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {validateStateDelivery} from '../../shared/src/state-delivery.ts';
 import {verifyNativePresentationSource} from '../../app/src/native-state-presentation.ts';
 import {decode} from '../../app/node_modules/fast-png/lib/index.js';
-const folder=resolve('level-editor/work/croisement02-refinement/restart27-orphan-delivery-v1');
+const folder=resolve('level-editor/work/active/croisement02/restart27-orphan-delivery-v1');
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const config=JSON.parse(await readFile(join(folder,'reader-config.json'),'utf8'));
 const checked=async p=>{const bytes=await readFile(p.path);assert.equal(sha(bytes),p.sha256,p.path);return bytes;};

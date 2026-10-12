@@ -3,7 +3,7 @@ import json,hashlib,shutil
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';OUT=BASE/'restart69-butterfly07-review-gallery-v1';FIT=BASE/'restart66-butterfly07-global-bright-fit-v1/fit.json';LOCAL=BASE/'restart69-butterfly07-local-review-v1';IMPORT=BASE/'restart69-butterfly07-import-review-v1';MODEL=BASE/'restart67-butterfly07-fullpath-export-v1/butterfly07-fullpath.glb'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02';OUT=BASE/'restart69-butterfly07-review-gallery-v1';FIT=BASE/'restart66-butterfly07-global-bright-fit-v1/fit.json';LOCAL=BASE/'restart69-butterfly07-local-review-v1';IMPORT=BASE/'restart69-butterfly07-import-review-v1';MODEL=BASE/'restart67-butterfly07-fullpath-export-v1/butterfly07-fullpath.glb'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  assert not OUT.exists();OUT.mkdir();fit=json.loads(FIT.read_text());frames=[]

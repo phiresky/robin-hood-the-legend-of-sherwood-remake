@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image,ImageDraw
 from scipy.signal import correlate
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement02-refinement'
+OUT=ROOT/'level-editor/work/active/croisement02'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
     path=OUT/'state-target-evidence/north-cart/manifest.json';manifest=json.loads(path.read_text());part=manifest['parts'][0];frames=part['frames'];dest=OUT/'north-cart-roof-motion-v2';dest.mkdir(exist_ok=False)

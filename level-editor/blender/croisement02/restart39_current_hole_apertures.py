@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
 import lossy_assets as la
-BASE=ROOT/'level-editor/work/croisement02-refinement';LIB=ROOT/'level-editor/library';DEST=BASE/'restart39-current-hole-apertures-v1';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))
+BASE=ROOT/'level-editor/work/active/croisement02';LIB=ROOT/'level-editor/library';DEST=BASE/'restart39-current-hole-apertures-v1';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def pin(p):return dict(path=str(p),sha256=sha(p))
 def read(p):return json.loads(Path(p).read_text())

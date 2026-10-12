@@ -2,7 +2,7 @@
 import hashlib,json
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement02-refinement'
+OUT=ROOT/'level-editor/work/active/croisement02'
 DEST=OUT/'restart3-review-batches/adapters-v1'
 def sha(p):
  with Path(p).open('rb') as f:return hashlib.file_digest(f,'sha256').hexdigest()
@@ -17,7 +17,7 @@ def main():
  def ims(rows):return [dict(label=l,file=str(p),source=str(p),sha256=sha(p)) for l,p in rows]
  member=dict(asset_id=d['asset_id'],model_sha256=d['model_sha256'],review_revision=revision,decision='pending',scope='New kindling geometry only; hidden texture fill remains pending.',notes=d['notes'],evidence={**d['files'],str(p):sha(p)},displayed_images=ims(images))
  (DEST/'kindling.json').write_text(json.dumps(dict(items=[member],cards=[dict(card_id=d['asset_id'],title='Southwest kindling bundle',asset_ids=[d['asset_id']])]),indent=2)+'\n')
- p=ROOT/'level-editor/work/york-refinement/restart2/pair-v16/ready-candidate-v1.json';d=json.loads(p.read_text());verify(d)
+ p=ROOT/'level-editor/work/active/york/restart2/pair-v16/ready-candidate-v1.json';d=json.loads(p.read_text());verify(d)
  evidence={str((ROOT/f).resolve()):h for f,h in d['files'].items()};evidence[str(p)]=sha(p)
  images=[(label.replace('_',' '),ROOT/path) for label,path in d['presentation'].items() if label!='first_view']
  # Individual sheets are also part of the paired geometry decision.

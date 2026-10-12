@@ -1,7 +1,7 @@
 """Stream catalog rows to locate independent publication drift with bounded memory."""
 import json,hashlib,itertools
 from pathlib import Path
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1';OUT=B/'prepublication-audit-oct12-v1/catalog-drift.json'
+R=Path.cwd();B=R/'level-editor/work/active/croisement02/approved-round-wood-integration-oct11-v1';OUT=B/'prepublication-audit-oct12-v1/catalog-drift.json'
 def rows(p):
  dec=json.JSONDecoder()
  with p.open()as f:

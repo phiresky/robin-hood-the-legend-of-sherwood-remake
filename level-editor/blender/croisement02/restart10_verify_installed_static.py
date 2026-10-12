@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from render_slots import acquire, release
 
-WORK = ROOT / 'level-editor/work/croisement02-refinement/restart2-textures'
+WORK = ROOT / 'level-editor/work/active/croisement02/restart2-textures'
 STAGE = WORK / 'post-batch15-static-candidate-v6'
 FIXTURE = WORK / 'installed-static-v1'
 RUNNER = WORK / 'review_installed_static_v1.mjs'

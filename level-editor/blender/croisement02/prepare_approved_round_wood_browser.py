@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/croisement02-refinement'
+BASE = ROOT / 'level-editor/work/active/croisement02'
 OUT = BASE / 'approved-round-wood-integration-oct11-v1/browser-request-v1'
 
 

@@ -13,7 +13,7 @@ from scipy.sparse import lil_matrix,coo_matrix,eye,hstack,vstack
 from scipy.optimize import linprog
 from scipy.sparse.linalg import spsolve
 from scipy.ndimage import binary_fill_holes,distance_transform_edt,map_coordinates
-BASE=Path(__file__).resolve().parents[3]/'level-editor/work/croisement02-refinement/wood-sweep-cpu-review'
+BASE=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement02/wood-sweep-cpu-review'
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--input',type=Path,required=True);parser.add_argument('--output',type=Path,required=True);parser.add_argument('--coefficient',type=float,default=.65);args=parser.parse_args();source=args.input;out=args.output
     if not np.isfinite(args.coefficient) or not 0<=args.coefficient<=.75:raise ValueError('Branch shear coefficient must stay within the declared .75 bound')

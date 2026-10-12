@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.ndimage import gaussian_filter
 from skimage.measure import marching_cubes
-ROOT=Path(__file__).resolve().parents[2]/'work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[2]/'work/active/croisement02'
 out=ROOT/'restart6-source-coverage/tree18-native-volume-v1';out.mkdir(exist_ok=False)
 sin=np.sin(np.deg2rad(35));cos=np.cos(np.deg2rad(35));ground=224.90138
 paths=next(r['paths']for r in json.load(open(ROOT/'wood-traces.json'))if r['mask']==18);nodes=[]

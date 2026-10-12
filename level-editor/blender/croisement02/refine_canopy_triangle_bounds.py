@@ -3,7 +3,7 @@ from pathlib import Path
 import json,struct,hashlib
 import numpy as np
 from audit_canopy_static_clearance import primitives
-R=Path.cwd();L=R/'level-editor/library';B=R/'level-editor/work/croisement02-refinement';a=B/'canopy-current-static-clearance-oct12-v1/audit.json';b=B/'canopy-current-static-clearance-refined-oct12-v1/audit.json';O=B/'canopy-new-neighbor-triangle-bounds-oct12-v1';O.mkdir(exist_ok=False);base=json.loads(a.read_text());refined=json.loads(b.read_text());scene=json.loads((L/'scenes/croisement02.rhlos-map.json').read_text());refs={x['id']:x for x in scene['assetSources']};results=[]
+R=Path.cwd();L=R/'level-editor/library';B=R/'level-editor/work/active/croisement02';a=B/'canopy-current-static-clearance-oct12-v1/audit.json';b=B/'canopy-current-static-clearance-refined-oct12-v1/audit.json';O=B/'canopy-new-neighbor-triangle-bounds-oct12-v1';O.mkdir(exist_ok=False);base=json.loads(a.read_text());refined=json.loads(b.read_text());scene=json.loads((L/'scenes/croisement02.rhlos-map.json').read_text());refs={x['id']:x for x in scene['assetSources']};results=[]
 def load(path):
  raw=path.read_bytes();n=struct.unpack_from('<I',raw,12)[0];doc=json.loads(raw[20:20+n]);buffers=[raw[28+n:]]+[ (path.parent/x['uri']).read_bytes()for x in doc['buffers'][1:]]
  def read(i):

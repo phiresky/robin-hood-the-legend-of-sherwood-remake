@@ -7,7 +7,7 @@ from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
 VERSION=sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'prototype-v1'
-OUT=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies'/VERSION;SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))
+OUT=ROOT/'level-editor/work/active/croisement02/restart14-butterflies'/VERSION;SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  assert shutil.disk_usage(OUT).free>25*1024**3

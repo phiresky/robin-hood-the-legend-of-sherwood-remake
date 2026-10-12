@@ -2,7 +2,7 @@
 import json,struct,hashlib
 from pathlib import Path
 import numpy as np
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement02'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def bounds(path):
  raw=path.read_bytes();length=struct.unpack_from('<I',raw,12)[0];doc=json.loads(raw[20:20+length]);blob=raw[28+length:]

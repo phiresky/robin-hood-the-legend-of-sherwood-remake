@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation
 from matplotlib.path import Path as Polygon
 from restart14_butterfly07_pose_fit import geometry
 ROOT=Path(__file__).resolve().parents[3]
-B=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies'
+B=ROOT/'level-editor/work/active/croisement02/restart14-butterflies'
 OUT=B/'butterfly07-full-local-registration-v1'
 PARENT=B/'butterfly07-body-axis-selected-v1/fit.json'
 PLAN=B/'all7-context-plan-v1/plan.json'

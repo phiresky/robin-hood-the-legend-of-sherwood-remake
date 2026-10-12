@@ -3,7 +3,7 @@ import hashlib,json
 from pathlib import Path
 from collections import Counter
 from PIL import Image,ImageDraw
-BASE=Path(__file__).resolve().parents[2]/'work/croisement02-refinement'
+BASE=Path(__file__).resolve().parents[2]/'work/active/croisement02'
 ROOT=BASE/'restart14-hidden-archer/audit-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():

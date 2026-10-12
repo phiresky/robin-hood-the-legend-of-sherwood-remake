@@ -9,7 +9,7 @@ from render_multiview_asset import render
 from restart6_bark_preservation import reachable_images
 from restart6_bake_five_bark import pixels
 from bake_texture_candidate import snapshot
-O=R/'level-editor/work/croisement02-refinement';B=O/'restart6-five-bark-fill-v1';read=lambda p:json.loads(p.read_text());h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+O=R/'level-editor/work/active/croisement02';B=O/'restart6-five-bark-fill-v1';read=lambda p:json.loads(p.read_text());h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main(n):
  F=B/f'tree-{n}-fill-v1';D=F/f'shader-restored-v3';P=D/'preservation.json';proof=read(P);model=D/'worker.blend';assert h(model)==proof['model_sha256'];out=D/'wood-review-v1';out.mkdir(exist_ok=False);auth=next(r for r in read(B/'source-authority.json')['records']if r['asset']==f'croisement02-tree-{n}');meta=read(D/'close-views.json');bpy.ops.wm.open_mainfile(filepath=auth['model']);scene=bpy.data.scenes[meta['scene_name']];bpy.context.window.scene=scene;before=snapshot(scene,set(meta['object_names']));original_uv={name:{uv.name:np.array([x.uv[:]for x in uv.data],np.float32)for uv in scene.objects[name].data.uv_layers}for name in proof['active_receivers']};bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.data.scenes[meta['scene_name']];bpy.context.window.scene=scene;assert snapshot(scene,set(meta['object_names']))==before;records=[]
  for name,layers in original_uv.items():

@@ -3,7 +3,7 @@ import json,hashlib
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[2]/'work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[2]/'work/active/croisement02'
 out=ROOT/'restart6-source-coverage/remaining-inventory-v1';out.mkdir(exist_ok=False)
 mask=np.array(Image.open(ROOT/'restart4-floor-closure-input-v1/native-exposed487.png'))>0
 source=np.array(Image.open(ROOT/'animation-references/composite-frame-0.png').convert('RGB'));covered=np.zeros_like(mask);rows=[]

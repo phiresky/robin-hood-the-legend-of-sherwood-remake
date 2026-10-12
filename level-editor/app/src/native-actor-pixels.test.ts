@@ -9,7 +9,7 @@ const fixture = JSON.parse(
   readFileSync(
     resolve(
       root,
-      "level-editor/work/croisement02-refinement/restart20-hidden-outline-v1/fixture.json",
+      "level-editor/work/active/croisement02/restart20-hidden-outline-v1/fixture.json",
     ),
     "utf8",
   ),

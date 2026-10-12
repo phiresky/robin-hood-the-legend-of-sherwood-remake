@@ -7,7 +7,7 @@ sys.path.insert(0,str(HERE));sys.path.insert(0,str(HERE.parents[1]/'refinement')
 from render_slots import acquire,release
 from restart9_hole_contact import clip_halfplane
 SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35))
-ROOT=HERE.parents[1]/'work/croisement02-refinement'
+ROOT=HERE.parents[1]/'work/active/croisement02'
 DEST=ROOT/'restart10-hole-aperture/packet-v1'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def area(poly):

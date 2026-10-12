@@ -3,7 +3,7 @@ from pathlib import Path
 import json,hashlib,math
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies';OUT=BASE/'prototype-v1';OUT.mkdir(exist_ok=True)
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-butterflies';OUT=BASE/'prototype-v1';OUT.mkdir(exist_ok=True)
 report=json.loads((BASE/'source-audit-v1/report.json').read_text());seq=next(s for s in report['sequences'] if s['index']==8)
 SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));R=np.array([0,-COS,SIN]);DOWN=np.array([0,-SIN,-COS]);X=np.array([1,0,0]);frames=[]
 for f in seq['frames']:

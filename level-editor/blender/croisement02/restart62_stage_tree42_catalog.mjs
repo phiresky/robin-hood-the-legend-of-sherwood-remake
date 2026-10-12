@@ -6,7 +6,7 @@ import {parseStoredMap} from '../../shared/src/stored-level.ts';
 import {gameToScene} from '../../shared/src/scene.ts';
 import {loadMissionStatePreview} from '../../app/src/mission-state-catalog.ts';
 import {verifyStaticReplacementRows} from '../../shared/src/state-delivery.ts';
-const root=resolve('.'),lib=join(root,'level-editor/library'),base=join(root,'level-editor/work/croisement02-refinement'),out=join(base,'restart62-tree42-catalog-stage-v2');
+const root=resolve('.'),lib=join(root,'level-editor/library'),base=join(root,'level-editor/work/active/croisement02'),out=join(base,'restart62-tree42-catalog-stage-v2');
 const sha=b=>createHash('sha256').update(b).digest('hex');const read=async p=>JSON.parse(await readFile(p));const pin=async p=>({path:p,sha256:sha(await readFile(p))});const save=async(p,d)=>{await mkdir(resolve(p,'..'),{recursive:true});await writeFile(p,JSON.stringify(d,null,2)+'\n',{flag:'wx'})};
 await mkdir(out);const catalog=await read(join(lib,'mission-states/index.json')),nativeSource=await read(join(lib,'mission-states/croisement02/contracts/signposts.json'));const element=nativeSource.native.elements.find(e=>e.id==='animation1');assert.equal(element.source.kind,'map-animation');assert.equal(element.frames.length,14);assert.ok(element.frames.every(f=>f.delay===3));
 const stored=await read(join(lib,'scenes/croisement02.rhlos-map.json')),descriptors=new Map();for(const ref of [...stored.assetSources??[],...stored.sceneAssets??[]])descriptors.set(ref.id,await read(join(lib,ref.descriptor)));const document=parseStoredMap(stored,descriptors),group=document.groups.find(g=>g.id==='croisement02-tree-42'),source=document.assetSources.find(a=>a.id===group.id);assert.ok(group&&source);

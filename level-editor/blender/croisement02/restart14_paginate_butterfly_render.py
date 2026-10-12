@@ -3,7 +3,7 @@ from pathlib import Path
 import hashlib,json
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies/rig-joint-trial-v1';OUT=BASE/'pagination-v1'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-butterflies/rig-joint-trial-v1';OUT=BASE/'pagination-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  OUT.mkdir(exist_ok=True);source=BASE/'all99-source-native-rear.png';before=sha(source);image=Image.open(source).convert('RGB');assert image.size==(3168,1188);pages=[]

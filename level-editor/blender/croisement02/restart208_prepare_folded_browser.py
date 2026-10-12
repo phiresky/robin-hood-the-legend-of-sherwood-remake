@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation,Slerp
 from scipy.interpolate import CubicSpline
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement02'
 def main():
  out=B/'restart208-butterfly03-folded-browser-v1';out.mkdir(exist_ok=False);p=B/'restart201-butterfly03-folded-candidate-v1';fit=json.loads((p/'fit.json').read_text());spec=importlib.util.spec_from_file_location('geo',p/'geometry.py');geo=importlib.util.module_from_spec(spec);spec.loader.exec_module(geo);d=json.loads((p/'inputs.json').read_text())['continuous_height_curve'];curve=CubicSpline(d['times'],d['heights'],bc_type='periodic');s=math.sin(math.radians(35));c=math.cos(math.radians(35));basis=np.array([[1,0,0],[0,-s,-c],[0,-c,s]]);convert=np.array([[1,0,0],[0,0,1],[0,-1,0]]);rows=[];sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();pin=lambda p:dict(path=str(p),sha256=sha(p))
  for tick in range(198):

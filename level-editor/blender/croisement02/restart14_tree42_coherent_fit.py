@@ -5,7 +5,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from PIL import Image
 from restart14_tree42_dense_motion import warp
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation';DEST=BASE/('tree42-coherent-correspondence-v2'if '--fine'in sys.argv else 'tree42-coherent-correspondence-v1')
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-canopy-animation';DEST=BASE/('tree42-coherent-correspondence-v2'if '--fine'in sys.argv else 'tree42-coherent-correspondence-v1')
 def main():
  DEST.mkdir(exist_ok=False);p=BASE/'tree42-smooth-correspondence-v1/flows.npz';packet=np.load(p);t=np.arange(8)/7;terminal=np.sum(packet['flow'][:8]*t[:,None,None,None],axis=0)/np.sum(t*t);sigma=1.5 if '--fine'in sys.argv else 2.5;terminal=gaussian_filter(terminal,(sigma,sigma,0));source=json.loads((BASE/'source-reconciliation-v1/report.json').read_text())['groups'][1];x0,y0,w,h=map(int,packet['bbox']);features=[]
  for f in source['frames']:

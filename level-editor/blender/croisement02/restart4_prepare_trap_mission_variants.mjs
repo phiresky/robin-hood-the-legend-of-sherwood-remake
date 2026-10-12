@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {validateStateDelivery} from '../../shared/src/state-delivery.ts';
 import {verifyNativePresentationSource} from '../../app/src/native-state-presentation.ts';
 import {placementHeight} from '../../app/src/entity-projection.ts';
-const root=resolve('level-editor'),out=join(root,'work/croisement02-refinement'),dest=join(out,'restart2-state/trap-mission-variants-v1');
+const root=resolve('level-editor'),out=join(root,'work/active/croisement02'),dest=join(out,'restart2-state/trap-mission-variants-v1');
 const read=async p=>JSON.parse(await readFile(p,'utf8')),sha=b=>createHash('sha256').update(b).digest('hex'),hash=x=>sha(JSON.stringify(x));
 const level=await read(join(root,'library/game-data/Data/Levels/Croisement02.rhp.json')),targets=await read(join(out,'state-target-evidence/manifest.json')),layers=await read(join(out,'source-states/layers.json'));
 await mkdir(dest,{recursive:true});const records=[];

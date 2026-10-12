@@ -7,7 +7,7 @@ import numpy as np
 from scipy.optimize import differential_evolution
 from scipy.spatial.transform import Rotation
 import restart21_butterfly07_global_registration_v2 as ref
-BASE=ref.ROOT/'level-editor/work/croisement02-refinement';FIT=BASE/'restart65-butterfly07-bright-pose-refinement-v1/fit.json';OUT=BASE/'restart66-butterfly07-global-bright-fit-v1'
+BASE=ref.ROOT/'level-editor/work/active/croisement02';FIT=BASE/'restart65-butterfly07-bright-pose-refinement-v1/fit.json';OUT=BASE/'restart66-butterfly07-global-bright-fit-v1'
 def main():
  assert not OUT.exists();OUT.mkdir();fit=json.loads(FIT.read_text());original=fit['rows'];rows=copy.deepcopy(original)
  for phase,row in enumerate(original):

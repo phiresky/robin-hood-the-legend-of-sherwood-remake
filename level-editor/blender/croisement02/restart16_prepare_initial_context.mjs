@@ -5,7 +5,7 @@ import {resolve,join,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
 import {addInitialContexts} from './restart16_initial_context.mjs';
 import {verifyNativePresentationSource} from '../../app/src/native-state-presentation.ts';
-const root=resolve('level-editor/work/croisement02-refinement');
+const root=resolve('level-editor/work/active/croisement02');
 const library=resolve('level-editor/library');
 const prior=join(root,'restart7-source-patch-delivery/contracts-v1');
 const output=join(root,'restart2-state/restart16-initial-context-v1');

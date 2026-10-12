@@ -6,7 +6,7 @@ import {validateStateDelivery} from '../../shared/src/state-delivery.ts';
 import {verifyNativePresentationSource} from '../../app/src/native-state-presentation.ts';
 import {nativePatchBackgroundFrame,nativeTransientPatchFrame} from '../../shared/src/native-state-presentation.ts';
 import {PendingPatchController,sourceSnapshot} from './restart24_pending_patch_adapter.mjs';
-const folder=resolve('level-editor/work/croisement02-refinement/restart28-approved-climbing-integration-v3');
+const folder=resolve('level-editor/work/active/croisement02/restart28-approved-climbing-integration-v3');
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const config=JSON.parse(await readFile(join(folder,'reader-config.json'),'utf8'));
 const checked=async p=>{const b=await readFile(p.path);assert.equal(sha(b),p.sha256,p.path);return b;};

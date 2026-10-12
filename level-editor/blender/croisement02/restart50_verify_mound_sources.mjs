@@ -1,7 +1,7 @@
 import {readFile,writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {verifyNativePresentationSource} from '../../app/src/native-state-presentation.ts';
-const out='level-editor/work/croisement02-refinement/restart50-mound-lifecycle-fixture-v1';
+const out='level-editor/work/active/croisement02/restart50-mound-lifecycle-fixture-v1';
 const sha=raw=>createHash('sha256').update(raw).digest('hex');
 async function read(pin){const raw=await readFile(pin.path);if(sha(raw)!==pin.sha256)throw Error('Pin mismatch '+pin.path);return JSON.parse(raw)}
 const request=JSON.parse(await readFile(out+'/request.json'));

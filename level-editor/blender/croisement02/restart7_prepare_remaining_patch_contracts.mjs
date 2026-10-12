@@ -4,7 +4,7 @@ import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {validateNativeStatePresentation} from '../../shared/src/native-state-presentation.ts';
 import {verifyNativePresentationSource} from '../../app/src/native-state-presentation.ts';
-const base=resolve('level-editor/work/croisement02-refinement'),lib=resolve('level-editor/library'),stage=join(base,'restart2-state/remaining-seven-package-v2/library'),out=join(base,'restart7-source-patch-delivery/contracts-v1');
+const base=resolve('level-editor/work/active/croisement02'),lib=resolve('level-editor/library'),stage=join(base,'restart2-state/remaining-seven-package-v2/library'),out=join(base,'restart7-source-patch-delivery/contracts-v1');
 const read=async p=>JSON.parse(await readFile(p,'utf8')),sha=b=>createHash('sha256').update(b).digest('hex'),hash=x=>sha(JSON.stringify(x));
 const audit=await read(join(base,'restart2-state/finite-state-coverage-reconciliation-v1.json')),catalog=await read(join(stage,'mission-states/index.json')),layers=await read(join(base,'source-states/layers.json')),level=await read(join(lib,'game-data/Data/Levels/Croisement02.rhp.json')),resources=new Map(),records=[];
 await mkdir(join(out,'contracts'),{recursive:true});await mkdir(join(out,'profiles'),{recursive:true});

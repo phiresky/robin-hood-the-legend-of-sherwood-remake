@@ -4,7 +4,7 @@ from pathlib import Path
 import bpy,numpy as np
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-BASE=ROOT/'level-editor/work/croisement02-refinement';MODEL=BASE/'restart65-butterfly07-exact-model-review-v1/model.blend';FIT=BASE/'restart64-butterfly07-pose-refinement-v1/fit.json'
+BASE=ROOT/'level-editor/work/active/croisement02';MODEL=BASE/'restart65-butterfly07-exact-model-review-v1/model.blend';FIT=BASE/'restart64-butterfly07-pose-refinement-v1/fit.json'
 def rotation(axis,angle):
  a=math.radians(angle);c=math.cos(a);s=math.sin(a)
  return {'x':np.array([[1,0,0],[0,c,-s],[0,s,c]]),'y':np.array([[c,0,s],[0,1,0],[-s,0,c]]),'z':np.array([[c,-s,0],[s,c,0],[0,0,1]])}[axis]

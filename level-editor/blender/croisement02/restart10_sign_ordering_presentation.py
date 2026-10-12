@@ -2,7 +2,7 @@
 from pathlib import Path
 import hashlib,json,math
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3]/'level-editor/work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement02'
 BASE=ROOT/'restart10-physical-signs'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main():

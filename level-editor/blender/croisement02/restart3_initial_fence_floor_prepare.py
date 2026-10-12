@@ -2,7 +2,7 @@
 from pathlib import Path
 import json,hashlib,shutil
 from PIL import Image
-R=Path(__file__).resolve().parents[3]; O=R/'level-editor/work/croisement02-refinement'; P=O/'restart3-initial-fence/floor-proposal-v2'; I=P/'inputs-v1'; E=O/'restart3-initial-fence/floor-fill-v1'
+R=Path(__file__).resolve().parents[3]; O=R/'level-editor/work/active/croisement02'; P=O/'restart3-initial-fence/floor-proposal-v2'; I=P/'inputs-v1'; E=O/'restart3-initial-fence/floor-fill-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def write(p,v):p.write_text(json.dumps(v,indent=2)+'\n')
 receipt=O/'restart3-review-batches/batch-v7/user-approval.json'

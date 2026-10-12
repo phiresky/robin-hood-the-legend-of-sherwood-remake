@@ -13,7 +13,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parents[2]
-BASE = ROOT / 'work/croisement02-refinement/restart14-hidden-archer'
+BASE = ROOT / 'work/active/croisement02/restart14-hidden-archer'
 SIN, COS = math.sin(math.radians(35)), math.cos(math.radians(35))
 RAY = np.array([0., -COS, SIN])
 

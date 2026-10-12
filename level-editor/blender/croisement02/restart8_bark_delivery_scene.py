@@ -2,7 +2,7 @@
 from pathlib import Path
 import copy,hashlib,json,struct,sys
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement/restart8-five-bark-approved-export-v1'
+BASE=ROOT/'level-editor/work/active/croisement02/restart8-five-bark-approved-export-v1'
 def digest(b):return hashlib.sha256(b).hexdigest()
 def unpack(b):
  assert b[:4]==b'glTF' and struct.unpack_from('<I',b,8)[0]==len(b)

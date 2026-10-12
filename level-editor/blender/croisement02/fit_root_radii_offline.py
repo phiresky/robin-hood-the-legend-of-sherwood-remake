@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 from scipy.spatial import ConvexHull
 
-OUT = Path(__file__).resolve().parents[3] / 'level-editor/work/croisement02-refinement'
+OUT = Path(__file__).resolve().parents[3] / 'level-editor/work/active/croisement02'
 SIN, COS = math.sin(math.radians(35)), math.cos(math.radians(35))
 
 

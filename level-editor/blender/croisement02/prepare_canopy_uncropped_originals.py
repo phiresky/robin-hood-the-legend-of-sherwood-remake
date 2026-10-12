@@ -1,7 +1,7 @@
 """Supplement native-cropped phase evidence with full original-direction views."""
 from pathlib import Path
 import json,hashlib,subprocess,shutil
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';S=B/'canopy06-complete-calibrated-playerfix-oct12-v1';O=B/'canopy-full-original-supplement-oct12-v1';O.mkdir(exist_ok=False)
+R=Path.cwd();B=R/'level-editor/work/active/croisement02';S=B/'canopy06-complete-calibrated-playerfix-oct12-v1';O=B/'canopy-full-original-supplement-oct12-v1';O.mkdir(exist_ok=False)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 rows=[]
 for group in [2,3,5,6,7]:rows.extend(json.loads((B/f'canopy{group:02}-complete-calibrated-playerfix-oct12-v1/request.json').read_text())['rows'])

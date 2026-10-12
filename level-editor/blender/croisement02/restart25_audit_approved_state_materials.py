@@ -6,7 +6,7 @@ HERE=Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE.parents[1]/'refinement'))
 from render_slots import acquire,release
 ROOT=HERE.parents[2]
-BASE=ROOT/'level-editor/work/croisement02-refinement'
+BASE=ROOT/'level-editor/work/active/croisement02'
 DEST=BASE/'restart25-approved-state-materialization-v1'
 RECEIPT=BASE/'restart3-review-batches/pending-v17-v23-plus-two-hub-v1/user-approval.json'
 EXPECTED='ca25ba9362b26dfb8ac1239f7acd7b56929463498b125bed0f42dcd98ec628f4'

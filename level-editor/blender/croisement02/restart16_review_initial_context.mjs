@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {NativeStatePresentation} from '../../app/src/native-state-presentation.ts';
 const require=createRequire(resolve('level-editor/app/package.json'));
 const {encode}=await import(require.resolve('fast-png'));
-const lib=resolve('level-editor/library'),stage=resolve('level-editor/work/croisement02-refinement/restart2-state/restart16-initial-context-v1');
+const lib=resolve('level-editor/library'),stage=resolve('level-editor/work/active/croisement02/restart2-state/restart16-initial-context-v1');
 const read=async p=>JSON.parse(await readFile(p,'utf8')),sha=b=>createHash('sha256').update(b).digest('hex');
 const manifest=await read(join(stage,'manifest.json')),level=await read(join(lib,'game-data/Data/Levels/Croisement02.rhp.json')),records=[];
 for(const row of manifest.records.filter(r=>r.id.endsWith('-log-trap'))){

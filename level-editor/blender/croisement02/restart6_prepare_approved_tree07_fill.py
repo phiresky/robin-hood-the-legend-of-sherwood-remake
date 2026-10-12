@@ -3,7 +3,7 @@ from pathlib import Path
 import hashlib,json,shutil,sys
 R=Path.cwd();sys.path[:0]=[str(R/'level-editor/refinement')]
 from prepare_texture_packet import prepare
-O=R/'level-editor/work/croisement02-refinement';S=O/'restart6-tree07-bark-close-v1';D=O/'restart6-tree07-bark-fill-v1';P=D/'packet';W=O/'root-stem-round-2/assets/croisement02-tree-07';read=lambda p:json.loads(p.read_text());h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+O=R/'level-editor/work/active/croisement02';S=O/'restart6-tree07-bark-close-v1';D=O/'restart6-tree07-bark-fill-v1';P=D/'packet';W=O/'root-stem-round-2/assets/croisement02-tree-07';read=lambda p:json.loads(p.read_text());h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 assert not D.exists();approval=O/'restart3-review-batches/pending-v12-v13-hub-v1/user-approval.json';assert h(approval)=='7824a374725f41de669cb93d8a1bd78659523a893b29fa541a195e5125de63f2';batch=O/'restart3-review-batches/batch-v12/user-approval.json';decision=next(m for c in read(batch)['cards'] for m in c['members'] if m['asset_id']=='croisement02-tree-07');card=read(S/'ready-candidate-v1.json');assert decision['scope']=='texture-input' and decision['model_sha256']==card['candidate_model_sha256'];assert decision['review_revision']==card['review_revision'];assert h(W/'model.blend')==card['candidate_model_sha256']
 for p,r in card['files'].items():assert h(Path(p))==r['sha256']
 P.mkdir(parents=True);(P/'views').mkdir();meta=read(S/'views.json');meta['source_blend']=str(W/'model.blend')

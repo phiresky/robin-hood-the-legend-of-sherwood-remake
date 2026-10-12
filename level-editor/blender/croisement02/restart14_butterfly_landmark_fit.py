@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation
 from matplotlib.path import Path as PolygonPath
 
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies'
+BASE=ROOT/'level-editor/work/active/croisement02/restart14-butterflies'
 OUT=BASE/'pose-landmarks-v1'
 # Manually reviewed original pixel coordinates; these have roughly one-pixel
 # uncertainty, and are correspondence hypotheses rather than new source art.

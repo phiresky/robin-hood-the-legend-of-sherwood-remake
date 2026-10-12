@@ -5,7 +5,7 @@ import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {NativeStatePresentation,verifyNativePresentationSource,decodeNativeResource} from '../../app/src/native-state-presentation.ts';
 import {nativeTransientPatchFrame} from '../../shared/src/native-state-presentation.ts';
-const library=resolve('level-editor/library'),stage=resolve('level-editor/work/croisement02-refinement/restart2-state/restart16-initial-context-v1');
+const library=resolve('level-editor/library'),stage=resolve('level-editor/work/active/croisement02/restart2-state/restart16-initial-context-v1');
 const read=async p=>JSON.parse(await readFile(p,'utf8'));
 const sha=x=>createHash('sha256').update(x).digest('hex');
 const manifest=await read(join(stage,'manifest.json'));

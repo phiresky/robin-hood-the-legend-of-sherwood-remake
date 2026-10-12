@@ -1,7 +1,7 @@
 """Prepare a bounded first combined-canopy proof with explicit contact evidence."""
 from pathlib import Path
 import json,hashlib
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';OLD=B/'restart101-five-combined-canopy-browser-v1';O=B/'canopy00-complete-review-oct12-v1'
+R=Path.cwd();B=R/'level-editor/work/active/croisement02';OLD=B/'restart101-five-combined-canopy-browser-v1';O=B/'canopy00-complete-review-oct12-v1'
 def sha(p):
  h=hashlib.sha256()
  with p.open('rb')as f:

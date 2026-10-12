@@ -9,7 +9,7 @@ from scipy.optimize import minimize
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'level-editor/refinement/blender'))
 from evidence_io import sha,write_json
-OUT=ROOT/'level-editor/work/croisement02-refinement'
+OUT=ROOT/'level-editor/work/active/croisement02'
 SIN,COS=math.sin(math.radians(35)),math.cos(math.radians(35))
 FACES=[(0,3,2,1),(4,5,6,7),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7)]
 

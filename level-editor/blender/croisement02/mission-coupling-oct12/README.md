@@ -24,7 +24,7 @@ patch's `integrate_in_background` flag; it does not need an invented background
 ID. Candidate selection is not canonical publication or gameplay verification.
 
 Outputs are immutable under
-`work/croisement02-refinement/mission-coupling-oct12-v1/`. Use `bindings-v2.json`;
+`work/active/croisement02/mission-coupling-oct12-v1/`. Use `bindings-v2.json`;
 `bindings.json` is an earlier diagnostic superseded after checking automatic
 crossing and sprite-origin semantics. Neither version is a geometry approval.
 

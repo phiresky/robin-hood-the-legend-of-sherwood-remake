@@ -5,7 +5,7 @@ from PIL import Image,ImageDraw
 from mound_contact_budget import digest,check,png_bound,MIB
 
 def main():
- root=Path(__file__).resolve().parents[2]/'work/croisement02-refinement/restart15-hiding-mounds/all-placements-v1'
+ root=Path(__file__).resolve().parents[2]/'work/active/croisement02/restart15-hiding-mounds/all-placements-v1'
  total=root/'contacts-v3';review=total/'review-pages';review.mkdir(exist_ok=True);rows=[]
  for i in range(20):
   tag=f'site-{i:02}';completed=[p.parent for p in (total/tag).glob('attempt-*/resource-receipt.json')if json.loads(p.read_text())['status']=='PASS'and len(json.loads((p.parent/'render-receipt.json').read_text())['images'])==3];assert len(completed)==1,f'Expected one completed attempt for {tag}';folder=completed[0];resource=json.loads((folder/'resource-receipt.json').read_text());render=json.loads((folder/'render-receipt.json').read_text())

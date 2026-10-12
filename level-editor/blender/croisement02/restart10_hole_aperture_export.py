@@ -6,7 +6,7 @@ from mathutils import Matrix,Vector
 HERE=Path(__file__).resolve().parent
 sys.path.insert(0,str(HERE.parents[1]/'refinement'))
 from render_slots import acquire,release
-ROOT=HERE.parents[1]/'work/croisement02-refinement/restart10-hole-aperture'
+ROOT=HERE.parents[1]/'work/active/croisement02/restart10-hole-aperture'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def root(name):
  ob=bpy.data.objects.new(name,None);bpy.context.scene.collection.objects.link(ob);ob['aperture_scene']=name;return ob

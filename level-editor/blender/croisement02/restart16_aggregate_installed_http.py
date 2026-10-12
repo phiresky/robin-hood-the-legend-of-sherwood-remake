@@ -1,6 +1,6 @@
 from pathlib import Path
 import json,hashlib
-R=Path(__file__).resolve().parents[3];S=R/'level-editor/work/croisement02-refinement/restart2-state';h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text());refs={};checks={};families={};resources={};catalog_sha='135e7e443ede18656309245a0609ee537f3d14f929baf303490099d8af177825'
+R=Path(__file__).resolve().parents[3];S=R/'level-editor/work/active/croisement02/restart2-state';h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text());refs={};checks={};families={};resources={};catalog_sha='135e7e443ede18656309245a0609ee537f3d14f929baf303490099d8af177825'
 def bind(p):refs[str(p.relative_to(R))]=h(p);return read(p)
 manifest=bind(S/'remaining-seven-package-v2/manifest.json');expected={e['id']:e for e in manifest['entries']}
 for name in ['installed41-normal-http-chunk-1-v1','installed41-normal-http-remaining5-v1']:

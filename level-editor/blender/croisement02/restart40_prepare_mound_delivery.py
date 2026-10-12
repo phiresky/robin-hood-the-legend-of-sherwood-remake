@@ -1,7 +1,7 @@
 """Bind approved mound appearances to exact source transitions in private contracts."""
 import json,hashlib
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';DEST=BASE/'restart40-approved-mound-export-v2';SOURCE=BASE/'restart7-source-patch-delivery/contracts-v1';LIB=ROOT/'level-editor/library';PLAN=BASE/'restart25-approved-state-materialization-v1/approved-bindings.json';APPROVAL=BASE/'restart3-review-batches/next-tree02-channels-mounds-v1/user-approval.json'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02';DEST=BASE/'restart40-approved-mound-export-v2';SOURCE=BASE/'restart7-source-patch-delivery/contracts-v1';LIB=ROOT/'level-editor/library';PLAN=BASE/'restart25-approved-state-materialization-v1/approved-bindings.json';APPROVAL=BASE/'restart3-review-batches/next-tree02-channels-mounds-v1/user-approval.json'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def read(p):return json.loads(Path(p).read_text())
 def pin(p):return dict(path=str(p),sha256=sha(p))

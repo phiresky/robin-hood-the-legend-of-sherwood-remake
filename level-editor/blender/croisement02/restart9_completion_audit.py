@@ -7,7 +7,7 @@ import struct
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-OUT = REPO/'level-editor/work/croisement02-refinement'
+OUT = REPO/'level-editor/work/active/croisement02'
 LIB = REPO/'level-editor/library'
 DEST = OUT/'restart9-completion-audit-v1'
 

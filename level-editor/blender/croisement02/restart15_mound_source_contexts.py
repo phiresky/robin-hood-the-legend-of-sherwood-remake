@@ -2,7 +2,7 @@
 from pathlib import Path
 import json,hashlib
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[2]/'work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[2]/'work/active/croisement02'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  worker=ROOT/'restart15-hiding-mounds/all-placements-v1';r=json.loads((worker/'validation.json').read_text());source=json.loads((ROOT/'restart9-hiding-scatter/mound-flat-v2/validation.json').read_text());sprite_path=Path(source['source']);sprite=Image.open(sprite_path).convert('RGBA');base_path=ROOT/'source-states/covered.png';base=Image.open(base_path).convert('RGBA');out=worker/'source-contexts-v1';out.mkdir(exist_ok=False);images=[];panels=[]

@@ -7,7 +7,7 @@ from scipy.spatial.transform import Rotation
 from scipy.spatial import ConvexHull
 from matplotlib.path import Path as Polygon
 import restart14_butterfly_canopy22_audit as reader
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies';O=B/'all7-footprint-audit-v2';O.mkdir(exist_ok=True)
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement02/restart14-butterflies';O=B/'all7-footprint-audit-v2';O.mkdir(exist_ok=True)
 plan=json.loads((B/'all7-context-plan-v1/plan.json').read_text());paths=json.loads((B/'flight-path-constraints-v1/proposal.json').read_text());fits=json.loads((B/'fixed-light-trial-v1/fit.json').read_text());wing=np.array(fits['wing_outline']);SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));basis=np.array([[1,0,0],[0,-SIN,-COS],[0,-COS,SIN]]);body=np.array([[.36*math.sin(a)*math.cos(t),4.5*math.cos(a),.55*math.sin(a)*math.sin(t)]for a in np.linspace(0,math.pi,13)for t in np.linspace(0,math.tau,25)[:-1]]);rays=[];lookup={};frames=[]
 def site(xy):
  key=tuple(float(v)for v in xy)

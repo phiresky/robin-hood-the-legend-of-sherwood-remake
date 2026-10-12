@@ -4,11 +4,11 @@ from PIL import Image
 from pathlib import Path
 import bpy,numpy as np
 HERE=Path(__file__).resolve().parent; ROOT=HERE.parents[2]
-sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender'),str(ROOT/'level-editor/work/croisement02-refinement/restart2-textures')]
+sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender'),str(ROOT/'level-editor/work/active/croisement02/restart2-textures')]
 from render_slots import acquire,release
 from exact_composite_export_v2 import convert,finalize_document
 import lossy_assets as la
-BASE=ROOT/'level-editor/work/croisement02-refinement'
+BASE=ROOT/'level-editor/work/active/croisement02'
 APPROVAL=BASE/'restart3-review-batches/next-tree02-channels-mounds-v1/user-approval.json'
 AUTH=BASE/'restart25-approved-state-materialization-v1/mound-ownership-v1/report.json'
 DEST=BASE/'restart40-approved-mound-export-v2'

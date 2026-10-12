@@ -2,7 +2,7 @@
 from pathlib import Path
 import hashlib,json,struct,mmap
 import numpy as np
-ROOT=Path(__file__).resolve().parents[3];LIB=ROOT/'level-editor/library';BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation';DEST=BASE/'butterfly-canopy-provenance-v1'
+ROOT=Path(__file__).resolve().parents[3];LIB=ROOT/'level-editor/library';BASE=ROOT/'level-editor/work/active/croisement02/restart14-canopy-animation';DEST=BASE/'butterfly-canopy-provenance-v1'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def inspect(aid,src):
  path=LIB/src['model'];raw=path.read_bytes();n=struct.unpack_from('<I',raw,12)[0];doc=json.loads(raw[20:20+n]);offset=28+n;external={};resources=[]

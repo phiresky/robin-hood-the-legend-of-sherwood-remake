@@ -6,7 +6,7 @@ import json
 import os
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/croisement02-refinement'
+OUT = ROOT / 'level-editor/work/active/croisement02'
 CHOICES = {
     0: 'wood-context-preparation-v2/experiment/bake-v1',
     1: 'wood-context-preparation-v2/experiment/bake-v1',

@@ -3,7 +3,7 @@ from pathlib import Path
 import json,hashlib
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation';DEST=OUT/'tree42-correspondence-v1'
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement02/restart14-canopy-animation';DEST=OUT/'tree42-correspondence-v1'
 def main():
  DEST.mkdir(exist_ok=False);report=json.loads((OUT/'source-reconciliation-v1/report.json').read_text());g=report['groups'][1];box=[616,688,342,288];x0,y0,w,h=box;frames=[]
  for f in g['frames']:

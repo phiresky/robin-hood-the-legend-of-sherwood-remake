@@ -3,7 +3,7 @@ from pathlib import Path
 import hashlib,json,math,shutil
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3]
-W=ROOT/'level-editor/work/croisement02-refinement';B=W/'restart14-butterflies';O=B/'all7-context-plan-v1'
+W=ROOT/'level-editor/work/active/croisement02';B=W/'restart14-butterflies';O=B/'all7-context-plan-v1'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 assert shutil.disk_usage(ROOT).free>=10*1024**3,'10GiB floor'
 O.mkdir(exist_ok=True)

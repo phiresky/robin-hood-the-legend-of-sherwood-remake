@@ -5,8 +5,8 @@ import numpy as np
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[4]
 LIB=ROOT/'level-editor/library'
-OUT=ROOT/'level-editor/work/croisement02-refinement/mission-hidden-archer-physical-oct12-v1'
-BIND=ROOT/'level-editor/work/croisement02-refinement/mission-coupling-oct12-v1/bindings-v2.json'
+OUT=ROOT/'level-editor/work/active/croisement02/mission-hidden-archer-physical-oct12-v1'
+BIND=ROOT/'level-editor/work/active/croisement02/mission-coupling-oct12-v1/bindings-v2.json'
 def pin(p):return dict(path=str(p.relative_to(ROOT)),sha256=hashlib.sha256(p.read_bytes()).hexdigest())
 def matrix(n):
  if 'matrix'in n:return np.array(n['matrix']).reshape(4,4).T

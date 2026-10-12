@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(Path(__file__).parent), str(ROOT/'level-editor/refinement')]
 from render_slots import acquire, release
 from integrate_wood_field import protected_state, mesh_report
-BASE = ROOT/'level-editor/work/croisement02-refinement'
+BASE = ROOT/'level-editor/work/active/croisement02'
 MODEL = BASE/'root-stem-round-3/assets/croisement02-tree-32/model.blend'
 MODEL_SHA = '00ab00761141d7c4c564331745ae680afef0fd20edd40e110c9301ec986f185b'
 

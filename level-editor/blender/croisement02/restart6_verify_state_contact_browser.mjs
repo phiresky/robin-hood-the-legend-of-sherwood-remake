@@ -7,7 +7,7 @@ import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {chromeEndpoint,socketOpen,evaluate} from '/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/app/tests/cdp.mjs';
 
-const root=resolve('.'),base=join(root,'level-editor/work/croisement02-refinement/restart2-state/remaining-seven-contact-v1');
+const root=resolve('.'),base=join(root,'level-editor/work/active/croisement02/restart2-state/remaining-seven-contact-v1');
 const {createServer:createViteServer}=await import('/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/app/node_modules/vite/dist/node/index.js');
 const {default:solid}=await import('/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/level-editor/app/node_modules/@solidjs/vite-plugin/dist/esm/index.mjs');
 const server=await createViteServer({plugins:[solid({solid:{delegateEvents:false}})],configFile:false,root:join(root,'level-editor/app'),cacheDir:join(base,'vite-cache'),optimizeDeps:{entries:[]},resolve:{alias:[{find:/^three\/addons\//,replacement:join(root,'level-editor/app/node_modules/three/examples/jsm/')+'/'},{find:/^three$/,replacement:join(root,'level-editor/app/node_modules/three/build/three.module.js')},{find:/^three\//,replacement:join(root,'level-editor/app/node_modules/three/')+'/' }]},server:{watch:null,hmr:false,host:'127.0.0.1',port:0,fs:{allow:[root]}}});await server.listen();

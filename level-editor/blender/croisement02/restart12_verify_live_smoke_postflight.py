@@ -5,7 +5,7 @@ import json
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-STATE = ROOT / 'level-editor/work/croisement02-refinement/restart2-state'
+STATE = ROOT / 'level-editor/work/active/croisement02/restart2-state'
 base = STATE / sys.argv[1]
 exit_code = int(sys.argv[2])
 ids = sys.argv[3:]

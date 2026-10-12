@@ -2,7 +2,7 @@
 from pathlib import Path
 from PIL import Image,ImageDraw
 import json,argparse,hashlib
-p=argparse.ArgumentParser();p.add_argument('--group',type=int,required=True);p.add_argument('--packet',type=Path,required=True);a=p.parse_args();B=Path('level-editor/work/croisement02-refinement');O=B/f'canopy{a.group:02}-independent-motion-review-oct12-v1';O.mkdir(exist_ok=False);r=json.loads((a.packet/'request.json').read_text());row=r['rows'][0];frames=row.get('native_source_frames',r.get('native_source_frames'));captures=a.packet/'captures-v1';prefix=f'canopy-group-{a.group:02}';calibrated=(captures/f'{prefix}-native-bbox-tick-0.png').exists();pins={}
+p=argparse.ArgumentParser();p.add_argument('--group',type=int,required=True);p.add_argument('--packet',type=Path,required=True);a=p.parse_args();B=Path('level-editor/work/active/croisement02');O=B/f'canopy{a.group:02}-independent-motion-review-oct12-v1';O.mkdir(exist_ok=False);r=json.loads((a.packet/'request.json').read_text());row=r['rows'][0];frames=row.get('native_source_frames',r.get('native_source_frames'));captures=a.packet/'captures-v1';prefix=f'canopy-group-{a.group:02}';calibrated=(captures/f'{prefix}-native-bbox-tick-0.png').exists();pins={}
 def load(path):
  pins[str(path)]=hashlib.sha256(path.read_bytes()).hexdigest();im=Image.open(path).convert('RGBA');bg=Image.new('RGBA',im.size,(37,37,37,255));bg.alpha_composite(im);return bg.convert('RGB')
 def tile(out,path,x,y,w,h,label):

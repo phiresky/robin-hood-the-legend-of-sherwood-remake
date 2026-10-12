@@ -7,7 +7,7 @@ import numpy as np
 from scipy.optimize import differential_evolution
 from scipy.spatial.transform import Rotation
 import restart21_butterfly07_global_registration_v2 as ref
-BASE=ref.ROOT/'level-editor/work/croisement02-refinement'
+BASE=ref.ROOT/'level-editor/work/active/croisement02'
 FIT=BASE/'restart64-butterfly07-pose-refinement-v1/fit.json'
 OUT=BASE/'restart65-butterfly07-bright-pose-refinement-v1'
 def main():

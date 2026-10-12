@@ -1,7 +1,7 @@
 """Bind complete state-family checkpoints without treating counters as test results."""
 from pathlib import Path
 import hashlib,json,sys
-ROOT=Path(__file__).resolve().parents[3];state=ROOT/'level-editor/work/croisement02-refinement/restart2-state'
+ROOT=Path(__file__).resolve().parents[3];state=ROOT/'level-editor/work/active/croisement02/restart2-state'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def read(p):return json.loads(p.read_text())
 manifest_path=state/'remaining-seven-package-v2/manifest.json';manifest=read(manifest_path);expected={r['id']for r in manifest['entries']};checks={};families={};bindings=[];images=[];map_sha=None;runtime_sha=None

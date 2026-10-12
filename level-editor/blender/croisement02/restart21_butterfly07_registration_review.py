@@ -9,7 +9,7 @@ from PIL import Image
 from scipy.spatial import ConvexHull
 from restart21_butterfly07_geometry_v2 import geometry
 ROOT=Path(__file__).resolve().parents[3]
-B=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies'
+B=ROOT/'level-editor/work/active/croisement02/restart14-butterflies'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
     fitpath=Path(sys.argv[1]).resolve() if len(sys.argv)>1 else B/'butterfly07-global-registration-v2/fit.json';fit=json.loads(fitpath.read_text())

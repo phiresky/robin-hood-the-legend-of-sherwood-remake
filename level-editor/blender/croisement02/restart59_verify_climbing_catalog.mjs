@@ -3,7 +3,7 @@ import {readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {loadMissionStatePreview,parseMissionStateCatalog} from '../../app/src/mission-state-catalog.ts';
-const base=resolve('level-editor/work/croisement02-refinement/restart59-climbing-catalog-stage-v1'),lib=resolve('level-editor/library');
+const base=resolve('level-editor/work/active/croisement02/restart59-climbing-catalog-stage-v1'),lib=resolve('level-editor/library');
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const plan=JSON.parse(await readFile(join(base,'plan.json'))),files=new Map(plan.files.map(r=>[r.destination,r]));
 async function checked(p){const raw=await readFile(p.path);assert.equal(sha(raw),p.sha256);return raw}

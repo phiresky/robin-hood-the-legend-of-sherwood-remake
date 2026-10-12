@@ -7,7 +7,7 @@ from mathutils import Vector,Matrix
 from PIL import Image,ImageDraw
 from render_slots import acquire,release
 from tree_geometry import SIN,COS,RAY
-BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation';TRIAL=BASE/'tree42-motion-v5';DEST=TRIAL/'fence-context-v1';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+BASE=ROOT/'level-editor/work/active/croisement02/restart14-canopy-animation';TRIAL=BASE/'tree42-motion-v5';DEST=TRIAL/'fence-context-v1';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def guard(n=524288):
  extra=sum(p.stat().st_size for p in DEST.rglob('*') if p.is_file()) if DEST.exists() else 0;total=sum(p.stat().st_size for p in TRIAL.rglob('*') if p.is_file());assert extra+n<=4*2**20 and total+n<=256*2**20;assert shutil.disk_usage(BASE).free-n>=10*2**30
 

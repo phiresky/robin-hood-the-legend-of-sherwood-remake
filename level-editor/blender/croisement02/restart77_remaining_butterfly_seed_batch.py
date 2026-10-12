@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 import restart21_butterfly07_global_registration_v2 as ref
 from restart21_butterfly07_geometry_v2 import geometry, fixed_geometry
 
-BASE = ref.ROOT / 'level-editor/work/croisement02-refinement'
+BASE = ref.ROOT / 'level-editor/work/active/croisement02'
 PLAN = BASE / 'restart14-butterflies/all7-context-plan-v1/plan.json'
 TEMPLATE = BASE / 'restart66-butterfly07-global-bright-fit-v1/fit.json'
 

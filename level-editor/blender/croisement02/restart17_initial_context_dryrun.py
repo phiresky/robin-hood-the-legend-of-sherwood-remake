@@ -2,7 +2,7 @@
 import argparse,copy,hashlib,json
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement/restart2-state'
+BASE=ROOT/'level-editor/work/active/croisement02/restart2-state'
 LIB=ROOT/'level-editor/library'
 CANDIDATE=BASE/'restart16-initial-context-v1'
 DEFAULT=BASE/'restart17-initial-context-publication-v1'

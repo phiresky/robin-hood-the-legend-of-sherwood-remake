@@ -3,8 +3,8 @@ import hashlib,json,subprocess,sys
 from pathlib import Path
 HERE=Path(__file__).resolve().parent
 EDITOR=HERE.parents[1]
-BATCH=EDITOR/'work/croisement02-refinement/restart3-review-batches'
-YORK=EDITOR/'work/york-refinement/restart2/jamb-clearance-candidate-v1'
+BATCH=EDITOR/'work/active/croisement02/restart3-review-batches'
+YORK=EDITOR/'work/active/york/restart2/jamb-clearance-candidate-v1'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 def main():

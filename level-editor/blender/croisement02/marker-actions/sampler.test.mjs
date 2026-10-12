@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { createMarkerAdapter, sampleRow } from './sampler.mjs';
 
 const root = resolve(import.meta.dirname, '../../../..');
-const work = resolve(root, 'level-editor/work/croisement02-refinement');
+const work = resolve(root, 'level-editor/work/active/croisement02');
 const read = path => JSON.parse(readFileSync(path, 'utf8'));
 const profile = read(resolve(work, 'state-target-evidence/profiles/TG_BowTarget-02/native-profile.json'));
 const dir = resolve(work, 'restart2-state/marker-source-export-v1');

@@ -2,7 +2,7 @@
 import bpy,json,hashlib
 from pathlib import Path
 from mathutils import Vector
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';MODEL=BASE/'restart67-butterfly07-fullpath-export-v1/butterfly07-fullpath.glb';REF=BASE/'restart67-butterfly07-browser-request-v1/reference.json';OUT=BASE/'restart67-butterfly07-fullpath-export-v1/import-verification.json'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02';MODEL=BASE/'restart67-butterfly07-fullpath-export-v1/butterfly07-fullpath.glb';REF=BASE/'restart67-butterfly07-browser-request-v1/reference.json';OUT=BASE/'restart67-butterfly07-fullpath-export-v1/import-verification.json'
 def main():
  assert not OUT.exists();bpy.ops.wm.read_factory_settings(use_empty=True);scene=bpy.context.scene;scene.render.fps=25;bpy.ops.import_scene.gltf(filepath=str(MODEL));rows=json.loads(REF.read_text())['rows'];maximum=0;count=0
  for tick in range(0,198,2):

@@ -10,7 +10,7 @@ from restart24_bake_climbing_donors import retained
 from bake_texture_candidate import snapshot
 from export_editor import foliage_export_meshes,finalize_foliage_glb
 import lossy_assets as la
-BASE=ROOT/'level-editor/work/croisement02-refinement';DEST=BASE/'restart28-approved-climbing-integration-v3'
+BASE=ROOT/'level-editor/work/active/croisement02';DEST=BASE/'restart28-approved-climbing-integration-v3'
 APPROVAL=BASE/'restart3-review-batches/next-six-textures-channels-v1/user-approval.json';APPROVAL_SHA='7f6abc55fa21eee6ebd3b10c4f079e91e7f8159127a30a23fb9a6955d52e3f9d'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def digest(data):

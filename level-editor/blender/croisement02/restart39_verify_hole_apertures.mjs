@@ -7,7 +7,7 @@ import {StateAperturePreview} from '../../app/src/state-aperture-preview.ts';
 import {isEffectivelyVisible} from '../../app/src/patch-display.ts';
 import {validateStateDelivery} from '../../shared/src/state-delivery.ts';
 import {prepareCurrentHoleApertures} from './restart39_hole_aperture_stage.ts';
-const folder=resolve(process.argv[2] ?? 'level-editor/work/croisement02-refinement/restart39-current-hole-apertures-v1');
+const folder=resolve(process.argv[2] ?? 'level-editor/work/active/croisement02/restart39-current-hole-apertures-v1');
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const checked=async pin=>{const bytes=await readFile(pin.path);assert.equal(sha(bytes),pin.sha256,pin.path);return bytes;};
 const integration=JSON.parse(await readFile(join(folder,process.argv[3] ?? 'integration-focused-v2.json'),'utf8'));

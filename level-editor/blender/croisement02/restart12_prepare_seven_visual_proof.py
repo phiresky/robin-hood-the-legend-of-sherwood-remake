@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 expected,name=sys.argv[1:]
 subprocess.run([sys.executable,str(Path(__file__).with_name('restart11_prepare_seven_http_proof.py')),expected,name],check=True)
-b=ROOT/'level-editor/work/croisement02-refinement/restart2-state'/name
+b=ROOT/'level-editor/work/active/croisement02/restart2-state'/name
 source=Path(__file__).with_name('restart6_verify_remaining_state_editor.mjs')
 s=source.read_text()
 s="import {spawnSync} from 'node:child_process';\n"+s

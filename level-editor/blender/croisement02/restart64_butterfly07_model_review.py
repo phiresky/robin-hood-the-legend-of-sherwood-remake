@@ -6,9 +6,9 @@ from mathutils import Matrix,Vector
 from PIL import Image,ImageDraw
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-FIT=ROOT/'level-editor/work/croisement02-refinement/restart64-butterfly07-pose-refinement-v1/fit.json'
-ATLAS=ROOT/'level-editor/work/croisement02-refinement/restart64-butterfly07-observed-atlas-v1'
-OUT=ROOT/'level-editor/work/croisement02-refinement/restart64-butterfly07-model-review-v1'
+FIT=ROOT/'level-editor/work/active/croisement02/restart64-butterfly07-pose-refinement-v1/fit.json'
+ATLAS=ROOT/'level-editor/work/active/croisement02/restart64-butterfly07-observed-atlas-v1'
+OUT=ROOT/'level-editor/work/active/croisement02/restart64-butterfly07-model-review-v1'
 SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));B=np.array([[1,0,0],[0,-SIN,-COS],[0,-COS,SIN]])
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def rot(axis,a):

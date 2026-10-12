@@ -7,7 +7,7 @@ import { validateNativePatchPreview, validateStateDelivery } from '../../shared/
 import { verifyNativePresentationSource } from '../../app/src/native-state-presentation.ts';
 import { PendingPatchController, sourceSnapshot } from './restart24_pending_patch_adapter.mjs';
 
-const root=resolve('.'), folder=resolve('level-editor/work/croisement02-refinement/restart24-hole-mound-bindings-v1');
+const root=resolve('.'), folder=resolve('level-editor/work/active/croisement02/restart24-hole-mound-bindings-v1');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const json=async path=>JSON.parse(await readFile(path,'utf8'));
 const bytes=await readFile(join(folder,'bindings.json')),plan=JSON.parse(bytes);

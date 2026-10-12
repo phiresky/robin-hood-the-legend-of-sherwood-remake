@@ -2,7 +2,7 @@
 import json,hashlib
 from pathlib import Path
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[2]/'work/croisement02-refinement/restart14-hidden-archer/candidate-v2'
+ROOT=Path(__file__).resolve().parents[2]/'work/active/croisement02/restart14-hidden-archer/candidate-v2'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
     for number in [1,2,5]:

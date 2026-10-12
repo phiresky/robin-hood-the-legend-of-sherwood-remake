@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {createServer} from '../../app/node_modules/vite/dist/node/index.js';
 import {chromeEndpoint,socketOpen,evaluate} from '../../app/tests/cdp.mjs';
 
-const repo=resolve('.'),root=resolve('level-editor/work/croisement02-refinement/restart10-physical-signs');
+const repo=resolve('.'),root=resolve('level-editor/work/active/croisement02/restart10-physical-signs');
 const input=join(root,'input-ordering-v1'),output=join(root,'ordering-browser-v1');
 await mkdir(output);await mkdir(join(output,'profile'));
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
@@ -45,7 +45,7 @@ try{
  }
  if(!status?.loaded)throw Error('Loading failed '+JSON.stringify(status));
  const contract=await call('physicalSigns.contract');await writeFile(join(output,'physical-contract.json'),JSON.stringify(contract,null,2)+'\n');
- const nativeManifestPath=resolve('level-editor/work/croisement02-refinement/state-target-evidence/manifest.json');
+ const nativeManifestPath=resolve('level-editor/work/active/croisement02/state-target-evidence/manifest.json');
  const nativeBytes=await readFile(nativeManifestPath),nativeManifest=JSON.parse(nativeBytes);
  const rows=nativeManifest.profiles.find(p=>p.id==='TG_Panel-12').rows;
  const fields=['image_sha256','offset','size','delay','ticks','sound_id'];

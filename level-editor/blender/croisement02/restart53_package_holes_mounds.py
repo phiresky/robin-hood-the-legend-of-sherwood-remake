@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[3]
 LIB=ROOT/'level-editor/library'
-BASE=ROOT/'level-editor/work/croisement02-refinement'
+BASE=ROOT/'level-editor/work/active/croisement02'
 OUT=BASE/'restart53-hole-mound-transaction-v1'
 STAGE=OUT/'library'
 

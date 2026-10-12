@@ -9,7 +9,7 @@ import numpy as np
 from PIL import Image
 import physical_wood_sections_cpu as constructor
 
-BASE=Path(__file__).resolve().parents[3]/'level-editor/work/croisement02-refinement/wood-sweep-cpu-review/tree32-nine-pixel-domain-proposal'
+BASE=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement02/wood-sweep-cpu-review/tree32-nine-pixel-domain-proposal'
 REVIEW_SHA='9d5890d66c7f9f67e3f39e93740072cf47adbbd2228b398a4d640fe9bb7949ba'
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()
 def reviewed_source(index,box):

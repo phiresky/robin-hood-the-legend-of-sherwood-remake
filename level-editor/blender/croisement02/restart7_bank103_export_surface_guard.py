@@ -5,10 +5,10 @@ import bpy,numpy as np
 from scipy.spatial import cKDTree
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 import lossy_assets as la
-sys.path.insert(0,str(ROOT/'level-editor/work/croisement02-refinement/restart2-textures'))
+sys.path.insert(0,str(ROOT/'level-editor/work/active/croisement02/restart2-textures'))
 from exact_composite_export_v2 import convert
 from render_slots import acquire,release
-D=ROOT/'level-editor/work/croisement02-refinement/restart7-bank103-approved-export-v3'
+D=ROOT/'level-editor/work/active/croisement02/restart7-bank103-approved-export-v3'
 def main():
  proof=json.loads((D/'export.json').read_text());bpy.ops.wm.open_mainfile(filepath=proof['source_model']);bpy.context.view_layer.update();conversion=[]
  for obj in list(bpy.context.scene.objects):

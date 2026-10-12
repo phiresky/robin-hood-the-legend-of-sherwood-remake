@@ -1,7 +1,7 @@
 """Rebase approved climbing and Tree42 browser proposals over installed state entries."""
 import json,hashlib
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';OUT=BASE/'restart72-climbing-tree42-ui-rebase-v1';INDEX=ROOT/'level-editor/library/mission-states/index.json'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02';OUT=BASE/'restart72-climbing-tree42-ui-rebase-v1';INDEX=ROOT/'level-editor/library/mission-states/index.json'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 pin=lambda p:dict(path=str(p),sha256=sha(p))
 def main():

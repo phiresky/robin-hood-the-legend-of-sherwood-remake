@@ -1,7 +1,7 @@
 """Prepare immutable source-preview routes without publishing library files."""
 from pathlib import Path
 import json,hashlib
-B=Path('level-editor/work/croisement02-refinement');S=B/'restart2-state/remaining-seven-package-v2/library';P=B/'restart7-source-patch-delivery/contracts-v1';O=B/'restart7-source-patch-delivery/catalog-private-v1';O.mkdir(exist_ok=True)
+B=Path('level-editor/work/active/croisement02');S=B/'restart2-state/remaining-seven-package-v2/library';P=B/'restart7-source-patch-delivery/contracts-v1';O=B/'restart7-source-patch-delivery/catalog-private-v1';O.mkdir(exist_ok=True)
 def read(p):return json.loads(p.read_text())
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 manifest=read(P/'manifest.json');index=read(S/'mission-states/index.json');entries=list(index['entries']);routes={}

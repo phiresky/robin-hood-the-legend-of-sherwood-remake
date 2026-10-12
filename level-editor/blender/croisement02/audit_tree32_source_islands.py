@@ -9,7 +9,7 @@ sys.path[:0]=[str(Path(__file__).parent),str(ROOT/'level-editor/refinement'),str
 from render_slots import acquire,release
 from physical_opacity import OpacityRegistry
 from wood_source_partition import RAY,SIN
-OUT=ROOT/'level-editor/work/croisement02-refinement'
+OUT=ROOT/'level-editor/work/active/croisement02'
 
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 

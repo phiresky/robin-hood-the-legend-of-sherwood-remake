@@ -9,7 +9,7 @@ from scipy.optimize import linprog
 from scipy.sparse import coo_matrix,eye,hstack,vstack
 from physical_wood_sections_cpu import projection_coverage
 from physical_tree32_reviewed_domain_cpu import reviewed_source
-BASE=Path(__file__).resolve().parents[3]/'level-editor/work/croisement02-refinement/wood-sweep-cpu-review'
+BASE=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement02/wood-sweep-cpu-review'
 def step(x):
     t=np.clip(x,0,1);return t*t*(3-2*t)
 def main():

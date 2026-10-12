@@ -5,7 +5,7 @@ import {EditorViewport} from '/src/editor-viewport.ts';
 import {isEffectivelyVisible} from '/src/patch-display.ts';
 window.apertureStage='module-start';
 const prefix='/@fs/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/';
-const base=prefix+'level-editor/work/croisement02-refinement/';
+const base=prefix+'level-editor/work/active/croisement02/';
 const json=async path=>{const response=await fetch(path);if(!response.ok)throw Error(path);return response.json()};
 const plan=await json(base+'restart10-hole-aperture/packet-v1/integration-plan.json');
 const exportFolder=new URLSearchParams(location.search).get('export')??'export-v1';

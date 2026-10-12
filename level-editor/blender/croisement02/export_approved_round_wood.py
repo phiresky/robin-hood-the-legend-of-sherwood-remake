@@ -2,7 +2,7 @@
 from pathlib import Path
 import sys,json,hashlib,shutil
 import bpy
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';D=B/'approved-round-wood-integration-oct11-v1';A=B/'restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json'
+R=Path.cwd();B=R/'level-editor/work/active/croisement02';D=B/'approved-round-wood-integration-oct11-v1';A=B/'restart3-review-batches/six-scoped-reviews-oct11-v1/user-approval.json'
 sys.path[:0]=[str(Path(__file__).parent),str(R/'level-editor/refinement'),str(R/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from restart8_binary_material_partition import convert

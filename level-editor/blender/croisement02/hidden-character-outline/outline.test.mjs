@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';import {resolve} from 'node:path';import {createHash} from 'node:crypto';
 import {decodeLegacy,outlineCharacter,splitPacked,packColor} from './outline.mjs';
 const root=resolve(import.meta.dirname,'../../../..');
-const fixture=JSON.parse(readFileSync(resolve(root,'level-editor/work/croisement02-refinement/restart20-hidden-outline-v1/fixture.json')));
+const fixture=JSON.parse(readFileSync(resolve(root,'level-editor/work/active/croisement02/restart20-hidden-outline-v1/fixture.json')));
 const levelBytes=readFileSync(resolve(root,fixture.level.path));const level=JSON.parse(levelBytes);
 const hash=b=>createHash('sha256').update(b).digest('hex');
 const mask=(bits,x=0)=>({box_top_left:[x,0],box_size:[bits.length,1],mask_type:1,layer:0,character_polyline:[[0,10],[99,10]],mask_data:[2,0x81,parseInt(bits.padEnd(8,'0'),2)]});

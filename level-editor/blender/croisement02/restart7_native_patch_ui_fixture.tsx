@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import StatePreview from '/src/StatePreview.tsx';
 import { EditorViewport } from '/src/editor-viewport.ts';
 import '/src/styles.css';
-const root='/@fs/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/',base=root+'level-editor/work/croisement02-refinement/restart7-source-patch-delivery/';
+const root='/@fs/home/phire/data/dev/2026/robin-hood-the-legend-of-sherwood/',base=root+'level-editor/work/active/croisement02/restart7-source-patch-delivery/';
 const manifest=await(await fetch(base+'catalog-private-v1/manifest.json')).json(),catalog=await(await fetch(base+'catalog-private-v1/index.json')).json();
 const entries=catalog.entries.filter(e=>e.kind==='native-patch'),sourceReview=await(await fetch(base+'contracts-v1/source-review-v1/manifest.json')).json();
 const errors=[],cache=new Map();let broken='',holdResolve;const held=new Promise(r=>holdResolve=r);

@@ -3,7 +3,7 @@ import hashlib,io,json,shlex,struct
 from pathlib import Path
 import numpy as np
 from PIL import Image
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02'
 PARENT=BASE/'restart25-approved-state-materialization-v1';DEST=BASE/'restart26-state-followthrough-v1'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def pin(p):return {'path':str(p),'sha256':sha(p)}

@@ -3,7 +3,7 @@ import argparse,hashlib,json,math
 from pathlib import Path
 import numpy as np
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement02-refinement'
+OUT=ROOT/'level-editor/work/active/croisement02'
 SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=np.array([0.,-COS,SIN])
 
 def digest(path):return hashlib.sha256(path.read_bytes()).hexdigest()

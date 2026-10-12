@@ -1,7 +1,7 @@
 """Prepare each remaining complete canopy group as an independent bounded review."""
 from pathlib import Path
 import json,hashlib,subprocess,shutil
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';SOURCE=B/'canopy00-junction-diagnostics-playerfix-oct12-v1';RUNNER=B/'canopy04-complete-review-playerfix-http-v2';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();catalog={x['asset_id']:x for x in json.loads((B/'restart101-five-combined-canopy-browser-v1/request.json').read_text())['rows']};catalog.update({x['asset_id']:x for x in json.loads((B/'canopy34-complete-review-oct12-v1/request.json').read_text())['rows']})
+R=Path.cwd();B=R/'level-editor/work/active/croisement02';SOURCE=B/'canopy00-junction-diagnostics-playerfix-oct12-v1';RUNNER=B/'canopy04-complete-review-playerfix-http-v2';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();catalog={x['asset_id']:x for x in json.loads((B/'restart101-five-combined-canopy-browser-v1/request.json').read_text())['rows']};catalog.update({x['asset_id']:x for x in json.loads((B/'canopy34-complete-review-oct12-v1/request.json').read_text())['rows']})
 def walk(value):
  if isinstance(value,dict):
   if isinstance(value.get('path'),str)and isinstance(value.get('sha256'),str):

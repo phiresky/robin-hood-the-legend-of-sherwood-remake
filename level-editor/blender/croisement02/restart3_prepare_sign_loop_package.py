@@ -2,7 +2,7 @@
 import json,hashlib
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-WORK=ROOT/'level-editor/work/croisement02-refinement'
+WORK=ROOT/'level-editor/work/active/croisement02'
 LIB=ROOT/'level-editor/library'
 DEST=WORK/'restart2-state/mission-sign-loop-package-v1'
 sha=lambda b:hashlib.sha256(b).hexdigest()

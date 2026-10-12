@@ -3,7 +3,7 @@ from pathlib import Path
 import json,struct,hashlib,itertools,math
 import numpy as np
 from scipy.spatial.transform import Rotation
-R=Path.cwd();L=R/'level-editor/library';B=R/'level-editor/work/croisement02-refinement';O=B/'canopy-current-static-clearance-oct12-v1';S=math.sin(math.radians(35))
+R=Path.cwd();L=R/'level-editor/library';B=R/'level-editor/work/active/croisement02';O=B/'canopy-current-static-clearance-oct12-v1';S=math.sin(math.radians(35))
 def sha(p):
  h=hashlib.sha256()
  with p.open('rb')as f:

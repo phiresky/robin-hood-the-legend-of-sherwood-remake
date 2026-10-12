@@ -5,7 +5,7 @@ import numpy as np
 from scipy.spatial import ConvexHull
 from matplotlib.path import Path as Polygon
 from restart64_butterfly07_source_ownership import ROOT,prepare,WING,geometry,sha
-FIT=ROOT/'level-editor/work/croisement02-refinement/restart65-butterfly07-bright-pose-refinement-v1/fit.json'
+FIT=ROOT/'level-editor/work/active/croisement02/restart65-butterfly07-bright-pose-refinement-v1/fit.json'
 OUT=FIT.parent/'pixel-footprints.json'
 def main():
  assert not OUT.exists();fit=json.loads(FIT.read_text());records=[];summary=dict(missing_centers=0,bright_missing_centers=0,no_sample_coverage=0,bright_no_sample_coverage=0,partial_footprints=0)

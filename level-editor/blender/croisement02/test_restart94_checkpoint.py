@@ -5,7 +5,7 @@ import numpy as np
 import restart94_piece_envelope_resume as envelope
 
 def main():
- base=Path(__file__).resolve().parents[3]/'level-editor/work/croisement02-refinement';candidate=base/'restart83-butterfly04-contact-candidate-v1';fit=json.loads((candidate/'fit.json').read_text());envelope.pinned.FIT=candidate/'fit.json';envelope.pinned.FIT_SHA=envelope.reader.sha(envelope.pinned.FIT);envelope.pinned.HELPER=candidate/'geometry.py';envelope.pinned.HELPER_SHA=envelope.reader.sha(envelope.pinned.HELPER);envelope.N=1
+ base=Path(__file__).resolve().parents[3]/'level-editor/work/active/croisement02';candidate=base/'restart83-butterfly04-contact-candidate-v1';fit=json.loads((candidate/'fit.json').read_text());envelope.pinned.FIT=candidate/'fit.json';envelope.pinned.FIT_SHA=envelope.reader.sha(envelope.pinned.FIT);envelope.pinned.HELPER=candidate/'geometry.py';envelope.pinned.HELPER_SHA=envelope.reader.sha(envelope.pinned.HELPER);envelope.N=1
  x,y=fit['rows'][0]['source']['alpha_centroid_display'];depth=envelope.reader.COS*y/envelope.reader.SIN+25/envelope.reader.SIN;camera=np.array([[x-12,y-12,depth],[x+12,y-12,depth],[x,y+12,depth]]);world=np.c_[camera[:,0],-envelope.reader.COS*camera[:,1]+envelope.reader.SIN*camera[:,2],envelope.reader.SIN*camera[:,1]+envelope.reader.COS*camera[:,2]]
  def reader(**kw):
   for number in range(2):kw['triangle_callback']({'id':f'fixture-receiver-{number}'},{'name':'Fixture'},0,0,(world+np.array([number,0,0]))[None],None,{'alphaMode':'OPAQUE'},lambda *args:1,lambda *args:(None,{},1))

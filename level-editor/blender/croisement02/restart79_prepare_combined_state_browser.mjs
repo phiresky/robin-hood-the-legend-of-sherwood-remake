@@ -2,11 +2,11 @@
 import {readFile,writeFile,mkdir,readdir,copyFile} from 'node:fs/promises';
 import {resolve,join,dirname} from 'node:path';
 import {createHash} from 'node:crypto';
-const root=resolve('.'),old='level-editor/work/croisement02-refinement/restart73-hole-mound-canonical-browser-v1',out='level-editor/work/croisement02-refinement/restart79-climbing-tree42-ui-browser-v1';
+const root=resolve('.'),old='level-editor/work/active/croisement02/restart73-hole-mound-canonical-browser-v1',out='level-editor/work/active/croisement02/restart79-climbing-tree42-ui-browser-v1';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');const read=async p=>JSON.parse(await readFile(p));const pin=async p=>({path:resolve(p),sha256:hash(await readFile(p))});const save=async(p,d)=>writeFile(p,JSON.stringify(d,null,2)+'\n',{flag:'wx'});
 await mkdir(out);
 for(const name of ['editor.tsx'])await copyFile(join(old,name),join(out,name));
-const queued=await read('level-editor/work/croisement02-refinement/restart72-climbing-tree42-ui-rebase-v1/browser-request.json');
+const queued=await read('level-editor/work/active/croisement02/restart72-climbing-tree42-ui-rebase-v1/browser-request.json');
 const currentPath='level-editor/library/mission-states/index.json',current=await read(currentPath);
 if(current.entries.length!==104)throw Error('Expected reviewed 104-entry baseline, inspect changes before rebasing');
 const oldCandidate=await read(queued.routes['mission-states/index.json'].path),ids=new Set(queued.steps.flatMap(s=>s.entry_ids));

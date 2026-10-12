@@ -6,7 +6,7 @@ import pathlib
 import struct
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-BASE = ROOT / 'work/croisement02-refinement'
+BASE = ROOT / 'work/active/croisement02'
 OUT = BASE / 'restart47-explicit-rgb-sampling-v1'
 
 

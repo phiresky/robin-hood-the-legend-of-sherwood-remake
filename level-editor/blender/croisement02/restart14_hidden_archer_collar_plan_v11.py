@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial import cKDTree
 from scipy.ndimage import gaussian_filter1d
-BASE=Path(__file__).resolve().parents[2]/'work/croisement02-refinement/restart14-hidden-archer';DEST=BASE/'collar-v11-cpu'
+BASE=Path(__file__).resolve().parents[2]/'work/active/croisement02/restart14-hidden-archer';DEST=BASE/'collar-v11-cpu'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def main():
  assert shutil.disk_usage(BASE).free>8*1024**3+2*1024**2;assert not DEST.exists()

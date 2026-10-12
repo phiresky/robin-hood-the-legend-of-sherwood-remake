@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/croisement02-refinement'
+WORK = ROOT / 'level-editor/work/active/croisement02'
 
 
 def sha(path):
@@ -29,7 +29,7 @@ def main():
     start = runner.index("const {createServer}=")
     end = runner.index('await server.listen();', start)
     replacement = r'''const {createServer}=await import(VITE_MODULE);
-const stateRoot=join(root,'level-editor/work/croisement02-refinement/restart2-state/remaining-seven-package-v2/library');
+const stateRoot=join(root,'level-editor/work/active/croisement02/restart2-state/remaining-seven-package-v2/library');
 const manifest=JSON.parse(await readFile(join(stateRoot,'../manifest.json'),'utf8'));
 const overlay=new Set(manifest.files.map(row=>row.path));overlay.add('mission-states/index.json');
 const html='<html><body style="margin:0"><div id="result">STARTING</div><div id="root"></div><script type="module" src="/@fs'+join(base,'editor.tsx')+'"></script></body></html>';

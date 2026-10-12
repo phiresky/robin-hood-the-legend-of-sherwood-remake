@@ -22,7 +22,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--install', action='store_true')
     args = parser.parse_args()
-    root = Path('level-editor/work/croisement02-refinement/restart2-state')
+    root = Path('level-editor/work/active/croisement02/restart2-state')
     stage = root / 'net-mission-package-v1'
     proof = root / 'full-editor-net-variants-v1'
     library = Path('level-editor/library')

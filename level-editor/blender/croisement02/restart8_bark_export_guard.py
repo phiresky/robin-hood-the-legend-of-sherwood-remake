@@ -6,7 +6,7 @@ from scipy.spatial import cKDTree
 R=Path.cwd();sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 import lossy_assets as la
-O=R/'level-editor/work/croisement02-refinement';B=O/'restart8-five-bark-approved-export-v1';read=lambda p:json.loads(p.read_text());h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+O=R/'level-editor/work/active/croisement02';B=O/'restart8-five-bark-approved-export-v1';read=lambda p:json.loads(p.read_text());h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def main(n):
  D=B/f'tree-{n}-v1';proof=read(D/'export.json');model=Path(proof['source_model']);assert h(model)==proof['source_sha256'];assert h(D/'exact/model.glb')==proof['model_sha256'];bpy.ops.wm.open_mainfile(filepath=str(model));scene=bpy.data.scenes['Croisement02 Refinement'];bpy.context.window.scene=scene;bpy.context.view_layer.update();doc,buffers,_=la.read_glb(D/'exact/model.glb');pivot=np.array(proof['pivot']);converted={r['object']:r for r in proof['conversion_records']};rows=[]
  for node in doc['nodes']:

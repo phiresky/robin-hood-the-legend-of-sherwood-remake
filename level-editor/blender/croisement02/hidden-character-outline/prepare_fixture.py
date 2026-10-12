@@ -2,7 +2,7 @@
 import hashlib,json,pathlib,struct
 from PIL import Image
 ROOT=pathlib.Path(__file__).resolve().parents[4]
-OUT=ROOT/'level-editor/work/croisement02-refinement/restart20-hidden-outline-v1'
+OUT=ROOT/'level-editor/work/active/croisement02/restart20-hidden-outline-v1'
 BASE=ROOT/'datadirs/fullgame_gog_hackable/Data'
 def read(p):return json.loads(p.read_text())
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()

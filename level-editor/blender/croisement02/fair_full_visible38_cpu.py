@@ -13,7 +13,7 @@ from scipy.sparse import coo_matrix, eye, hstack, vstack
 from continuous_wood_field import RAY, SIN, COS
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = ROOT / 'level-editor/work/croisement02-refinement/wood-sweep-cpu-review'
+BASE = ROOT / 'level-editor/work/active/croisement02/wood-sweep-cpu-review'
 
 
 def main():

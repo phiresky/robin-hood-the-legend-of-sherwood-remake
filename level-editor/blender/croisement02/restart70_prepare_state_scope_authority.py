@@ -1,7 +1,7 @@
 """Freeze a narrow, review-required authority proposal for catalog UI publication."""
 import json,hashlib,difflib,re
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';BROWSER=BASE/'restart63-hole-mound-current-runtime-browser-v1';OUT=BASE/'restart70-hole-mound-scoped-authority-v1'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02';BROWSER=BASE/'restart63-hole-mound-current-runtime-browser-v1';OUT=BASE/'restart70-hole-mound-scoped-authority-v1'
 ALLOWED=('level-editor/shared/src/compile-asset-gameplay.ts','level-editor/shared/src/wall-spline-gameplay.ts','level-editor/shared/test-fixtures/wall-spline.ts')
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 pin=lambda p:dict(path=str(p.relative_to(ROOT)),sha256=sha(p))

@@ -1,7 +1,7 @@
 """One frozen lighting trial with a single reviewed local pose replacement."""
 from pathlib import Path
 import json,hashlib,shutil,sys,math,copy
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies';O=B/'fixed-light-trial-v1';P=ROOT/'level-editor/work/croisement02-refinement/restart17-small-job-disk-policy.json';CAP=8*1024**2
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement02/restart14-butterflies';O=B/'fixed-light-trial-v1';P=ROOT/'level-editor/work/active/croisement02/restart17-small-job-disk-policy.json';CAP=8*1024**2
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def budget():
  used=sum(p.stat().st_size for p in O.rglob('*')if p.is_file());assert used<CAP,'8MiB trial cap';assert shutil.disk_usage(ROOT).free>=8*1024**3+CAP-used,'8GiB plus remaining reserve'

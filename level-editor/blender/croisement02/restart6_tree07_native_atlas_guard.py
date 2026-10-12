@@ -9,7 +9,7 @@ import bpy,numpy as np
 ROOT=Path.cwd();sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from render_slots import acquire,release
 from source_projection_bake import bake
-O=ROOT/'level-editor/work/croisement02-refinement';W=O/'root-stem-round-2/assets/croisement02-tree-07';D=O/'restart6-tree07-native-atlas-guard-v1';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text());expected='8bcb2ea9a6c40f920e15590569934f18c3bb3c002c26bb8160a6903605f107df'
+O=ROOT/'level-editor/work/active/croisement02';W=O/'root-stem-round-2/assets/croisement02-tree-07';D=O/'restart6-tree07-native-atlas-guard-v1';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text());expected='8bcb2ea9a6c40f920e15590569934f18c3bb3c002c26bb8160a6903605f107df'
 def pixels(im):
  a=np.empty(len(im.pixels),np.float32);im.pixels.foreach_get(a);return a.reshape(im.size[1],im.size[0],4)
 def state(ob):

@@ -2,7 +2,7 @@
 from pathlib import Path
 import sys,json,hashlib,shutil,resource
 ROOT=Path(__file__).resolve().parents[3];sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(Path(__file__).parent)]
-BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-canopy-animation';TRIAL=BASE/'tree42-motion-v5';DEST=TRIAL/'review-supplement-v1'
+BASE=ROOT/'level-editor/work/active/croisement02/restart14-canopy-animation';TRIAL=BASE/'tree42-motion-v5';DEST=TRIAL/'review-supplement-v1'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def guard(n=2**20):
  assert shutil.disk_usage(BASE).free-n>=10*2**30

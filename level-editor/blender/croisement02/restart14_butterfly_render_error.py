@@ -3,7 +3,7 @@ from pathlib import Path
 import json,sys,hashlib
 import numpy as np
 from PIL import Image,ImageDraw
-ROOT=Path(__file__).resolve().parents[3];version=sys.argv[1] if len(sys.argv)>1 else 'rig-full-v1';OUT=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies'/version
+ROOT=Path(__file__).resolve().parents[3];version=sys.argv[1] if len(sys.argv)>1 else 'rig-full-v1';OUT=ROOT/'level-editor/work/active/croisement02/restart14-butterflies'/version
 p=json.loads((OUT/'fit.json').read_text());rows=[];sheet=Image.new('RGB',(3168,1188),'#252525');d=ImageDraw.Draw(sheet)
 for row in p['poses']:
  phase=row['phase'];src=np.array(Image.open(row['source']['source']).convert('RGBA'));render=np.array(Image.open(OUT/'motion'/f'phase-{phase:02d}-view-0.png').convert('RGBA'));center=np.array(row['source_center'])+np.array(row['parameters'][5:7]);ys,xs=np.nonzero(src[:,:,3]);pixel=np.column_stack((xs+.5,ys+.5));loc=np.floor((pixel-center)*8+96).astype(int);inside=(loc[:,0]>=0)&(loc[:,0]<192)&(loc[:,1]>=0)&(loc[:,1]<192);samples=np.zeros((len(xs),4),dtype=np.uint8);samples[inside]=render[loc[inside,1],loc[inside,0]];hit=samples[:,3]>127;color=np.abs(samples[hit,:3].astype(int)-src[ys[hit],xs[hit],:3].astype(int));rows.append({'phase':phase,'source_positive_centers':len(xs),'native_render_covered':int(hit.sum()),'native_render_missing':int((~hit).sum()),'covered_rgb_mae':float(color.mean()) if color.size else None,'covered_rgb_exact':int(np.all(color==0,axis=1).sum()),'render_sha256':hashlib.sha256((OUT/'motion'/f'phase-{phase:02d}-view-0.png').read_bytes()).hexdigest()})

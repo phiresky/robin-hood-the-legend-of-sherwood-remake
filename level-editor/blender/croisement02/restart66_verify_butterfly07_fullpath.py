@@ -5,7 +5,7 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 from scipy.spatial.transform import Rotation,Slerp
 from restart21_butterfly07_geometry_v2 import WING,HINGES
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';OUT=BASE/'restart66-butterfly07-fullpath-export-v3';MODEL=OUT/'butterfly07-fullpath.glb'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02';OUT=BASE/'restart66-butterfly07-fullpath-export-v3';MODEL=OUT/'butterfly07-fullpath.glb'
 FIT=BASE/'restart64-butterfly07-pose-refinement-v1/fit.json'
 ATLAS=BASE/'restart65-butterfly07-exact-observation-atlas-v1'
 BODY_ATLAS=BASE/'restart66-butterfly07-body-observations-v1/body.png'

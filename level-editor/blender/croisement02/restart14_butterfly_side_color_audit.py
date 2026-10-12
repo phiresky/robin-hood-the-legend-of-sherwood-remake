@@ -10,7 +10,7 @@ from PIL import Image,ImageDraw
 from scipy.ndimage import distance_transform_edt
 from scipy.spatial.transform import Rotation
 from scipy.optimize import least_squares
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies';OUT=BASE/'side-color-audit-v1'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02/restart14-butterflies';OUT=BASE/'side-color-audit-v1'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def linear(rgb):
  a=np.asarray(rgb,float)/255;return np.where(a<=.04045,a/12.92,((a+.055)/1.055)**2.4)

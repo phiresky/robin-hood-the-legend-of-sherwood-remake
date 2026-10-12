@@ -6,7 +6,7 @@ import {parseStoredMap} from '../../shared/src/stored-level.ts';
 import {verifyStaticStateReplacements} from '../../shared/src/state-delivery.ts';
 const [expected,outArg]=process.argv.slice(2);
 if(!/^[0-9a-f]{64}$/.test(expected??'')||!outArg)throw Error('Expected exact map SHA256 and fresh output directory');
-const root=resolve('.'),library=join(root,'level-editor/library'),base=join(root,'level-editor/work/croisement02-refinement/restart2-state');
+const root=resolve('.'),library=join(root,'level-editor/library'),base=join(root,'level-editor/work/active/croisement02/restart2-state');
 const stage=join(base,'remaining-seven-package-v2'),out=resolve(outArg),mapPath=join(library,'scenes/croisement02.rhlos-map.json');
 if(!out.startsWith(base+'/'))throw Error('Output must remain in private state workspace');
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex'),read=async path=>JSON.parse(await readFile(path));

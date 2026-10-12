@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {readFile}from'node:fs/promises';import {createHash}from'node:crypto';
 import{decodeMask,appliesToCharacter,maskCharacterPixels}from'./character-masks.mjs';
-const root=new URL('../../../work/croisement02-refinement/restart19-shared-runtime-gpu/input/manifest.json',import.meta.url),manifest=JSON.parse(await readFile(root));
+const root=new URL('../../../work/active/croisement02/restart19-shared-runtime-gpu/input/manifest.json',import.meta.url),manifest=JSON.parse(await readFile(root));
 const level=JSON.parse(await readFile(manifest.level.file)),baseline=JSON.parse(await readFile(new URL('./baseline-pixel-hashes.json',import.meta.url)));
 test('all native mask bitmaps equal independent baseline PNG bytes',()=>{for(const row of baseline){const mask=level.masks[row.index];assert.deepEqual(mask.box_size,[row.width,row.height]);assert.equal(createHash('sha256').update(decodeMask(mask)).digest('hex'),row.sha256,'mask '+row.index)}});
 test('character side is strict below polyline, with inclusive X endpoints and explicit activity/layer',()=>{for(const m of level.masks.filter(m=>m.mask_type&1)){const a=m.character_polyline[0];assert.equal(appliesToCharacter(m,true,m.layer,[a[0],a[1]-1]),true);assert.equal(appliesToCharacter(m,true,m.layer,a),false);assert.equal(appliesToCharacter(m,true,m.layer,[a[0]-1,a[1]-1]),false);assert.equal(appliesToCharacter(m,false,m.layer,[a[0],a[1]-1]),false);assert.equal(appliesToCharacter(m,true,m.layer+1,[a[0],a[1]-1]),false)}});

@@ -9,7 +9,7 @@ from restart14_render_butterfly_rig import B,SIN,COS,rot
 ROOT=HERE.parents[2];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
 VERSION=sys.argv[sys.argv.index('--')+1] if '--' in sys.argv else 'rig-full-v1'
-OUT=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies'/VERSION
+OUT=ROOT/'level-editor/work/active/croisement02/restart14-butterflies'/VERSION
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def signature(mesh):return hashlib.sha256(json.dumps({'v':[list(v.co) for v in mesh.vertices],'f':[list(p.vertices) for p in mesh.polygons]},separators=(',',':')).encode()).hexdigest()
 def constant(action):

@@ -2,7 +2,7 @@
 import sys,json,struct,hashlib
 from pathlib import Path
 import bpy
-ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/croisement02-refinement/restart2-textures';sys.path[:0]=[str(Path(__file__).parent),str(R),str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
+ROOT=Path(__file__).resolve().parents[3];R=ROOT/'level-editor/work/active/croisement02/restart2-textures';sys.path[:0]=[str(Path(__file__).parent),str(R),str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
 from catalog import OUT
 from render_slots import acquire,release
 from evidence_io import sha,write_json

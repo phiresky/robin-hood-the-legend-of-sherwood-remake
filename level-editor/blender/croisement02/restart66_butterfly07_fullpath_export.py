@@ -6,7 +6,7 @@ from scipy.spatial import ConvexHull
 from scipy.spatial.transform import Rotation
 from scipy.interpolate import CubicSpline
 from restart21_butterfly07_geometry_v2 import WING,BODY,HINGES
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02'
 FIT=BASE/'restart64-butterfly07-pose-refinement-v1/fit.json';ATLAS=BASE/'restart65-butterfly07-exact-observation-atlas-v1'
 DEPTH=BASE/'restart14-butterflies/butterfly07-v3-global-corridor-v2-actual-audit/report.json'
 OUT=BASE/'restart66-butterfly07-fullpath-export-v3'

@@ -3,7 +3,7 @@ import sys,json,hashlib,shutil
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from prepare_texture_packet import prepare
-O=ROOT/'level-editor/work/croisement02-refinement';D=O/'restart4-south-cart-texture/initial-source-inputs-v1';B=D.parent/'approved-fill-v1';B.mkdir()
+O=ROOT/'level-editor/work/active/croisement02';D=O/'restart4-south-cart-texture/initial-source-inputs-v1';B=D.parent/'approved-fill-v1';B.mkdir()
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')
 A=O/'restart3-review-batches/batch-v9/user-approval.json';a=json.loads(A.read_text());asset='croisement02-south-cart-initial-physical';member=next(m for c in a['decisions'] for m in c['members'] if m['asset_id']==asset);der=json.loads((D/'derivation.json').read_text());assert der['geometry_uv_materials_unchanged'] and member['model_sha256']==der['source_model_sha256']

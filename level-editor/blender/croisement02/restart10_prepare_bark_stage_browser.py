@@ -2,7 +2,7 @@
 import argparse, hashlib, json
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
-WORK = ROOT / 'level-editor/work/croisement02-refinement/restart2-textures'
+WORK = ROOT / 'level-editor/work/active/croisement02/restart2-textures'
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('stage', type=Path)
@@ -23,7 +23,7 @@ def main():
     runner = (WORK / 'review_installed_static_v2.mjs').read_text()
     runner = runner.replace("'../../../app/tests/cdp.mjs'", repr(str(ROOT / 'level-editor/app/tests/cdp.mjs')))
     runner = runner.replace("'../../../app/node_modules/vite/dist/node/index.js'", repr(str(ROOT / 'level-editor/app/node_modules/vite/dist/node/index.js')))
-    runner = runner.replace('level-editor/work/croisement02-refinement/restart2-textures/installed-static-v2', str(out))
+    runner = runner.replace('level-editor/work/active/croisement02/restart2-textures/installed-static-v2', str(out))
     runner = runner.replace("import {spawn} from 'node:child_process';", "import {spawn} from 'node:child_process';import {createHash} from 'node:crypto';import {createReadStream} from 'node:fs';import {stat} from 'node:fs/promises';")
     middleware = """plugins:[{name:'exact-private-library-overlay',enforce:'pre',configureServer(server){server.middlewares.use(async(req,res,next)=>{try{const pathname=new URL(req.url,'http://localhost').pathname;if(!pathname.startsWith('/library/'))return next();const relative=decodeURIComponent(pathname.slice(9));if(relative.split('/').includes('..'))throw Error('Invalid library path');let candidate;if(relative==='scenes/croisement02.rhlos-map.json')candidate=STAGE+'/croisement02.rhlos-map.json';else if(relative==='3d-assets/index.json')candidate=STAGE+'/promotion-library-index.json';else candidate=STAGE+'/map-assets/'+relative;let info;try{info=await stat(candidate)}catch{return next()}if(!info.isFile())return next();await fs.appendFile(path.join(out,'served-overlay.jsonl'),JSON.stringify({request:relative,source:candidate})+'\\n');res.setHeader('Content-Type',candidate.endsWith('.json')?'application/json':candidate.endsWith('.glb')?'model/gltf-binary':'application/octet-stream');res.setHeader('Content-Length',info.size);res.setHeader('Cache-Control','no-store');createReadStream(candidate).pipe(res);}catch(error){next(error)}})}}],""".replace('STAGE', json.dumps(str(stage)))
     runner = runner.replace('createServer({configFile:', 'createServer({' + middleware + 'configFile:')

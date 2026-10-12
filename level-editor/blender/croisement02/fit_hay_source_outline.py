@@ -7,7 +7,7 @@ from scipy.optimize import minimize
 from scipy.ndimage import label
 
 ROOT=Path(__file__).resolve().parents[3]
-OUT=ROOT/'level-editor/work/croisement02-refinement'
+OUT=ROOT/'level-editor/work/active/croisement02'
 SIN,COS=math.sin(math.radians(35)),math.cos(math.radians(35))
 BOX=(860,930,1050,1110)
 

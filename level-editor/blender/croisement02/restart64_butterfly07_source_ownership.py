@@ -13,9 +13,9 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from restart21_butterfly07_geometry_v2 import WING,geometry,HINGES
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies'
+BASE=ROOT/'level-editor/work/active/croisement02/restart14-butterflies'
 FIT=BASE/'butterfly07-v3-baseline-contacts-v1/joined-fit.json'
-OUT=ROOT/'level-editor/work/croisement02-refinement/restart64-butterfly07-source-ownership-v1'
+OUT=ROOT/'level-editor/work/active/croisement02/restart64-butterfly07-source-ownership-v1'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 
 def prepare(row):

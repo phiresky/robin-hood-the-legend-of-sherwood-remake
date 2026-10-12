@@ -2,7 +2,7 @@ import {readFile,writeFile} from 'node:fs/promises';
 import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {loadMissionStatePreview} from '../../app/src/mission-state-catalog.ts';
-const stage=resolve('level-editor/work/croisement02-refinement/restart2-state/remaining-seven-package-v2'),live=resolve('level-editor/library');
+const stage=resolve('level-editor/work/active/croisement02/restart2-state/remaining-seven-package-v2'),live=resolve('level-editor/library');
 const manifest=JSON.parse(await readFile(join(stage,'manifest.json'),'utf8'));
 const staged=new Set([...manifest.files,manifest.private_index].map(r=>r.path));
 function directory(prefix=''){return {async getDirectoryHandle(name){return directory(prefix+name+'/')},async getFileHandle(name){const path=prefix+name,bytes=await readFile(join(staged.has(path)?join(stage,'library'):live,path));return {getFile:async()=>new File([bytes],name)}}}}

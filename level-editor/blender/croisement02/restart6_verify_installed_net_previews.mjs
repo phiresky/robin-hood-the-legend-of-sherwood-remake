@@ -7,17 +7,17 @@ import {createHash} from 'node:crypto';
 import {chromeEndpoint,socketOpen} from '../../app/tests/cdp.mjs';
 
 const disk=await statfs('.');if(disk.bavail*disk.bsize<23*1024**3)throw Error('Disk below23GiB');
-const root=resolve('.'),base=join(root,'level-editor/work/croisement02-refinement/restart2-state/full-editor-net-variants-installed-v1');
-const stage=join(root,'level-editor/work/croisement02-refinement/restart2-state/net-mission-package-v1'),manifest=JSON.parse(await readFile(join(stage,'manifest.json'),'utf8')),staged=new Map([...manifest.files,manifest.private_index].map(r=>['/library/'+r.path,r]));
+const root=resolve('.'),base=join(root,'level-editor/work/active/croisement02/restart2-state/full-editor-net-variants-installed-v1');
+const stage=join(root,'level-editor/work/active/croisement02/restart2-state/net-mission-package-v1'),manifest=JSON.parse(await readFile(join(stage,'manifest.json'),'utf8')),staged=new Map([...manifest.files,manifest.private_index].map(r=>['/library/'+r.path,r]));
 manifest.entries=JSON.parse(await readFile(join(stage,'entries.json'),'utf8')).map(entry=>({entry,mission:entry.mission}));
-const reference=JSON.parse(await readFile(join(root,'level-editor/work/croisement02-refinement/restart2-state/integrating-foreground-private-v1/independent-reference.json'),'utf8'));
+const reference=JSON.parse(await readFile(join(root,'level-editor/work/active/croisement02/restart2-state/integrating-foreground-private-v1/independent-reference.json'),'utf8'));
 
 const runtimeFiles=['level-editor/shared/src/native-state-presentation.ts','level-editor/shared/src/state-delivery.ts','level-editor/app/src/native-state-presentation.ts','level-editor/app/src/state-delivery.ts','level-editor/app/src/StatePreview.tsx','level-editor/app/src/editor-viewport.ts','level-editor/app/src/mission-state-catalog.ts','level-editor/app/src/scene-assets.ts','level-editor/app/src/projection-library.ts'];
 const runtimePins=Object.fromEntries(await Promise.all(runtimeFiles.map(async path=>[path,createHash('sha256').update(await readFile(path)).digest('hex')])));
 await mkdir(base,{recursive:true});
 const installation=JSON.parse(await readFile(join(stage,'installation.json'),'utf8'));if(installation.status!=='INSTALLED')throw Error('Net package is not installed');
 const {createServer:createViteServer}=await import('../../app/node_modules/vite/dist/node/index.js');
-const server=await createViteServer({configFile:join(root,'level-editor/app/vite.config.ts'),root:join(root,'level-editor/app'),cacheDir:join(root,'level-editor/work/croisement02-refinement/restart2-state/full-editor-net-variants-installed-v1/vite-cache'),plugins:[{name:'private-state-visibility-audit',enforce:'pre',transform(code,id){if(id.split('?')[0].endsWith('/app/src/editor-viewport.ts'))return code+'\nconst auditSetup=EditorViewport.prototype.setup;EditorViewport.prototype.setup=function(...args){window.__stateAuditViewport=this;return auditSetup.apply(this,args)};';}}],server:{watch:null,hmr:false,host:'127.0.0.1',port:0}});await server.listen();
+const server=await createViteServer({configFile:join(root,'level-editor/app/vite.config.ts'),root:join(root,'level-editor/app'),cacheDir:join(root,'level-editor/work/active/croisement02/restart2-state/full-editor-net-variants-installed-v1/vite-cache'),plugins:[{name:'private-state-visibility-audit',enforce:'pre',transform(code,id){if(id.split('?')[0].endsWith('/app/src/editor-viewport.ts'))return code+'\nconst auditSetup=EditorViewport.prototype.setup;EditorViewport.prototype.setup=function(...args){window.__stateAuditViewport=this;return auditSetup.apply(this,args)};';}}],server:{watch:null,hmr:false,host:'127.0.0.1',port:0}});await server.listen();
 const origin='http://127.0.0.1:'+server.httpServer.address().port,profile=await mkdtemp(join(tmpdir(),'croisement02-full-state-proof-'));
 const chrome=spawn('/usr/lib/chromium/chromium',['--headless','--no-sandbox','--disable-dev-shm-usage','--disable-background-networking','--enable-unsafe-swiftshader','--use-angle=swiftshader','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:['ignore','ignore','pipe']});
 const closed=new Promise(r=>chrome.on('close',r));let ws,id=0;

@@ -7,7 +7,7 @@ import bpy
 from mathutils import Vector
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/croisement02-refinement/tree-references'
+OUT = ROOT / 'level-editor/work/active/croisement02/tree-references'
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 sys.path.insert(0, str(ROOT / 'level-editor/refinement/blender'))
 from render_slots import acquire

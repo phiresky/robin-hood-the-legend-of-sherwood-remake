@@ -3,7 +3,7 @@ import hashlib,json,sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 base=Path(sys.argv[1]).resolve()
-assert base.parent==ROOT/'level-editor/work/croisement02-refinement/restart2-state'
+assert base.parent==ROOT/'level-editor/work/active/croisement02/restart2-state'
 fixture=base/'editor.tsx'
 fixture.write_text(fixture.read_text()+r'''
 import * as THREE from "three";

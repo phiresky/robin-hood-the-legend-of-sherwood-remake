@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { translateGameplayFrames } from '../../pipeline/src/translate-gameplay-frames.ts';
 import { validateAssetGameplay } from '../../shared/src/asset-gameplay.ts';
-const root=path.resolve('level-editor/work/croisement02-refinement/restart4-gameplay-migration-v4');
+const root=path.resolve('level-editor/work/active/croisement02/restart4-gameplay-migration-v4');
 const read=(p:string)=>JSON.parse(fs.readFileSync(p,'utf8'));
 const digest=(p:string)=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const inventory=read(path.join(root,'frame-inventory.json'));

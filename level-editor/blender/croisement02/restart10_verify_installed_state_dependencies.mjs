@@ -3,7 +3,7 @@ import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {parseStoredMap} from '../../shared/src/stored-level.ts';
 import {verifyStaticStateReplacements} from '../../shared/src/state-delivery.ts';
-const sha=b=>createHash('sha256').update(b).digest('hex'),base=resolve('level-editor/work/croisement02-refinement'),library=resolve('level-editor/library'),stage=join(base,'restart2-state/remaining-seven-package-v2'),candidate=join(base,'restart2-textures/post-batch15-static-candidate-v6'),out=resolve(process.argv[3]||'');
+const sha=b=>createHash('sha256').update(b).digest('hex'),base=resolve('level-editor/work/active/croisement02'),library=resolve('level-editor/library'),stage=join(base,'restart2-state/remaining-seven-package-v2'),candidate=join(base,'restart2-textures/post-batch15-static-candidate-v6'),out=resolve(process.argv[3]||'');
 const read=async p=>JSON.parse(await readFile(p,'utf8')),mapPath=join(library,'scenes/croisement02.rhlos-map.json'),mapBytes=await readFile(mapPath),map=JSON.parse(mapBytes),manifestBytes=await readFile(join(stage,'manifest.json')),manifest=JSON.parse(manifestBytes);
 if(!/^[a-f0-9]{64}$/.test(process.argv[2]??'')||!process.argv[3])throw Error('Expected explicit installed map hash and fresh output directory');
 if(sha(mapBytes)!==process.argv[2])throw Error('Installed static selection changed');

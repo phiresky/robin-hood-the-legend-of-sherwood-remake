@@ -5,7 +5,7 @@ import hashlib
 import json
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/croisement02-refinement'
+OUT = ROOT / 'level-editor/work/active/croisement02'
 LIB = ROOT / 'level-editor/library'
 DEST = OUT / 'restart23-remaining-state-controls-v1'
 CATALOG_SHA = 'e9bed0e6fa08731872afd48266c93abc3edda13550ec3d444c60ef88a98b7211'

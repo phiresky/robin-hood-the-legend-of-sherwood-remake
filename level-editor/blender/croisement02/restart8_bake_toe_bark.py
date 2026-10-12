@@ -16,7 +16,7 @@ from source_projection_bake import bake
 from project_reviewed_texture import _read,_reconcile
 from restart6_bark_preservation import reachable_images,add_generated_layer
 from render_multiview_asset import render
-O=R/'level-editor/work/croisement02-refinement';B=O/'restart8-toe-bark-fill-v1';read=lambda p:json.loads(p.read_text());h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+O=R/'level-editor/work/active/croisement02';B=O/'restart8-toe-bark-fill-v1';read=lambda p:json.loads(p.read_text());h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def pixels(im):
  a=np.empty(len(im.pixels),np.float32);im.pixels.foreach_get(a);return a.reshape(im.size[1],im.size[0],4)
 def image_array(name,a):

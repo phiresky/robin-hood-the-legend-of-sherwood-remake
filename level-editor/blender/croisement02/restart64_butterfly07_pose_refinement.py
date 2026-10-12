@@ -7,7 +7,7 @@ import numpy as np
 from scipy.optimize import differential_evolution
 from scipy.spatial.transform import Rotation
 import restart21_butterfly07_global_registration_v2 as ref
-OUT=ref.ROOT/'level-editor/work/croisement02-refinement/restart64-butterfly07-pose-refinement-v1'
+OUT=ref.ROOT/'level-editor/work/active/croisement02/restart64-butterfly07-pose-refinement-v1'
 FIT=ref.B/'butterfly07-v3-baseline-contacts-v1/joined-fit.json'
 def main():
     assert not OUT.exists();OUT.mkdir();fit=json.loads(FIT.read_text());original=fit['rows'];rows=[]

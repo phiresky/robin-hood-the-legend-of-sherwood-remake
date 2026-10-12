@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement'
+BASE=ROOT/'level-editor/work/active/croisement02'
 OUT=BASE/'restart25-approved-state-materialization-v1'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def main(relative):

@@ -1,7 +1,7 @@
 """Prepare a small contact-view fixture using unchanged verified delivery resources."""
 import hashlib,json,math
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/croisement02-refinement';S=B/'restart2-state/remaining-seven-package-v2';OUT=B/'restart2-state/remaining-seven-contact-v1';STATIC=B/'restart2-textures/batch10-private-browser-delivery-v1/map-assets'
+ROOT=Path(__file__).resolve().parents[3];B=ROOT/'level-editor/work/active/croisement02';S=B/'restart2-state/remaining-seven-package-v2';OUT=B/'restart2-state/remaining-seven-contact-v1';STATIC=B/'restart2-textures/batch10-private-browser-delivery-v1/map-assets'
 def read(p):return json.loads(p.read_text())
 def pin(p):return {'url':'/@fs'+str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}
 m=read(S/'manifest.json');doc=read(STATIC/'scenes/croisement02.rhlos-map.json');records=[]

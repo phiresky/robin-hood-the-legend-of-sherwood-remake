@@ -4,7 +4,7 @@ import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {stateProofCommand} from './restart6_verify_remaining_state_editor.mjs';
 export async function run({ws,nextId,origin,out,commandTimeoutMs=60000}){
- const base=resolve('level-editor/work/croisement02-refinement/restart2-state/remaining-seven-contact-v1');
+ const base=resolve('level-editor/work/active/croisement02/restart2-state/remaining-seven-contact-v1');
  await mkdir(out,{recursive:true});
  const command=(method,params)=>stateProofCommand(ws,nextId,method,params,commandTimeoutMs);
  const evaluate=async expression=>{const r=await command('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result?.value};

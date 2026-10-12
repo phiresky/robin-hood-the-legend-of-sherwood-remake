@@ -2,7 +2,7 @@
 from pathlib import Path
 import json,struct,hashlib,math
 import numpy as np
-R=Path.cwd();B=R/'level-editor/work/croisement02-refinement';O=B/'tree38-reverse-neighbor-contact-oct12-v1'
+R=Path.cwd();B=R/'level-editor/work/active/croisement02';O=B/'tree38-reverse-neighbor-contact-oct12-v1'
 def read(p):
  raw=p.read_bytes();n=struct.unpack_from('<I',raw,12)[0];g=json.loads(raw[20:20+n]);binary=raw[28+n:]
  def acc(i):

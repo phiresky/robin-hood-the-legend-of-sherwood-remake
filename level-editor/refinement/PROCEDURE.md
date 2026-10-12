@@ -1144,8 +1144,13 @@ directories for new work and when migrating existing work:
 | `work/needs-review/<job>/` | Mixed or unclassified material whose final dependencies have not been established | Keep until classified. Completion of a map alone does not make the whole directory disposable. |
 | `work/storage-maintenance/` | Retention manifests, relocation maps and cleanup receipts | Keep; these explain where the surviving assets are. |
 
-During the October 2026 migration, York and Croisement01, Croisement02 and
-Croisement03 remain active at their existing `work/<map>-refinement/` paths.
+York and Croisement01, Croisement02 and Croisement03 use
+`work/active/york/`, `work/active/croisement01/`,
+`work/active/croisement02/` and `work/active/croisement03/`, respectively.
+Their October 2026 relocation receipts and historical-to-operational path
+mappings are retained in `work/storage-maintenance/migration-20261012/`.
+Historical approval records retain their original bytes; current scripts use
+the relocated paths or explicitly verified operational copies.
 Derby, Leicester, Lincoln, Nottingham and Sherwood are complete, but their
 existing refinement directories remain protected mixed storage until their
 final manifests and dependencies are verified. Unclassified legacy directories

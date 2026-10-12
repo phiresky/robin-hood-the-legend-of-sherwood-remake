@@ -6,7 +6,7 @@ from PIL import Image
 from scipy.spatial.transform import Rotation
 from matplotlib.path import Path as Polygon
 from restart64_butterfly07_source_ownership import prepare,WING,ROOT,sha
-BASE=ROOT/'level-editor/work/croisement02-refinement';FIT=BASE/'restart64-butterfly07-pose-refinement-v1/fit.json';OUT=BASE/'restart66-butterfly07-body-observations-v1'
+BASE=ROOT/'level-editor/work/active/croisement02';FIT=BASE/'restart64-butterfly07-pose-refinement-v1/fit.json';OUT=BASE/'restart66-butterfly07-body-observations-v1'
 def main():
  assert not OUT.exists();OUT.mkdir();fit=json.loads(FIT.read_text());w,h=64,32;iy,ix=np.mgrid[:h,:w];a=(iy.ravel()+.5)/h*np.pi;t=(ix.ravel()+.5)/w*2*np.pi;points=np.c_[.5*np.sin(a)*np.cos(t),2.7*np.cos(a),.5*np.sin(a)*np.sin(t)];normals=points/np.array([.5**2,2.7**2,.5**2]);normals/=np.linalg.norm(normals,axis=1)[:,None];scores=np.zeros(h*w);colors=np.full((h*w,4),255,np.uint8);colors[:,:3]=112;phases=np.full(h*w,-1,int);source_xy=np.full((h*w,2),-1,int)
  for row in fit['rows']:

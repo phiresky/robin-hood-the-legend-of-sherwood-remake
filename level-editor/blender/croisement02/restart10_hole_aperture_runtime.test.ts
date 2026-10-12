@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import * as THREE from '../../app/node_modules/three/build/three.module.js';
 import {PatchDisplay,isEffectivelyVisible} from '../../app/src/patch-display.ts';
-const folder=path.resolve(process.argv[2]??'level-editor/work/croisement02-refinement/restart10-hole-aperture/packet-v1');
+const folder=path.resolve(process.argv[2]??'level-editor/work/active/croisement02/restart10-hole-aperture/packet-v1');
 const packet=JSON.parse(fs.readFileSync(path.join(folder,'packet.json'),'utf8'));
 const root=new THREE.Group(),display=new PatchDisplay();
 const material=new THREE.MeshBasicMaterial({side:THREE.DoubleSide});

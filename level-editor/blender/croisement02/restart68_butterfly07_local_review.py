@@ -5,7 +5,7 @@ import bpy,bmesh
 from mathutils import Vector
 ROOT=Path(__file__).resolve().parents[3];sys.path.insert(0,str(ROOT/'level-editor/refinement'))
 from render_slots import acquire,release
-BASE=ROOT/'level-editor/work/croisement02-refinement';MODEL=BASE/'restart67-butterfly07-fullpath-export-v1/butterfly07-fullpath.glb';OUT=BASE/'restart68-butterfly07-local-review-v1'
+BASE=ROOT/'level-editor/work/active/croisement02';MODEL=BASE/'restart67-butterfly07-fullpath-export-v1/butterfly07-fullpath.glb';OUT=BASE/'restart68-butterfly07-local-review-v1'
 def main():
  assert not OUT.exists();assert shutil.disk_usage(ROOT).free>10*1024**3;OUT.mkdir();bpy.ops.wm.read_factory_settings(use_empty=True);s=bpy.context.scene;s.render.fps=25;bpy.ops.import_scene.gltf(filepath=str(MODEL));root=bpy.data.objects['Butterfly07 full inferred flight path'];owned=list(s.objects)
  s.render.engine='CYCLES';s.cycles.samples=4;s.render.threads_mode='FIXED';s.render.threads=2;s.render.resolution_x=s.render.resolution_y=128;s.render.resolution_percentage=100;s.render.image_settings.file_format='PNG';s.render.image_settings.color_mode='RGBA';s.render.film_transparent=True;s.view_settings.view_transform='Standard';s.view_settings.look='None'

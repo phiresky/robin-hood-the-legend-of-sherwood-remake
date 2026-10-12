@@ -6,7 +6,7 @@ from scipy.interpolate import CubicSpline
 from restart26_butterfly07_depth_curve import derivative_bounds
 
 def main():
-    b=Path('level-editor/work/croisement02-refinement/restart14-butterflies');r=json.loads((b/'butterfly07-v3-depth-outer-samples-v1/combined/contacts/report.json').read_text());f=json.loads((b/'butterfly07-v3-baseline-contacts-v1/joined-fit.json').read_text());h=np.array([x['fixed_path_anchor_zup'][2]for x in f['rows']]);offs=np.sort(np.r_[np.arange(-6,6.01,.5),[-10,-9,-8,-7,-6.5,6.5,7,8,9,10]]);times=np.arange(15,34.01,.25);base=np.interp(times,np.arange(99),h);allowed=[]
+    b=Path('level-editor/work/active/croisement02/restart14-butterflies');r=json.loads((b/'butterfly07-v3-depth-outer-samples-v1/combined/contacts/report.json').read_text());f=json.loads((b/'butterfly07-v3-baseline-contacts-v1/joined-fit.json').read_text());h=np.array([x['fixed_path_anchor_zup'][2]for x in f['rows']]);offs=np.sort(np.r_[np.arange(-6,6.01,.5),[-10,-9,-8,-7,-6.5,6.5,7,8,9,10]]);times=np.arange(15,34.01,.25);base=np.interp(times,np.arange(99),h);allowed=[]
     for t in times:
      ph=int(t);fr=round(t-ph,2);suffix=f'pose:{ph}'if fr==0 else f'edge:{ph}:{fr}';allowed.append([i for i,v in enumerate(offs) if not r['results'][f'depth-trial:offset{float(v)}:{suffix}']['contact_counts']])
     allresults=[]

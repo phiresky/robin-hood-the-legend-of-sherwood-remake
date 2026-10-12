@@ -1,6 +1,6 @@
 import json,hashlib
 from pathlib import Path
-root=Path('level-editor/work/croisement02-refinement')
+root=Path('level-editor/work/active/croisement02')
 src=root/'restart2-state/state-preview-ui-v2'
 out=root/'restart2-state/mission-state-package-v1'
 lib=out/'library'

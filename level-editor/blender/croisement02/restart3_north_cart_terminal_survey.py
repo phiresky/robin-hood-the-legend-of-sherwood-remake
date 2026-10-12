@@ -8,7 +8,7 @@ from PIL import Image, ImageDraw
 from scipy.ndimage import label, find_objects
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / 'work/croisement02-refinement'
+OUT = ROOT / 'work/active/croisement02'
 DEST = OUT / 'restart3-north-cart/terminal-source-survey-v1'
 
 

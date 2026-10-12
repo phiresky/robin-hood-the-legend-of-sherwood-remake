@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image,ImageDraw
 from scipy.spatial.transform import Rotation
 from scipy.spatial import ConvexHull
-ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/croisement02-refinement/restart14-butterflies'/(sys.argv[1] if len(sys.argv)>1 else 'joint99-cpu-v1')
+ROOT=Path(__file__).resolve().parents[3];OUT=ROOT/'level-editor/work/active/croisement02/restart14-butterflies'/(sys.argv[1] if len(sys.argv)>1 else 'joint99-cpu-v1')
 def main():
  report=json.loads((OUT/'joint-fit-proposal.json').read_text());selected=report['selected'];rows=selected['rows'];im=Image.new('RGB',(1200,850),'#202020');d=ImageDraw.Draw(im)
  def chart(top,title,series,limit):

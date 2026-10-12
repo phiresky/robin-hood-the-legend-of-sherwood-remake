@@ -3,7 +3,7 @@ from pathlib import Path
 import sys,json,hashlib,shutil
 R=Path.cwd();sys.path[:0]=[str(R/'level-editor/refinement'),str(Path(__file__).parent)]
 from prepare_texture_packet import prepare
-B=R/'level-editor/work/croisement02-refinement';A=B/'restart3-review-batches/three-tree-geometry-oct11-v1/user-approval.json'
+B=R/'level-editor/work/active/croisement02';A=B/'restart3-review-batches/three-tree-geometry-oct11-v1/user-approval.json'
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def read(p):return json.loads(p.read_text())
 def write(p,d):p.write_text(json.dumps(d,indent=2)+'\n')

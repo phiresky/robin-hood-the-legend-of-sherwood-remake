@@ -10,7 +10,7 @@ R=Path.cwd();sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/
 from render_slots import acquire,release
 from render_multiview_asset import render
 from refinement_workspace import _geometry
-O=R/'level-editor/work/croisement02-refinement';BASE=O/'restart6-five-bark-fill-v1';h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text())
+O=R/'level-editor/work/active/croisement02';BASE=O/'restart6-five-bark-fill-v1';h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text())
 def reachable(material):
  root=next(n for n in material.node_tree.nodes if n.type=='OUTPUT_MATERIAL');pending=[root];seen=set();images=[]
  while pending:

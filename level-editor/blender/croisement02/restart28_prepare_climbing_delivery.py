@@ -1,7 +1,7 @@
 """Bind the two approved climbing endpoints to unchanged native patch contracts."""
 import json,hashlib
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';DEST=BASE/'restart28-approved-climbing-integration-v3';LIB=ROOT/'level-editor/library';SOURCE=BASE/'restart7-source-patch-delivery/contracts-v1'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02';DEST=BASE/'restart28-approved-climbing-integration-v3';LIB=ROOT/'level-editor/library';SOURCE=BASE/'restart7-source-patch-delivery/contracts-v1'
 APPROVAL=BASE/'restart3-review-batches/next-six-textures-channels-v1/user-approval.json';APPROVAL_SHA='7f6abc55fa21eee6ebd3b10c4f079e91e7f8159127a30a23fb9a6955d52e3f9d'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def pin(p):return {'path':str(p),'sha256':sha(p)}

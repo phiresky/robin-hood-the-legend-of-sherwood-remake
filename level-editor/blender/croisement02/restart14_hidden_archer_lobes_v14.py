@@ -7,7 +7,7 @@ from scipy.spatial import cKDTree
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-BASE=Path(__file__).resolve().parents[2]/'work/croisement02-refinement/restart14-hidden-archer';DEST=BASE/'lobes-v14-cpu';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=np.array([0,-COS,SIN]);CAP=2*1024**2
+BASE=Path(__file__).resolve().parents[2]/'work/active/croisement02/restart14-hidden-archer';DEST=BASE/'lobes-v14-cpu';SIN=math.sin(math.radians(35));COS=math.cos(math.radians(35));RAY=np.array([0,-COS,SIN]);CAP=2*1024**2
 
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def budget():

@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {parseStoredMap} from '../../shared/src/stored-level.ts';
 import {loadMissionStatePreview} from '../../app/src/mission-state-catalog.ts';
 import {verifyStaticReplacementRows} from '../../shared/src/state-delivery.ts';
-const root=resolve('.'),lib=join(root,'level-editor/library'),stage=join(root,'level-editor/work/croisement02-refinement/restart62-tree42-catalog-stage-v2');
+const root=resolve('.'),lib=join(root,'level-editor/library'),stage=join(root,'level-editor/work/active/croisement02/restart62-tree42-catalog-stage-v2');
 const read=async p=>JSON.parse(await readFile(p)),sha=b=>createHash('sha256').update(b).digest('hex');
 const plan=await read(join(stage,'plan.json'));assert.equal(plan.catalog_additions.length,1);
 const mappings=new Map();for(const row of plan.files){assert.equal(sha(await readFile(row.staged.path)),row.staged.sha256);mappings.set(row.destination,row.staged.path)}

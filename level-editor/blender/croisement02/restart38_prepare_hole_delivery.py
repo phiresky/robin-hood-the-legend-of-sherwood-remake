@@ -1,7 +1,7 @@
 """Prepare private approved hole endpoints without altering source timing or apertures."""
 import json,hashlib,copy
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/croisement02-refinement';DEST=BASE/'restart38-approved-hole-export-v1';LIB=ROOT/'level-editor/library';SOURCE=BASE/'restart7-source-patch-delivery/contracts-v1';PLAN=BASE/'restart25-approved-state-materialization-v1/approved-bindings.json'
+ROOT=Path(__file__).resolve().parents[3];BASE=ROOT/'level-editor/work/active/croisement02';DEST=BASE/'restart38-approved-hole-export-v1';LIB=ROOT/'level-editor/library';SOURCE=BASE/'restart7-source-patch-delivery/contracts-v1';PLAN=BASE/'restart25-approved-state-materialization-v1/approved-bindings.json'
 RECEIPT=BASE/'restart3-review-batches/next-ground-storehouse-hole-v1/user-approval-partial.json';RECEIPT_SHA='db55badd3a8f9545ecbf381f6dc6014d344f8a773e573e055e17bfb7eec5a675'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def pin(p):return dict(path=str(p),sha256=sha(p))

@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-OUT = ROOT / 'level-editor/work/croisement02-refinement'
+OUT = ROOT / 'level-editor/work/active/croisement02'
 
 
 def sha(path):

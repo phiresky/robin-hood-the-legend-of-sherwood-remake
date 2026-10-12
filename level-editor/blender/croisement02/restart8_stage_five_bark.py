@@ -6,7 +6,7 @@ sys.path[:0]=[str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinem
 from asset_index import write_asset_index,discover_asset_index
 from promote_staged_publication import library_lock,check_gameplay_preserved
 from lossy_assets import verify_derivatives,read_glb
-O=ROOT/'level-editor/work/croisement02-refinement';B=O/'restart8-five-bark-approved-export-v1';L=ROOT/'level-editor/library'
+O=ROOT/'level-editor/work/active/croisement02';B=O/'restart8-five-bark-approved-export-v1';L=ROOT/'level-editor/library'
 NUMBERS=[18,24,38,39,45]
 
 def read(p):return json.loads(p.read_text())

@@ -2,7 +2,7 @@
 import copy, hashlib, json
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement'
+BASE=ROOT/'level-editor/work/active/croisement02'
 DEST=BASE/'restart25-approved-state-materialization-v1'
 EXPECTED='ca25ba9362b26dfb8ac1239f7acd7b56929463498b125bed0f42dcd98ec628f4'
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()

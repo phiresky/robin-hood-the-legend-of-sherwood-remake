@@ -3,7 +3,7 @@ import ast,hashlib,json,math
 from pathlib import Path
 import numpy as np
 from PIL import Image,ImageDraw
-BASE=Path(__file__).resolve().parents[2]/'work/croisement02-refinement'
+BASE=Path(__file__).resolve().parents[2]/'work/active/croisement02'
 ROOT=BASE/'restart14-hidden-archer/audit-v1'
 REFERENCE=Path(__file__).with_name('restart7_reference_remaining_patches.py')
 def sha(path):return hashlib.sha256(path.read_bytes()).hexdigest()

@@ -4,7 +4,7 @@ import {resolve,join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {validateStateDelivery} from '../../shared/src/state-delivery.ts';
 import {PendingPatchController,sourceSnapshot} from './restart24_pending_patch_adapter.mjs';
-const folder=resolve('level-editor/work/croisement02-refinement/restart38-approved-hole-export-v1');
+const folder=resolve('level-editor/work/active/croisement02/restart38-approved-hole-export-v1');
 const sha=b=>createHash('sha256').update(b).digest('hex');
 const config=JSON.parse(await readFile(join(folder,'reader-config.json'),'utf8'));
 const checked=async p=>{const b=await readFile(p.path);assert.equal(sha(b),p.sha256,p.path);return b;};

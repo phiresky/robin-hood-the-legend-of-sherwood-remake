@@ -9,7 +9,7 @@ R=Path.cwd();sys.path[:0]=[str(R/'level-editor/refinement'),str(R/'level-editor/
 from render_slots import acquire,release
 from render_multiview_asset import render
 from refinement_workspace import _geometry
-O=R/'level-editor/work/croisement02-refinement';D=O/'restart6-tree07-bark-close-v1';W=O/'root-stem-round-2/assets/croisement02-tree-07';h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text());expected='8bcb2ea9a6c40f920e15590569934f18c3bb3c002c26bb8160a6903605f107df';assert h(W/'model.blend')==expected
+O=R/'level-editor/work/active/croisement02';D=O/'restart6-tree07-bark-close-v1';W=O/'root-stem-round-2/assets/croisement02-tree-07';h=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();read=lambda p:json.loads(p.read_text());expected='8bcb2ea9a6c40f920e15590569934f18c3bb3c002c26bb8160a6903605f107df';assert h(W/'model.blend')==expected
 parent=read(O/'restart6-tree07-bark-input-v1/input-review.json');assert parent['approved_model_sha256']==expected
 acquire()
 try:

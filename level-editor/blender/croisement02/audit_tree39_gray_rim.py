@@ -3,7 +3,7 @@ import hashlib,json,math,struct
 from pathlib import Path
 import numpy as np
 ROOT=Path(__file__).resolve().parents[3]
-BASE=ROOT/'level-editor/work/croisement02-refinement'
+BASE=ROOT/'level-editor/work/active/croisement02'
 OUT=BASE/'tree39-gray-rim-audit-oct12-v1'
 LIVE=ROOT/'level-editor/library/3d-assets/croisement02/croisement02-tree-39/model.glb'
 APPROVED=BASE/'restart8-five-bark-approved-export-v1/tree-39-v1/delivery-v3/model.glb'

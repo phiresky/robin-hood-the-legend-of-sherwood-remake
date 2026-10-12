@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {createHash} from 'node:crypto';
 import {chromeEndpoint,socketOpen,evaluate} from '../../app/tests/cdp.mjs';
 
-const root=resolve('.'),base=join(root,'level-editor/work/croisement02-refinement/restart2-state');
+const root=resolve('.'),base=join(root,'level-editor/work/active/croisement02/restart2-state');
 const server=createServer(async(req,res)=>{try{
   const pathname=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
   if(!pathname.startsWith('/@fs/'))throw Error('Unsupported route');

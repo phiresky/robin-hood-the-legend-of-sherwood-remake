@@ -3,7 +3,7 @@ from pathlib import Path
 import json, math, hashlib
 from PIL import Image, ImageDraw
 
-ROOT=Path(__file__).resolve().parents[2]/'work/croisement02-refinement'
+ROOT=Path(__file__).resolve().parents[2]/'work/active/croisement02'
 BASE=ROOT/'restart10-physical-signs'
 
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
