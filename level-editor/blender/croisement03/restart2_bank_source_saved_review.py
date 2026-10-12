@@ -18,6 +18,9 @@ def main():
   for obj in scene.objects:
    if obj.type!='MESH':continue
    obj.data.calc_loop_triangles();tri=list(obj.data.loop_triangles);verts=[obj.matrix_world@v.co for v in obj.data.vertices];rows.append((obj,BVHTree.FromPolygons(verts,[list(t.vertices)for t in tri],all_triangles=True),tri,verts))
+  if '--exact-coupled-traces' in sys.argv:
+   from restart2_bank_saved_trace_guard import verify
+   verify(scene,folder,source.sha)
   original=np.array(Image.open(source.B.parent/'baseline/covered.png').convert('RGBA'));fail=[];samples=[p[:2]for p in receipt['protected_firsthits']]+receipt['accepted_pixels']
   for x,y in samples:
    origin=Vector((x+.5,-(y+.5)/base.S,0))+base.RAY*5000;hits=[]
