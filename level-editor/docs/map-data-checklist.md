@@ -124,8 +124,10 @@ and wider movement regressions passing. Two-copy assemblies at four rotations
 and two elevations pass 96 open round trips, 192 closed/reset denials and 576
 directed gate-search checks, with routes available only when open. All 192
 directed open-state player clicks pass across these placements, plus twelve in
-the staged full scene. Closed/reset player dispatch, bank contacts and mesh
-edges still need verification. Sixteen
+the staged full scene. A subsequent mesh-clipped deck candidate has support at
+all 2,145 sampled deck points and passes 576 open/closed/reset player clicks
+across the same placements. The neighbouring plateau still has mesh gaps;
+bank contacts and the revised candidate's full-scene/archive checks remain open. Sixteen
 missing/raised-neighbour exports reject the three unsupported plateau entrances
 while native traversal and lock checks pass for the untouched copy. Invalid
 lighting receivers now produce explicit warnings in best-effort mode instead

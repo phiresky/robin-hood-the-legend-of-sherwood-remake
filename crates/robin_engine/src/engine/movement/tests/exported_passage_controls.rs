@@ -126,10 +126,11 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                         |_, _, _| {},
                     );
                     let expected = state == "open";
-                    let player_clicks: Vec<_> = if expected {
+                    let player_clicks: Vec<_> = if expected || probe["reject_alternatives"] == true
+                    {
                         [true, false].into_iter().map(|direct| {
                             let outcome = click_exported_passage(
-                                engine.clone(), assets.clone(), index, direct, &sprite,
+                                engine.clone(), assets.clone(), index, direct, expected, &sprite,
                             );
                             serde_json::json!({"direct": direct, "passed": outcome.is_ok(), "outcome": outcome})
                         }).collect()
@@ -152,7 +153,7 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
     let complete = !results.is_empty() && results.iter().all(|result| result["passed"] == true);
     let report = directory.join("actor-passage-control-report.json");
     std::fs::write(&report, serde_json::to_vec_pretty(&serde_json::json!({
-        "scope": "ordinary-passage-round-trips-open-player-clicks-and-optional-bidirectional-gate-search",
+        "scope": "ordinary-passage-round-trips-player-clicks-and-optional-closed-route-rejection",
         "complete": complete, "results": results,
     })).unwrap()).unwrap();
     assert!(complete, "see {}", report.display());
@@ -163,6 +164,7 @@ fn click_exported_passage(
     mut assets: LevelAssets,
     index: usize,
     direct: bool,
+    expected_crossing: bool,
     sprite: &crate::sprite::Sprite,
 ) -> Result<(), String> {
     let door = engine.script_domains.interactables.doors[index].clone();
@@ -227,6 +229,11 @@ fn click_exported_passage(
         let element = engine.ent(owner).element_data();
         let point = element.position_map();
         let sector = element.sector().ok_or("passage actor lost sector")?;
+        if !expected_crossing && sector != source_sector {
+            return Err(format!(
+                "closed passage click left source sector: {sector:?}"
+            ));
+        }
         let passing = crate::engine::ai::selected_actor_is_passing_door(
             &engine.entities(),
             &engine.seq(),
@@ -245,6 +252,9 @@ fn click_exported_passage(
         stationary = if previous == point { stationary + 1 } else { 0 };
         previous = point;
         if stationary >= 200 {
+            if !expected_crossing && !passing && element.layer() == source.layer_out {
+                return Ok(());
+            }
             return Err(format!(
                 "player passage stalled: {point:?}, goal {goal:?}, sector {sector:?}, target {target_sector:?}"
             ));

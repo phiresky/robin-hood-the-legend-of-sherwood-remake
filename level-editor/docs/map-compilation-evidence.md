@@ -96,6 +96,22 @@ interior samples out of 878, with maximum gap 3.307 game units; deck 059 has eig
 out of 880, with maximum gap 0.632. Boundary discrepancies reach 4.117 and 1.067
 units respectively. Passing movement does not establish visible mesh support.
 
+`drawbridge-mesh-footprints-6yr2ut` clips these two staged floor outlines to their
+own near-plane mesh triangles. All 1,096 deck-058 and 1,049 deck-059 probes now
+have mesh support, with maximum height differences 0.0011 and 0.0583 units.
+This remains unpublished: the neighbouring plateau separately has 514 unsupported
+probes out of 3,242 and gaps up to 118.199 units, requiring geometry review.
+
+The revised `lincoln-drawbridge-placements-IPfsDI` passes the combined native
+audit in 20.35 seconds: 96 prepared open round trips, 192 closed/reset denials,
+576 directed gate searches and 576 player clicks (192 each open, closed, reset).
+Closed/reset clicks remain on the source floor and settle without crossing.
+`lincoln-drawbridge-disconnections-vz3eQu` retains all sixteen missing/raised
+neighbour rejection checks. The revised full-scene `saved-map-exports-NcXoRP`
+passes 186 ordinary route samples, sixteen stair-click routes and the native
+jump-click audit. Full-scene bridge controls and rendered-archive regressions
+for these revised footprints remain pending.
+
 The follow-up `lincoln-drawbridge-disconnections-QrZQte` removes or raises the
 plateau in only the first copy across the same eight placements. All sixteen
 exports omit the three unsupported plateau entrances and retain three supported
