@@ -45,8 +45,19 @@ Rendered fixture `render-connection-library-G5JiC2` contains two complete
 published copies rotated 90 degrees and raised 40 units. Its first browser
 attempt terminated on a CDP status-query timeout before producing an archive.
 A second attempt tolerates individual status-query timeouts while preserving
-the twenty-minute overall limit and all round-trip assertions. ZIP evidence
-remains pending until that run completes.
+the twenty-minute overall limit and all round-trip assertions. It passes:
+the 2,500-square bake reopens with identical gameplay, color and depth.
+The 11,109,889-byte `croisement-platform-rendered.zip` has SHA-256
+`15e8c20cc555e23a8e0217266e931e0db563662b8381439ee8d354c02b4a5d9e`.
+
+Native loading over an empty base datadir passes, including the archived color,
+depth, minimap and editor document, with seven sight obstacles, two door
+projections and 10,560 grid blocks. The exact archived descriptor passes ten
+ordinary and two hidden-floor traversals plus eight expected lower-target
+occlusion checks. `jump-dispatch-coverage.json` matches the cases and descriptor
+hash. Both copies have traversal in each direction. The baked image was visually
+inspected; actual native character/depth compositing remains unverified. There
+are no appearance controls in this fixture, so it adds no state-transition proof.
 
 ## Croisement helper threshold and landing trace (2026-10-12)
 

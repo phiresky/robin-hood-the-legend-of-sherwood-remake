@@ -48,8 +48,11 @@ existing walkable surface. The published change improves rotated/raised copies
 from 132/160 to 156/160 with no regressions; the four remaining checks pass with
 hidden-floor selection. The combined 160 checks comprise 144 actual traversals
 and sixteen expected occlusion checks, not 160 traversals.
-These exports include concurrent local scene edits and do not
-establish rendered ZIP fidelity. See [the receiver correction](map-compilation-evidence.md#croisement03-authored-landing-receiver-2026-10-12).
+These full-map exports include concurrent local scene edits. The corrected asset's
+two-copy, rotated/raised browser ZIP now reopens and rebakes identically, loads
+without base-game data, and retains twelve archived traversals plus eight
+occlusion checks. Native character/depth compositing and full-map rendered ZIP
+fidelity remain open. See [the receiver correction](map-compilation-evidence.md#croisement03-authored-landing-receiver-2026-10-12).
 
 The published restoration of four asset-local keep movement contours improves Leicester
 to **226/230** offset jump clicks with no regressions. All 46 interior directions
