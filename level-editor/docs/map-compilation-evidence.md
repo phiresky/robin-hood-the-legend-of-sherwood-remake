@@ -109,8 +109,22 @@ Closed/reset clicks remain on the source floor and settle without crossing.
 `lincoln-drawbridge-disconnections-vz3eQu` retains all sixteen missing/raised
 neighbour rejection checks. The revised full-scene `saved-map-exports-NcXoRP`
 passes 186 ordinary route samples, sixteen stair-click routes and the native
-jump-click audit. Full-scene bridge controls and rendered-archive regressions
-for these revised footprints remain pending.
+jump-click audit. Full-scene bridge controls also pass in 0.84 seconds: six open
+round trips, twelve closed/reset denials and twelve directed open player clicks.
+Rendered-archive regressions for these revised footprints remain pending.
+
+The plateau follow-up separates near-plane coverage from any mesh intersection
+at the same horizontal location. Of 514 unsupported probes, 470 are boundary
+probes and 44 are interior probes. All 44 interior probes intersect mesh, but
+some intersect substantially different elevations: local (-875,10) has mesh near
+height 107.918 and (-800,50) near 124, versus the authored flat floor at 220.001.
+The remaining boundary failures include 384 probes without any mesh intersection
+and six probes whose interpolated mesh height is within 0.5 units although their
+triangle vertices are not all near the floor plane. `plateau-support.png` was
+inspected; large discrepancies cluster near the west end. The review now records
+`nearestMeshHeightError` so a non-flat mesh is not mistaken for absent geometry.
+Correcting this area requires authored slopes/contact review, not indiscriminate
+deletion of every near-plane failure. The published plateau is unchanged.
 
 The follow-up `lincoln-drawbridge-disconnections-QrZQte` removes or raises the
 plateau in only the first copy across the same eight placements. All sixteen

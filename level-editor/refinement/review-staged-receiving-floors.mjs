@@ -94,12 +94,20 @@ for (const edit of edits) {
       }
     const samples = points.map((point) => {
       const heights = top.map((triangle) => height(point, triangle)).filter((v) => v !== undefined);
+      const otherHeights = heights.length
+        ? []
+        : triangles.map((triangle) => height(point, triangle)).filter((v) => v !== undefined);
       return {
         point,
         supported: heights.length > 0,
         heightError: heights.length
           ? Math.min(...heights.map((z) => Math.abs(z - planeHeight(plane, point))))
           : null,
+        nearestMeshHeightError: heights.length
+          ? Math.min(...heights.map((z) => Math.abs(z - planeHeight(plane, point))))
+          : otherHeights.length
+            ? Math.min(...otherHeights.map((z) => Math.abs(z - planeHeight(plane, point))))
+            : null,
         gap: heights.length
           ? 0
           : Math.min(

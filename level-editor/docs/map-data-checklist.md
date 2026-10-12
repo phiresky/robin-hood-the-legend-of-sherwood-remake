@@ -127,7 +127,10 @@ directed open-state player clicks pass across these placements, plus twelve in
 the staged full scene. A subsequent mesh-clipped deck candidate has support at
 all 2,145 sampled deck points and passes 576 open/closed/reset player clicks
 across the same placements. The neighbouring plateau still has mesh gaps;
-bank contacts and the revised candidate's full-scene/archive checks remain open. Sixteen
+bank contacts and the revised candidate's rendered archive check remain open.
+Its full-scene route, stair, jump and bridge-control checks pass. Plateau review
+identifies sloped mesh under part of its flat walking definition, requiring an
+asset-local slope correction rather than merely removing those areas. Sixteen
 missing/raised-neighbour exports reject the three unsupported plateau entrances
 while native traversal and lock checks pass for the untouched copy. Invalid
 lighting receivers now produce explicit warnings in best-effort mode instead
