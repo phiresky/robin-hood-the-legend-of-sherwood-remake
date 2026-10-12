@@ -16,7 +16,7 @@ acquire(slots=2)
 assert shutil.disk_usage(OUT).free>10*1024**3+512*1024**2
 available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024
 assert available>6*1024**3
-base=OUT/'restart2';dest=base/'tree07-wood-v1';dest.mkdir(exist_ok=False)
+base=OUT/'restart2';dest=base/'tree07-wood-v2';dest.mkdir(exist_ok=False)
 bank=base/'tree05-regional-banks-v18/assets/croisement01-tree-05/model.blend'
 assert sha(bank)=='7926500e407950bd66b78d13e0ce65b3829dd2263d7db4ba5c57a7ece5dbc818'
 bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.preferences.filepaths.save_version=0
@@ -25,26 +25,10 @@ for o in list(bpy.data.objects):
  if o.type=='MESH' and o.get('source_node') not in terrain:bpy.data.objects.remove(o,do_unlink=True)
 asset='croisement01-tree-07';node='scenery-tree07-wood';name='Northern Partly Hidden Tree'
 core=base/'tree07-source-partition-v2/conservative-bark-core.png';wood=Image.open(core).convert('L');wood.save(dest/'wood-domain.png')
-# Only the complete upper section constrains width; its isolated lower edge
-# samples establish color without narrowing the opposite hidden side.
+# Conservative bark-core edges are color ownership, not a complete silhouette.
+# Keep a continuous inferred round stem and validate all known source rays.
 centers=[Vector(v) for v in [(458,-307,39),(458,-307,55),(458,-307,120),(456,-307,190),(456,-307,218),(458,-307,270),(452,-308,335),(451,-308,365)]]
 body=helpers.tube('Continuous partly observed stem',centers,[14,13,11,10.5,10.5,9,5,1]);body['defer_union']=True
-fit=np.asarray(wood)>0;fit[12:]=False
-before=[v.co.copy() for v in body.data.vertices]
-helpers.fit_short_root(body,fit,x0=441)
-# The short helper requires only five observed slices; its exact changed band
-# is kept separate from inferred continuation. Blend endpoints outside that
-# band without pretending the foliage-hidden rows measured another silhouette.
-for vertex,old in zip(body.data.vertices,before):
- sy=-old.y*SIN-old.z*COS
- if .5<=sy<=11.5:continue
- if -12<sy<.5 or 11.5<sy<24:
-  boundary=.5 if sy<.5 else 11.5
-  neighbors=[(abs((-v.y*SIN-v.z*COS)-boundary),j) for j,v in enumerate(before) if abs((-v.y*SIN-v.z*COS)-boundary)<2]
-  if neighbors:
-   _,j=min(neighbors,key=lambda pair:pair[0]+abs(before[pair[1]].x-old.x))
-   dx=body.data.vertices[j].co.x-before[j].x;vertex.co.x+=dx*max(0,1-abs(sy-boundary)/12)
-body.data.update()
 for i,tip in enumerate([(435,-308,40),(480,-307,39),(458,-334,41),(458,-278,38)]):
  end=Vector(tip);root=helpers.tube('Inferred seated root '+str(i),[Vector((458,-307,64)),Vector((458,-307,45)).lerp(end,.6)+Vector((0,0,1)),end],[8,4,.3]);union(body,root)
 for i,tip in enumerate([(408,-301,362),(492,-293,375),(462,-340,370)]):
