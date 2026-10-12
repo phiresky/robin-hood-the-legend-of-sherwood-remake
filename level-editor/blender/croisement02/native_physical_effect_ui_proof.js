@@ -1,7 +1,7 @@
 (async()=>{
  const v=window.reviewViewport,cfg=window.canonicalSmoke,checks=[];
  const check=(name,pass,detail)=>{checks.push({name,pass:!!pass,detail});window.canonicalSmokeEvidence={checks};if(!pass)throw Error(name)};
- const wait=async(fn,label)=>{for(let i=0;i<1200;i++){if(fn())return;await new Promise(r=>setTimeout(r,100))}throw Error('Timeout '+label)};
+ const wait=async(fn,label)=>{for(let i=0;i<1200;i++){if(fn())return;const failure=document.querySelector('#result')?.textContent;if(failure?.startsWith('FAIL'))throw Error(label+': '+failure);await new Promise(r=>setTimeout(r,100))}throw Error('Timeout '+label)};
  const select=(label,value)=>{const el=document.querySelector('select[aria-label="'+label+'"]');check('Offered '+label,el&&[...el.options].some(o=>o.value===value));el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))};
  const digest=async p=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',p.data))].map(n=>n.toString(16).padStart(2,'0')).join('');
  const capture=async name=>{window.scatterStage={name,time:Date.now()};await wait(()=>window.scatterCaptures[name],name+' capture')};
