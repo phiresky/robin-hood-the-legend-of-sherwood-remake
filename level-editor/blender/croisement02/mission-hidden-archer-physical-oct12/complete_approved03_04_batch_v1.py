@@ -7,7 +7,7 @@ import review_approved03_04_textures_v1 as review
 from render_slots import acquire,release
 STATES=['03-transition-0','03-transition-1','03-applied','04-initial','04-transition-0','04-transition-1','04-applied']
 def main(mode):
-    receipt=bake.BASE/'baked-v1/03-initial/saved-review-v1/self-review.json'
+    receipt=bake.BASE/'baked-v1/03-initial/saved-review-v2/self-review.json'
     initial=json.loads(receipt.read_text());assert initial['ready_for_remaining_bakes']
     assert bake.sha(bake.BASE/'baked-v1/03-initial/model.blend')==initial['model_sha256']
     pending=[]
@@ -24,8 +24,8 @@ def main(mode):
         for state in STATES:
             packet=bake.BASE/'baked-v1'/state
             assert bake.sha(packet/'model.blend')==json.loads((packet/'bake-validation.json').read_text())['model_sha256']
-            if (packet/'saved-review-v1').exists():
-                existing=json.loads((packet/'saved-review-v1/report.json').read_text())
+            if (packet/'saved-review-v2').exists():
+                existing=json.loads((packet/'saved-review-v2/report.json').read_text())
                 assert bake.sha(packet/'model.blend')==existing['model_sha256']
                 for path,digest in existing['images'].items():assert bake.sha(path)==digest
             else:pending.append(state)

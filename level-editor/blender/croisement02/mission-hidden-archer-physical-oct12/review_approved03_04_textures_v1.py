@@ -8,7 +8,7 @@ from render_slots import acquire,release
 
 def main(state):
     folder=BASE/'baked-v1'/state;report=json.loads((folder/'bake-validation.json').read_text())
-    model=folder/'model.blend';assert sha(model)==report['model_sha256'];dest=folder/'saved-review-v1';assert not dest.exists();dest.mkdir();b.DEST=dest
+    model=folder/'model.blend';assert sha(model)==report['model_sha256'];dest=folder/'saved-review-v2';assert not dest.exists();dest.mkdir();b.DEST=dest
     b.bpy.ops.wm.open_mainfile(filepath=str(model));objects=[o for o in b.bpy.context.scene.objects if o.type=='MESH']
     assert {o.name:geometry(o) for o in objects}==report['geometry']
     phase=state[3:];active=[o for o in objects if o['source_phase']==phase]

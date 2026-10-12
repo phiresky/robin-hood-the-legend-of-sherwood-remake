@@ -5,7 +5,7 @@ This is a reconstruction handoff, not approved geometry or a publication.
 
 Run `qualify.py`, `model_evidence.py`, then `reconstruct.py` with Python, NumPy
 and Pillow. Run `python3 -m unittest discover -s <this-directory> -p 'test_*.py'`.
-Outputs go to `work/croisement02-refinement/mission-hidden-archer-physical-oct12-v1`.
+Outputs go to `work/active/croisement02/mission-hidden-archer-physical-oct12-v1`.
 
 The qualification pins the current map, native binding packet, source artwork,
 and candidate models/descriptors. The geometry diagnostic applies the complete
@@ -88,3 +88,21 @@ is drawn afterward even when a patch display polyline is empty. The previous
 empty-polyline sentinel interpretation is superseded. A patch-foreground image
 is retained only as a counterfactual diagnostic. Static wood and static foliage
 must not gain moving-owner draw order merely because they share an export.
+
+### Relocated approved appearance work
+
+Current outputs are in `work/active/croisement02/mission-hidden-archer-physical-oct12-v1`.
+`migrate_operational_v1.py` creates explicit operational JSON copies under
+`work/storage-maintenance/migration-20261012/croisement02/archers/` and verifies
+historical bytes through `work_relocation`. Existing approvals, paid API outputs,
+and model files remain unchanged. `operational_records.py` checks both historical
+and operational hashes before bake input use; no old-path search is permitted.
+`audit_relocated_models_v1.py` reopens the retained scenes without saving/rendering
+and reports missing unpacked images or linked libraries.
+
+All eight paid generations already exist: do not rerun generation. Resume the
+first saved appearance review with `review_approved03_04_textures_v1.py -- 03-initial`;
+its new output is `saved-review-v2`. The interrupted empty `saved-review-v1` remains
+evidence. After visual acceptance, write the exact model-bound self-review there,
+then run `complete_approved03_04_batch_v1.py -- bake` and separately `-- review`.
+These actions remain deferred until the coordinated map relocation is complete.
