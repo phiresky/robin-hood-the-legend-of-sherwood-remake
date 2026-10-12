@@ -90,12 +90,43 @@ def main():
     elif not first or first[1]!=f'Candidate bank {owner}':perface[idx]['ray_rejected'].append([x,y,None if first is None else first[1]]);continue
     perface[idx]['accepted']+=1;accepted.append([x,y])
    assignments.setdefault((first[1],first[2]),[]).append((x,y))
+  # Each tile contains the entire projected polygon, not merely the assigned
+  # pixel crop. Thus every face UV stays inside its own transparent-padded tile.
+  tiles=[]
   for (name,face),pixels in assignments.items():
-   obj=scene.objects[name];xs,ys=zip(*pixels);l,t,r,b=min(xs),min(ys),max(xs)+1,max(ys)+1;rgba=source[t:b,l:r].copy();rgba[:,:,3]=0
-   for x,y in pixels:rgba[y-t,x-l,3]=255
-   path=OUT/f'{name.replace(" ","-")}-face-{face}.png';Image.fromarray(rgba).save(path);im=bpy.data.images.load(str(path));im.pack();mat=bpy.data.materials.new(f'Private reviewed stone {name}/{face}');mat.use_nodes=True;nodes=mat.node_tree.nodes;nodes.clear();tex=nodes.new('ShaderNodeTexImage');tex.image=im;tex.interpolation='Closest';tex.extension='CLIP';em=nodes.new('ShaderNodeEmission');gray=nodes.new('ShaderNodeBsdfPrincipled');gray.inputs['Base Color'].default_value=(.25,.25,.25,1);mix=nodes.new('ShaderNodeMixShader');out=nodes.new('ShaderNodeOutputMaterial');links=mat.node_tree.links;links.new(tex.outputs['Color'],em.inputs['Color']);links.new(tex.outputs['Alpha'],mix.inputs[0]);links.new(gray.outputs[0],mix.inputs[1]);links.new(em.outputs[0],mix.inputs[2]);links.new(mix.outputs[0],out.inputs['Surface']);obj.data.materials.append(mat);obj.data.polygons[face].material_index=len(obj.data.materials)-1;uv=obj.data.uv_layers.active or obj.data.uv_layers.new(name="Native stone coordinates")
-   for li in obj.data.polygons[face].loop_indices:
-    v=obj.matrix_world@obj.data.vertices[obj.data.loops[li].vertex_index].co;uv.data[li].uv=((v.x-l)/(r-l),1-(-v.y*base.S-v.z*base.C-t)/(b-t))
+   obj=scene.objects[name];poly=obj.data.polygons[face];projected=[]
+   for vi in poly.vertices:
+    v=obj.matrix_world@obj.data.vertices[vi].co;projected.append((float(v.x),float(-v.y*base.S-v.z*base.C)))
+   xs,ys=zip(*projected);px,py=zip(*pixels);l=int(np.floor(min(min(xs),min(px))));t=int(np.floor(min(min(ys),min(py))));r=int(np.ceil(max(max(xs),max(px)+1)));b=int(np.ceil(max(max(ys),max(py)+1)))
+   tiles.append(dict(name=name,face=face,pixels=pixels,l=l,t=t,w=r-l,h=b-t))
+  width=max(1024,max(tile['w']+4 for tile in tiles));cx=cy=rowheight=0
+  for tile in sorted(tiles,key=lambda q:(-q['h'],q['name'],q['face'])):
+   tw,th=tile['w']+4,tile['h']+4
+   if cx+tw>width:cx=0;cy+=rowheight;rowheight=0
+   tile['ax']=cx+2;tile['ay']=cy+2;cx+=tw;rowheight=max(rowheight,th)
+  height=cy+rowheight;assert width*height<=16*1024**2,('atlas pixel budget',width,height)
+  rgba=np.zeros((height,width,4),dtype=np.uint8)
+  for tile in tiles:
+   for x,y in tile['pixels']:rgba[tile['ay']+y-tile['t'],tile['ax']+x-tile['l']]=source[y,x]
+  assert int((rgba[:,:,3]>0).sum())==sum(len(tile['pixels'])for tile in tiles), 'Atlas assignment overlap or missing source alpha'
+  atlas=OUT/'exact-native-stone-atlas.png';Image.fromarray(rgba).save(atlas);im=bpy.data.images.load(str(atlas));im.pack();mat=bpy.data.materials.new('Private exact-source stone atlas');mat.use_nodes=True;nodes=mat.node_tree.nodes;nodes.clear();tex=nodes.new('ShaderNodeTexImage');tex.image=im;tex.interpolation='Closest';tex.extension='CLIP';em=nodes.new('ShaderNodeEmission');gray=nodes.new('ShaderNodeBsdfPrincipled');gray.inputs['Base Color'].default_value=(.25,.25,.25,1);mix=nodes.new('ShaderNodeMixShader');out=nodes.new('ShaderNodeOutputMaterial');links=mat.node_tree.links;links.new(tex.outputs['Color'],em.inputs['Color']);links.new(tex.outputs['Alpha'],mix.inputs[0]);links.new(gray.outputs[0],mix.inputs[1]);links.new(em.outputs[0],mix.inputs[2]);links.new(mix.outputs[0],out.inputs['Surface'])
+  slots={}
+  for tile in tiles:
+   obj=scene.objects[tile['name']]
+   if obj.name not in slots:obj.data.materials.append(mat);slots[obj.name]=len(obj.data.materials)-1
+   poly=obj.data.polygons[tile['face']];poly.material_index=slots[obj.name];uv=obj.data.uv_layers.active or obj.data.uv_layers.new(name='Native stone coordinates')
+   for li in poly.loop_indices:
+    v=obj.matrix_world@obj.data.vertices[obj.data.loops[li].vertex_index].co;xx=float(v.x)-tile['l'];yy=float(-v.y*base.S-v.z*base.C)-tile['t'];assert -1e-5<=xx<=tile['w']+1e-5 and -1e-5<=yy<=tile['h']+1e-5
+    uv.data[li].uv=((tile['ax']+xx)/width,1-(tile['ay']+yy)/height)
+  for name in slots:
+   mesh=scene.objects[name].data;indices=[p.material_index for p in mesh.polygons];used=sorted(set(indices));materials=[mesh.materials[i]for i in used];remap={old:new for new,old in enumerate(used)};mesh.materials.clear()
+   for material in materials:mesh.materials.append(material)
+   for poly,index in zip(mesh.polygons,indices):poly.material_index=remap[index]
+  for material in list(bpy.data.materials):
+   if material.users==0:bpy.data.materials.remove(material)
+  for image in list(bpy.data.images):
+   if image.users==0:bpy.data.images.remove(image)
+  (OUT/'atlas-layout.json').write_text(json.dumps({'image_sha256':sha(atlas),'size':[width,height],'padding':2,'tiles':[{k:v for k,v in tile.items()if k!='pixels'}for tile in tiles],'assigned_pixels':sum(len(tile['pixels'])for tile in tiles),'nonzero_alpha_pixels':int((rgba[:,:,3]>0).sum())},indent=2)+'\n')
   assert len(unresolved_hits)==len(unresolved)
   retained_proof=None
   if '--retained-projection' in sys.argv:
@@ -108,6 +139,6 @@ def main():
    obj=bpy.context.scene.objects[name];assert [list(obj.matrix_world@v.co)for v in obj.data.vertices]==verts;assert [list(p.vertices)for p in obj.data.polygons]==faces0
   assert sha(model)==input_model_digest;assert len(oldhits)==3446
   provenance_path=INPUT/'interface-construction.json';provenance=json.loads(provenance_path.read_text());provenance['inherited_geometry_provenance']={'path':str(provenance_path),'sha256':sha(provenance_path),'reason':'Material-only derivative; saved vertex/face arrays independently asserted identical.'};(OUT/'interface-construction.json').write_text(json.dumps(provenance,indent=2)+'\n')
-  report=dict(status='PRIVATE_SOURCE_PROJECTION_REQUIRES_SAVED_VISUAL_REVIEW',input_model_sha256=input_model_digest,model_sha256=sha(OUT/'worker.blend'),source_sha256=sha(sourcepath),protected3446_unchanged_geometry=True,protected_firsthits=oldhits,proposed=2516+(extra['total']if extra_proof else 0)+(17773 if full_source_proof else 0)+(222 if residual_source_proof else 0),accepted=len(accepted),accepted_pixels=accepted,extra_proposal=extra_proof,full_source_proposal=full_source_proof,residual_source_selection=residual_source_proof,full_source_receiver_hits=full_source_hits,retained_projection=retained_proof,unresolved_receiver_evidence=unresolved_receipt,unresolved_receivers=unresolved_hits,thin_or_boundary_rejected=int((proposal&~broad).sum()),faces=perface,limits=['Only directly reviewed broad stone interiors assigned experimentally; thin matches and wrong receivers remain unknown.','Opening is a conservative rejection filter, not independent ownership evidence.','Manual extra interiors remain subject to exact first-hit owner rejection; original5015 samples must survive.','Any explicit unresolved102 receiver list is a color-continuity preview, not an ownership assignment or approval.','No canonical writes or final appearance approval.']);(OUT/'projection.json').write_text(json.dumps(report,indent=2)+'\n');print({k:report[k]for k in ['status','accepted','thin_or_boundary_rejected']})
+  report=dict(status='PRIVATE_SOURCE_PROJECTION_REQUIRES_SAVED_VISUAL_REVIEW',texture_atlas={'path':str(atlas),'sha256':sha(atlas),'layout_sha256':sha(OUT/'atlas-layout.json'),'dimensions':[width,height],'full_polygon_tile_bounds':True},input_model_sha256=input_model_digest,model_sha256=sha(OUT/'worker.blend'),source_sha256=sha(sourcepath),protected3446_unchanged_geometry=True,protected_firsthits=oldhits,proposed=2516+(extra['total']if extra_proof else 0)+(17773 if full_source_proof else 0)+(222 if residual_source_proof else 0),accepted=len(accepted),accepted_pixels=accepted,extra_proposal=extra_proof,full_source_proposal=full_source_proof,residual_source_selection=residual_source_proof,full_source_receiver_hits=full_source_hits,retained_projection=retained_proof,unresolved_receiver_evidence=unresolved_receipt,unresolved_receivers=unresolved_hits,thin_or_boundary_rejected=int((proposal&~broad).sum()),faces=perface,limits=['Only directly reviewed broad stone interiors assigned experimentally; thin matches and wrong receivers remain unknown.','Opening is a conservative rejection filter, not independent ownership evidence.','Manual extra interiors remain subject to exact first-hit owner rejection; original5015 samples must survive.','Any explicit unresolved102 receiver list is a color-continuity preview, not an ownership assignment or approval.','No canonical writes or final appearance approval.']);(OUT/'projection.json').write_text(json.dumps(report,indent=2)+'\n');print({k:report[k]for k in ['status','accepted','thin_or_boundary_rejected']})
  finally:guard.release()
 if __name__=='__main__':main()

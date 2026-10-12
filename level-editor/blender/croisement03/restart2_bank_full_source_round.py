@@ -9,7 +9,7 @@ import restart2_bank_native_foreground_review as native
 import restart2_bank_lofts_contact_audit as contact
 from render_slots import acquire, release
 B=projection.B
-OUT=B/'bank-coupled-left-full-source-v2'
+OUT=B/'bank-coupled-left-full-source-v3'
 
 
 def main():
