@@ -577,7 +577,21 @@ fn exported_vertical_jumps_resolve_clicks_and_complete_the_route() {
     audit_jump_dispatch(JumpDispatch::Click, JumpStance::Vertical);
 }
 
+#[test]
+#[ignore = "diagnostic only: requires explicit unsnapped endpoints and ROBIN_CLIMB_RHS"]
+fn exported_jump_precision_diagnostic() {
+    audit_jump_dispatch_with_precision(JumpDispatch::Click, JumpStance::Upright, true);
+}
+
 fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
+    audit_jump_dispatch_with_precision(mode, stance, false);
+}
+
+fn audit_jump_dispatch_with_precision(
+    mode: JumpDispatch,
+    stance: JumpStance,
+    precise_endpoints: bool,
+) {
     let sprite = super::exported_stairs::complete_climb_sprite();
     let carrier_sprite =
         matches!(stance, JumpStance::Shoulders | JumpStance::Vertical).then(|| {
@@ -608,13 +622,33 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
         let bytes = std::fs::read(directory.join(file)).unwrap();
         let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let dims = &descriptor["walkable_polygon"][2];
-        let (engine, assets) = compiled_walkway_with_dimensions(
+        let (mut engine, assets) = compiled_walkway_with_dimensions(
             &bytes,
             (
                 dims[0].as_f64().unwrap() as f32 + 1.,
                 dims[1].as_f64().unwrap() as f32 + 1.,
             ),
         );
+        if precise_endpoints {
+            // Test a representation hypothesis without changing the loader or tick path.
+            // Prepared graph/cell data remains unchanged; this is not archive parity.
+            let endpoints = result["diagnostic_jump_endpoints"].as_array().unwrap();
+            let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
+            let level = std::sync::Arc::make_mut(&mut grid.level);
+            assert_eq!(endpoints.len(), level.jump_lines.len());
+            for (line, points) in level.jump_lines.iter_mut().zip(endpoints) {
+                let coordinate = |end: usize, axis: usize| {
+                    let value = points[end][axis].as_f64().unwrap() as f32;
+                    assert!(value.is_finite());
+                    value
+                };
+                line.point_a = MapPoint::new(coordinate(0, 0), coordinate(0, 1));
+                line.point_b = MapPoint::new(coordinate(1, 0), coordinate(1, 1));
+                line.z_a = coordinate(0, 2);
+                line.z_b = coordinate(1, 2);
+                assert!(line.vector().length() > 1e-4);
+            }
+        }
         for index in 0..engine.world.fast_grid.level.jump_lines.len() {
             let line = &engine.world.fast_grid.level.jump_lines[index];
             let destination = &engine.world.fast_grid.level.jump_lines
@@ -742,18 +776,23 @@ fn audit_jump_dispatch(mode: JumpDispatch, stance: JumpStance) {
         .count();
     let occlusions = results.len() - traversals;
     let report = serde_json::json!({
+        "diagnostic_endpoint_override": precise_endpoints,
         "stance": match stance { JumpStance::Sword => "sword", JumpStance::Shoulders => "shoulders", JumpStance::Upright => "upright", JumpStance::Vertical => "assisted-ascent-upright-descent" },
-        "scope": match mode {
+        "scope": if precise_endpoints {
+            "injected-endpoints-only-not-native-loader-or-prepared-graph-proof"
+        } else { match mode {
             JumpDispatch::EndpointClick => "endpoint-player-click-resolution-and-full-depth-arrival-not-rendering",
             JumpDispatch::HiddenClick => "hidden-player-click-resolution-and-walk-jump-walk-not-rendering",
             JumpDispatch::Click => "player-click-resolution-and-walk-jump-walk-not-rendering",
             JumpDispatch::Approach => "walk-jump-walk-sequence-not-click-authorization-or-rendering",
             JumpDispatch::Isolated => "sprite-dispatch-and-landing-not-click-approach-or-rendering",
-        },
+        } },
         "complete": traversals > 0 && failed == 0,
         "traversal_cases": traversals, "occlusion_cases": occlusions, "results": results,
     });
-    let path = directory.join(if mode == JumpDispatch::EndpointClick {
+    let path = directory.join(if precise_endpoints {
+        "actor-jump-precise-diagnostic-report.json"
+    } else if mode == JumpDispatch::EndpointClick {
         "actor-jump-endpoint-click-report.json"
     } else if mode == JumpDispatch::HiddenClick {
         "actor-jump-hidden-click-report.json"

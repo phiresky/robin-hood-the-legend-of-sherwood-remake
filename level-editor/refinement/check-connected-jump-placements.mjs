@@ -2,12 +2,17 @@
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { readStoredMap, pinnedDescriptors } from "../pipeline/src/stored-map.ts";
-import { groupCentroid, groupParts } from "../shared/src/level3d.ts";
+import { groupCentroid, groupParts, partMatrix } from "../shared/src/level3d.ts";
+import { gameToScene } from "../shared/src/scene.ts";
+import { sceneToGame } from "../shared/src/geometry.ts";
 import { roofJumpPlacement } from "../shared/test-fixtures/roof-jump-placements.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 import { compileMap } from "../app/src/map-compile.ts";
 
-const [map, pair, assetList, stage] = process.argv.slice(2);
+const diagnosticPrecision = process.argv.includes("--diagnostic-precision");
+const [map, pair, assetList, stage] = process.argv
+  .slice(2)
+  .filter((argument) => argument !== "--diagnostic-precision");
 assert.ok(
   map && pair && assetList,
   "Supply map, pair prefix, comma-separated asset IDs and optional stage",
@@ -82,12 +87,75 @@ for (const rotation of [0, 37, 90, 180])
     );
     const file = `connection-${rotation}-${height}.level.json`;
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
+    let diagnosticEndpoints;
+    if (diagnosticPrecision) {
+      const segments = document.groups.map((group) => {
+        const parts = groupParts(document, group.id);
+        const id = parts[0].node.split(":")[1];
+        const segment = assets.get(id).gameplay.jumpSegments[0];
+        const part = parts.find((part) => part.node === `asset:${id}:${segment.node}`);
+        assert.ok(part);
+        const matrix = partMatrix(document.camera, document, part);
+        return [segment.edge.a, segment.edge.b].map((point) => {
+          const local = gameToScene(document.camera, ...point);
+          const world = sceneToGame(
+            document.camera,
+            [0, 1, 2].map(
+              (row) =>
+                matrix[row] * local[0] +
+                matrix[4 + row] * local[1] +
+                matrix[8 + row] * local[2] +
+                matrix[12 + row],
+            ),
+          );
+          return [world[0], world[1] - world[2], world[2]];
+        });
+      });
+      const used = new Set();
+      const match = (line) => {
+        const candidates = segments
+          .map((points, index) => ({
+            points,
+            index,
+            distance: points.reduce(
+              (sum, point, endpoint) =>
+                sum +
+                point.reduce(
+                  (sum, value, axis) =>
+                    sum + (value - [line.point_a, line.point_b][endpoint][axis]) ** 2,
+                  0,
+                ),
+              0,
+            ),
+          }))
+          .filter((candidate) => !used.has(candidate.index))
+          .sort((a, b) => a.distance - b.distance);
+        assert.ok(
+          candidates[0] && candidates[0].distance < 25,
+          "Diagnostic requires an untrimmed matching asset edge",
+        );
+        used.add(candidates[0].index);
+        return candidates[0].points;
+      };
+      diagnosticEndpoints = compiled.descriptor.asset_geometry.jump_line_pairs.flatMap((pair) => {
+        const first = match(pair.line1),
+          second = match(pair.line2);
+        // Keep the native equal-span rule, removing only integer snapping.
+        second[0] = [
+          second[1][0] + first[1][0] - first[0][0],
+          second[1][1] + first[1][1] - first[0][1],
+          second[0][2],
+        ];
+        return [first, second];
+      });
+    }
     results.push({
       file,
       rotation,
       height,
       pairs: compiled.descriptor.asset_geometry.jump_line_pairs?.length ?? 0,
       warnings: compiled.warnings,
+      diagnostic_jump_endpoints: diagnosticEndpoints,
     });
     await save(false);
   }

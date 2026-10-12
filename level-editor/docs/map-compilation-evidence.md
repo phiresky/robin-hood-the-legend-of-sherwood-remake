@@ -65,6 +65,18 @@ zones are unchanged; motion and receiving coverage change. In the failing case,
 the receiving midpoint is outside both candidate roof polygons. The ridge edit
 must not be published on the strength of pair 62's four improved probes.
 
+The full ridge candidate `saved-map-exports-OJi1nP` finishes in 500.58 seconds
+and improves one line-65 probe (27 failures of 720 versus 28); that does not
+override the rotated pair-61 regressions. A separate test-only precision
+diagnostic is now available: `check-connected-jump-placements.mjs` accepts
+`--diagnostic-precision`, and native `exported_jump_precision_diagnostic` injects
+those unsnapped endpoints after loading. The loader, prepared graph/cell data
+and production movement remain unchanged; the diagnostic is not archive proof.
+On `connected-jump-placements-o3alO4`, both ordinary and precision-injected
+audits fail the same 20/160 cases. The precise landing midpoint still lacks a
+receiver. Endpoint precision alone therefore does not justify a format or
+runtime change for this failure.
+
 ## Fresh York export after folded-floor preparation (2026-10-12)
 
 `saved-map-exports-YQaMEL` compiles the published York scene in 389.66 seconds
