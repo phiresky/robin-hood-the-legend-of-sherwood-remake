@@ -1,7 +1,7 @@
 """Source-camera scene proof retaining all nearby static geometry and alpha."""
 import sys,json,math,shutil
 from pathlib import Path
-import bpy
+import bpy,numpy as np
 from mathutils import Vector
 from bpy_extras.object_utils import world_to_camera_view
 from PIL import Image,ImageDraw
@@ -16,6 +16,8 @@ def main():
   for root in roots:root.location+=Vector((t['dx'],-t['dy']/S,t['dz']))
   for obj in added:
    if obj.get('gameplay_only'):obj.hide_render=True
+  bpy.context.view_layer.update()
+  points=np.array([obj.matrix_world@v.co for obj in added if obj.type=='MESH' for v in obj.data.vertices]);uv=np.c_[points[:,0],-S*points[:,1]-C*points[:,2]];box=candidate['projected_aabb'];assert np.all(uv>=np.array(box[:2])-.02) and np.all(uv<=np.array(box[2:])+.02),candidate['id']
   receivers.extend(o for o in added if o.type=='MESH')
  bpy.context.view_layer.update();crop=[row['source_union_box'][0]-35,-35,row['source_union_box'][2]+35,row['source_union_box'][3]+35];w,h=crop[2]-crop[0],crop[3]-crop[1];cx,cy=(crop[0]+crop[2])/2,(crop[1]+crop[3])/2;center=Vector((cx,-cy/S,0));scene=bpy.context.scene;cam=bpy.data.objects.new('Exact source camera',bpy.data.cameras.new('Exact source camera'));scene.collection.objects.link(cam);scene.camera=cam;cam.data.type='ORTHO';cam.data.ortho_scale=max(w,h);cam.data.clip_end=10000;cam.location=center+RAY*4000;cam.rotation_euler=(center-cam.location).to_track_quat('-Z','Y').to_euler();scene.render.engine='CYCLES';scene.cycles.samples=8;scene.cycles.use_denoising=False;scene.cycles.transparent_max_bounces=128;scene.render.threads_mode='FIXED';scene.render.threads=2;scene.render.resolution_x=w;scene.render.resolution_y=h;scene.render.resolution_percentage=100;scene.render.film_transparent=True;scene.render.image_settings.color_mode='RGBA';scene.render.image_settings.file_format='PNG';scene.view_settings.view_transform='Standard';scene.world=bpy.data.worlds.new('Neutral context');scene.world.use_nodes=True;scene.world.node_tree.nodes['Background'].inputs[1].default_value=1
  bpy.context.view_layer.update()
