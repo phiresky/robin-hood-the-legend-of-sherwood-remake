@@ -322,8 +322,11 @@ or rendered-actor coverage. See [full-overlay evidence](map-compilation-evidence
 **Current Nottingham ZIP verification (2026-10-12):** the fresh 57,945,741-byte
 archive reopens and rebakes identically, including ten appearance states, and
 passes native loading without base-game data. Its complete gameplay descriptor
-matches the 390-case traversal audit. Native rendered-character coverage remains
-open. See [the archive evidence](map-compilation-evidence.md#full-rendered-nottingham-archive).
+matches the 390-case traversal audit. Native offscreen GPU checks also pass all
+1,024 control combinations with transition suppression and reset at six
+color/depth probes. Native rendered-character coverage remains open. See
+[the archive evidence](map-compilation-evidence.md#full-rendered-nottingham-archive)
+and [the GPU and clipping regression checks](map-compilation-evidence.md#nottingham-exhaustive-archive-gpu-check-2026-10-12).
 
 **Earlier Nottingham ZIP verification (2026-10-12):** the full 57,942,452-byte archive reopens
 with identical gameplay, color and depth, and loads through native mod/resource

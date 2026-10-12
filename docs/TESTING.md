@@ -584,7 +584,19 @@ through every control combination, transition suppression and reset. The fixture
 contains two independently controlled copies, one rotated 37 degrees. Like the
 state fixture above, it assigns patch flags directly; it does not exercise actor
 activation, full-scene compositing, or gameplay callbacks. Archives for this gate
-must have 1–8 controls and each appearance region must change both color and depth.
+must have 1–10 controls and each appearance region must change both color and depth.
+The ten-control limit also permits a full Nottingham export; all 1,024 global
+control combinations are exercised, including controls without appearance bindings.
+On systems with surfaceless EGL, the same offscreen gate can run without Xvfb:
+
+```sh
+ASSET_APPEARANCE_EXPORT_ZIP=/absolute/path/to/export.zip \
+  EGL_PLATFORM=surfaceless WGPU_BACKEND=gl RUST_MIN_STACK=33554432 \
+  cargo test -p robin_rs --lib -j1 \
+  gpu_upscale::tests::headless_downlevel_device_executes_every_multipass_profile \
+  -- --ignored --exact --nocapture
+```
+
 Add `&overlap=1` to place the copies close enough to share one appearance region;
 the browser requires all four states in that region. GPU probes select a changing
 color/depth pixel for each control, including when several controls share a region.

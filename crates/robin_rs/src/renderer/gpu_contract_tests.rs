@@ -700,8 +700,8 @@ fn verify_asset_archive_appearance(gpu: GpuContext, archive: &std::path::Path) {
     .unwrap();
     let count = loaded.proto.patches.len();
     assert!(
-        (1..=8).contains(&count),
-        "GPU archive fixture needs 1–8 controls"
+        (1..=10).contains(&count),
+        "GPU archive fixture needs 1–10 controls"
     );
     assert!(!background.appearance_regions.is_empty());
     let mut renderer =

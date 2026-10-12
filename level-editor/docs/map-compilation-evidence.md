@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Nottingham exhaustive archive GPU check (2026-10-12)
+
+The full archive in `nottingham-rendered-library-ai1yht_r` passes the native
+offscreen OpenGL appearance test with surfaceless EGL. All 1,024 combinations
+of its ten controls pass transition suppression and reset checks across four
+appearance regions and six color/depth probes. The test took 5,250.69 seconds;
+this is exhaustive test time, not game tick time. The test-only archive control
+limit increased from eight to ten; production rendering is unchanged.
+This verifies sampled background appearance and probe occlusion, not full
+rendered-character traversal or actor-triggered control activation.
+
+After the exact-integer clipping patch, `saved-map-exports-dNZvA3` compiles
+Nottingham in 61.657 seconds. Its entire parsed level descriptor equals
+`saved-map-exports-mog5ON`, retaining the geometry used by the 390-case traversal
+audit. This is a full-descriptor regression comparison, not a new traversal run.
+
+The earlier Wychford profiling process ended with exit 143 and does not establish
+completion. The separate corrected export remains pending; neither this
+interruption nor elapsed time is recorded as a passing export.
+
 ## York missing roof faces and observed flight contact (2026-10-12)
 
 Stage `york-central-south-roofs-2WImX0` adds the missing opposite roof surfaces
