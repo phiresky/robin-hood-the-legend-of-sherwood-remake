@@ -64,7 +64,7 @@ for name,rows in trace.items():
    z=(412-y)/COS if j==0 else max(.4,radius*.7)
    centers.append(Vector((x,-(y+z*COS)/SIN,z)))
  else:
-  offsets={'upper_branch':-70,'right_fork':90,'right_tip':130,'left_main':-90,'left_upper':60,'left_twig':90}
+  offsets={'upper_branch':-105,'right_fork':135,'right_tip':195,'left_main':-135,'left_upper':90,'left_twig':135}
   # Native camera rays leave branch depth unconstrained. Offset progressively
   # from the connected base while preserving every traced screen centerline.
   ray=Vector((0,-COS,SIN));start_depth=0.;parent={'right_tip':'right_fork','left_twig':'left_upper'}.get(name)
