@@ -6,6 +6,15 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Croisement03 fallen-log cap repair (2026-10-12)
 
+After the log publication, full-scene run `saved-map-exports-B2Tme3` passes the
+log but encounters another collapsed cap in timber-bridge volume
+`timber-2340-face-2340-cell-0`. Stage `wood-cap-slivers-gD3MMx` removes four
+mesh-decomposition fragments and retains 522 volumes. Footprint loss is
+0.000002886% and enclosed-volume loss 0.0000006472%. Both deck bodies, both
+walkable surfaces, navigation joins, placement rules and every retained volume
+are unchanged. All ten placement exports load natively, and all 26,800 directed
+mesh-derived sight/projectile queries pass. Full-map validation remains pending.
+
 The baseline ten-map batch `saved-map-exports-MqNblp` has finished: nine saved
 scenes compile, while Croisement03 fails on fallen-log volume `wood-90`. That
 fragment has nearly coincident edges which collapse at native float precision.

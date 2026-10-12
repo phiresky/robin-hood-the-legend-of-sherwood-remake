@@ -24,7 +24,10 @@ routes. Its church-side-tower entrance remains about 46 units above its support
 and is omitted with a warning. The baseline ten-map batch finished with nine
 successful exports and one Croisement03 fallen-log cap failure. An offline log
 repair passes ten placement loads and 17,880 sampled sight/projectile queries;
-full-scene re-export remains pending. Copied-roof
+full-scene re-export then exposes an equivalent timber-bridge cap failure.
+The bridge repair passes ten placement loads and 26,800 sampled queries with
+its deck and connection definitions unchanged. Full-scene validation remains
+pending. Copied-roof
 flight-clearance rejection remains unresolved; bypassed diagnostic flights are
 not evidence of a safe production export.
 

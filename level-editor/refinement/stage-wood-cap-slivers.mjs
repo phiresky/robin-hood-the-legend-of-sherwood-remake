@@ -38,10 +38,13 @@ for (const id of ids) {
   const descriptor = JSON.parse(bytes);
   const gameplay = descriptor.gameplay;
   assert.ok(
-    gameplay.draft.issues.some((issue) => /^Mesh-derived (wood|log) collision/.test(issue)),
+    gameplay.draft.issues.some((issue) => /^Mesh-derived (wood|log|bridge) collision/.test(issue)),
   );
   assert.ok(
-    gameplay.volumes.length && gameplay.volumes.every((volume) => /^wood-\d+$/.test(volume.id)),
+    gameplay.volumes.length &&
+      gameplay.volumes.every((volume) =>
+        /^(wood-\d+|timber-\d+-face-\d+-cell-\d+|deck-body-\d+)$/.test(volume.id),
+      ),
   );
   const measures = gameplay.volumes.map((volume) => {
     const points = volume.shape.points,
@@ -65,7 +68,9 @@ for (const id of ids) {
     assert.ok(area > 0 && enclosed >= 0 && longest > 0);
     return { id: volume.id, area, enclosed, width: (2 * area) / longest };
   });
-  const discarded = measures.filter((measure) => measure.width < 0.001);
+  const discarded = measures.filter(
+    (measure) => !measure.id.startsWith("deck-body-") && measure.width < 0.001,
+  );
   const sum = (rows, key) => rows.reduce((sum, row) => sum + row[key], 0);
   const areaRatio = sum(discarded, "area") / sum(measures, "area");
   const volumeRatio = sum(discarded, "enclosed") / sum(measures, "enclosed");
