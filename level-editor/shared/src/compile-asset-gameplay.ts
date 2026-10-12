@@ -2748,6 +2748,40 @@ function compileAssetGameplayAttempt(
   // can move a supported approach outside a narrow receiving roof.
   const doorProjection = (door: (typeof doors)[number], point: Vec3): Point =>
     door.lift && physicalStairs.has(door.lift) ? [point[0], point[1] - point[2]] : project(point);
+  const passageReceivers = new Map<string, Point[][]>();
+  for (const shape of sight) {
+    if (!shape.projection_area) continue;
+    if (!Array.isArray(shape.projection_area) || shape.projection_area.length !== 2)
+      throw new Error("Compiled receiving surface has an invalid area binding");
+    const key = shape.projection_area.join("/");
+    const contours = passageReceivers.get(key) ?? [];
+    contours.push(shape.points.map((point): Point => [point.x, point.y - point.z_top]));
+    passageReceivers.set(key, contours);
+  }
+  const checkPassageReceiver = (
+    door: (typeof doors)[number],
+    point: Vec3,
+    area: (typeof areas)[number],
+    label: string,
+  ) => {
+    // Alternate anchors select topology, but elevated ordinary passages must
+    // also have a receiving floor at the actual runtime endpoint.
+    if (
+      door.definition.type !== 0 ||
+      door.lift ||
+      door.interior ||
+      area.lift ||
+      Math.abs(point[2]) <= 1e-4
+    )
+      return area;
+    const projected = project(point);
+    const contours = passageReceivers.get(`${area.sector}/${area.layer}`) ?? [];
+    if (!contours.some((contour) => inside(projected, contour, true)))
+      throw new UnresolvedSurface(
+        `${label}: elevated passage endpoint has no receiving floor at ${JSON.stringify(projected)}; repair its endpoint or asset-local receiving surface`,
+      );
+    return area;
+  };
   const resolveDoorOutside = (door: (typeof doors)[number], lift?: string | null) => {
     const label = `${door.name} outside`;
     if (door.outsideReceiverSegment) {
@@ -2755,12 +2789,17 @@ function compileAssetGameplayAttempt(
       door.outside = resolveReceivingSegment(door.outsideReceiverSegment, door.outside, label);
       door.outsideAnchor = door.outside;
     }
-    return resolve(
-      door.outsideAnchor,
+    return checkPassageReceiver(
+      door,
+      door.outside,
+      resolve(
+        door.outsideAnchor,
+        label,
+        lift,
+        door.allowChangingObstacleAnchors === true,
+        doorProjection(door, door.outsideAnchor),
+      ),
       label,
-      lift,
-      door.allowChangingObstacleAnchors === true,
-      doorProjection(door, door.outsideAnchor),
     );
   };
   const resolveDoorInside = (door: (typeof doors)[number], lift?: string | null) => {
@@ -2769,12 +2808,17 @@ function compileAssetGameplayAttempt(
       door.inside = resolveReceivingSegment(door.insideReceiverSegment, door.inside, label);
       door.insideAnchor = door.inside;
     }
-    return resolve(
-      door.insideAnchor,
+    return checkPassageReceiver(
+      door,
+      door.inside,
+      resolve(
+        door.insideAnchor,
+        label,
+        lift,
+        door.allowChangingObstacleAnchors === true,
+        doorProjection(door, door.insideAnchor),
+      ),
       label,
-      lift,
-      door.allowChangingObstacleAnchors === true,
-      doorProjection(door, door.insideAnchor),
     );
   };
   const motionBySector = new Map<number, (typeof layers)[number][number]>();

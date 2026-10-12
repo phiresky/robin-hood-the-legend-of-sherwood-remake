@@ -1735,7 +1735,7 @@ test("transition receiving anchors preserve reference points outside their linke
   assert.throws(() => validateAssetGameplay(hut.gameplay, hut), /invalid movement transition/);
 });
 
-test("receiving anchors preserve door coordinates outside the receiving polygons", () => {
+test("ground receiving anchors preserve door coordinates outside the receiving polygons", () => {
   const { document, assets, hut } = doorAnchorCompilerFixture();
   const compiled = compileAssetGameplay(document, assets, bounds);
   const door = compiled.doors[0]!;
@@ -1747,7 +1747,7 @@ test("receiving anchors preserve door coordinates outside the receiving polygons
   copy.group = "copy";
   copy.transform = { ...IDENTITY_TRANSFORM };
   document.objects.push(copy);
-  document.groups.push({ id: "copy", transform: { dx: 1000, dy: 700, dz: 30, rot_deg: 90 } });
+  document.groups.push({ id: "copy", transform: { dx: 1000, dy: 700, dz: 0, rot_deg: 90 } });
   const duplicated = compileAssetGameplay(document, assets, bounds);
   assert.equal(duplicated.doors.length, 2);
   assert.notEqual(duplicated.doors[1]!.sector_out, duplicated.doors[0]!.sector_out);
@@ -1761,6 +1761,71 @@ test("receiving anchors preserve door coordinates outside the receiving polygons
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /inside must resolve/);
   hut.gameplay!.doors[0]!.insideAnchor = [45, 45, 0];
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /inside must resolve/);
+});
+
+test("elevated passages require floors at their actual endpoints despite alternate anchors", () => {
+  for (const rotation of [0, 90]) {
+    const { document, assets, hut } = doorAnchorCompilerFixture();
+    document.groups[0]!.transform.dz = 30;
+    document.groups[0]!.transform.rot_deg = rotation;
+    document.groups[0]!.transform.dx = 700;
+    document.groups[0]!.transform.dy = 700;
+    const door = hut.gameplay!.doors[0]!;
+    assert.throws(
+      () => compileAssetGameplay(document, assets, bounds),
+      /outside: elevated passage endpoint has no receiving floor/,
+    );
+    const best = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+    assert.equal(best.doors.length, 0);
+    assert.ok(
+      best.warnings.some((warning) =>
+        warning.includes("elevated passage endpoint has no receiving floor"),
+      ),
+    );
+    assert.ok(best.sight_obstacles.length > 0);
+    door.outside = [...door.outsideAnchor!];
+    assert.throws(
+      () => compileAssetGameplay(document, assets, bounds),
+      /inside: elevated passage endpoint has no receiving floor/,
+    );
+    door.inside = [...door.insideAnchor!];
+    assert.equal(compileAssetGameplay(document, assets, bounds).doors.length, 1);
+  }
+});
+
+test("elevated passage endpoints can use authored receiving coverage beyond motion contours", () => {
+  const { document, assets, hut } = doorAnchorCompilerFixture();
+  document.groups[0]!.transform.dz = 30;
+  hut.gameplay!.volumes = [];
+  hut.gameplay!.projectionReceivers = [];
+  for (const [index, surface] of hut.gameplay!.surfaces.entries()) {
+    const left = index * 100;
+    const id = `receiver-${index}`;
+    hut.gameplay!.volumes.push({
+      id,
+      node: surface.node,
+      shape: {
+        points: [
+          [left, 0],
+          [left + 100, 0],
+          [left + 100, 100],
+          [left, 100],
+        ].map(([x, y]) => ({ x: x!, y: y!, z_bottom: -5, z_top: 0 })),
+        solid: true,
+        opaque: true,
+        mouse: true,
+        show_shadow_polygon: true,
+        default_material: 0,
+      },
+    });
+    hut.gameplay!.projectionReceivers.push({
+      id: `${id}-binding`,
+      volume: id,
+      node: surface.node,
+      anchor: [left + 50, 20, 0],
+    });
+  }
+  assert.equal(compileAssetGameplay(document, assets, bounds).doors.length, 1);
 });
 
 test("receiving anchors validate coordinates and cannot replace a virtual interior", () => {

@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Elevated passage export validation (2026-10-12)
+
+Compilation now checks that each elevated ordinary passage endpoint has a
+receiving contour in its selected sector and layer. A separate topology anchor
+cannot substitute for that actual floor. Strict compilation reports the bad
+endpoint; best-effort export omits the invalid passage with an actionable warning.
+Ground's implicit plane, virtual interiors and lift-owned endpoints retain their
+existing rules. Explicit asset receiving volumes may extend beyond motion
+contours; the validation preserves that supported case.
+
+Fresh published-library Lincoln export `saved-map-exports-M5gm67` compiles in
+about 26 seconds and passes native construction (1.01 seconds). It retains 14
+standalone passages and warns about the omitted step passage. This resolves the
+load failure, **not** the missing traversal connection. No runtime code changes.
+All 236 compiler/export tests pass, including unsupported raised/rotated
+endpoints, supported explicit receiving coverage, and unaffected ground anchors.
+Application type checking, targeted lint and formatting checks also pass.
+
+The obstruction audit was refined after accounting for asset-local movement
+clearances. Raw volumes 109 and 134 intersect the corridor, but the surviving
+compiler cut is from `lincoln-south-wall-cone-turret`'s wall geometry. Diagnostic
+`saved-map-exports-uNoC8k` records that cut after clearances; it clips the crossing
+near the passage midpoint. Restoring the connection requires reviewing that
+opening and its receiving floor, rather than disabling collision.
+
 ## Lincoln passage receiver and obstruction audit (2026-10-12)
 
 The native failure is standalone passage 12 (runtime door 47), owned by
