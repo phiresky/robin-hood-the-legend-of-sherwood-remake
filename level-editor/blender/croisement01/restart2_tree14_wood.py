@@ -16,7 +16,7 @@ acquire(slots=2)
 assert shutil.disk_usage(OUT).free>10*1024**3+512*1024**2
 available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024
 assert available>6*1024**3
-base=OUT/'restart2';dest=base/'tree14-wood-v4';dest.mkdir(exist_ok=False)
+base=OUT/'restart2';dest=base/'tree14-wood-v5';dest.mkdir(exist_ok=False)
 bank=base/'tree05-regional-banks-v18/assets/croisement01-tree-05/model.blend'
 assert sha(bank)=='7926500e407950bd66b78d13e0ce65b3829dd2263d7db4ba5c57a7ece5dbc818'
 bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.preferences.filepaths.save_version=0
@@ -29,7 +29,9 @@ core=base/'tree14-source-preparation-v1/known-trunk-root-domain.png';wood=Image.
 trace=json.loads((base/'tree14-source-preparation-v1/preparation.json').read_text())['trace_screen_coordinates']
 trace['root_left']=[[849,395,18],[821,395,10],[807,402,6],[794,413,.8]]
 trace['root_front']=[[850,405,20],[821,411,12],[807,423,8],[794,436,.8]]
-trace['root_forward_base']=[[852,401,18],[852,414,14],[850,424,.5]]
+trace['root_forward_base']=[[852,401,18],[849,416,14],[849,424,4],[851,432,.5]]
+trace['root_forward_west']=[[846,410,10],[838,418,5],[835,425,2],[837,429,.5]]
+trace['root_right']=[[851,405,18],[873,398,9],[892,391,7],[905,397,5],[914,402,.4]]
 base_y=-412/SIN
 point=lambda x,y:Vector((x,base_y,(412-y)/COS))
 main=trace['main_stem'];body=helpers.tube('Continuous twisted trunk',[point(x,y) for x,y,r in main],[r for x,y,r in main]);body['defer_union']=True
