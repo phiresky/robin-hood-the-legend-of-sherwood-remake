@@ -223,6 +223,40 @@ unchanged by raising the assembly forty units. This helper is currently used
 by the diagnostic; native export integration and the height/collision guards
 above are still required.
 
+### Integrated landing support (2026-10-12)
+
+`prepareJoinedStairClearance` now runs in the normal exporter before passage
+approach preparation. It uses the stair's placed physical definition and
+referenced landing receivers, clipped to their usable navigation footprints.
+Landings must share a segment at matching height; missing/displaced/raised
+landings cannot supply support. All landing collision states are excluded,
+and state-dependent receiving geometry cannot provide unconditional clearance.
+The helper emits an ordinary static boundary and regenerates its route graph.
+It preserves every previously admitted walking center; floors requiring holes,
+multiple components, changing stair obstacles or multiple physical planes retain
+their existing preparation. No engine or descriptor-format change is involved.
+
+Fresh published-asset sweep `asset-jump-exports-FCFcaQ` passes **16/16 forced
+routes and 16/16 player clicks**, with no skips. After the final state guards,
+`asset-jump-exports-0cS4yu` reproduces all eight descriptors byte for byte.
+Fresh full scenes `saved-map-exports-XFOp1W` pass **46/46 stair clicks**
+(Derby 28, Lincoln sixteen, Sherwood two), plus **384 ordinary route samples**
+(152, 182 and fifty respectively). Isolated jump regression manifests
+`joined-stair-upright-j_k2gsnv` and `joined-stair-helper-agbj97cj` retain
+**110 upright jump clicks** (Lincoln 100, Sherwood ten) and **twenty Derby
+posture-aware jump clicks**. Every recorded jump probe succeeds.
+
+Final full-scene export `saved-map-exports-759BDS` reproduces those three
+tested descriptors byte for byte after the state-guard additions. Five focused
+tests cover valid support, missing/raised/displaced neighbours (including a
+raised anchor), permanent and changing collision, unchanged existing walking
+coverage, and state-dependent receivers. Related approach/support tests,
+app typechecking and focused lint/format checks pass. The export progress UI
+receives separate stair-clearance and passage-preparation stages.
+Rendered ZIP round-trip and mesh-contact validation for this change are still
+outstanding; this closes the measured stair traversal failure, not all Sherwood
+or all-map parity.
+
 ## Non-reversed projection clearance (2026-10-12)
 
 Pre-normalization clearance was restricted to folded projections. A simple

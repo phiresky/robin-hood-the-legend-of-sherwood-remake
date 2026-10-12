@@ -63,17 +63,14 @@ loads without base-game data. Its archived geometry passes all twelve stair
 player-click routes. In-game actor/depth compositing remains unverified.
 See [the Lincoln evidence](map-compilation-evidence.md#fresh-lincoln-traversal-checks-2026-10-12).
 
-**Sherwood stair gap (2026-10-12):** fresh published data passes 50 ordinary
-routes and ten jump clicks, but both oak-platform stair directions fail. The
-isolated placement sweep passes 12/16 stairs. A staged clearance change fixes
-the saved orientation but regresses 180-degree placements; retaining existing
-contacts initially exposes lower-entrance collision. Height clipping and a
-matching owner-local opening clear that collision, but 180-degree approach
-clearance still fails. These stages remain unpublished.
-A static-navigation diagnostic using the published footprint plus its landing
-support now passes all sixteen scripted routes and sixteen player clicks across
-the placement sweep. Production integration, height/collision guards and visual
-contact checks remain open; no wider stair geometry has been published.
+**Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
+clearance from connected landing support, with matching-height, collision and
+state guards. The published oak-platform footprint passes all sixteen scripted
+routes and sixteen player clicks across four rotations and two elevations.
+Fresh saved-map export also passes both stairs, fifty ordinary routes and ten
+jump clicks. No wider asset geometry or runtime solver is needed. Mesh contact
+and rendered actor/depth checks remain open; earlier authoring experiments stay
+unpublished.
 See [the investigation](map-compilation-evidence.md#sherwood-stair-clearance-investigation-2026-10-12).
 
 **York jump checks (2026-10-12):** the current full-map audit has 696 successful

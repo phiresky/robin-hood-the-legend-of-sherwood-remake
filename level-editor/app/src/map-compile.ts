@@ -9,6 +9,7 @@ import type { ProjectionAssetDescriptor } from "@rle/shared";
 import { packageAppearanceRegions, type BakedAppearanceRegion } from "./map-appearance.ts";
 import { compileMission } from "./compile-mission.ts";
 import { compileLiftApproaches } from "../../shared/src/compile-lift-approaches.ts";
+import { prepareJoinedStairClearance } from "../../shared/src/prepare-joined-stair-clearance.ts";
 import { quantizePassageReceivers } from "../../shared/src/quantize-passage-receivers.ts";
 import { prepareOrdinaryStairPassages } from "../../shared/src/prepare-ordinary-stair-passages.ts";
 import {
@@ -127,6 +128,9 @@ export function compileMap(
         })
       : undefined;
   if (assetGeometry) {
+    options.onProgress?.("Preparing joined stair clearance");
+    prepareJoinedStairClearance(assetGeometry);
+    options.onProgress?.("Preparing passage approaches");
     compileLiftApproaches(assetGeometry);
     quantizePassageReceivers(assetGeometry);
     prepareOrdinaryStairPassages(assetGeometry);

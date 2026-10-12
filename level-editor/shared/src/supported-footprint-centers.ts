@@ -1,7 +1,7 @@
 import clipping, { type MultiPolygon, type Polygon } from "polygon-clipping";
 import type { Point } from "./level.ts";
 
-function convexHull(points: Point[]): Point[] {
+export function footprintBoundaryHull(points: Point[]): Point[] {
   const sorted = [...points].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   const turn = (a: Point, b: Point, c: Point) =>
     (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
@@ -54,7 +54,7 @@ export function supportedFootprintCenters(
           Math.min(a[1], b[1]) - half[1] > bottom
         )
           continue;
-        const sweep = convexHull(
+        const sweep = footprintBoundaryHull(
           [a, b].flatMap(([x, y]) => offsets.map(([dx, dy]): Point => [x + dx, y + dy])),
         );
         result = clipping.difference(result, [sweep]);
