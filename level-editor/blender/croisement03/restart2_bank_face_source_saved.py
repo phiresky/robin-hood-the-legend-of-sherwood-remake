@@ -46,6 +46,10 @@ def main():
   residual_source_proof=None
   if '--residual-source-selection' in sys.argv:
    residual_path=Path(sys.argv[sys.argv.index('--residual-source-selection')+1]).resolve();residual_mask=residual_path/'exact222-private-trial-mask.png';assert sha(residual_mask)=='28a94b05ec5fa13792ca8564d22088321acaa064de50caa3d30ae6b19f9c64f1';domain=np.array(Image.open(residual_mask))>0;assert int(domain.sum())==222
+   assert full_source_proof is not None
+   residual_receipt=json.loads((residual_path/'receipt.json').read_text())
+   for pinned_path,pinned_hash in residual_receipt['pins'].items():assert sha(Path(pinned_path))==pinned_hash,pinned_path
+   assert residual_receipt['source_sha256']==sha(sourcepath) and {tuple(p)for p in residual_receipt['exact_selected_pixels_xy']}=={(int(x),int(y))for y,x in np.argwhere(domain)}
    foreground=np.array(Image.open(B/'bank-full-visible-stone-audit-v3/native-foreground.png'))>0;assert not np.any(domain&foreground)
    new_domain=domain&~old&~broad;perface.append(dict(id='authorized222-residual-interiors',owner=None,proposed=222,thin_or_boundary_rejected=0,accepted=0,ray_rejected=[]))
    for y,x in np.argwhere(new_domain):expected[(int(x),int(y))]=(None,len(perface)-1)
