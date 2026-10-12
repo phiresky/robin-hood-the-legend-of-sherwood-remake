@@ -244,6 +244,10 @@ isolated placement except for warnings about other disconnected connections.
 Fresh tracing of those 288 passing interior routes records 72 airborne
 anchor/solid contacts, up to 2.921 units deep. A one-unit takeoff shift clears the
 original orientation but worsens other rotations and remains unpublished.
+Export now checks the final rounded landing spans against their receiving-face
+coverage after partitioning. It reports both unsupported copied connections at
+180 degrees at each tested elevation, preserving the connections for best-effort
+review. This checks coverage, not flight clearance or animated contact.
 Rendered character contact and the offset-coverage limits remain open.
 See [central-roof archive evidence](map-compilation-evidence.md#published-central-roofs-and-archive-verification).
 

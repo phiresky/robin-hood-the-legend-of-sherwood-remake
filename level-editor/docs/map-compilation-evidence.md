@@ -617,6 +617,28 @@ image was inspected; this does not establish rendered character contact or
 sprite depth compositing. The offset-coverage failures and previously measured
 airborne anchor/solid contacts remain recorded, not excused by these routes.
 
+### Final jump receiver coverage diagnostics (2026-10-13)
+
+The compiler now checks final jump pairs after receiver partitioning and integer
+rounding. It follows the native source-distance transfer from destination B,
+rather than assuming that an unequal authored destination span determines the
+landing. The receiving faces are indexed once by sector/layer; segment boundary
+intersections expose uncovered interior gaps as well as unsupported endpoints.
+Adjacent receiver pieces are accepted, and zero-height implicit-ground endpoints
+remain supported when no explicit receiver is supplied. Potentially inactive
+receivers are included: this is a coverage warning, not state-availability proof.
+
+Fresh copied-roof fixture `connected-jump-placements-9KjJX4` is identical to
+`connected-jump-placements-73VZgl` apart from four new warnings: one per copy at
+180 degrees, at elevations zero and forty. Other tested rotations have no new
+coverage warnings. No geometry, connection, runtime lookup or movement code
+changes. Best-effort export retains these connections for author review.
+
+All 178 focused compiler, partition and jump-audit tests pass. The new cases cover
+a 0.001-unit gap between receiving pieces, source/destination span mismatch,
+wrong-layer receivers and implicit-ground handling. Editor type checking and
+scoped lint pass. Flight and rendered-contact limitations remain open.
+
 ### Central-roof takeoff placement review (2026-10-13)
 
 The published central-roof endpoint heights sit below their local receiving
