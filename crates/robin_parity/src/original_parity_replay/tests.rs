@@ -518,6 +518,38 @@ fn legacy_blocked_box_reset_recognizes_hidden_stop_movement_rewrite() {
         );
     }
 
+    // Attentive soldiers remap the stop sprite without changing the order.
+    for (kind, frame_count, expected) in [
+        (robin_engine::element::EntityIdKind::Soldier, 0, true),
+        (
+            robin_engine::element::EntityIdKind::Soldier,
+            u16::MAX,
+            false,
+        ),
+        (robin_engine::element::EntityIdKind::Pc, 0, false),
+    ] {
+        let replacement = trace_actor_order(
+            robin_engine::order::OrderType::WaitingSword,
+            false,
+            robin_engine::sprite::MotionState::InProgress,
+            30,
+        );
+        assert_eq!(
+            original_reset_blocked_box_this_frame(
+                &replacement,
+                EntityId::new(126, kind),
+                25,
+                false,
+                None,
+                Some(prior_walking),
+                Some(20),
+                frame_count,
+                Some(robin_engine::order::OrderType::TransitionWalkingAlertedWaitingAlerted as u32),
+            ),
+            expected
+        );
+    }
+
     for (action, stop_animation) in [
         (
             robin_engine::order::OrderType::WalkingUpright,
@@ -660,6 +692,7 @@ fn sword_motion_initialization_is_visible_even_without_displacement() {
         }
         for (processed, count, action, expected) in [
             (1425, 0, OT::StrafingRightSword, true),
+            (1425, 2, OT::StrafingRightSword, postponed),
             (1431, 0, OT::StrafingRightSword, false),
             (1425, u16::MAX, OT::StrafingRightSword, false),
             (1425, 0, OT::WaitingSword, false),

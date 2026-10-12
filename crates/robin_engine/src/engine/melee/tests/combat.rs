@@ -2816,7 +2816,28 @@ fn lethal_sword_damage_to_grounded_non_rider_publishes_dead_before_terminating()
             victim_entity.npc_data_mut().unwrap().life_points = 1;
             victim_entity.enemy_ai_mut().unwrap().hth_weapon_id = 1;
         }
-        let assets = assets_with_sword_profile_effects(200, 50, 100, 0);
+        let mut assets = assets_with_sword_profile_effects(200, 50, 100, 0);
+        // A slope makes an erroneous post-termination roll observable.
+        let mut obstacle = crate::sight_obstacle::SightObstacle::new_default(0);
+        obstacle.top_plane_points = [[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]];
+        assets.environment.static_sight_obstacles = std::sync::Arc::new(vec![obstacle]);
+        engine
+            .ent_mut(victim)
+            .element_data_mut()
+            .set_obstacle_index(
+                crate::position_interface::ObstacleHandle::new(0),
+                Some(crate::position_interface::PlaneZCoeffs {
+                    az: 1.0,
+                    bz: 0.0,
+                    dz: 0.0,
+                }),
+            );
+        engine.ent_mut(victim).position_iface_mut().set_move_box(
+            crate::coordinates::MoveBox::from_corners(
+                crate::coordinates::MapVec::new(-5.0, -5.0),
+                crate::coordinates::MapVec::new(5.0, 5.0),
+            ),
+        );
         let mut damage =
             crate::sequence::SequenceElement::new(1, Command::ReceiveSwordDamage, Some(victim));
         damage.data =

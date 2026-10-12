@@ -1658,6 +1658,10 @@ pub(super) fn pc_init_validity_arm(
         // Init-phase guard with check_position=false; Terminated.
         OT::Eating => Some((false, ValidityArmTerminal::Terminated)),
 
+        // Queued drops must recheck ammunition and outdoor eligibility when
+        // execution starts. A failed check terminates before sprite processing.
+        OT::DroppingAle | OT::DroppingAleCrouched => Some((true, ValidityArmTerminal::Terminated)),
+
         // ── Searching / SearchingCrouched ──────────────────────
         // Terminated on validity failure.
         OT::Searching | OT::SearchingCrouched => Some((true, ValidityArmTerminal::Terminated)),
@@ -2183,6 +2187,83 @@ mod tests {
         pc.campaign_description_index = Some(1);
 
         assert!(engine.pc_has_ammo(pc_id, crate::profiles::Action::Eat));
+    }
+
+    #[test]
+    fn queued_ale_drop_rechecks_ammo_before_either_posture_animation() {
+        for order_type in [
+            crate::order::OrderType::DroppingAle,
+            crate::order::OrderType::DroppingAleCrouched,
+        ] {
+            let mut campaign = crate::campaign::Campaign::default();
+            campaign
+                .characters
+                .push(crate::campaign::PcDescription::default());
+            campaign.characters[0]
+                .status
+                .set_ammo(crate::profiles::Action::Ale, 1);
+            let mut engine = EngineInner::new_with_campaign(campaign);
+            let assets = LevelAssets::new();
+            let owner = add_pc(&mut engine);
+            engine.mission_domain.campaign.characters[0].character_profile_idx = Some(
+                engine
+                    .get_entity(owner)
+                    .unwrap()
+                    .pc_data()
+                    .unwrap()
+                    .profile_index,
+            );
+            engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .pc_data_mut()
+                .unwrap()
+                .life_points = 100;
+            engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .pc_data_mut()
+                .unwrap()
+                .campaign_description_index = Some(0);
+            let mut element = SequenceElement::new(1, Command::DropAle, Some(owner));
+            element
+                .orders
+                .push_back(crate::order::Order::test_new(order_type, 0.0, 0.0));
+            let sequence = engine.orders.sequence_manager.insert_element(element);
+            engine
+                .orders
+                .sequence_manager
+                .start_sequence_level(sequence);
+            engine.select_sequence_element(owner, Some((sequence, 0)));
+            engine.element_in_progress(
+                TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                &mut Vec::new(),
+                SequenceElementRef::new(sequence, 0),
+            );
+            engine
+                .get_entity_mut(owner)
+                .unwrap()
+                .actor_data_mut()
+                .unwrap()
+                .execute_order_initialising = true;
+            assert_eq!(
+                engine.pre_tick_human_execute_validity_for(
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                    owner,
+                ),
+                None
+            );
+            engine.mission_domain.campaign.characters[0]
+                .status
+                .set_ammo(crate::profiles::Action::Ale, 0);
+            assert_eq!(
+                engine.pre_tick_human_execute_validity_for(
+                    TickCtx::new(&crate::sim_rng::test_context(), &assets),
+                    owner,
+                ),
+                Some(crate::sprite::MotionState::Terminated)
+            );
+        }
     }
 
     #[test]

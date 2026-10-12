@@ -2321,6 +2321,9 @@ impl EngineInner {
         // creates a fallback Wait and leaves the post-seek action
         // stranded on ActorData for one frame (or forever).
         let final_point_post_seek_arrival = is_final_waypoint_after_transition_cleanup
+            // An ordinary move may retain an earlier point seek's actor state.
+            // Only a SEEK movement may consume that pending follow-up action.
+            && actor_seek_flags.contains(MoveFlags::SEEK)
             && ft.target_id.is_none()
             && entity.actor_data().is_some_and(|actor| {
                 actor.continuation.seek_to_point

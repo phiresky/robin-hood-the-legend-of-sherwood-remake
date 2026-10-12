@@ -2121,6 +2121,67 @@ mod suite {
     }
 
     #[test]
+    fn ordinary_move_does_not_consume_retained_point_seek_in_same_sector() {
+        let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);
+        let seek_sector = engine.ent(owner).element_data().sector().unwrap();
+        let (sequence_id, element_index) = {
+            let actor = engine.actor_mut(owner);
+            actor.seek_target = None;
+            actor.continuation.seek_to_point = true;
+            actor.continuation.seek_layer = 0;
+            actor.continuation.seek_sector =
+                Some(crate::actor_state::ActorSeekSector::Position(seek_sector));
+            let mut post_seek = Sequence::new();
+            post_seek.append_element(SequenceElement::new(1, Command::DropAle, Some(owner)));
+            actor.post_seek_sequence = Some(post_seek.into_post_seek());
+            let selected = actor.selected_sequence_element.unwrap();
+            (selected.sequence_id, selected.element_index)
+        };
+        let movement = engine
+            .orders
+            .sequence_manager
+            .get_element_mut(sequence_id, element_index)
+            .unwrap();
+        let SequenceElementData::Movement { sector, flags, .. } = &mut movement.data else {
+            panic!("point-seek fixture must retain its movement element")
+        };
+        *sector = Some(seek_sector);
+        flags.remove(MoveFlags::SEEK);
+
+        let sim = crate::sim_rng::test_context();
+        let assets = LevelAssets::new();
+        for _ in 0..4 {
+            engine.tick_actor_owner_envelopes(TickCtx::new(&sim, &assets));
+            engine.hourglass_phase_sequences(
+                TickCtx::new(&sim, &assets),
+                &mut crate::engine::HostDisplayState::default(),
+            );
+            if engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, element_index)
+                .is_none_or(|element| element.state != SequenceState::InProgress)
+            {
+                break;
+            }
+        }
+
+        assert!(
+            engine
+                .orders
+                .sequence_manager
+                .get_element(sequence_id, element_index)
+                .is_none_or(|element| element.state != SequenceState::InProgress)
+        );
+        let actor = engine.actor(owner);
+        assert!(
+            actor.post_seek_sequence.is_some(),
+            "an ordinary move must leave a retained point-seek follow-up unlaunched"
+        );
+        assert_ne!(engine.actor_order_type(owner), Some(OrderType::DroppingAle));
+    }
+
+    #[test]
     fn translated_point_seek_terminal_in_matching_sector_launches_drop_ale() {
         let assets = LevelAssets::new();
         let (mut engine, owner, _target) = install_terminal_interaction_seek(Command::HitCmd, 40.0);

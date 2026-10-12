@@ -359,7 +359,9 @@ pub(super) fn original_reset_blocked_box_this_frame(
             == Some(robin_engine::element::Command::Move as u64)
     }) && current_order_id.is_some_and(|id| id != last_processed_order_id);
     if sword_motion_sprite
-        && sprite_frame_count == 0
+        // Resuming the same directional sprite can retain its frame counter.
+        // The unadvanced action-only sentinel still cannot prove a reset.
+        && (sprite_frame_count == 0 || (postponed_movement && sprite_frame_count != u16::MAX))
         && prior_last_processed_order_id.is_some_and(|id| id != last_processed_order_id)
         && (live_sword_motion || postponed_movement)
     {
@@ -375,10 +377,29 @@ pub(super) fn original_reset_blocked_box_this_frame(
     let hidden_stop_movement_rewrite = prior_stoppable_motion_order
         .zip(prior_last_processed_order_id)
         .is_some_and(|(stoppable_order, prior_last_processed_order_id)| {
+            let alerted_stop =
+                match robin_engine::order::OrderType::try_from(stoppable_order.stop_animation) {
+                    Ok(robin_engine::order::OrderType::TransitionWalkingUprightWaitingUpright) => {
+                        Some(
+                            robin_engine::order::OrderType::TransitionWalkingAlertedWaitingAlerted
+                                as u32,
+                        )
+                    }
+                    Ok(robin_engine::order::OrderType::TransitionRunningUprightWaitingUpright) => {
+                        Some(
+                            robin_engine::order::OrderType::TransitionRunningAlertedWaitingAlerted
+                                as u32,
+                        )
+                    }
+                    _ => None,
+                };
             (stoppable_order.id == prior_last_processed_order_id
                 || (stoppable_order.playing_source_animation && sprite_frame_count == 0))
                 && (actor.animation == stoppable_order.stop_animation
-                    || sprite_last_action == Some(stoppable_order.stop_animation))
+                    || sprite_last_action == Some(stoppable_order.stop_animation)
+                    || (entity_id.kind() == robin_engine::element::EntityIdKind::Soldier
+                        && alerted_stop.is_some()
+                        && sprite_last_action == alerted_stop))
         })
         && sequence.movement.is_none()
         && current_order_id

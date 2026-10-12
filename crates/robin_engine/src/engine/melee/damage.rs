@@ -1625,12 +1625,17 @@ impl EngineInner {
                 }
             } else {
                 if fresh_lethal_ordinary {
-                    self.queue_death_visuals_with_damage_element(
-                        tcx.assets,
-                        victim_id,
-                        damage_element,
-                        dying_anim_override,
-                    );
+                    // Grounded damage translation has already terminated. Its
+                    // death cascade ran during the life update, but it must not
+                    // allocate a new roll on a slope after returning early.
+                    if !grounded_translation_terminates {
+                        self.queue_death_visuals_with_damage_element(
+                            tcx.assets,
+                            victim_id,
+                            damage_element,
+                            dying_anim_override,
+                        );
+                    }
                 } else {
                     self.handle_post_damage(
                         tcx,
