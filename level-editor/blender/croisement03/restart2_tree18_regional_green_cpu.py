@@ -18,7 +18,7 @@ def sha(p):
 
 
 def main():
-    out = B / 'tree18-regional-green-cpu-v2'
+    out = B / 'tree18-regional-green-cpu-v3'
     assert not out.exists()
     paths = [B / 'tree18-regional-plants-source-v2/receipt.json',
              B / 'bank-coupled-left-cpu-v3/geometry.json',
@@ -63,24 +63,32 @@ def main():
     if native.ndim == 3: native = np.any(native, axis=2)
     pins[str(native_path)] = sha(native_path)
     assert int(native.sum()) == 22406
+    stone_path=B/'bank-coupled-left-full-source-v3/projection.json';stone=json.loads(stone_path.read_text());pins[str(stone_path)]=sha(stone_path)
+    stone_pixels={tuple(q)for q in stone['accepted_pixels']}|{tuple(q[:2])for q in stone['protected_firsthits']};assert len(stone_pixels)==29000
+    protected=np.zeros_like(native)
+    for x,y in stone_pixels:protected[y,x]=True
     rng = np.random.default_rng(18354)
     parts = []; contacts = []; preview = Image.open(source).convert('RGB'); pen = ImageDraw.Draw(preview)
     for region in proposal['regions'][:3]:
         region_mask = Image.new('1', (1408,960)); ImageDraw.Draw(region_mask).polygon([tuple(v) for v in region['outline']],fill=1)
-        admissible = np.array(region_mask) & ~reserved_array & ~native
+        admissible = np.array(region_mask) & ~reserved_array & ~native & ~protected
         vertices, faces, clumps, rejected = [], [], [], 0
         xmin,ymin = np.min(region['outline'],axis=0); xmax,ymax = np.max(region['outline'],axis=0)
         ground = region['contacts'].get('ground_contact',region['contacts'].get('grass_contact',region['contacts'].get('lower_leaf_cover_to_grass')))
         ground = sorted(ground)
-        for y0 in range(int(ymin)+3,int(ymax),7):
-            for x0 in range(int(xmin)+3,int(xmax),7):
-                x,y = x0+rng.uniform(-2,2), y0+rng.uniform(-2,2)
+        candidates=rng.uniform([xmin+3,ymin+3],[xmax-3,ymax-3],size=(int((xmax-xmin)*(ymax-ymin)//9),2))
+        admitted=[]
+        for candidate in candidates:
+            for x,y in [candidate]:
+                if admitted and np.min(np.linalg.norm(np.array(admitted)-[x,y],axis=1))<4.8:continue
                 if not admissible[int(y),int(x)]: continue
                 # Whole projected clump must avoid reserved corridors. This is a
                 # geometry-placement exclusion, never an accepted texture mask.
-                rx,ry = rng.uniform(2.0,3.5), rng.uniform(2.0,4.0)
-                patch = admissible[max(0,int(y-ry)-1):int(y+ry)+2,max(0,int(x-rx)-1):int(x+rx)+2]
+                rx,ry = rng.uniform(1.8,3.4), rng.uniform(2.2,4.2)
+                extent=max(rx,ry)*1.12
+                patch = admissible[max(0,int(y-extent)-1):int(y+extent)+2,max(0,int(x-extent)-1):int(x+extent)+2]
                 if not patch.size or not patch.all(): rejected += 1; continue
+                admitted.append([x,y])
                 grounded_y = float(np.interp(x,[p[0]for p in ground],[p[1]for p in ground]))
                 backing = support(x,y)
                 if region['id'] == 'left-bank-climbing-ivy' and backing is not None:
@@ -93,8 +101,9 @@ def main():
                 depth = rng.uniform(9.,21.) if region['id']=='left-bank-climbing-ivy' else rng.uniform(16.,32.)
                 for layer in range(3):
                     center=point-RAY*(depth*layer/2)
-                    xx=rx*rng.uniform(.85,1.12);yy=ry*rng.uniform(.85,1.12);zz=2.0+rng.random()*2
-                    points=[center+np.array([xx,0,0]),center-np.array([xx,0,0]),center+UP*yy,center-UP*yy,center+RAY*zz,center-RAY*zz]
+                    xx=rx*rng.uniform(.85,1.12);yy=ry*rng.uniform(.85,1.12);zz=.25+rng.random()*.65
+                    angle=rng.uniform(0,2*math.pi);u=np.array([math.cos(angle),0,0])+UP*math.sin(angle);v=np.array([-math.sin(angle),0,0])+UP*math.cos(angle)
+                    points=[center+u*xx,center-u*xx,center+v*yy,center-v*yy,center+RAY*zz,center-RAY*zz]
                     if min(p[2] for p in points)<0: continue
                     offset=len(vertices);vertices.extend([p.tolist() for p in points]);faces.extend([[offset+a,offset+c,offset+b] for a,b,c in [(0,2,4),(2,1,4),(1,3,4),(3,0,4),(2,0,5),(1,2,5),(3,1,5),(0,3,5)]])
                 clumps.append({'source_xy':[x,y],'support_method':method,'support_owner_hypothesis':owner,'support_triangle':triangle,'front_center':point.tolist(),'rear_depth':depth})
@@ -110,7 +119,7 @@ def main():
         assert len(vertices)//6==len(faces)//8
         parts.append({'id':region['id'],'vertices':vertices,'faces':faces,'clumps':clumps,'rejected_boundary_clumps':rejected,'bounds':[points.min(0).tolist(),points.max(0).tolist()],'material':'UNASSIGNED_GREEN_FOLIAGE_GEOMETRY_DIAGNOSTIC_ONLY','observed_source_assignments':0})
         pen.line([tuple(p) for p in region['outline']]+[tuple(region['outline'][0])], fill=(255,120,185),width=1)
-    report={'status':'PRIVATE_REGIONAL_GREEN_GEOMETRY_PROPOSAL_REQUIRES_SAVED_CONTEXT_REVIEW','pins':pins,'parts':parts,'contacts':contacts,'reserved_openings':proposal['reserved_openings_and_context'],'native_actual_union_preserved':22406,'limits':['No source pixels assigned: envelopes contain mixed leaves, twigs and background. Exclusions are conservative geometry guidance, not accepted pixel roles.','All parts are inferred authored scenery; no invented gameplay obstacle or catalog ownership.','Bank support uses private52/53/54 CPU geometry only; saved contact with94–97, Tree18 wood and neighbors remains mandatory.','Plant ground profile is inferred from source contacts, not measured depth. Three rear layers are a starting hypothesis requiring oblique review.','Green material remains unassigned; gold Arbre05 donors cannot substitute for green foliage. No generation authorized by this preparation.','Lower-right left-ivy boundary is foreground occlusion, so final hidden completion needs neighbor context before physical closure approval.']}
+    report={'status':'PRIVATE_REGIONAL_GREEN_GEOMETRY_PROPOSAL_REQUIRES_SAVED_CONTEXT_REVIEW','pins':pins,'parts':parts,'contacts':contacts,'reserved_openings':proposal['reserved_openings_and_context'],'native_actual_union_preserved':22406,'distribution_revision':'V3 removes the visible lattice: deterministic irregular point spacing, independently rotated thin leaf lobes and exact29000stone admission protection.','limits':['No source pixels assigned: envelopes contain mixed leaves, twigs and background. Exclusions are conservative geometry guidance, not accepted pixel roles.','All parts are inferred authored scenery; no invented gameplay obstacle or catalog ownership.','Bank support uses private52/53/54 CPU geometry only; saved contact with94–97, Tree18 wood and neighbors remains mandatory.','Plant ground profile is inferred from source contacts, not measured depth. Three rear layers are a starting hypothesis requiring oblique review.','Green material remains unassigned; gold Arbre05 donors cannot substitute for green foliage. No generation authorized by this preparation.','Lower-right left-ivy boundary is foreground occlusion, so final hidden completion needs neighbor context before physical closure approval.']}
     out.mkdir();(out/'geometry.json').write_text(json.dumps(report,separators=(',',':'))+'\n');preview.crop((95,320,610,600)).resize((1545,840),Image.Resampling.NEAREST).save(out/'source-support-preview.png')
     print(json.dumps({'parts':[{ 'id':p['id'],'clumps':len(p['clumps']),'faces':len(p['faces'])}for p in parts],'contacts':len(contacts),'bytes':sum(p.stat().st_size for p in out.iterdir())}))
 

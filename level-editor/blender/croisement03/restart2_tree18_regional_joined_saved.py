@@ -12,7 +12,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parent))
 import restart2_tree01_canopy_saved as guard
 
 B,S,C=guard.B,guard.S,guard.C
-OUT=B/'tree18-regional-joined-saved-v1'
+OUT=B/'tree18-regional-joined-saved-v2'
 RAY=Vector((0,-C,S))
 
 
@@ -21,12 +21,12 @@ def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 
 def main():
     bank=B/'bank-coupled-left-full-source-v3/worker.blend'
-    wood=B/'tree18-united-wood-saved-v1/worker.blend'
+    wood=B/'tree18-five-track-saved-v2/worker.blend'
     crown_path=B/'tree18-regional-crown-cpu-v1/geometry.json'
-    green_path=B/'tree18-regional-green-cpu-v2/geometry.json'
-    exclusions=green_path.parent/'independent-projected-exclusions.json'
+    green_path=B/'tree18-regional-green-cpu-v3/geometry.json'
+    exclusions=green_path.parent/'independent-full-source-guards.json'
     assert json.loads(exclusions.read_text())['status']=='PASS_SCOPED_PROJECTED_EXCLUSIONS'
-    assert json.loads(exclusions.read_text())['geometry_sha256']==sha(green_path)
+    assert json.loads(exclusions.read_text())['pins'][str(green_path)]==sha(green_path)
     assert json.loads((wood.parent/'receipt.json').read_text())['status']=='PASS_SAVED_UNION_REQUIRES_VISUAL_CONTACT_REVIEW'
     crown,green=[json.loads(p.read_text())for p in (crown_path,green_path)]
     audit_path=B/'bank-foreground-source-audit-v2/receipt.json';audit=json.loads(audit_path.read_text())

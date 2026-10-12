@@ -9,7 +9,7 @@ B=Path(__file__).resolve().parents[3]/'level-editor/work/croisement03-refinement
 
 
 def main():
-    folder=B/'tree18-regional-green-cpu-v2';gp=folder/'geometry.json';d=json.loads(gp.read_text());rp=B/'tree18-regional-plants-source-v2/receipt.json';r=json.loads(rp.read_text());bp=B/'bank-coupled-left-full-source-v3/projection.json';bank=json.loads(bp.read_text());wp=B/'tree18-priority-source-proposals-v1/receipt.json';wood=json.loads(wp.read_text())
+    folder=B/'tree18-regional-green-cpu-v3';gp=folder/'geometry.json';d=json.loads(gp.read_text());rp=B/'tree18-regional-plants-source-v2/receipt.json';r=json.loads(rp.read_text());bp=B/'bank-coupled-left-full-source-v3/projection.json';bank=json.loads(bp.read_text());wp=B/'tree18-priority-source-proposals-v1/receipt.json';wood=json.loads(wp.read_text())
     layers={name:Image.new('1',(1408,960))for name in ['reserved','known_bank_stone','proposed_bark']};draw=ImageDraw.Draw(layers['reserved'])
     for opening in r['reserved_openings_and_context']:
         if 'outline'in opening:draw.polygon([tuple(q)for q in opening['outline']],fill=1)
