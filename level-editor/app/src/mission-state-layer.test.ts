@@ -150,6 +150,9 @@ test("a failed refined model preserves its original target while successful sibl
   await layer.set(f.contract, {} as FileSystemDirectoryHandle, f.source);
   assert.deepEqual([...layer.replacedTargets], [1]);
   assert.match(errors[0]!, /bad hash/);
+  assert.deepEqual([...layer.loadErrors.values()], errors);
+  layer.clear();
+  assert.equal(layer.loadErrors.size, 0);
   layer.dispose();
 });
 

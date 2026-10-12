@@ -173,7 +173,21 @@ test("invalid clocks and shared-material tracks fail before changing a running p
   const offGrid = new THREE.AnimationClip("off-grid", -1, [
     new THREE.VectorKeyframeTrack(f.phases[0]!.name + ".scale", [0, 0.05], [1, 1, 1, 0, 0, 0]),
   ]);
-  assert.throws(() => captureStateAppearance(f.loaded, [offGrid], f.asset), /25 Hz grid/);
+  const fractional = new StateAppearancePlayer(
+    captureStateAppearance(f.loaded, [offGrid], f.asset),
+  );
+  fractional.select("off-grid", { mode: "clamp", terminalTick: 2 });
+  fractional.seek(1);
+  assert.ok(Math.abs(fractional.content.children[0]!.scale.x - 0.2) < 1e-6);
+  fractional.dispose();
+  const backwards = new THREE.AnimationClip("backwards", -1, [
+    new THREE.VectorKeyframeTrack(
+      f.phases[0]!.name + ".scale",
+      [0, 0.08, 0.04],
+      [1, 1, 1, 2, 2, 2, 3, 3, 3],
+    ),
+  ]);
+  assert.throws(() => captureStateAppearance(f.loaded, [backwards], f.asset), /increasing/);
   const player = new StateAppearancePlayer(f.template);
   assert.throws(() => player.play(), /Select/);
   player.select("native", { mode: "loop", cycleTicks: 6 });
@@ -435,4 +449,114 @@ test("loaded GLTF cubic splines retain tangent units and quaternion normalizatio
   );
   independent.dispose();
   player.dispose();
+});
+
+test("GLTF quarter-tick flight knots retain the authored curve on integer clocks", async () => {
+  const { GLTFLoader } = await import("three/examples/jsm/loaders/GLTFLoader.js");
+  // A 198-tick flight with four interpolation knots per tick, like the saved butterfly loop.
+  const times = Float32Array.from({ length: 793 }, (_, i) => i / 100);
+  const values = Float32Array.from(
+    Array.from(times).flatMap((t) => {
+      const w = (2 * Math.PI) / 7.92,
+        a = t * w;
+      const derivative = [-10 * w * Math.sin(a), 3 * w * Math.cos(a), 5 * w * Math.cos(a)];
+      return [
+        ...derivative,
+        861 + 10 * Math.cos(a),
+        25 + 3 * Math.sin(a),
+        1588 + 5 * Math.sin(a),
+        ...derivative,
+      ];
+    }),
+  );
+  const binary = Buffer.concat([Buffer.from(times.buffer), Buffer.from(values.buffer)]);
+  const document = {
+    asset: { version: "2.0" },
+    buffers: [{ byteLength: binary.length }],
+    bufferViews: [
+      { buffer: 0, byteLength: times.byteLength },
+      { buffer: 0, byteOffset: times.byteLength, byteLength: values.byteLength },
+    ],
+    accessors: [
+      {
+        bufferView: 0,
+        componentType: 5126,
+        count: times.length,
+        type: "SCALAR",
+        min: [0],
+        max: [7.92],
+      },
+      { bufferView: 1, componentType: 5126, count: times.length * 3, type: "VEC3" },
+    ],
+    nodes: [{ name: "flight" }],
+    scenes: [{ nodes: [0] }],
+    scene: 0,
+    animations: [
+      {
+        name: "flight",
+        samplers: [{ input: 0, output: 1, interpolation: "CUBICSPLINE" }],
+        channels: [{ sampler: 0, target: { node: 0, path: "translation" } }],
+      },
+    ],
+  };
+  const json = Buffer.from(JSON.stringify(document)),
+    padded = Buffer.concat([json, Buffer.alloc((4 - (json.length % 4)) % 4, 32)]);
+  const header = Buffer.alloc(20),
+    binHeader = Buffer.alloc(8);
+  header.writeUInt32LE(0x46546c67);
+  header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(28 + padded.length + binary.length, 8);
+  header.writeUInt32LE(padded.length, 12);
+  header.writeUInt32LE(0x4e4f534a, 16);
+  binHeader.writeUInt32LE(binary.length);
+  binHeader.writeUInt32LE(0x004e4942, 4);
+  const bytes = Buffer.concat([header, padded, binHeader, binary]);
+  const loaded = await new GLTFLoader().parseAsync(
+    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+    "",
+  );
+  const track = loaded.animations[0]!.tracks[0]!,
+    before = Array.from(track.values);
+  const template = captureStateAppearance(loaded.scene, loaded.animations);
+  const player = new StateAppearancePlayer(template),
+    external = new StateAppearancePlayer(template, true);
+  for (const p of [player, external]) p.select("flight", { mode: "loop", cycleTicks: 198 });
+  const check = (p: StateAppearancePlayer, tick: number) => {
+    const time = (tick % 198) / 25;
+    let i = 0;
+    while (i + 1 < times.length - 1 && times[i + 1]! <= time) i++;
+    const dt = times[i + 1]! - times[i]!,
+      u = (time - times[i]!) / dt;
+    const expected = [0, 1, 2].map(
+      (j) =>
+        (2 * u ** 3 - 3 * u * u + 1) * values[i * 9 + 3 + j]! +
+        (u ** 3 - 2 * u * u + u) * dt * values[i * 9 + 6 + j]! +
+        (-2 * u ** 3 + 3 * u * u) * values[(i + 1) * 9 + 3 + j]! +
+        (u ** 3 - u * u) * dt * values[(i + 1) * 9 + j]!,
+    );
+    p.content.children[0]!.position.toArray().forEach((v, j) =>
+      assert.ok(Math.abs(v - expected[j]!) < 0.0001, `tick ${tick}: ${v} != ${expected[j]}`),
+    );
+    assert.equal(p.tick, tick % 198);
+  };
+  for (let tick = 0; tick <= 396; tick++) {
+    player.seek(tick);
+    external.sampleExternalTick(tick);
+    check(player, tick);
+    check(external, tick);
+  }
+  player.seek(73);
+  player.play();
+  player.advance(1 / 25);
+  check(player, 74);
+  player.pause();
+  player.advance(10);
+  check(player, 74);
+  player.seek(1);
+  check(player, 1);
+  assert.throws(() => player.seek(1.25), /integer/);
+  assert.deepEqual(Array.from(track.times), Array.from(times));
+  assert.deepEqual(Array.from(track.values), before);
+  player.dispose();
+  external.dispose();
 });

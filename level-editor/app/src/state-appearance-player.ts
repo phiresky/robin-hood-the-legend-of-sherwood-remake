@@ -88,13 +88,21 @@ export function captureStateAppearance(
         throw new Error(`State appearance tracks must begin at tick zero: ${original.name}`);
       let previous = -1;
       const ticks = Array.from(track.times, (time) => {
-        const tick = integerTick(Math.round(time * HZ), "Animation key tick");
-        if (Math.abs(time * HZ - tick) > 0.001 || tick <= previous)
-          throw new Error(`Animation keys must follow the 25 Hz grid: ${original.name}`);
+        const scaled = time * HZ,
+          nearest = Math.round(scaled);
+        // Interpolation knots are not source-frame events. Retain sub-tick knots;
+        // snap only float32 seconds roundoff around an integer sampling boundary.
+        const tick = Math.fround(
+          Math.abs(scaled - nearest) <= Math.max(1, Math.abs(scaled)) * 2 ** -24 ? nearest : scaled,
+        );
+        if (!Number.isFinite(tick) || tick < 0 || tick > MAX_TICK || tick <= previous)
+          throw new Error(
+            `Animation key ticks must be finite, increasing and in range: ${original.name}`,
+          );
         previous = tick;
         return tick;
       });
-      // Integer key times avoid float32 seconds selecting the previous STEP frame at a boundary.
+      // Native STEP boundaries remain exact; continuous curves retain fractional control knots.
       track.times = new Float32Array(ticks);
       if (Array.from(track.values).some((value) => !Number.isFinite(value)))
         throw new Error(`Animation values are not finite: ${original.name}`);

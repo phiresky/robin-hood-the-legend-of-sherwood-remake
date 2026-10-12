@@ -748,7 +748,8 @@ export class EditorViewport {
               [
                 this.objectsRoot,
                 this.terrain.root,
-                this.scenery.root,
+                // Native effects are composited separately using their authored priority.
+                // Legacy animation planes must not become static depth receivers.
                 this.sunlight.root,
                 ...(this.ground ? [this.ground] : []),
                 ...this.splines.assetObjects(),
@@ -1256,7 +1257,9 @@ export class EditorViewport {
       ]);
       if (!current()) return false;
       if (!ready || this.missionStates.players.size !== frozen.physical!.targets.length)
-        throw new Error("Physical loop resources did not all become ready");
+        throw new Error(
+          `Physical loop resources did not all become ready${this.missionStates.loadErrors.size ? ": " + [...this.missionStates.loadErrors.values()].join("; ") : ""}`,
+        );
       if (frozen.physical!.targets.some((t) => t.source_kind === "map-animation"))
         this.physicalNativeEffects = new NativePhysicalEffectPreview(
           frozen.native,

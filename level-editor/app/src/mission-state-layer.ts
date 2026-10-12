@@ -123,6 +123,7 @@ export class MissionStateLayer {
   private readonly loader: (
     root: FileSystemDirectoryHandle,
   ) => Pick<SceneAssetLoader, "load" | "dispose">;
+  readonly loadErrors = new Map<string, string>();
   get replacedTargets(): ReadonlySet<number> {
     return this.replaced;
   }
@@ -134,6 +135,7 @@ export class MissionStateLayer {
     }
     this.clocks = undefined;
     this.players.clear();
+    this.loadErrors.clear();
     this.root.clear();
     this.replaced = new Set();
     this.changed(this.replaced);
@@ -223,7 +225,11 @@ export class MissionStateLayer {
             this.changed(new Set(this.replaced));
           } catch (error) {
             player?.dispose();
-            if (current()) this.error(`${row.binding.id}: ${String(error)}`);
+            if (current()) {
+              const message = `${row.binding.id}: ${String(error)}`;
+              this.loadErrors.set(row.binding.id, message);
+              this.error(message);
+            }
           }
         }),
       );
