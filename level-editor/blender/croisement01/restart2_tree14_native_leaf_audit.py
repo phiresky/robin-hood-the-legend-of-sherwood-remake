@@ -65,10 +65,19 @@ for y,x in zip(*np.nonzero(rgba[:,:,3]>127)):
                         leaf_distance=cd if math.isfinite(cd) else None,actual_rgba=actual))
     classified[y,x]=dict(exact_native_leaf=(60,210,100,255),occluded_by_wood=(240,70,50,255),
         missing_leaf=(230,70,230,255),unknown_in_front=(245,200,70,255),source_color_mismatch=(70,120,240,255))[state]
+native_wood=np.asarray(Image.open(r.parent/'baseline/masks/000014.png').convert('L'))>0
+known_wood=np.asarray(Image.open(r/'tree14-source-restoration-proposal-v1/wood-domain.png').convert('L'))>0
+edge_records=[]
+for y,x in zip(*np.nonzero(native_wood&~known_wood)):
+    origin=Vector((float(689+x)+.5,-(float(122+y)+.5)/s,0))+ray*5000
+    hit,_,_,_=wt.ray_cast(origin,-ray,10000)
+    edge_records.append(dict(pixel=[int(689+x),int(122+y)],wood_geometry_hit=hit is not None))
+assert len(edge_records)==40
 counts={key:sum(x['state']==key for x in records) for key in ('exact_native_leaf','occluded_by_wood','missing_leaf','unknown_in_front','source_color_mismatch')}
 assert len(records)==16719
 Image.fromarray(classified).resize((width*3,height*3),Image.Resampling.NEAREST).save(out/'native-first-hit.png')
 report=dict(status='MEASURED_NATIVE_FRAME0_VISIBILITY',model_sha256=before,source_sha256=frame['sha256'],counts=counts,records=records,
+    pending_wood_edge_geometry=edge_records,pending_wood_edge_source_status='Observed edge fragments unresolved; not eligible for synthesis.',
     limitations=['Checks retained Tree14 wood and crown front/back geometry. Edge-on inferred cross sections and neighboring objects require actual saved camera review.',
                  'Frame0 source only. Remaining13frames and native state ordering need integration proof.'])
 assert sha(model)==before
