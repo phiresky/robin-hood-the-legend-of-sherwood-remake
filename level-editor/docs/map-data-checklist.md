@@ -146,7 +146,7 @@ embedded definitions, descriptor bytes and pins. Its browser export/reopen/rebak
 now passes with matching gameplay and rendered color/depth across 45 appearances.
 The 169,676,380-byte first-pass ZIP loads natively without a base datadir and its
 gameplay descriptor exactly matches the staged native traversal fixture.
-The browser runner's final archive transfer is still pending.
+The final transferred archive has the same size and SHA-256 as that first-pass ZIP.
 
 The unpublished south-wall step stair candidate passes 32 directed player-click
 routes across four rotations and two elevations without navigation-preparation

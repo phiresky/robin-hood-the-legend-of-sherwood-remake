@@ -184,8 +184,8 @@ descriptor bytes, and source-library descriptors remain unchanged. It contains
 the two drawbridge receiving surfaces and three plateau regions. A fresh no-watch
 browser roundtrip now passes: 2944×2176, 597 sight obstacles, 169,676,380 ZIP bytes,
 and matching reopened gameplay and rendered color/depth through 45 appearances.
-The runner is still transferring its final archive. The separately saved
-`lincoln-first-pass.zip` has SHA-256
+The final transferred `lincoln-supported-top.zip` and separately saved
+`lincoln-first-pass.zip` have identical size and SHA-256
 `77c807ac09373f79488cb47a6c20609b481a6544c7bf629db7ec5aaeae93cdba` and passes
 native loading without a base datadir in 12.20 seconds: 85 door projections,
 71,668 grid blocks, zero masks and three appearance regions for eleven controls.
