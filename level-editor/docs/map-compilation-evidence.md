@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## York interior jump clicks (2026-10-12)
+
+`check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,
+ordered by distance to the takeoff edge. Each point must pass static corridor
+clearance against both native and precise floor contours with an additional
+one-unit margin. This is a conservative projected-footprint diagnostic, not
+proof of world support or absence of smaller usable areas. Unavailable probes
+are recorded explicitly and cause a nonzero generator exit; they are not passes.
+
+Published export `saved-map-exports-8tuyfM`, subset
+`interior-jump-clicks-iNUf93`, produces eight probes for lines
+4/5/56/57/64/65/142/143. Native complete-click traversal passes seven: line 142
+stalls before flight, whereas 143 succeeds. Lines 50/51 lack a sampled interior
+point on their shared golden-house side and remain untested by this diagnostic.
+The earlier four-direction subset `interior-jump-clicks-17af68` agrees.
+The 28 failures in the full 720 perpendicular-offset audit are not reclassified
+as successes; broader click coverage and moved/rotated placements remain open.
+
+Mesh review `jump-edge-mesh-review-VR1B8m` finds the west-town rear-house
+`jump-pair-55-side-0` edge lies 1.078–2.034 units below its physical roof at
+the same XY, including 1.556 at its midpoint. The next investigation is an
+asset-local takeoff correction checked in both directions and rotated copies.
+No asset correction or runtime change is published by this diagnostic.
+
 ## Preserve subpixel folded floors before normalization (2026-10-12)
 
 The 37-degree central-house floor exists in authored geometry but projects to a

@@ -11,6 +11,14 @@ retired physical-navigation solver do **not** establish current traversal parity
 assets need verification against prepared-graph movement. The current architecture
 and its remaining runtime work are tracked in [the runtime inventory](map-runtime-inventory.md).
 
+**York interior jump clicks (2026-10-12):** a separate conservative footprint
+probe passes seven of eight tested directions, including lines 5, 57 and 65
+that fail some perpendicular-offset probes. Line 142 still stalls before
+takeoff; its reverse succeeds. Lines 50/51 have no sampled supported interior
+on one side and remain untested by this probe. These results narrow the
+investigation; they do not replace the full-map 28/720 failure count or prove
+rotated placements. See [interior-click evidence](map-compilation-evidence.md#york-interior-jump-clicks-2026-10-12).
+
 **Subpixel rotated floors (2026-10-12):** simple folded floors now receive
 walking clearance before integer normalization can erase them. York's copied
 two-house fixture retains both jump connections at all eight placements,
