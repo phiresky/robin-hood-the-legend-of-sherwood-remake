@@ -107,6 +107,12 @@ def main():
         assert model.stat().st_size < 8 * 1024**2
         assert not failures, report['status']
         print({k: report[k] for k in ['status', 'native_firsthit_samples', 'native_firsthit_max_error']})
+        if '--review' in sys.argv:
+            import restart2_tree18_saved_review as review
+            review.F = out
+            review.O = out / 'saved-review-v1'
+            review.main()
+            assert sum(p.stat().st_size for p in out.rglob('*') if p.is_file()) < 32 * 1024**2
     finally:
         guard.release()
 
