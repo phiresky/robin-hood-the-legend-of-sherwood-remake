@@ -16,7 +16,7 @@ acquire(slots=2)
 assert shutil.disk_usage(OUT).free>10*1024**3+512*1024**2
 available=int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024
 assert available>6*1024**3
-base=OUT/'restart2';dest=base/'tree14-wood-v11';dest.mkdir(exist_ok=False)
+base=OUT/'restart2';dest=base/'tree14-wood-v15';dest.mkdir(exist_ok=False)
 bank=base/'tree05-regional-banks-v18/assets/croisement01-tree-05/model.blend'
 assert sha(bank)=='7926500e407950bd66b78d13e0ce65b3829dd2263d7db4ba5c57a7ece5dbc818'
 bpy.ops.wm.open_mainfile(filepath=str(bank));bpy.context.preferences.filepaths.save_version=0
@@ -24,7 +24,7 @@ working=bpy.data.collections['Croisement01 Working'];terrain={'ground',*[f'build
 for o in list(bpy.data.objects):
  if o.type=='MESH' and o.get('source_node') not in terrain:bpy.data.objects.remove(o,do_unlink=True)
 asset='croisement01-tree-14';node='scenery-tree14-wood';asset_label='Northern Twisted Tree'
-core=base/'tree14-upper-ownership-v1/extended-known-wood-domain.png';wood=Image.open(core).convert('L');wood.save(dest/'wood-domain.png')
+core=base/'tree14-source-restoration-proposal-v1/wood-domain.png';wood=Image.open(core).convert('L');wood.save(dest/'wood-domain.png')
 # The source traces define branch centerlines; unseen depth remains inferred.
 trace=json.loads((base/'tree14-source-preparation-v1/preparation.json').read_text())['trace_screen_coordinates']
 trace['root_left']=[[849,395,18],[821,395,10],[807,402,6],[794,413,.8]]
@@ -39,17 +39,21 @@ main=trace['main_stem'];body=helpers.tube('Continuous twisted trunk',[point(x,y)
 # conservative color patch. Root and left-branch zones are fitted separately.
 fit=np.asarray(wood)>0;yy,xx=np.indices(fit.shape);fit&=(yy+122>=270)&(yy+122<=385)&(xx+689>=794)
 fit_native_width(body,fit,'west-cut',x0=689,y0=122)
-profiles=json.loads((base/'tree14-upper-branch-profiles-v1/profiles.json').read_text())['profiles']
+profile_packet=json.loads((base/'tree14-upper-branch-profiles-v2/profiles.json').read_text())
+trace['right_fork']=profile_packet['traces']['right_fork']
+profiles=profile_packet['profiles']
 for branch,profile in profiles.items():
  original=trace[branch];xy=np.array([row[:2] for row in original],float);lengths=np.linalg.norm(np.diff(xy,axis=0),axis=1);distance=np.r_[0,np.cumsum(lengths)];samples=profile['samples'];new=[]
  for row in samples:
   along=row['along'];center=np.array([np.interp(along,distance,xy[:,axis]) for axis in range(2)]);measured=np.array([row['x'],row['y']]);shift=measured-center;norm=np.linalg.norm(shift)
-  limit=6 if (branch=='left_main' and center[0]<=760) or branch=='right_tip' else 2
+  limit=6 if (branch=='left_main' and center[0]<=760) or branch in ('right_tip','left_twig') else 2
   if norm>limit:shift*=limit/norm
   radius=row['smoothed_radius']+.35
   observed_radius=float(np.interp(along,distance,[v[2] for v in original]));allowance=0.
   if branch=='left_main':allowance=4. if 725<=center[0]<=760 else 1.5
   elif branch=='right_tip':allowance=1.
+  elif branch=='left_twig':allowance=1.
+  elif branch in ('upper_branch','right_fork'):allowance=.5
   radius=min(radius,observed_radius+allowance)
   new.append([*(center+shift),max(.4,radius)])
  for axis in range(3):
@@ -118,13 +122,13 @@ groups.append(dict(id=asset,name=asset_label,parts=[dict(node=node,name='Partly 
 catalog.update(version=2,groups=groups,canonical_owners={f"building-{p['obstacle']:03d}" if 'obstacle' in p else p['node']:g['id'] for g in groups for p in g['parts']})
 cat=dest/'catalog.json';cat.write_text(json.dumps(catalog,indent=2)+'\n');inventory(dest/'inventory',collection_name=working.name,map_name='Croisement01',source_path=OUT/'baseline/covered.png',patch_manifest=OUT/'source-states/layers.json')
 masks=dest/'masks.json';masks.write_text(json.dumps(native,indent=2)+'\n');source=dest/'source-masks.json';source.write_text(json.dumps(dict(version=1,mask_inventory=str(masks),projections=dict(exterior=dict(state='Conservative native14 bark',source_sha256=sha(OUT/'baseline/covered.png'),assignments=[dict(reviewed=True,asset_group=asset,mask_indices=[214])]))),indent=2)+'\n')
-review=dest/'grouping-review.json';review.write_text(json.dumps(dict(status='reviewed',reviewer='Codex',catalog_sha256=sha(cat),inventory_sha256=sha(dest/'inventory/inventory.json'),evidence='9151 native lower trunk/root pixels only; 3181 overlapping upper foliage pixels deferred. Native043/044/045 proxy correspondence measured separately; no gameplay changes. Root depth and hidden wood inferred; crown excluded.'),indent=2)+'\n')
+review=dest/'grouping-review.json';review.write_text(json.dumps(dict(status='reviewed',reviewer='Codex',catalog_sha256=sha(cat),inventory_sha256=sha(dest/'inventory/inventory.json'),evidence='12292 source-supported wood pixels, including restored native upper branches; 40 fork-context pixels remain unresolved. Native043/044/045 proxy correspondence measured separately; no gameplay changes. Root depth and hidden wood inferred; crown excluded.'),indent=2)+'\n')
 worker=dest/'assets'/asset
 if '--geometry-only' in sys.argv:
  worker.mkdir(parents=True);bpy.ops.wm.save_as_mainfile(filepath=str(worker/'baseline.blend'))
  (dest/'geometry-checkpoint.json').write_text(json.dumps(dict(status='PRIVATE_MEASURED_UPPER_BRANCH_CORRECTION_PENDING_AUDIT',baseline_sha256=sha(worker/'baseline.blend'),trace=trace,scope='Correct lower native root contour; preserve prior nonplanar limbs and private bank. No appearance approval.'),indent=2)+'\n')
  raise SystemExit(0)
 prepare(worker,asset_id=asset,scene_name='Croisement01 Refinement',collection_name=working.name,source_path=OUT/'baseline/covered.png',grouping_manifest=cat,inventory_path=dest/'inventory/inventory.json',review_path=review,source_mask_manifest=source,width=384,height=384,framing_padding=1.2,lighting=dict(toward_sun=[-.6,-.4,.7],ambient=.22,diffuse=.78,shadow_epsilon=.05));validate(worker);modified(worker)
-(dest/'construction.json').write_text(json.dumps(dict(status='PRIVATE_GEOMETRY_PENDING_SAVED_VIEW_SOURCE_AND_CONTACT_REVIEW',model_sha256=sha(worker/'model.blend'),known_bark_pixels=9151,deferred_mixed_pixels=3181,bank_sha256=sha(bank),source_partition_sha256=sha(base/'tree14-source-preparation-v1/preparation.json'),crown_excluded=True,inferred_nonplanar_branches=True,no_gameplay_mutation=True),indent=2)+'\n')
+(dest/'construction.json').write_text(json.dumps(dict(status='PRIVATE_GEOMETRY_PENDING_SAVED_VIEW_SOURCE_AND_CONTACT_REVIEW',model_sha256=sha(worker/'model.blend'),known_bark_pixels=12292,deferred_mixed_pixels=40,bank_sha256=sha(bank),source_partition_sha256=sha(base/'tree14-source-preparation-v1/preparation.json'),crown_excluded=True,inferred_nonplanar_branches=True,no_gameplay_mutation=True),indent=2)+'\n')
 (worker/'inspection').mkdir(exist_ok=True)
 import render_candidate;sys.argv=['render','--',str(worker)];render_candidate.main()

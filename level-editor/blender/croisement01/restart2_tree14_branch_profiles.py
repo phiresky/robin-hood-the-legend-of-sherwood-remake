@@ -8,9 +8,11 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[3]
 R = ROOT/'level-editor/work/croisement01-refinement/restart2'
-OUT = R/'tree14-upper-branch-profiles-v1'
+OUT = R/'tree14-upper-branch-profiles-v2'
 OUT.mkdir(exist_ok=False)
 prep = json.loads((R/'tree14-source-preparation-v1/preparation.json').read_text())
+prep['trace_screen_coordinates']['right_fork'] = [[820,244,10],[843,233,8],[853,222,5],
+    [853,214,3.2],[851,204,2.2],[852,197,1.5],[857,192,1],[861,190,.35]]
 native_path = R.parent/'baseline/masks/000014.png'
 mask = np.asarray(Image.open(native_path).convert('L')) > 0
 profiles = {}
@@ -65,7 +67,7 @@ for name,profile in profiles.items():
         endpoints=[tuple((p-np.array([680,110]))*5) for p in (c-n*rad,c+n*rad)]
         draw.line(endpoints,fill='magenta',width=1)
 source.save(OUT/'measured-cross-sections.png')
-report=dict(status='SOURCE_MEASUREMENTS_NOT_GEOMETRY_APPROVAL',native_sha256=hashlib.sha256(native_path.read_bytes()).hexdigest(),
+report=dict(status='SOURCE_MEASUREMENTS_NOT_GEOMETRY_APPROVAL',traces=prep['trace_screen_coordinates'],native_sha256=hashlib.sha256(native_path.read_bytes()).hexdigest(),
             profiles=profiles,source_ownership='Use separately reviewed uncontested bark domain; silhouette measurements do not authorize overlapping foliage colors.')
 (OUT/'profiles.json').write_text(json.dumps(report,indent=2)+'\n')
 print({k:len(v['samples']) for k,v in profiles.items()})
