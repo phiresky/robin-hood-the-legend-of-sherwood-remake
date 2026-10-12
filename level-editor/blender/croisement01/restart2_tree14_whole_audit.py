@@ -22,6 +22,10 @@ from foliage_trees import geometry_hash
 from render_multiview_asset import render
 
 R=ROOT/'level-editor/work/croisement01-refinement/restart2';OUT=R/'tree14-whole-tree-v1'
+if '--' in sys.argv:
+ args=sys.argv[sys.argv.index('--')+1:]
+ assert len(args)==1
+ OUT=Path(args[0]).resolve();assert OUT.parent==R.resolve()
 acquire(slots=2)
 assert shutil.disk_usage(ROOT).free>10*1024**3
 assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024>6*1024**3

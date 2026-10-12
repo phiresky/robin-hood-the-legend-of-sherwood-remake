@@ -1,5 +1,6 @@
 """Read-only regional terrain measurements for the complete northern wood group."""
 import json
+import hashlib
 import math
 from pathlib import Path
 import shutil
@@ -12,7 +13,9 @@ from mathutils.bvhtree import BVHTree
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'level-editor/refinement'))
 from render_slots import acquire
-from evidence_io import sha
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 BASE = ROOT / 'level-editor/work/croisement01-refinement/restart2'
 PLAN = BASE / 'northern-wood-construction-plan-v1'
