@@ -3,7 +3,7 @@ import json,math,hashlib
 from pathlib import Path
 from collections import Counter
 import numpy as np
-R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-east-loft-cpu-v5';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
+R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-east-loft-cpu-v7';S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 def main():
  O.mkdir(exist_ok=False);inp=B/'bank-sidewall-cpu-v1/geometry.json';data=json.loads(inp.read_text());mesh=data['52'];traces={t['id']:[mesh['vertices'][i]for i in t['vertices']]for t in mesh['traces']};xs=[560,575,587,590,594,596,603,606,610,613,616];rings=[];names=[]
  def ring(height,front,name):
@@ -14,8 +14,14 @@ def main():
  ring(85,[(560,292),(575,281),(590,274),(603,276),(610,281),(613,285),(616,286)],'upper inferred shoulder')
  left={'east-upper-block-upper':300.,'east-upper-block-lower':301.5,'east-middle-block-upper':330.,'east-middle-block-lower':331.5,'east-low-block-upper':340.,'east-low-block-lower':341.5}
  for name in left:
-  points=traces[name];height=points[0][2]*C;native=[[p[0],-p[1]*S]for p in points];front=[[560,left[name]],[575,(left[name]+native[0][1])/2],[587,native[0][1]-7],[590,native[0][1]-15]]+native+[[616,native[-1][1]-2]];ring(height,front,name)
+  points=traces[name];height={'east-upper-block-upper':75.,'east-upper-block-lower':67.5,'east-middle-block-upper':54.,'east-middle-block-lower':43.5,'east-low-block-upper':34.,'east-low-block-lower':21.5}[name];native=[[p[0],-p[1]*S-p[2]*C+height]for p in points];front=[[560,left[name]],[575,(left[name]+native[0][1])/2],[587,native[0][1]-7],[590,native[0][1]-15]]+native+[[616,native[-1][1]-2]];ring(height,front,name)
  ring(0,[(560,350),(575,345),(590,334),(603,323),(610,320),(616,317)],'inferred lower closure')
+ expanded=[];expanded_names=[]
+ for i,ring in enumerate(rings):
+  expanded.append(ring);expanded_names.append(names[i])
+  if i in (1,2,3,4,5):
+   a=np.array(ring);b=np.array(rings[i+1]);gap=float(np.min(a[:,2]-b[:,2]));assert gap>0;belly=i in (1,3,5);distance=min(3. if belly else 5.,gap*.25/S)*(1 if belly else -1);expanded.append(((a+b)/2+np.array([0.,-C,S])*distance).tolist());expanded_names.append('inferred rounded course' if belly else 'inferred recessed riser')
+ rings=expanded;names=expanded_names
  v=np.array(rings).reshape((-1,3)).tolist();n=len(rings[0]);faces=[]
  for row in range(len(rings)-1):
   for i in range(n):
@@ -42,7 +48,8 @@ def main():
  ec=Counter(tuple(sorted((a,b)))for f in faces for a,b in zip(f,f[1:]+f[:1]));assert set(ec.values())=={2}and len(v)-len(ec)+len(faces)==2 and volume>0
  errors=[]
  for name in left:
-  for p in traces[name]:errors.append(float(np.min(np.linalg.norm(np.array(v)-p,axis=1))))
+  for p in traces[name]:
+   native_point=np.array([p[0],-p[1]*S-p[2]*C]);projected=np.column_stack((np.array(v)[:,0],-np.array(v)[:,1]*S-np.array(v)[:,2]*C));errors.append(float(np.min(np.linalg.norm(projected-native_point,axis=1))))
  assert max(errors)<1e-7
- out={'vertices':v,'faces':faces,'volume':volume,'ring_names':names,'x_cut':565.,'source_anchor_error':max(errors),'input_sha256':hashlib.sha256(inp.read_bytes()).hexdigest(),'status':'PRIVATE_CLOSED_EASTERN_COURSES_CPU_ONLY','limits':['Replacing eastern52 body requires saved cut/union and all original first-hit guards.','Source anchors are exact; hidden rear bulk and outer shoulders are inferred.','No source ownership, material or gameplay changes authorized by this candidate.']};(O/'geometry.json').write_text(json.dumps(out,indent=2)+'\n');print({'rings':len(rings),'vertices':len(v),'closed':True,'source_anchor_error':max(errors)})
+ out={'vertices':v,'faces':faces,'volume':volume,'ring_names':names,'x_cut':565.,'source_anchor_error':max(errors),'previous_inferred_world':{name:traces[name]for name in left},'depth_provenance':'Coordinator-authorized correction of old sampled proxy heights; exact2D source anchors retained.','input_sha256':hashlib.sha256(inp.read_bytes()).hexdigest(),'status':'PRIVATE_CLOSED_EASTERN_COURSES_CPU_ONLY','limits':['Replacing eastern52 body requires saved cut/union and all original first-hit guards.','Source anchors are exact; hidden rear bulk and outer shoulders are inferred.','No source ownership, material or gameplay changes authorized by this candidate.']};(O/'geometry.json').write_text(json.dumps(out,indent=2)+'\n');print({'rings':len(rings),'vertices':len(v),'closed':True,'source_anchor_error':max(errors)})
 if __name__=='__main__':main()
