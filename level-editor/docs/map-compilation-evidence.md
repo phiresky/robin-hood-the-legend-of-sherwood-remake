@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Nottingham required postures and roof ownership (2026-10-12)
+
+The unchanged upright click report has 367 passes and 23 failures, but nine
+failures are expected posture restrictions: five samples on line 31 and four
+on line 53 attempt helper-required climbs without a helper. They are not nine
+broken unassisted routes. Fourteen other upright failures remain, covering
+overlay selection, unauthorized approaches and missing receivers.
+
+`refinement/check-required-jump-postures.mjs` isolates helper-required vertical
+pairs, retaining all physical geometry and recording the original line/zone
+mapping. Unused jump overlays are removed and indices rebuilt for the native
+fixture contract, so this is not a full-map overlay-interaction check.
+`required-jump-postures-liAiNd` selects original lines 30/31 and 52/53 from
+`saved-map-exports-9oPIj0`. Native click traversal with the required rider/helper
+postures passes 18/20 cases. The remaining failures map to line 52 at t=0.05
+(unauthorized approach) and line 53 at t=0.95 (missing receiver), the same
+courtyard-wall endpoint already present in the upright report. No gameplay
+restrictions or engine behavior were changed to make these checks pass.
+
+The thin slab failures on lines 64/65 expose a separate ownership issue. The
+point `[1594.2283,529.63116]` is outside the slab receiver's sector 248/layer 58,
+but inside the neighboring stone-house roof receiver, sector 246/layer 56.
+Asset-frame inspection identifies `nottingham-north-stone-house` surface
+`building-113-walk-0` beside the slab's `building-140-walk-0`. Their authored
+projected edges differ by approximately one grid unit and neither exposes a
+navigation join. The slab's movement area cannot supply the full character
+approach. Asset-local connection/contour repair requires moved-copy checks;
+no surface has been widened or rebound to a neighboring asset speculatively.
+
 ## Precise roof takeoff boundaries (2026-10-12)
 
 Diagnostic `roof-contact-bounds-KCAFHm` identifies the copied-roof rejection:
