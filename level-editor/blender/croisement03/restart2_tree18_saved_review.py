@@ -72,7 +72,7 @@ def main():
                            'intersection_faces':len(bm.faces),'closed':all(e.is_manifold for e in bm.edges)})
             bm.free();mesh=clone.data;bpy.data.objects.remove(clone,do_unlink=True);bpy.data.meshes.remove(mesh)
         report={'status':'HOLD_PRIVATE_WOOD_ANATOMY_AND_CONTACT_REVIEW','pins':pins,'native_union':len(union),
-                'blocked_native_union':len(blocked),'blocked_pixels':[{'xy':list(p),'hit':hit}for p,hit in blocked.items()],
+                'priority_measurement':'Current editor vertical-plane diagnostic only; authored native displayline priority is separate and not proved by these depths.','diagnostic_plane_native_ground_y':462,'blocked_native_union':len(blocked),'blocked_pixels':[{'xy':list(p),'hit':hit}for p,hit in blocked.items()],
                 'phase_blocked':[len(d&blocked.keys())for d in domains],'junction_intersections':joints,
                 'limits':['Exact saved geometry audit; static foliage, complete root contacts and runtime integration remain separate.',
                           'Four closed sweeps are not yet a united branching trunk. No bark or native leaf source assignment.']}

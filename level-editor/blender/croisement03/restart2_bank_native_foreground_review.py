@@ -25,6 +25,12 @@ def sha(path):
 
 
 def main():
+    global F,O
+    if '--folder' in sys.argv:
+        F = Path(sys.argv[sys.argv.index('--folder')+1]).resolve()
+        O = F / 'native-foreground-context-v1'
+    if '--out' in sys.argv:
+        O = Path(sys.argv[sys.argv.index('--out')+1]).resolve()
     guard.resources()
     guard.acquire(slots=2)
     try:

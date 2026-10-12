@@ -7,6 +7,7 @@ from render_slots import acquire,release
 import restart2_bank_whole_builder as whole
 import restart2_bank_full_v1 as base
 B=R/'level-editor/work/croisement03-refinement/restart2';CPU=B/'bank-boulder-fronts-cpu-v8';E=B/'bank-boulder-east-cpu-v8/geometry.json';OUT=B/'bank-boulder-fronts-saved-v3'
+W=None
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 def resources():
  assert shutil.disk_usage(R).free>=10*1024**3+32*1024**2
@@ -14,7 +15,7 @@ def resources():
 
 def main():
  proof=json.loads((CPU/'combined-source-guard.json').read_text());assert proof['status']=='PASS_SOURCE_CONSTRAINTS_CPU'
- for p in [CPU/'geometry.json',E]:assert proof['input_hashes'][str(p)]==sha(p)
+ for p in [CPU/'geometry.json',E]+([W]if W else []):assert proof['input_hashes'][str(p)]==sha(p)
  assert not OUT.exists();east=json.loads(E.read_text())
  # Adapt the independently executed combined ray result to the legacy builder's
  # input contract. Its post-Boolean check still runs against actual saved faces.
@@ -22,7 +23,7 @@ def main():
  (CPU/'cpu-crease-firsthits.json').write_text(json.dumps(contract,indent=2)+'\n')
  resources();acquire(slots=2)
  try:
-  resources();whole.O=CPU;original=base.main
+  resources();whole.O=CPU;whole.W=W;original=base.main
   def scoped_main():
    base.O=OUT;build=base.mesh_object
    def modified(name,points,scene):
@@ -37,6 +38,6 @@ def main():
     bm=bmesh.new();bm.from_mesh(obj.data);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));assert all(e.is_manifold for e in bm.edges);assert bm.calc_volume()>0;bm.to_mesh(obj.data);bm.free();obj.data.materials.clear();return obj
    base.mesh_object=modified;original()
   base.main=scoped_main;whole.run()
-  (OUT/'loft-inputs.json').write_text(json.dumps({'cpu_geometry_sha256':sha(CPU/'geometry.json'),'east_geometry_sha256':sha(E),'source_guard_sha256':sha(CPU/'combined-source-guard.json'),'status':'Saved construction only; visual anatomy and contacts remain required'},indent=2)+'\n')
+  (OUT/'loft-inputs.json').write_text(json.dumps({'cpu_geometry_sha256':sha(CPU/'geometry.json'),'east_geometry_sha256':sha(E),'private_west_geometry_sha256':sha(W)if W else None,'source_guard_sha256':sha(CPU/'combined-source-guard.json'),'status':'Saved construction only; visual anatomy and contacts remain required'},indent=2)+'\n')
  finally:release()
 if __name__=='__main__':main()

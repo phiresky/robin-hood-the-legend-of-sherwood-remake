@@ -4,6 +4,7 @@ from collections import Counter
 from pathlib import Path
 import numpy as np
 R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement';P=B/'restart2/bank-whole-source-plan-v1/plan.json';O=B/'restart2/bank-whole-geometry-plan-v4'
+W=None
 S=math.sin(math.radians(35));C=math.cos(math.radians(35))
 
 def inside(p,ring):
@@ -126,16 +127,17 @@ def run():
  import bpy,bmesh
  sys.path.insert(0,str(Path(__file__).parent));import restart2_bank_full_v1 as base
  proof=json.loads((O/'cpu-crease-firsthits.json').read_text());assert proof['blocked']==0 and proof['misses']==0 and proof['geometry_sha256']==hashlib.sha256((O/'geometry.json').read_bytes()).hexdigest()
- data=json.loads((O/'geometry.json').read_text());west=json.loads((B/'restart2/bank-continuous-strata-plan-v1/geometry.json').read_text());data['53']=west
+ data=json.loads((O/'geometry.json').read_text());west=json.loads((W or B/'restart2/bank-continuous-strata-plan-v1/geometry.json').read_text());data['53']=west
  assert data['guards']['plan_sha256']==hashlib.sha256(P.read_bytes()).hexdigest()
  baseline=B/'restart2/bank-continuous-strata-v1/worker.blend'
  assert data['guards']['baseline53_sha256']==hashlib.sha256(baseline.read_bytes()).hexdigest()
  base.O=B/'restart2/bank-whole-prototype-v3';interface={'geometry_plan':str(O/'geometry.json'),'geometry_plan_sha256':hashlib.sha256((O/'geometry.json').read_bytes()).hexdigest()}
+ if W:interface['private_revised53']={'path':str(W),'sha256':hashlib.sha256(W.read_bytes()).hexdigest(),'scope':'New private western whole-mass candidate; earlier baseline is preserved and is not silently redefined.'}
  def signature(obj):return ([list(v.co) for v in obj.data.vertices],sorted(tuple(sorted(f.vertices)) for f in obj.data.polygons))
  def build(name,points,scene):
   index=name.rsplit(' ',1)[1];d=data[index];mesh=bpy.data.meshes.new(name+' continuous surface');mesh.from_pydata(d['vertices'],[],d['faces']);mesh.update();obj=bpy.data.objects.new(name,mesh);scene.collection.objects.link(obj)
   bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.recalc_face_normals(bm,faces=list(bm.faces));assert all(e.is_manifold for e in bm.edges) and all(f.calc_area()>1e-8 for f in bm.faces);assert bm.calc_volume()>0;bm.to_mesh(mesh);bm.free()
-  if index=='53':
+  if index=='53' and W is None:
    with bpy.data.libraries.load(str(baseline),link=False) as (a,b):b.objects=['Candidate bank 53']
    reference=b.objects[0];assert signature(reference)==signature(obj),'Retained53 geometry differs';bpy.data.objects.remove(reference,do_unlink=True)
   if index=='54':
@@ -160,7 +162,7 @@ def run():
    for key in trees:
     m=bpy.data.objects['Candidate bank '+key].data;triangle_meshes[key]=([tuple(v.co) for v in m.vertices],[list(t.vertices) for t in m.loop_triangles])
    boundary_fallbacks=[];failures=[];sample_count=0;max_surface_error=0.
-   for key in ('52','54'):
+   for key in ('52','54')+ (('53',)if W else ()):
     for trace in data[key]['traces']:
      pts=[Vector(p) for p in trace.get('source_path_world',[data[key]['vertices'][i] for i in trace['vertices']])]
      for a,b in zip(pts,pts[1:]):
@@ -180,7 +182,7 @@ def run():
    interface['full_crease_guard']=dict(samples=sample_count,failures=failures,max_surface_error=max_surface_error,boundary_fallbacks=boundary_fallbacks,precision='Float32 BVH with independently intersected double-precision inclusive triangle edges only on null rays; barycentric tolerance1e-7')
    (base.O/'construction-crease-guard.json').write_text(json.dumps(interface,indent=2)+'\n')
    assert not failures,'Post-Boolean full-crease guard failed; no saved model or render'
-   interface.update(dict(retained53_exact=True,bank52_after_difference_vertices=len(owner.data.vertices),bank52_after_difference_faces=len(owner.data.polygons),fixed_crest_max_world_error=max(errors),status='PASS construction checks; saved native and oblique review pending'))
+   interface.update(dict(retained53_exact=W is None,candidate53_unchanged_during_interface_boolean=True,bank52_after_difference_vertices=len(owner.data.vertices),bank52_after_difference_faces=len(owner.data.polygons),fixed_crest_max_world_error=max(errors),status='PASS construction checks; saved native and oblique review pending'))
   return obj
  base.mesh_object=build;base.main();(base.O/'interface-construction.json').write_text(json.dumps(interface,indent=2)+'\n')
  assert sum(p.stat().st_size for p in base.O.rglob('*') if p.is_file())<32*1024**2
