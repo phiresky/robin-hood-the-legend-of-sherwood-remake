@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Explicit receiving seams survive fractional placement (2026-10-12)
+
+The moved roof assembly exposed an export defect separate from asset authoring.
+When a joined region could not recover its complete precise outer boundary,
+each receiving face fell back to an independently rounded contour. Explicit
+material/support partitioning then clipped those contours to authored coverage,
+leaving a roughly half-unit strip without any receiving floor at a shared seam.
+The moved probe `[655.5777,756.2111]` lay between its two intended receivers.
+
+Explicit receiving supports now retain each face's authored receiving contour.
+Implicit grid-joined floors retain their grid-coverage behavior. The focused
+sloped-seam regression fails with the previous condition and passes with the
+fix; all 238 compiler/export tests pass. Targeted lint passes. App typecheck
+passed initially, but a final run encounters concurrent unrelated work in
+`app/src/native-physical-effect-preview.ts:36` (TS1294, erasable syntax).
+No runtime behavior changes.
+
+`roof-slab-placements-YYg9sI` constructs all six 0/37/180-degree descriptors
+natively. Native clicks improve from 52/120 to 80/120: both 0-degree elevations
+pass 20/20, and all 28 missing-receiver failures disappear. The forty remaining
+failures concern rotated overlay selection, while the separate 90-degree join
+rejection still needs work. The roof-slab asset candidate remains unpublished.
+The existing generated-roof regression `prepared-roof-placements-0PnA2N` also
+passes its native click traversal check; its 90-degree narrow layout retains
+the established no-jump result. This run did not repeat ZIP/render verification.
+
 ## Unpublished roof-slab connection candidate (2026-10-12)
 
 Follow-up collision diagnostic `roof-approach-cuts-OZ6xeU` identifies the slab

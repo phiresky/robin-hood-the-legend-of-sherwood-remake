@@ -32,8 +32,9 @@ not certify full-map overlay interactions. See the
 [courtyard repair evidence](map-compilation-evidence.md#courtyard-wall-jump-inset-2026-10-12). All 239
 compiler/export tests passed at that stage. The subsequent copied-roof failure
 is repaired and verified above; full-map jump failures remain under review.
-The revised roof-slab candidate fixes its ten full-map samples, but passes only
-52/120 moved/copy checks and fails to compile the 90-degree join. It remains
+The revised roof-slab candidate fixes its ten full-map samples. An export fix
+for fractional receiving seams improves moved/copy checks to 80/120; rotated
+overlay selection and the 90-degree join still fail. It remains
 unpublished; see the [candidate evidence](map-compilation-evidence.md#unpublished-roof-slab-connection-candidate-2026-10-12).
 See [partition verification](map-compilation-evidence.md#compiled-jump-receiving-face-partitions-2026-10-12).
 

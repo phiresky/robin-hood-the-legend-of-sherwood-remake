@@ -2653,6 +2653,59 @@ test("grid-joined floors retain receiver coverage at their walking boundary", ()
   }
 });
 
+test("explicit joined roof receivers retain their fractional shared seam", () => {
+  const { document, assets, hut } = multiPlaneRegionCompilerFixture();
+  hut.gameplay!.surfaces.forEach((surface, index) => {
+    const outline = index
+      ? [
+          [-9, -29],
+          [4, -39],
+          [71, -85],
+          [72, -84],
+          [85, -51],
+          [83, -49],
+          [17, 26],
+          [9, 21],
+          [7, 22],
+          [0, 0],
+          [2, -1],
+        ]
+      : [
+          [-13, 6],
+          [0, 0],
+          [7, 22],
+          [-6, 26],
+        ];
+    const projected: [number, number][] = outline.map(([x, y]) => [x! + 100.4356, y! + 100.655]);
+    const heights = projected.map(
+      ([x, y]) => 20 + 0.1 * x + (index ? 0.1 * (x - 100.4356 - ((y - 100.655) * 7) / 22) : 0),
+    );
+    surface.height = heights;
+    surface.polygon = projected.map(([x, y], i) => [x, y + heights[i]!]);
+    surface.projectionMaterials = { defaultMaterial: 2, regions: [] };
+    surface.preserveMovementBoundary = true;
+  });
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.equal(compiled.motion_data.layers.flat().length, 1);
+  const receivers = compiled.sight_obstacles.filter((shape) =>
+    Array.isArray(shape.projection_area),
+  );
+  for (const t of [0.1, 0.3, 0.5, 0.7, 0.9])
+    for (const inset of [-0.01, 0, 0.01]) {
+      const probe: [number, number] = [400.4356 + t * 7 + inset, 400.655 + t * 22];
+      assert.ok(
+        receivers.some((receiver) =>
+          pointInGameplayPolygon(
+            probe,
+            receiver.points.map((p) => [p.x, p.y - p.z_top]),
+            true,
+          ),
+        ),
+        `joined receiving seam has a gap at ${probe}`,
+      );
+    }
+});
+
 test("a rotated authored loop exports connected floors without an explicit precision flag", () => {
   const { document, assets, hut } = assetCompilerFixture();
   const surface = (
