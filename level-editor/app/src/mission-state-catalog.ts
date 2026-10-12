@@ -137,7 +137,11 @@ export async function loadMissionStatePreview(
     level: level as ProtoLevel,
     camera: { kind: "oblique-orthographic", elevation_deg: native.camera_elevation_deg },
   };
-  await verifyNativePresentationSource(native, source);
+  await verifyNativePresentationSource(
+    native,
+    source,
+    loop ? (contract as NativeLoopPreviewContract).initial_context : undefined,
+  );
   if (loop && (contract as NativeLoopPreviewContract).physical)
     await resolveMissionStateTargets((contract as NativeLoopPreviewContract).physical!, source);
   let aperture: StateApertureManifest | undefined;

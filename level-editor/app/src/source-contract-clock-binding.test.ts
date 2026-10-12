@@ -288,3 +288,59 @@ test("physical map animation follows its own native clock without replacing miss
   assert.throws(() => validateNativeLoopPreview(invalidReplacement), /static replacement/);
   clocks.dispose();
 });
+
+test("explicit initial context preserves idle nonloop artwork without giving it a clock", async () => {
+  const f = await fixture();
+  Object.assign(f.source.level, { patches: [], element_chunk_order: ["Animation", "Patch"] });
+  Object.assign(f.source.data, {
+    mission_patches: [],
+    civilians: [],
+    pcs_to_rescue: [],
+    soldiers: [],
+    element_chunk_order: ["Patch", "Element", "Bonus", "Scroll", "Mobile"],
+    element_group_order: ["Animal", "BeamMe", "Civilian", "PcToRescue", "Soldier", "Target"],
+  });
+  f.native.mission_data_sha256 = f.physical.mission_data_sha256 = await missionStateDataHash(
+    f.source.data,
+  );
+  f.native.level_data_sha256 = f.physical.level_data_sha256 = await missionStateDataHash(
+    f.source.level,
+  );
+  const idle = f.native.elements.find((e) => e.id === "sign4")!;
+  idle.loop = false;
+  idle.active = false;
+  idle.initial_frame = { ...idle.frames[0]!, path: "stationary-outside-transition.png" };
+  f.physical.targets.pop();
+  const contract = {
+    version: 1,
+    scope: "controlled-native-loop-preview",
+    native: f.native,
+    physical: f.physical,
+    focus_element_id: "animation12",
+    initial_context: "immutable-source-initial",
+  };
+  assert.throws(
+    () => validateNativeLoopPreview({ ...contract, initial_context: undefined }),
+    /independent loops/,
+  );
+  validateNativeLoopPreview(contract);
+  const clocks = new SourceContractClockBinding();
+  await assert.rejects(clocks.set(f.native, f.physical, f.source), /patch activation/);
+  await clocks.set(f.native, f.physical, f.source, [], "immutable-source-initial");
+  const before = clocks.snapshot().find((e) => e.id === idle.id);
+  clocks.setAllPlaying(true);
+  clocks.advance(0, 2);
+  assert.equal(clocks.snapshot().find((e) => e.id === "animation12")!.tick, 50);
+  assert.deepEqual(
+    clocks.snapshot().find((e) => e.id === idle.id),
+    before,
+  );
+  for (const action of [
+    () => clocks.seek(idle.id, 5),
+    () => clocks.setPlaying(idle.id, true),
+    () => clocks.setActive(idle.id, true),
+    () => clocks.resourceToken(idle.id),
+  ])
+    assert.throws(action, /Immutable source initial context/);
+  clocks.dispose();
+});

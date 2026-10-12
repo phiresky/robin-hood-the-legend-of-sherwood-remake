@@ -682,3 +682,160 @@ test("physical loop pixel substitution uses native composition without changing 
   p.setElementState("sign", false);
   assert.throws(() => p.composeLoopSnapshot(snapshot), /Retired/);
 });
+
+async function initialContextSource(f: Awaited<ReturnType<typeof fixture>>) {
+  Object.assign(f.source.level, { element_chunk_order: ["Animation", "Patch"] });
+  f.source.level.patches ??= [];
+  Object.assign(f.source.data, {
+    element_chunk_order: ["Patch", "Element", "Bonus", "Scroll", "Mobile"],
+    element_group_order: ["Animal", "BeamMe", "Civilian", "PcToRescue", "Soldier", "Target"],
+    civilians: [],
+    pcs_to_rescue: [],
+    soldiers: [],
+  });
+  f.source.data.mission_patches ??= [];
+  const ranks = new Map<string, number>();
+  let rank = 0;
+  for (const [kind, rows] of [
+    ["map-animation", f.source.level.animations],
+    ["map-patch", f.source.level.patches],
+    ["mission-patch", f.source.data.mission_patches],
+    ["mission-target", f.source.data.targets],
+  ] as const)
+    (rows as object[]).forEach((_, i) => ranks.set(`${kind}:${i}`, rank++));
+  for (const row of [...f.contract.elements, ...(f.contract.patch_states ?? [])])
+    row.creation_order = ranks.get(`${row.source.kind}:${row.source.index}`)!;
+  f.contract.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  f.contract.level_data_sha256 = await missionStateDataHash(f.source.level);
+}
+
+test("immutable initial background art follows ambient FX insertion order and never enters transition", async () => {
+  const f = await fixture();
+  const frames = f.contract.elements[0]!.frames;
+  f.contract.elements[0]!.active = false;
+  const animation = {
+    active: true,
+    sprite: { position_x: 0, position_y: 0, elevation: 0 },
+    display_polyline: [],
+  };
+  f.source.level.animations = [animation] as unknown as typeof f.source.level.animations;
+  f.contract.elements.push({
+    ...f.contract.elements[0]!,
+    id: "ambient",
+    active: true,
+    frames: [frames[0]!],
+    source: { kind: "map-animation", index: 0, sha256: await missionStateDataHash(animation) },
+    creation_order: 1,
+  });
+  const patch = {
+    integrate_in_background: true,
+    definitive: false,
+    start_animation_valid: true,
+    transition_animation_valid: true,
+    end_animation_valid: false,
+    element_fx: { active: true, sprite: { position_x: 0, position_y: 0, elevation: 0 } },
+  };
+  f.source.data.mission_patches = [patch];
+  f.contract.background_states = [
+    {
+      id: "receiver",
+      source: { kind: "mission-patch", index: 0, sha256: await missionStateDataHash(patch) },
+      display_position: [0, 0],
+      restore_bounds: [0, 0, 2, 2],
+      definitive: false,
+      initial: [frames[1]!, frames[0]!],
+      transition: [frames[0]!],
+      final: [],
+      initial_loop: true,
+      final_loop: false,
+    },
+  ];
+  await initialContextSource(f);
+  const p = new NativeStatePresentation();
+  await p.set(f.contract, f.source, f.read, "immutable-source-initial");
+  for (const tick of [0, 2, 50, 0]) {
+    p.seek(tick);
+    assert.deepEqual(
+      [...p.pixels().data.slice(0, 3)],
+      [0, 200, 0],
+      "initial receiver paints after red ambient FX, without advancing its initial loop",
+    );
+    assert.deepEqual(p.composeLoopSnapshot(p.loopDrawSnapshot()).data, p.pixels().data);
+    assert.equal(
+      p.loopDrawSnapshot().draws.find((d) => d.element.id === "receiver")!.sourceTick,
+      0,
+    );
+  }
+  assert.throws(() => p.setBackgroundState("receiver", "forward"), /Immutable/);
+  patch.element_fx.active = false;
+  f.contract.background_states![0]!.source.sha256 = await missionStateDataHash(patch);
+  f.contract.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  await p.set(f.contract, f.source, f.read, "immutable-source-initial");
+  assert.deepEqual(
+    [...p.pixels().data.slice(0, 3)],
+    [200, 0, 0],
+    "a valid initial animation does not activate inactive source FX",
+  );
+  assert.equal(
+    p.loopDrawSnapshot().draws.some((d) => d.element.id === "receiver"),
+    false,
+  );
+  p.dispose();
+});
+
+test("immutable context retains stationary inactive artwork outside transition frames and rejects state mutation", async () => {
+  const f = await fixture();
+  const e = f.contract.elements[0]!;
+  e.loop = false;
+  e.active = false;
+  e.initial_frame = e.frames[1];
+  e.frames = [e.frames[0]!];
+  await initialContextSource(f);
+  const p = new NativeStatePresentation();
+  await p.set(f.contract, f.source, f.read, "immutable-source-initial");
+  p.seek(100);
+  assert.deepEqual([...p.pixels().data.slice(0, 3)], [0, 200, 0]);
+  const draw = p.loopDrawSnapshot().draws[0]!;
+  assert.equal(draw.sourceActive, false);
+  assert.equal(draw.sourceTick, 0);
+  assert.equal(draw.element.frames[0]!.path, e.initial_frame!.path);
+  assert.throws(() => p.seek(3, e.id), /Immutable/);
+  assert.throws(() => p.setElementState(e.id, true), /Immutable/);
+  assert.throws(
+    () =>
+      p.sampleExternalClocks(
+        [{ id: e.id, source: e.source, tick: 1, active: false, playing: false, frame: 0 }],
+        e.id,
+      ),
+    /Immutable/,
+  );
+  const wrongRank = structuredClone(f.contract);
+  wrongRank.elements[0]!.creation_order = 99;
+  await assert.rejects(
+    p.set(wrongRank, f.source, f.read, "immutable-source-initial"),
+    /construction rank differs/,
+  );
+  assert.equal(p.ready, false);
+  p.dispose();
+});
+
+test("immutable ordered patch context retains source identity, first frame and foreground priority", async () => {
+  const f = await transientFixture();
+  const state = f.contract.patch_states![0]!;
+  const patch = (f.source.data.mission_patches as { start_animation_valid: boolean }[])[0]!;
+  patch.start_animation_valid = true;
+  state.source.sha256 = await missionStateDataHash(patch);
+  state.initial = [state.final[1]!, state.transition[0]!];
+  await initialContextSource(f);
+  const p = new NativeStatePresentation();
+  await p.set(f.contract, f.source, f.read, "immutable-source-initial");
+  for (const tick of [0, 20]) {
+    p.seek(tick);
+    assert.deepEqual([...p.pixels().data.slice(0, 3)], [0, 0, 200]);
+    const draw = p.loopDrawSnapshot().draws.find((d) => d.element.id === state.id)!;
+    assert.deepEqual(draw.element.source, state.source);
+    assert.equal(draw.sourceTick, 0);
+  }
+  assert.throws(() => p.setPatchState(state.id, "forward"), /Immutable/);
+  p.dispose();
+});

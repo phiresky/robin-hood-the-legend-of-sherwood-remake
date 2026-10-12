@@ -163,3 +163,42 @@ test("pixel-empty background effects never enter the foreground polyline merge",
   assert.equal(prepared.draws.length, 1);
   composition.dispose();
 });
+
+test("initial patch FX keeps its source background rank before actors", () => {
+  const composition = new NativeActorComposition({
+    epoch: 3,
+    mission: "S03_FoB_MP",
+    creationRanks: new Map([
+      ["map-animation:0", 0],
+      ["mission-patch:0", 24],
+      ["soldiers:0", 40],
+    ]),
+    backgroundEffects: new Set(["map-animation:0", "mission-patch:0"]),
+  });
+  const initial = structuredClone(loop);
+  const base = initial.draws[0]!;
+  initial.draws = [
+    {
+      ...base,
+      element: {
+        ...base.element,
+        id: "patch",
+        source: { kind: "mission-patch", index: 0, sha256: "a".repeat(64) },
+        display_order: -900,
+      },
+    },
+    {
+      ...base,
+      element: {
+        ...base.element,
+        id: "ambient",
+        source: { kind: "map-animation", index: 0, sha256: "b".repeat(64) },
+        display_order: 900,
+      },
+    },
+  ];
+  const prepared = composition.prepare(initial, snapshot);
+  assert.deepEqual(prepared.identities, ["map-animation:0", "mission-patch:0", "soldiers:0"]);
+  assert.equal(prepared.draws[0]!.pixels, base.pixels);
+  composition.dispose();
+});

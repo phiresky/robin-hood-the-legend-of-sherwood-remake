@@ -157,6 +157,14 @@ export async function bindInitialActorSource(
   level.animations.forEach((animation, index) => {
     if (animation.sprite.elevation === 0) backgroundEffects.add(`map-animation:${index}`);
   });
+  for (const [kind, rows] of [
+    ["map-patch", level.patches],
+    ["mission-patch", missionPatches],
+  ] as const)
+    rows.forEach((patch, index) => {
+      const fx = patch.element_fx as { sprite?: { elevation?: number } } | undefined;
+      if (fx?.sprite?.elevation === 0) backgroundEffects.add(`${kind}:${index}`);
+    });
   const membership = initialActorMaskMembership(level.masks, [
     ...level.patches,
     ...missionPatches.map((patch) => ({

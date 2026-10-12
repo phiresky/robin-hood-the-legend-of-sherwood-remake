@@ -2038,3 +2038,51 @@ test("disabling actor preview retains the selected physical source-camera compos
   viewport.nativePreviewPixels = sample;
   viewport.dispose();
 });
+
+test("native loop viewport passes explicit immutable startup context through the production loader", async () => {
+  const f = await deliveredFixture();
+  const { missionStateDataHash } = await import("./mission-state-layer.ts");
+  const native = f.contract.native;
+  const target = structuredClone((f.source.data.targets as object[])[0]!);
+  (f.source.data.targets as object[]).push(target);
+  Object.assign(f.source.data, {
+    mission_patches: [],
+    civilians: [],
+    pcs_to_rescue: [],
+    soldiers: [],
+    element_chunk_order: ["Patch", "Element", "Bonus", "Scroll", "Mobile"],
+    element_group_order: ["Animal", "BeamMe", "Civilian", "PcToRescue", "Soldier", "Target"],
+  });
+  Object.assign(f.source.level, { element_chunk_order: ["Animation", "Patch"] });
+  native.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  native.level_data_sha256 = await missionStateDataHash(f.source.level);
+  native.elements.push({
+    ...structuredClone(native.elements[0]!),
+    id: "loop",
+    active: true,
+    loop: true,
+    creation_order: 1,
+    source: { kind: "mission-target", index: 1, sha256: await missionStateDataHash(target) },
+  });
+  const contract: import("../../shared/src/state-delivery.ts").NativeLoopPreviewContract = {
+    version: 1,
+    scope: "controlled-native-loop-preview",
+    native,
+    focus_element_id: "loop",
+    initial_context: "immutable-source-initial",
+  };
+  assert.equal(await f.viewport.setNativeLoopPresentation(contract, f.library, f.source), true);
+  const art = (
+    f.viewport as unknown as {
+      nativeArt: import("./native-state-presentation.ts").NativeStatePresentation;
+    }
+  ).nativeArt;
+  art.seek(40, "loop");
+  const idle = art.loopDrawSnapshot().draws.find((row) => row.element.id === "target")!;
+  assert.equal(idle.sourceTick, 0);
+  assert.equal(idle.sourceActive, false);
+  assert.throws(() => art.setElementState("target", true), /Immutable/);
+  f.viewport.clearNativeArtPresentation();
+  assert.equal(art.ready, false);
+  f.viewport.dispose();
+});

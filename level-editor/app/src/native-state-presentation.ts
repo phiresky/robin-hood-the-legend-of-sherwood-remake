@@ -7,6 +7,8 @@ import {
   nativeTransientPatchFrame,
   nativePatchBackgroundFrame,
   type NativePresentationElement,
+  type NativeInitialContextMode,
+  type NativePatchState,
   validateNativeStatePresentation,
   type NativeImageResource,
   type NativeShadowKey,
@@ -21,15 +23,18 @@ export interface NativePixels {
   height: number;
   data: Uint8Array;
 }
+export type NativeLoopDrawElement = Omit<NativePresentationElement, "source"> & {
+  source: NativePresentationElement["source"] | NativePatchState["source"];
+};
 export interface NativeLoopDrawSnapshot {
   revision: number;
   mission: string;
   origin: [number, number];
   background: NativePixels;
   /** Active pixel-empty effects still participate in display ordering. */
-  orderOnly?: NativePresentationElement[];
+  orderOnly?: NativeLoopDrawElement[];
   draws: {
-    element: NativePresentationElement;
+    element: NativeLoopDrawElement;
     frame: number;
     /** Present on production snapshots; retained separately from stationary initial artwork. */
     sourceTick?: number;
@@ -148,8 +153,12 @@ function backgroundEffectIds(
 export async function verifyNativePresentationSource(
   contract: NativeStatePresentationContract,
   source: MissionStateSource,
+  initialContext?: NativeInitialContextMode,
 ) {
   validateNativeStatePresentation(contract);
+  if (initialContext !== undefined && initialContext !== "immutable-source-initial")
+    throw new Error("Invalid immutable source initial context");
+  const initialRanks = initialContext ? initialContextRanks(source) : undefined;
   if (
     contract.mission !== source.name ||
     contract.camera_elevation_deg !== source.camera.elevation_deg ||
@@ -172,6 +181,11 @@ export async function verifyNativePresentationSource(
   if (!Array.isArray(targets)) throw new Error("Native artwork preview has no mission targets");
   const seenAnimations = new Set<number>();
   for (const element of contract.elements) {
+    if (
+      initialRanks &&
+      element.creation_order !== initialRanks.get(`${element.source.kind}:${element.source.index}`)
+    )
+      throw new Error(`Immutable initial element construction rank differs: ${element.id}`);
     const raw =
       element.source.kind === "map-animation"
         ? source.level.animations[element.source.index]
@@ -245,8 +259,9 @@ export async function verifyNativePresentationSource(
     };
     const sprite = fx?.sprite,
       center = state.profile.center;
-    const creation =
-      state.source.kind === "map-patch"
+    const creation = initialRanks
+      ? initialRanks.get(`${state.source.kind}:${state.source.index}`)
+      : state.source.kind === "map-patch"
         ? state.source.index
         : source.level.patches.length +
           source.level.animations.length +
@@ -296,12 +311,41 @@ export async function verifyNativePresentationSource(
   );
 }
 
+/** Exact supported construction stream; retained context never acquires an animation clock. */
+function initialContextRanks(source: MissionStateSource) {
+  if (
+    JSON.stringify(
+      (source.level as typeof source.level & { element_chunk_order?: unknown }).element_chunk_order,
+    ) !== JSON.stringify(["Animation", "Patch"]) ||
+    JSON.stringify(source.data.element_chunk_order) !==
+      JSON.stringify(["Patch", "Element", "Bonus", "Scroll", "Mobile"]) ||
+    JSON.stringify(source.data.element_group_order) !==
+      JSON.stringify(["Animal", "BeamMe", "Civilian", "PcToRescue", "Soldier", "Target"])
+  )
+    throw new Error("Unsupported immutable initial context construction order");
+  const ranks = new Map<string, number>();
+  let rank = 0;
+  const add = (kind: string, rows: unknown) => {
+    if (!Array.isArray(rows)) throw new Error(`Missing immutable context source rows: ${kind}`);
+    rows.forEach((_, index) => ranks.set(`${kind}:${index}`, rank++));
+  };
+  add("map-animation", source.level.animations);
+  add("map-patch", source.level.patches);
+  add("mission-patch", source.data.mission_patches);
+  for (const family of ["civilians", "pcs_to_rescue", "soldiers", "targets"])
+    add(family === "targets" ? "mission-target" : family, source.data[family]);
+  return ranks;
+}
+
 /** Resource ownership and integer timing; the containing viewport owns the only clock. */
 export class NativeStatePresentation {
   private epoch = 0;
   private disposed = false;
   private images = new Map<string, NativePixels>();
   private contract: NativeStatePresentationContract | undefined;
+  private initialContext: NativeInitialContextMode | undefined;
+  private initialElements: NativeLoopDrawElement[] = [];
+  private initialRanks = new Map<string, number>();
   private offsets = new Map<string, number>();
   private coverApplied = new Set<string>();
   private visibleElements = new Map<string, boolean>();
@@ -333,6 +377,9 @@ export class NativeStatePresentation {
     this.epoch++;
     this.images.clear();
     this.contract = undefined;
+    this.initialContext = undefined;
+    this.initialElements = [];
+    this.initialRanks.clear();
     this.offsets.clear();
     this.activeElements.clear();
     this.backgroundEffectIds.clear();
@@ -353,14 +400,17 @@ export class NativeStatePresentation {
     contract: NativeStatePresentationContract,
     source: MissionStateSource,
     read: NativeResourceReader,
+    initialContext?: NativeInitialContextMode,
   ) {
     if (this.disposed) throw new Error("Native artwork preview is disposed");
     this.clear();
+    if (initialContext !== undefined && initialContext !== "immutable-source-initial")
+      throw new Error("Invalid immutable source initial context");
     const epoch = this.epoch,
       frozen = structuredClone(contract),
       frozenSource = structuredClone(source);
     try {
-      await verifyNativePresentationSource(frozen, frozenSource);
+      await verifyNativePresentationSource(frozen, frozenSource, initialContext);
     } catch (error) {
       if (this.disposed || epoch !== this.epoch) return false;
       throw error;
@@ -467,6 +517,44 @@ export class NativeStatePresentation {
     }
     this.verifiedDisjointPair = pair;
     this.backgroundEffectIds = backgroundEffectIds(frozen, frozenSource);
+    if (initialContext) {
+      this.initialRanks = initialContextRanks(frozenSource);
+      const rank = (source: NativeLoopDrawElement["source"]) => {
+        const value = this.initialRanks.get(`${source.kind}:${source.index}`);
+        if (value === undefined) throw new Error("Missing immutable initial context rank");
+        return value;
+      };
+      for (const element of frozen.elements)
+        if (this.backgroundEffectIds.has(element.id))
+          this.backgroundEffectIds.set(element.id, rank(element.source));
+      for (const state of [...(frozen.background_states ?? []), ...(frozen.patch_states ?? [])]) {
+        const rows =
+          state.source.kind === "map-patch"
+            ? frozenSource.level.patches
+            : frozenSource.data.mission_patches;
+        const raw = (rows as { element_fx: { active: boolean } }[])[state.source.index]!;
+        if (typeof raw.element_fx?.active !== "boolean")
+          throw new Error("Missing initial patch activity");
+        const patch = "layer" in state;
+        const frame = patch
+          ? nativeTransientPatchFrame(state, "initial", 0)
+          : nativeBackgroundFrames(state, "initial", 0)[0];
+        if (!raw.element_fx.active || !frame) continue;
+        const background = !patch || state.layer === "background";
+        if (background) this.backgroundEffectIds.set(state.id, rank(state.source));
+        this.initialElements.push({
+          ...state,
+          active: true,
+          loop: false,
+          frames: [frame],
+          creation_order: rank(state.source),
+          sort_position: patch ? state.sort_position : [...state.display_position],
+          display_order: patch ? state.display_order : state.display_position[1],
+          polyline: patch ? state.polyline : [],
+        });
+      }
+      this.initialContext = initialContext;
+    }
     this.contract = frozen;
     this.images = images;
     this.revision++;
@@ -501,6 +589,8 @@ export class NativeStatePresentation {
     this.playing = value;
   }
   setElementState(id: string, active: boolean, tick = 0) {
+    if (this.initialContext && this.contract?.elements.some((e) => e.id === id && !e.loop))
+      throw new Error("Immutable source initial context cannot change element state");
     if (this.externalClock) throw new Error("External source clock owns element state");
     if (!this.contract?.elements.some((e) => e.id === id))
       throw new Error(`Unknown native preview element: ${id}`);
@@ -511,6 +601,8 @@ export class NativeStatePresentation {
     this.revision++;
   }
   setBackgroundState(id: string, phase: NativeBackgroundPhase, tick = 0) {
+    if (this.initialContext)
+      throw new Error("Immutable source initial context cannot change background state");
     const state = this.contract?.background_states?.find((s) => s.id === id);
     if (!state) throw new Error(`Unknown native background state: ${id}`);
     if (
@@ -524,6 +616,8 @@ export class NativeStatePresentation {
     this.revision++;
   }
   setPatchState(id: string, phase: NativeBackgroundPhase, tick = 0) {
+    if (this.initialContext)
+      throw new Error("Immutable source initial context cannot change patch state");
     const state = this.contract?.patch_states?.find((s) => s.id === id);
     if (!state) throw new Error(`Unknown native patch state: ${id}`);
     nativePatchBackgroundFrame(state, phase, tick);
@@ -532,6 +626,8 @@ export class NativeStatePresentation {
     this.revision++;
   }
   seek(tick: number, id?: string) {
+    if (id && this.initialContext && this.contract?.elements.some((e) => e.id === id && !e.loop))
+      throw new Error("Immutable source initial context cannot be sought");
     if (this.externalClock) throw new Error("External source clock owns seek");
     if (!this.contract) throw new Error("Native artwork preview is not loaded");
     if (!Number.isSafeInteger(tick) || tick < 0) throw new Error("Invalid native preview tick");
@@ -550,13 +646,23 @@ export class NativeStatePresentation {
   /** Atomic read-only clock consumption; patch activation keeps its separate timing path. */
   sampleExternalClocks(rows: ReturnType<SourceContractClockBinding["snapshot"]>, focus: string) {
     if (!this.contract) throw new Error("Native artwork preview is not loaded");
-    if (this.contract.patch_states?.length || this.contract.background_states?.length)
+    if (
+      !this.initialContext &&
+      (this.contract.patch_states?.length || this.contract.background_states?.length)
+    )
       throw new Error("Loop clock snapshots cannot own patch timing");
     const byId = new Map(rows.map((r) => [r.id, r]));
     if (byId.size !== rows.length || rows.length !== this.contract.elements.length)
       throw new Error("External source clock inventory differs");
     for (const e of this.contract.elements) {
       const r = byId.get(e.id);
+      if (
+        this.initialContext &&
+        !e.loop &&
+        r &&
+        (r.tick !== 0 || r.active !== e.active || r.playing || r.visible === false)
+      )
+        throw new Error("Immutable source initial context cannot consume a changed clock");
       if (
         !r ||
         r.source.kind !== e.source.kind ||
@@ -604,8 +710,8 @@ export class NativeStatePresentation {
   loopSourceBinding() {
     if (
       !this.contract ||
-      this.contract.patch_states?.length ||
-      this.contract.background_states?.length
+      (!this.initialContext &&
+        (this.contract.patch_states?.length || this.contract.background_states?.length))
     )
       throw new Error("Native loop source is not ready or has unsupported patch ownership");
     const contract = this.contract;
@@ -619,18 +725,24 @@ export class NativeStatePresentation {
   loopDrawSnapshot(): NativeLoopDrawSnapshot {
     const contract = this.contract;
     if (!contract) throw new Error("Native artwork preview is not loaded");
-    if (contract.patch_states?.length || contract.background_states?.length)
+    if (
+      !this.initialContext &&
+      (contract.patch_states?.length || contract.background_states?.length)
+    )
       throw new Error("Actor loop composition cannot infer patch or background state ownership");
     const draws: NativeLoopDrawSnapshot["draws"] = [];
-    const orderOnly: NativePresentationElement[] = [];
-    for (const original of contract.elements) {
+    const orderOnly: NativeLoopDrawElement[] = [];
+    for (const original of [...contract.elements, ...this.initialElements]) {
       if (this.visibleElements.get(original.id) === false) continue;
       const active = this.activeElements.get(original.id) ?? original.active;
       const element =
         !active && original.initial_frame
           ? { ...original, active: true, frames: [original.initial_frame], loop: false }
           : { ...original, active };
-      const sourceTick = Math.max(0, this.currentTick + (this.offsets.get(element.id) ?? 0));
+      const sourceTick =
+        this.initialContext && !original.loop
+          ? 0
+          : Math.max(0, this.currentTick + (this.offsets.get(element.id) ?? 0));
       const frame = nativePresentationFrame(element, sourceTick);
       if (frame < 0) {
         if (element.active && element.frames.length === 0) orderOnly.push(element);
@@ -665,7 +777,10 @@ export class NativeStatePresentation {
       snapshot.revision !== this.revision
     )
       throw new Error("Retired physical loop snapshot");
-    if (this.contract.patch_states?.length || this.contract.background_states?.length)
+    if (
+      !this.initialContext &&
+      (this.contract.patch_states?.length || this.contract.background_states?.length)
+    )
       throw new Error("Physical loop substitution cannot own patch composition");
     const pixels = { ...snapshot.background, data: new Uint8Array(snapshot.background.data) };
     const byId = new Map(snapshot.draws.map((d) => [d.element.id, d]));
@@ -686,6 +801,11 @@ export class NativeStatePresentation {
   pixels(): NativePixels {
     if (!this.contract) throw new Error("Native artwork preview is not loaded");
     if (this.cached?.revision === this.revision) return this.cached.pixels;
+    if (this.initialContext) {
+      const pixels = this.composeLoopSnapshot(this.loopDrawSnapshot());
+      this.cached = { revision: this.revision, pixels };
+      return pixels;
+    }
     const background = this.currentBackground();
     const pixels = {
       width: background.width,

@@ -20,6 +20,8 @@ export type NativePresentationFrame = NativeImageResource & {
   delay: number;
   shadow_key?: NativeShadowKey;
 };
+/** Fixed startup context for a loop preview, never patch/transition clock ownership. */
+export type NativeInitialContextMode = "immutable-source-initial";
 export type NativeBackgroundPhase = "initial" | "forward" | "applied" | "reverse";
 /** Independently restored background regions; overlapping regions require another contract. */
 export interface NativeBackgroundState {

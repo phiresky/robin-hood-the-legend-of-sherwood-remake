@@ -28,6 +28,16 @@ test("actual S03 stream includes invisible patches and binds layer-local mask re
   );
   assert.deepEqual(got.gridSize, [28, 22]);
   assert.ok(got.authority.backgroundEffects.has("map-animation:12"));
+  for (const [kind, rows] of [
+    ["map-patch", source.level.patches],
+    ["mission-patch", source.data.mission_patches],
+  ] as const)
+    rows.forEach((patch: { element_fx: { sprite: { elevation: number } } }, index: number) => {
+      assert.equal(
+        got.authority.backgroundEffects.has(`${kind}:${index}`),
+        patch.element_fx.sprite.elevation === 0,
+      );
+    });
   const changed = structuredClone(source);
   changed.data.soldiers[0].direction = 0;
   if (changed.data.soldiers[0].direction === source.data.soldiers[0].direction)

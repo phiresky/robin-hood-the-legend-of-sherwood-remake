@@ -9,6 +9,7 @@ import type { MissionStateContract } from "../../shared/src/mission-state.ts";
 import {
   nativePresentationFrame,
   type NativeStatePresentationContract,
+  type NativeInitialContextMode,
   type NativePresentationFrame,
 } from "../../shared/src/native-state-presentation.ts";
 import {
@@ -35,6 +36,7 @@ export interface PhysicalTickConsumer {
 
 /** Exact loop-contract linkage. Resource decoding begins only after set() publishes every identity. */
 export class SourceContractClockBinding {
+  private initialContext: NativeInitialContextMode | undefined;
   private covers: SourceCoverVisibility[] = [];
   private coverStates = new Map<string, boolean>();
   private readonly clocks = new SourceAnimationClocks();
@@ -51,6 +53,7 @@ export class SourceContractClockBinding {
     this.request++;
     this.clocks.clear();
     this.native = undefined;
+    this.initialContext = undefined;
     this.physical = undefined;
     this.handles.clear();
     this.physicalIds.clear();
@@ -63,6 +66,7 @@ export class SourceContractClockBinding {
     physical: MissionStateContract,
     source: MissionStateSource,
     coverVisibility: readonly SourceCoverVisibility[] = [],
+    initialContext?: NativeInitialContextMode,
   ) {
     this.clear();
     const request = this.request,
@@ -91,7 +95,7 @@ export class SourceContractClockBinding {
         )
           throw new Error("Source cover patch or loop identity differs");
       }
-      await verifyNativePresentationSource(n, s);
+      await verifyNativePresentationSource(n, s, initialContext);
       await resolveMissionStateTargets(p, s);
       if (!current()) return false;
       if (
@@ -101,10 +105,13 @@ export class SourceContractClockBinding {
         n.camera_elevation_deg !== p.camera_elevation_deg
       )
         throw new Error("Physical/native source contracts differ");
+      if (initialContext !== undefined && initialContext !== "immutable-source-initial")
+        throw new Error("Invalid native loop initial context");
       if (
-        n.background_states?.length ||
-        n.patch_states?.length ||
-        n.elements.some((e) => e.frames.length && !e.loop)
+        !initialContext &&
+        (n.background_states?.length ||
+          n.patch_states?.length ||
+          n.elements.some((e) => e.frames.length && !e.loop))
       )
         throw new Error("Loop clock binding cannot stand in for patch activation/state timing");
       const ids = new Set<string>(),
@@ -126,6 +133,7 @@ export class SourceContractClockBinding {
         if (
           !e ||
           !e.frames.length ||
+          !e.loop ||
           e.source.sha256 !== t.target_sha256 ||
           t.representation !== "physical"
         )
@@ -142,12 +150,14 @@ export class SourceContractClockBinding {
           p.targets.some((t) => t.source_kind !== "map-animation") &&
           e.source.kind === "mission-target" &&
           e.frames.length &&
+          (e.loop || !initialContext) &&
           ![...physicalIds.values()].includes(e.id)
         )
           throw new Error(`Missing physical target for native identity: ${e.id}`);
       // All definitions and source-slot checks complete synchronously before callers can start loads.
       this.clocks.reset({ levelSha256: n.level_data_sha256, missionSha256: n.mission_data_sha256 });
       for (const e of n.elements) {
+        if (initialContext && !e.loop) continue;
         const handle = this.clocks.define({
           kind: e.source.kind,
           index: e.source.index,
@@ -158,6 +168,7 @@ export class SourceContractClockBinding {
       }
       this.covers = structuredClone(covers);
       for (const c of covers) this.coverStates.set(c.placement.patch_id, false);
+      this.initialContext = initialContext;
       this.native = n;
       this.physical = p;
       this.physicalIds = physicalIds;
@@ -212,7 +223,10 @@ export class SourceContractClockBinding {
   snapshot() {
     if (!this.native) throw new Error("Source contract clocks are not ready");
     return this.native.elements.map((e) => {
-      const cursor = this.clocks.read(this.handle(e.id));
+      const cursor =
+        this.initialContext && !e.loop
+          ? { tick: 0, active: e.active, playing: false }
+          : this.clocks.read(this.handle(e.id));
       return Object.freeze({
         id: e.id,
         source: Object.freeze({ ...e.source }),
@@ -302,6 +316,8 @@ export class SourceContractClockBinding {
     return this.clocks.read(this.physicalToken(id)).tick % timing.cycleTicks;
   }
   private handle(id: string) {
+    if (this.initialContext && this.native?.elements.some((e) => e.id === id && !e.loop))
+      throw new Error("Immutable source initial context has no animation clock");
     const handle = this.handles.get(id);
     if (!handle || !this.native) throw new Error(`Missing source clock identity: ${id}`);
     return handle;

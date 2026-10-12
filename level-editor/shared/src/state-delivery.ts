@@ -10,6 +10,7 @@ import {
   validateNativeStatePresentation,
   nativePresentationFrame,
   type NativeStatePresentationContract,
+  type NativeInitialContextMode,
 } from "./native-state-presentation.ts";
 
 export type PhysicalStateBinding = SceneAssetSource & {
@@ -360,8 +361,10 @@ export function stateDeliveryLoopsAfterTransition(
   ].some((s) => s.final_loop && s.final.length > 0);
 }
 
-/** Source artwork loop preview; independent ambient elements retain their own clocks. */
+/** Source artwork loops retain independent clocks and may include immutable startup context. */
 export interface NativeLoopPreviewContract {
+  /** Freeze nonloop/state artwork at source tick0; grants no transition or patch activation. */
+  initial_context?: NativeInitialContextMode;
   cover_visibility?: SourceCoverVisibility[];
   version: 1;
   scope: "controlled-native-loop-preview";
@@ -384,14 +387,21 @@ export function validateNativeLoopPreview(
     if (!contract.physical) throw new Error("Cover visibility requires a physical loop");
   }
   validateNativeStatePresentation(contract.native);
+  if (
+    contract.initial_context !== undefined &&
+    contract.initial_context !== "immutable-source-initial"
+  )
+    throw new Error("Invalid native loop initial context");
   const focus = contract.native.elements.find((e) => e.id === contract.focus_element_id);
   if (
     !focus ||
     !focus.active ||
     !focus.loop ||
     !focus.frames.length ||
-    contract.native.background_states?.length ||
-    contract.native.elements.some((e) => e.frames.length && !e.loop)
+    (!contract.initial_context &&
+      (contract.native.background_states?.length ||
+        contract.native.patch_states?.length ||
+        contract.native.elements.some((e) => e.frames.length && !e.loop)))
   )
     throw new Error("Native loop preview requires a visible looping focus and independent loops");
   if (contract.static_replacements !== undefined) {
@@ -435,6 +445,7 @@ export function validateNativeLoopPreview(
         (e) =>
           e.source.kind === "mission-target" &&
           e.frames.length &&
+          (e.loop || !contract.initial_context) &&
           !bound.has(`${e.source.kind}:${e.source.index}`),
       )
     )

@@ -1215,7 +1215,13 @@ export class EditorViewport {
     source: MissionStateSource,
   ) {
     validateNativeLoopPreview(contract);
-    if (!contract.physical) return this.setNativeArtPresentation(contract.native, library, source);
+    if (!contract.physical)
+      return this.setNativeArtPresentation(
+        contract.native,
+        library,
+        source,
+        contract.initial_context,
+      );
     if (this.disposed) throw new Error("Disposed viewport");
     this.clearNativeArtPresentation();
     const epoch = this.loopEpoch;
@@ -1236,6 +1242,7 @@ export class EditorViewport {
           frozen.physical!,
           resolvedSource,
           frozen.cover_visibility,
+          frozen.initial_context,
         )) ||
         !current()
       )
@@ -1252,7 +1259,12 @@ export class EditorViewport {
       this.loopSequence = 0;
       this.stateMission = frozen.native.mission;
       const [ready] = await Promise.all([
-        this.nativeArt.set(frozen.native, resolvedSource, nativeLibraryReader(library)),
+        this.nativeArt.set(
+          frozen.native,
+          resolvedSource,
+          nativeLibraryReader(library),
+          frozen.initial_context,
+        ),
         this.missionStates.set(frozen.physical!, library, resolvedSource, this.loopClocks),
       ]);
       if (!current()) return false;
@@ -1291,6 +1303,7 @@ export class EditorViewport {
     contract: NativeStatePresentationContract,
     library: FileSystemDirectoryHandle,
     source: MissionStateSource,
+    initialContext?: NativeLoopPreviewContract["initial_context"],
   ) {
     if (this.disposed) throw new Error("Disposed viewport");
     this.clearNativeArtPresentation();
@@ -1301,6 +1314,7 @@ export class EditorViewport {
         contract,
         { ...source, level: this.bindings.level() ?? source.level },
         nativeLibraryReader(library),
+        initialContext,
       );
     } catch (error) {
       this.bindings.onError?.(String(error));
