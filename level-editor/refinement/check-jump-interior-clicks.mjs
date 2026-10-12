@@ -6,7 +6,15 @@ import { prepareCorridorStates } from "../shared/src/compile-navigation-graph.ts
 import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 
 const hidden = process.argv.includes("--hidden");
-const [directory, indices] = process.argv.slice(2).filter((argument) => argument !== "--hidden");
+const sampleArguments = process.argv
+  .slice(2)
+  .filter((argument) => argument.startsWith("--samples="));
+assert.ok(sampleArguments.length <= 1);
+const samples = sampleArguments.length ? Number(sampleArguments[0].slice("--samples=".length)) : 1;
+assert.ok(Number.isInteger(samples) && samples >= 1 && samples <= 16, "Sample count must be 1–16");
+const [directory, indices] = process.argv
+  .slice(2)
+  .filter((argument) => argument !== "--hidden" && !argument.startsWith("--samples="));
 assert.ok(directory, "Supply an export directory and optional comma-separated line indices");
 const selected = indices?.split(",").map(Number);
 assert.ok(!selected || selected.every((index) => Number.isInteger(index) && index >= 0));
@@ -54,7 +62,7 @@ for (const entry of manifest.results) {
       }
     const distance = (point) => (point[0] - midpoint[0]) ** 2 + (point[1] - midpoint[1]) ** 2;
     candidates.sort((a, b) => distance(a) - distance(b));
-    const point = candidates.find((point) =>
+    const supported = (point) =>
       [-1, 1].every((dx) =>
         [-1, 1].every((dy) => {
           const shifted = [point[0] + dx, point[1] + dy];
@@ -62,22 +70,48 @@ for (const entry of manifest.results) {
             check(shifted, shifted).some((state) => (state & 0xaaaaaaaa) === 0),
           );
         }),
-      ),
-    );
-    cache.set(index, point);
-    return point;
+      );
+    const points = [];
+    // Preserve the nearest-point default, then spread additional probes across
+    // the usable zone by maximizing their distance from already sampled points.
+    const remaining = [];
+    for (const point of candidates) {
+      if (!supported(point)) continue;
+      remaining.push(point);
+      if (samples === 1) break;
+    }
+    if (remaining.length) points.push(remaining.shift());
+    while (points.length < samples && remaining.length) {
+      let bestIndex = 0,
+        bestDistance = -1;
+      for (const [i, point] of remaining.entries()) {
+        const separation = Math.min(
+          ...points.map((sample) => (sample[0] - point[0]) ** 2 + (sample[1] - point[1]) ** 2),
+        );
+        if (separation > bestDistance) {
+          bestDistance = separation;
+          bestIndex = i;
+        }
+      }
+      points.push(remaining.splice(bestIndex, 1)[0]);
+    }
+    cache.set(index, points);
+    return points;
   };
   for (const index of selected ?? lines.map((_, index) => index)) {
     assert.ok(index < lines.length, `${entry.file}: missing jump line ${index}`);
     const start = interior(index),
       goal = interior(index ^ 1);
-    if (!start || !goal)
+    if (!start.length || !goal.length)
       unavailable.push({
         file: entry.file,
         line: index,
-        missing: [!start && "start", !goal && "goal"].filter(Boolean),
+        missing: [!start.length && "start", !goal.length && "goal"].filter(Boolean),
       });
-    else probes.push({ line: index, start, goal, ...(hidden ? { hidden: true } : {}) });
+    else
+      for (const from of start)
+        for (const to of goal)
+          probes.push({ line: index, start: from, goal: to, ...(hidden ? { hidden: true } : {}) });
   }
   await fs.writeFile(path.join(output, entry.file), bytes);
   results.push({ ...entry, click_probes: probes });
@@ -89,6 +123,7 @@ await fs.writeFile(
     supportedFloorClicks: true,
     scope: "interior-native-footprint-probes-not-world-support-or-rendering-proof",
     source: directory,
+    samplesPerSide: samples,
     unavailable,
     results,
   }),

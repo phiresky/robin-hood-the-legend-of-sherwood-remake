@@ -154,6 +154,22 @@ Full York candidate `saved-map-exports-Bwpp17` is still compiling. The lane edit
 remains unpublished pending that regression check; broader click-zone coverage,
 traffic behavior for the narrower span and a rendered round trip remain open.
 
+The broader click-zone check now uses `check-jump-interior-clicks.mjs --samples=5`:
+five spatially separated supported points on each side, with every start/goal
+combination tested. The first point retains the previous nearest-edge default;
+additional points maximize separation from already selected points. It keeps
+the existing footprint filters and records the requested sample count.
+`interior-jump-clicks-GOdh4w` covers 800 internal-jump combinations at
+0/37/90/180 degrees: 740 normal clicks succeed and sixty select another overlying
+surface. All sixty complete under explicit hidden selection in
+`hidden-interior-retries-tw93s_uk`; these normal-click failures are retained.
+`interior-jump-clicks-ETJCT7` covers another 1,000 combinations at
+45/135/225/270/315 degrees, all successful with normal clicks. Thus all 1,800
+sampled routes complete using their tested selection mode, but this is not a
+claim that all points in the zone or simultaneous multi-character traffic work.
+The publication preview selects only the raised-lane asset and York scene pin,
+with `applied: false`.
+
 `check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,
 ordered by distance to the takeoff edge. Each point must pass static corridor
 clearance against both native and precise floor contours with an additional

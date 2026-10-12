@@ -41,6 +41,9 @@ probes and 144/144 complete-asset interior clicks across nine rotations and two
 elevations. It derives matching level spans from the lane's existing receiving
 surfaces; no runtime change or replacement terrain is involved. Full York
 regression checks are running, so this lane correction is not published yet.
+An expanded internal-jump sweep passes 1,740 normal clicks and sixty explicit
+hidden-surface clicks across 1,800 start/destination combinations. Multi-character
+traffic and a rendered round trip of this lane correction remain unverified.
 
 **Subpixel rotated floors (2026-10-12):** simple folded floors now receive
 walking clearance before integer normalization can erase them. York's copied
