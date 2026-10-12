@@ -11,6 +11,11 @@ Connections and runtime indices are rebuilt after placement, rotation and copyin
 the saved scenes. Twenty-one unused assets lack definitions. This checks library
 definition presence and index hashes, not scene pins or gameplay completeness.
 
+**Current Wychford blocker (2026-10-12):** the fresh baseline fails during final
+stair-clearance preparation after roughly 52 minutes. Convex-region duplicate
+comparison no longer uses the failing polygon sweep, but a complete fresh export
+has not yet verified that correction. See [the failure and profiling scope](map-compilation-evidence.md#fresh-wychford-final-clearance-failure-2026-10-12).
+
 This file also retains historical investigations. Results that depended on the
 retired physical-navigation solver do **not** establish current traversal parity;
 assets need verification against prepared-graph movement. The current architecture

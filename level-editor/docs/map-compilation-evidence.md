@@ -262,6 +262,26 @@ clearance while rejecting routes outside it, cropped mask ownership, repeated
 materials, sight blocking and elevated wall lighting. No native assertions were
 weakened and no production engine code changed for this refresh.
 
+## Fresh Wychford final-clearance failure (2026-10-12)
+
+Baseline `saved-map-exports-PgbVhn` reaches final stair-clearance preparation
+after approximately 3,110 seconds, then fails in `convexSupportRegions` while
+using polygon XOR to deduplicate convex candidates. The clipping library reports
+an incomplete output ring near `(2467.482940492016, 343.1274004758509)`.
+This run produces no completed descriptor and does not certify Wychford export.
+
+Convex-candidate deduplication now compares canonical hull vertices, removing the
+polygon sweep used solely for equality. It retains the existing hull-containment
+checks and candidate order. Fractional-coordinate start/winding checks and the
+existing concave-support coverage test pass. Full current-scene verification is
+still required; an older Wychford descriptor does not reproduce this failure.
+All 254 focused convex-support, compiler, packaging and wall tests pass with
+the change; app type-checking also passes.
+
+The cache-only comparison/profile run in `wychford-cpu-profile-ppz81c53`
+started before this fix. Its output cannot validate the corrected deduplication;
+the CPU profile is intended to identify remaining expensive compiler operations.
+
 ## Supported integer jump-span search (2026-10-12)
 
 `refinement/review-jump-supported-spans.mjs` generates diagnostic replacements

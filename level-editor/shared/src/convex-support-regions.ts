@@ -24,6 +24,7 @@ export function convexSupportRegions(boundary: Point[]): Point[][] {
     triangles.push(indices.slice(i, i + 3).map((index) => boundary[index]!));
   if (!triangles.length) return [];
   const pieces: Point[][] = [];
+  const seen = new Set<string>();
   for (const triangle of triangles) {
     let region = triangle;
     for (;;) {
@@ -41,7 +42,13 @@ export function convexSupportRegions(boundary: Point[]): Point[][] {
       if (best === region) break;
       region = best;
     }
-    if (!pieces.some((piece) => clipping.xor([piece], [region]).length === 0)) pieces.push(region);
+    // Convex hulls have a deterministic start and winding. Comparing their
+    // vertices avoids a numerical polygon sweep solely to remove duplicates.
+    const key = JSON.stringify(footprintBoundaryHull(region));
+    if (!seen.has(key)) {
+      seen.add(key);
+      pieces.push(region);
+    }
   }
   return pieces.sort((a, b) => area(b) - area(a));
 }

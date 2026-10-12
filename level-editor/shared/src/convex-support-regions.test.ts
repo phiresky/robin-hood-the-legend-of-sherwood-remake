@@ -4,6 +4,25 @@ import clipping from "polygon-clipping";
 import type { Point } from "./level.ts";
 import { convexSupportRegions } from "./convex-support-regions.ts";
 import { stairBoundaryPlanes, stairCenterRegion } from "./stair-center-region.ts";
+import { footprintBoundaryHull } from "./supported-footprint-centers.ts";
+
+test("convex support deduplication is independent of ring start and winding", () => {
+  const boundary: Point[] = [
+    [2467.482940492016, 343.1274004758509],
+    [2483.8064079045876, 400.57228977840407],
+    [2451.119885747444, 409.8602102052063],
+    [2434.796418334873, 352.4153209026531],
+  ];
+  const expected = footprintBoundaryHull(boundary);
+  for (const ring of [boundary, [...boundary].reverse()]) {
+    for (let start = 0; start < ring.length; start++) {
+      const placed = [...ring.slice(start), ...ring.slice(0, start)];
+      const regions = convexSupportRegions(placed);
+      assert.equal(regions.length, 1);
+      assert.deepEqual(footprintBoundaryHull(regions[0]!), expected);
+    }
+  }
+});
 
 test("concave support has usable convex regions even when its common kernel is empty", () => {
   const boundary: Point[] = [
