@@ -185,6 +185,31 @@ does not justify publishing extra collision clearance; short-stair support
 across the adjacent landings and the asset's known mesh discrepancies remain
 to be reconciled.
 
+`refinement/check-stair-landing-support.mjs` now measures whole-footprint
+coverage across a stair and its two referenced landing receivers. It uses
+polygon differences, so checking the four footprint corners alone cannot hide
+a gap. Its unpublished static-navigation experiment keeps the center corridor
+inside the authored stair, verifies the entire swept footprint against the
+joined support, and prepares the resulting native graph and door approaches.
+It does not change the engine or publish asset geometry.
+
+The widened draft diagnostic `joined-stair-support-diagnostic-C2leko` passes
+**16/16 forced routes and 16/16 player clicks**, with complete coverage and no
+skips, across four rotations and two elevations. More importantly, repeating
+the experiment with the **published authored footprint**, without widening it,
+in `joined-stair-support-diagnostic-568Dtg` also passes **16/16 forced routes
+and 16/16 player clicks**. At 180 degrees, that footprint alone has no supported
+integer center for either the full or inset actor box; including the landings
+provides forty full-box and 66 inset-box centers. The approach corridor loses
+positive support area when either landing is omitted in every tested placement.
+
+This establishes a static-data route to resolving the short-stair failure;
+it is not yet a production compiler fix. The prototype uses a narrow sampled
+approach corridor and checks footprint support only. General integration must
+validate landing height continuity and collision/state ownership, retain all
+usable floor coverage, and reject missing or displaced landings. Asset mesh
+contact and rendered actor/depth verification remain separate open checks.
+
 ## Non-reversed projection clearance (2026-10-12)
 
 Pre-normalization clearance was restricted to folded projections. A simple

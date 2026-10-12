@@ -70,6 +70,10 @@ the saved orientation but regresses 180-degree placements; retaining existing
 contacts initially exposes lower-entrance collision. Height clipping and a
 matching owner-local opening clear that collision, but 180-degree approach
 clearance still fails. These stages remain unpublished.
+A static-navigation diagnostic using the published footprint plus its landing
+support now passes all sixteen scripted routes and sixteen player clicks across
+the placement sweep. Production integration, height/collision guards and visual
+contact checks remain open; no wider stair geometry has been published.
 See [the investigation](map-compilation-evidence.md#sherwood-stair-clearance-investigation-2026-10-12).
 
 **York jump checks (2026-10-12):** the current full-map audit has 696 successful
