@@ -74,7 +74,7 @@ test("receivers on another layer do not cover an elevated landing", () => {
   assert.match(createJumpReceiverSupportAudit([face(0), wrong], zones)(pair)[0]!, /direction 1/);
 });
 
-test("implicit ground needs zero endpoint heights and no explicit receiving faces", () => {
+test("implicit ground remains available beside other receivers in its sector", () => {
   const ground = structuredClone(pair);
   for (const line of [ground.line1, ground.line2]) {
     line.point_a[2] = 0;
@@ -83,5 +83,5 @@ test("implicit ground needs zero endpoint heights and no explicit receiving face
   assert.deepEqual(createJumpReceiverSupportAudit([], zones)(ground), []);
   assert.equal(createJumpReceiverSupportAudit([], zones)(pair).length, 2);
   const missing = face(1, 20, 30);
-  assert.match(createJumpReceiverSupportAudit([missing], zones)(ground)[0]!, /direction 1/);
+  assert.deepEqual(createJumpReceiverSupportAudit([missing], zones)(ground), []);
 });

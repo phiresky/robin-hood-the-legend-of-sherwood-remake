@@ -625,7 +625,7 @@ rather than assuming that an unequal authored destination span determines the
 landing. The receiving faces are indexed once by sector/layer; segment boundary
 intersections expose uncovered interior gaps as well as unsupported endpoints.
 Adjacent receiver pieces are accepted, and zero-height implicit-ground endpoints
-remain supported when no explicit receiver is supplied. Potentially inactive
+remain supported, including beside explicit receivers in the same sector. Potentially inactive
 receivers are included: this is a coverage warning, not state-availability proof.
 
 Fresh copied-roof fixture `connected-jump-placements-9KjJX4` is identical to
@@ -638,6 +638,12 @@ All 178 focused compiler, partition and jump-audit tests pass. The new cases cov
 a 0.001-unit gap between receiving pieces, source/destination span mismatch,
 wrong-layer receivers and implicit-ground handling. Editor type checking and
 scoped lint pass. Flight and rendered-contact limitations remain open.
+
+The installed Lincoln descriptor (`saved-map-exports-h7ZuCA`, ten pairs) and
+published York descriptor (`saved-map-exports-Etu7BT`, 72 pairs) produce no new
+coverage warnings. The native landing check permits implicit ground at zero
+height independently of other receivers in the sector; the matching regression
+guards that case so mixed ground/raised layouts do not get spurious warnings.
 
 ### Central-roof takeoff placement review (2026-10-13)
 

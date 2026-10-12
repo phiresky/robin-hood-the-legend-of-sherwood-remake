@@ -60,8 +60,7 @@ export function createJumpReceiverSupportAudit(sight: SightObstacle[], zones: Ju
       ];
       const receivers = faces.get(`${zone.sector}/${zone.layer}`) ?? [];
       // Zero-height endpoints may intentionally use the implicit ground plane.
-      if (!receivers.length && destination.point_a[2] === 0 && destination.point_b[2] === 0)
-        return [];
+      if (destination.point_a[2] === 0 && destination.point_b[2] === 0) return [];
       return covered(a, b, receivers)
         ? []
         : [
