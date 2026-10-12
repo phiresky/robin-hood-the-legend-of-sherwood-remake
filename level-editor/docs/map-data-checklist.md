@@ -75,11 +75,19 @@ solver is needed. Mesh contact and in-game actor/depth compositing remain open;
 earlier authoring experiments stay unpublished.
 See [the investigation](map-compilation-evidence.md#sherwood-stair-clearance-investigation-2026-10-12).
 
-**York jump checks (2026-10-12):** the current full-map audit has 696 successful
+**York jump checks (2026-10-12):** the last completed full-map audit has 696 successful
 traversals, eleven occluded lower-click cases and thirteen failures out of 720.
 The remaining failures are lines 5, 57 and 65. All ten selected interior-click
 directions pass, but that does not clear wider click coverage or all placements.
 See [interior-click evidence](map-compilation-evidence.md#york-interior-jump-clicks-2026-10-12).
+
+A fresh export exposed a receiving-plane error in joined-stair preparation:
+volume vertices beyond the three native plane anchors were incorrectly required
+to be coplanar. The exporter now uses the native receiving-plane definition;
+eleven focused geometry tests pass. Full York recompilation is pending, so the
+earlier traversal counts do not certify the latest compiler. Central-south roof
+experiments remain unpublished: an inset improves isolated offset clicks from
+68/160 to 104/160, but 90/180-degree cases still need investigation.
 
 The published west-lane roof correction passes all **72 interior-click traversals**
 across nine angles, two elevations and two copies. It restores the mesh-supported

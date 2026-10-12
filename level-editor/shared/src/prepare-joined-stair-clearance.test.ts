@@ -104,6 +104,25 @@ test("short stairs gain static clearance from height-connected landings", () => 
   );
 });
 
+test("landing support uses the native receiving plane rather than all volume heights", () => {
+  const expected = fixture();
+  assert.equal(prepareJoinedStairClearance(expected), 1);
+  for (const explicit of [false, true]) {
+    const geometry = fixture();
+    const receiver = geometry.sight_obstacles[1]!;
+    if (explicit) {
+      receiver.projection_plane = receiver.points
+        .slice(0, 3)
+        .map((p): Vec3 => [p.x, p.y, p.z_top]) as [Vec3, Vec3, Vec3];
+      for (const point of receiver.points) point.z_top += 30;
+    } else {
+      receiver.points[3]!.z_top += 30;
+    }
+    assert.equal(prepareJoinedStairClearance(geometry), 1);
+    assert.deepEqual(geometry.motion_data, expected.motion_data);
+  }
+});
+
 test("missing, raised or displaced landings cannot supply stair clearance", () => {
   for (const change of ["missing", "raised", "raised-anchor", "gap"] as const) {
     const geometry = fixture();

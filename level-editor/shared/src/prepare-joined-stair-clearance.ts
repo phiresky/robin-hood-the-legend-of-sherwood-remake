@@ -116,7 +116,10 @@ export function prepareJoinedStairClearance(geometry: CompiledAssetGeometry): nu
         )
           continue;
         const vertices =
-          receiver.projection_plane ?? receiver.points.map((p): Vec3 => [p.x, p.y, p.z_top]);
+          receiver.projection_plane ??
+          receiver.points.slice(0, 3).map((p): Vec3 => [p.x, p.y, p.z_top]);
+        // The native receiver uses its explicit anchors or first three top
+        // vertices. Remaining volume vertices do not redefine that plane.
         const plane = heightPlane(vertices);
         if (
           Math.abs(plane[1] - 1) < 1e-6 ||
