@@ -30,7 +30,10 @@ its deck and connection definitions unchanged. Both repairs are published;
 fresh full Croisement03 now compiles and passes native geometry construction.
 Its ordinary-sector route sampler also passes; rendered ZIP and full traversal
 verification remain pending. Native batch loading now exposes a Lincoln passage
-with no receiving floor (door 47, layer 3, sector 153). Copied-roof
+with no receiving floor (door 47, layer 3, sector 153). An asset-local endpoint
+candidate fixes native loading but remains unpublished: collision still blocks
+the passage. Nottingham, Sherwood and York also pass native construction.
+Copied-roof
 flight-clearance rejection remains unresolved; bypassed diagnostic flights are
 not evidence of a safe production export.
 

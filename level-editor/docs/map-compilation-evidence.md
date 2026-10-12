@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Lincoln passage receiver and obstruction audit (2026-10-12)
+
+The native failure is standalone passage 12 (runtime door 47), owned by
+`lincoln-south-wall-walk-step`. Its inside endpoint projects to `[1935,1559]`,
+outside the exported receiving floor, while its separately authored binding
+anchor projects inside that floor. `refinement/stage-step-passage-receiver.mjs`
+stages an asset-only candidate using that anchor as the actual endpoint.
+Stage `step-passage-receiver-wWv5dg` exports full Lincoln in
+`saved-map-exports-73KcPb`; native geometry loading now passes (0.96 seconds).
+
+This candidate is **not published**: the passage still has an empty allowed-state
+set on its outside leg, so loading is not proof of a usable connection. A
+static-volume probe identifies exported sight solids 109 and 134 intersecting
+the character corridor between its outside endpoint and midpoint. Both extend
+from approximately height 320 to 371. The passage requires a physically usable
+connection to the step, not just a corrected receiving index or disabled
+collision check. Asset placement and connection authoring remain under review.
+
+The remaining baseline snapshot `remaining-three-native-ck0d5u22` passes native
+construction for Nottingham, Sherwood and York (3.29 seconds). Together with
+the preceding batch and repaired Croisement03, all ten scenes have native-load
+evidence, but Lincoln requires the unpublished candidate above. This does not
+establish traversal parity or ten-map ZIP fidelity.
+
 ## Croisement03 fallen-log cap repair (2026-10-12)
 
 After the log publication, full-scene run `saved-map-exports-B2Tme3` passes the
