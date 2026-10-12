@@ -11,14 +11,25 @@ import { sceneToGame, gltfToScene } from "../shared/src/geometry.ts";
 const { Triangle, Vector3 } = createRequire(new URL("../shared/package.json", import.meta.url))(
   "three",
 );
-const [map, assetId, segmentId] = process.argv.slice(2);
-assert.ok(map && assetId && segmentId, "Supply map, asset ID and external jump segment ID");
+const [map, assetId, segmentId, stage] = process.argv.slice(2);
+assert.ok(
+  map && assetId && segmentId,
+  "Supply map, asset ID, external jump segment ID and optional stage",
+);
 const scene = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const source = scene.assetSources.find((source) => source.id === assetId);
 assert.ok(source, "Asset must be pinned in the scene");
 const bytes = await fs.readFile(`library/${source.descriptor}`);
 assert.equal(createHash("sha256").update(bytes).digest("hex"), source.descriptor_sha256);
 const descriptor = JSON.parse(bytes);
+if (stage) {
+  const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`));
+  const edit = edits.find((edit) => edit.asset === assetId);
+  assert.ok(edit, "Staged asset must exist");
+  assert.equal(edit.descriptorSha256, source.descriptor_sha256);
+  assert.equal(edit.modelSha256, source.model_sha256);
+  descriptor.gameplay = edit.gameplay;
+}
 const segment = descriptor.gameplay.jumpSegments.find((segment) => segment.id === segmentId);
 assert.ok(segment, "External jump segment must exist");
 const model = await loadSceneModel("library", source);
@@ -61,6 +72,7 @@ await fs.writeFile(
     map,
     assetId,
     segmentId,
+    stage,
     source,
     segment,
     meshes,

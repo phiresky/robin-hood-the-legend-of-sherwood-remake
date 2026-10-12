@@ -28,6 +28,42 @@ degrees. This general narrow-floor fix does not resolve that concave asset.
 
 ## York interior jump clicks (2026-10-12)
 
+### West-lane roof and supported takeoff candidate
+
+`stage-york-west-lane-roof.mjs` creates `york-west-lane-roof-HoTN5S`, exactly
+matching the reviewed staged definition `york-west-lane-inset-stage-nsedozyx`.
+It replaces the two partial walking outlines with the asset's complete planar
+roof footprint. Existing solid parts still carve their collision from this
+surface. The short level takeoff moves eight local X units inward along a
+constant-height roof contour, rather than changing runtime movement.
+
+Mesh review `roof-slab-mesh-review-E5vmNT` measures the restored perimeter at
+most 0.054 units from the pinned roof mesh (the prior partial perimeter reached
+0.503). Its plan/3D boundary plot was inspected. Staged-edge review
+`jump-edge-mesh-review-UPiSsm` confirms a nonvertical roof triangle at every
+sampled XY; height difference is 0.021–0.065 units. These are mesh measurements,
+not a rendered sprite-contact verification.
+
+| Stage | Native complete offset-click traversals | Interior clicks |
+| --- | --- | --- |
+| Published pair-55 baseline `4v773T` | 40/160 | 8/16, 16 unavailable |
+| Level takeoff only `FVLOdR` | 60/160 | 12/16, 16 unavailable |
+| Complete roof `mYTvpY` | 100/160 | 28/32 |
+| Complete roof and inset `HyXC70` | 124/160 | 32/32 |
+
+All prefixes in the table refer to `connected-jump-placements-*` artifacts.
+Exact case comparisons find no regressions between those stages. The final
+interior-click artifact is `interior-jump-clicks-yGIAww`. Additional rotations
+45/135/225/270/315 in `connected-jump-placements-BCHNei` pass 180/200 offset
+clicks and all forty interior clicks (`interior-jump-clicks-9BWWSD`). Combined,
+all 18 native descriptors load and all 72 interior clicks traverse successfully
+across nine angles, two elevations and two copied assemblies. Offset failures
+remain at 135/180 degrees where the sampled start or landing lacks authorization
+or a receiver; these are retained as failures, not counted as successful routes.
+
+Full York candidate `saved-map-exports-D4r29E` is still compiling. The asset is
+not published yet; full-map regression checks and rendered traversal remain open.
+
 `check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,
 ordered by distance to the takeoff edge. Each point must pass static corridor
 clearance against both native and precise floor contours with an additional

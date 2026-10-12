@@ -10,9 +10,23 @@ import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 import { compileMap } from "../app/src/map-compile.ts";
 
 const diagnosticPrecision = process.argv.includes("--diagnostic-precision");
+const rotationArguments = process.argv
+  .slice(2)
+  .filter((argument) => argument.startsWith("--rotations="));
+assert.ok(rotationArguments.length <= 1, "Supply at most one rotation list");
+const rotations = rotationArguments.length
+  ? rotationArguments[0].slice("--rotations=".length).split(",").map(Number)
+  : [0, 37, 90, 180];
+assert.ok(
+  rotations.length &&
+    rotations.every((angle) => Number.isFinite(angle) && angle >= 0 && angle < 360),
+);
+assert.equal(new Set(rotations).size, rotations.length, "Rotations must be unique");
 const [map, pair, assetList, stage] = process.argv
   .slice(2)
-  .filter((argument) => argument !== "--diagnostic-precision");
+  .filter(
+    (argument) => argument !== "--diagnostic-precision" && !argument.startsWith("--rotations="),
+  );
 assert.ok(
   map && pair && assetList,
   "Supply map, pair prefix, comma-separated asset IDs and optional stage",
@@ -75,7 +89,7 @@ const save = (complete) =>
     }),
   );
 await save(false);
-for (const rotation of [0, 37, 90, 180])
+for (const rotation of rotations)
   for (const height of [0, 40]) {
     const document = roofJumpPlacement(source, rotation, height);
     document.terrain = createTerrainGrid([0, 0, 2500, 2500], 2500, height);
