@@ -176,7 +176,7 @@ def main():
   while len(chunks)%4:chunks.append(0)
   offset=len(chunks);chunks.extend(data);out['bufferViews'].append(dict(buffer=0,byteOffset=offset,byteLength=len(data)));return len(out['bufferViews'])-1
  def array(values,kind):
-  data=np.array(values,dtype='<f4');view=blob(data.tobytes());a=dict(bufferView=view,componentType=5126,count=len(data),type=kind)
+  data=np.array(values,dtype='<f4');assert data.shape[1]=={'SCALAR':1,'VEC2':2,'VEC3':3,'VEC4':4}[kind],(kind,data.shape);view=blob(data.tobytes());a=dict(bufferView=view,componentType=5126,count=len(data),type=kind)
   if kind=='VEC3':a.update(min=data.min(0).tolist(),max=data.max(0).tolist())
   out['accessors'].append(a);return len(out['accessors'])-1
  def import_material(index):
@@ -195,7 +195,7 @@ def main():
    keep|=np.linalg.norm(np.cross(tri[:,1]-tri[:,0],tri[:,2]-tri[:,0]),axis=1)>0
   indices=np.where(np.repeat(keep,3))[0]
   data={k:([[target[i] for i in indices] for target in values] if k in ['morph','pairmorph'] else [values[i] for i in indices]) for k,values in data.items() if k in ['pos','uv','normal','color','morph']}
-  p=dict(attributes=dict(POSITION=array(data['pos'],'VEC3'),NORMAL=array(data['normal'],'VEC3'),TEXCOORD_0=array(data['uv'],'VEC2'),COLOR_0=array(data['color'],'VEC4')),material=material,mode=4)
+  p=dict(attributes=dict(POSITION=array(data['pos'],'VEC3'),NORMAL=array(data['normal'],'VEC3'),TEXCOORD_0=array(data['uv'],'VEC2'),COLOR_0=array(data['color'],'VEC4' if len(data['color'][0])==4 else 'VEC3')),material=material,mode=4)
   if data['morph']:p['targets']=[dict(POSITION=array(m,'VEC3')) for m in data['morph']]
   return p
  for owner in [0,1]:
