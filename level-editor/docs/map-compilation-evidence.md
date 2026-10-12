@@ -4,6 +4,17 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Full Wychford browser round trip in progress (2026-10-12)
+
+Private fixture `wychford-rendered-library-sv656wxd` copies the current saved
+Wychford scene and references its published library, with a scene digest in
+`preparation.json`. The browser loaded all 96 asset sources, calibrated spline
+walls and entered gameplay compilation. The reusable
+`refinement/check-map-bake-browser.mjs` runner permits both compilation passes
+within a one-hour overall limit and tolerates individual status-query timeouts.
+This records a running verification, not a successful archive or parity claim.
+The runner's lint and formatting checks pass; full-map ZIP evidence is pending.
+
 ## Croisement03 authored landing receiver (2026-10-12)
 
 The focused `croisement03-landing-eaq_n6ci/elevation-trace.log` confirms that

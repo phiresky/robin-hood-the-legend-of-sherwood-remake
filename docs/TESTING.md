@@ -918,3 +918,22 @@ registry during each target's `Initialize`, even though allocation is batched.
 Targets also retain separate visual and action positions with valid cached
 projections. Saved-world replays bypass these construction steps and therefore
 cannot establish their correctness; retain fresh-start regression coverage.
+
+## Browser map archive round trips
+
+With the editor Vite server running against the intended library, run from
+`level-editor/` (create a dedicated output directory first):
+
+```sh
+node refinement/check-map-bake-browser.mjs \
+  'http://127.0.0.1:5186/tests/map-bake-library.html?map=Wychford&roundtrip=1' \
+  work/map-compile/browser-review wychford-rendered.zip 3600000
+```
+
+The runner requires ZIP reopening and rebaking, saves the actual browser archive
+and its digest, and refuses to overwrite an existing archive. Individual CDP
+status timeouts leave the bake running; the final argument sets the overall
+deadline in milliseconds (one hour by default). Progress is printed when it
+changes. A passing report proves the browser harness's document, gameplay, color,
+depth and appearance comparisons. Native ZIP loading, movement and rendered
+character compositing still require separate checks.
