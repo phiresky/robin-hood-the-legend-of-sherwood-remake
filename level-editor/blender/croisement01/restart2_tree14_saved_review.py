@@ -6,11 +6,18 @@ import sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3];HERE=Path(__file__).resolve().parent
 sys.path[:0]=[str(HERE),str(ROOT/'level-editor/refinement'),str(ROOT/'level-editor/refinement/blender')]
-from render_slots import acquire
+import render_slots
 from evidence_io import sha
-acquire(slots=2)
-assert shutil.disk_usage(ROOT).free>10*1024**3
-assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024>6*1024**3
+raw_acquire=render_slots.acquire
+def guarded_acquire(*args,**kwargs):
+    result=raw_acquire(*args,**kwargs)
+    assert shutil.disk_usage(ROOT).free>10*1024**3
+    assert int(next(x.split()[1] for x in Path('/proc/meminfo').read_text().splitlines() if x.startswith('MemAvailable:')))*1024>6*1024**3
+    return result
+# Helpers reacquire after releasing their prior lease. Recheck host resources
+# after each acquisition, including a wait between review phases.
+render_slots.acquire=guarded_acquire
+guarded_acquire(slots=2)
 r=ROOT/'level-editor/work/croisement01-refinement/restart2/tree14-wood-v16-projected'
 w=r/'assets/croisement01-tree-14';model=w/'model.blend';phase=json.loads((r/'phase-modified.json').read_text());before=sha(model);assert before==phase['model_sha256']
 import render_candidate
