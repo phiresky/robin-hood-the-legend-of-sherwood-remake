@@ -2061,8 +2061,15 @@ impl EngineInner {
     /// and carried-PC substitution, without constructing an entity-view world.
     pub(in crate::engine) fn live_ai_position(&self, id: EntityId) -> crate::ai::Position {
         let entity = self.expect_entity(id, "live AI position");
+        // Money callbacks can inspect a consumed object's retained position
+        // before removing it from remembered targets. Spatial discovery still
+        // excludes inactive objects through entity_has_ai_view.
         assert!(
-            entity_has_ai_view(entity),
+            entity.element_data().optional_layer().is_some()
+                && (matches!(
+                    entity,
+                    Entity::Pc(_) | Entity::Soldier(_) | Entity::Civilian(_)
+                ) || entity.object_data().is_some()),
             "live AI position unavailable for {id:?}"
         );
         resolve_ai_position_with(
@@ -2201,6 +2208,34 @@ mod ai_view_position_sector_tests {
     use crate::fast_find_grid::SectorIndex;
     use crate::gate::Door;
     use crate::sector::SectorNumber;
+
+    #[test]
+    fn remembered_inactive_money_retains_position_without_spatial_ai_view() {
+        for object_type in [
+            crate::element::ObjectType::Purse,
+            crate::element::ObjectType::Coin,
+        ] {
+            let mut engine = EngineInner::new();
+            let mut element = crate::element::ElementData::default();
+            element.kind = crate::element::ElementKind::ObjectProjectile;
+            element.active = false;
+            element.set_layer(2);
+            element.set_position_map(MapPoint::new(850.0, 750.0));
+            let id =
+                engine.add_test_entity(Entity::Projectile(crate::element::ElementProjectile {
+                    element,
+                    object: crate::element::ObjectData {
+                        object_type,
+                        ..Default::default()
+                    },
+                    projectile: Default::default(),
+                }));
+            assert!(!entity_has_ai_view(engine.ent(id)));
+            let position = engine.live_ai_position(id);
+            assert_eq!((position.x, position.y, position.level), (850.0, 750.0, 2));
+            assert_eq!(position.sector, None);
+        }
+    }
 
     #[test]
     fn copied_exact_sector_survives_overlapping_public_sector_numbers() {
