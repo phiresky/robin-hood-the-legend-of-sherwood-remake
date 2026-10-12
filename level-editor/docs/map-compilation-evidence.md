@@ -49,12 +49,20 @@ Transforming the pinned asset's authored surfaces shows this point inside both
 are approximately 140.4233 and 155.5054 respectively. The existing destination
 zone already covers the point on the lower surface.
 
-This is evidence of overlapping receiving geometry, not a missing ground-style
-click band. It does not yet establish whether the asset has an erroneous roof
-surface or the intended landing requires hidden selection. Both the geometry
-and native selection behavior need verification before changing ownership or
-counting these five cases as expected occlusions. No asset or runtime change
-has been made for this finding.
+The native hidden-screen query selects jump sector 683 on layer 57 for all five
+samples, and the existing jump authorization chooses line 62. Ordinary selection
+returns sector 249 on layer 59. The separate walk-jump-walk audit passes all ten
+samples of lines 62/63 in both directions (depth 8, t=0/0.25/0.5/0.75/1).
+This supports occlusion as the selection issue; there is no evidence requiring
+a larger click polygon or receiver reassignment. These are separate selection
+and traversal checks, not an end-to-end Shift-click or rendered roof test.
+The ordinary-click failures remain in the report until that check is added.
+
+The complete approach audit passes 336/390 and retains 54 failures for further
+review; this stricter endpoint/deeper-approach audit must not be confused with
+the 369/390 ordinary-click report. Both reports are in the same export directory.
+The diagnostic change, game build and Rust formatting check pass. No asset or
+runtime change has been made for this finding.
 
 ## Wychford tower entrance requires an authored landing (2026-10-12)
 

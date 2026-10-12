@@ -364,9 +364,26 @@ fn resolve_jump_click(
         .ok_or_else(|| format!("click misses all sectors: {goal:?}"))?;
     let selected = &engine.world.fast_grid.level.sectors[usize::from(hit_index)];
     if !selected.sector_type.is_jump() {
+        let hidden = engine.world.fast_grid.get_sector_screen_hidden(goal, start);
+        let hidden_details = hidden.sector_idx.map(|index| {
+            let sector = &engine.world.fast_grid.level.sectors[usize::from(index)];
+            (
+                sector.sector_number,
+                sector.layer,
+                sector.sector_type.is_jump(),
+                engine.get_nearest_jumpable_jump_line(
+                    owner,
+                    u32::from(index),
+                    start,
+                    authorized_goal,
+                    true,
+                    Some(u16::from(destination_sector)),
+                ),
+            )
+        });
         return Err(format!(
-            "click does not select jump overlay: {goal:?}, sector={:?}",
-            selected.sector_number
+            "click does not select jump overlay: {goal:?}, sector={:?}, layer={}, hidden_sector_layer_jump_line={hidden_details:?}",
+            selected.sector_number, selected.layer
         ));
     }
     let chosen = engine.get_nearest_jumpable_jump_line(
