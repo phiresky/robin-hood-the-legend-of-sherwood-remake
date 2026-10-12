@@ -1,17 +1,17 @@
 """Prepare after publication only; never launch or modify canonical resources."""
 from pathlib import Path
 import argparse,hashlib,json,shutil
+from audit_smoke_catalog_authority import published_authority
 R=Path.cwd();B=R/'level-editor/work/croisement02-refinement/approved-round-wood-integration-oct11-v1';OLD=B/'editor-check-v3';LIB=R/'level-editor/library'
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 def dump(p,x):p.write_text(json.dumps(x,indent=2)+'\n')
 def prepare(plan_path,out):
  plan=json.loads(plan_path.read_text())
- assert len(plan['records'])==12
- for rec in plan['records']:
-  assert sha(Path(rec['target']))==rec['new_sha256'],'Not published: '+rec['target']
+ catalog_audit=published_authority(plan,LIB)
  state_packet=R/'level-editor/work/croisement02-refinement/restart136-installed-state-ui-inputs-v1/inputs.json';states=json.loads(state_packet.read_text())
  for pin in states['pins']:assert sha(Path(pin['path']))==pin['sha256'],pin['path']
  out.mkdir(exist_ok=False)
+ dump(out/'current-catalog-audit.json',catalog_audit)
  authority=json.loads((OLD/'runtime-authority.json').read_text());snapshot={}
  for d in authority['sourceDirectories']:
   for p in sorted((R/d).rglob('*')):
@@ -22,7 +22,9 @@ def prepare(plan_path,out):
  authority['membership']=sorted(snapshot);authority['index']={'path':str(LIB/'3d-assets/index.json'),'initial_sha256':sha(LIB/'3d-assets/index.json')}
  dump(out/'source-snapshot.json',snapshot);dump(out/'runtime-authority.json',authority)
  inputs={str(plan_path):sha(plan_path),str(state_packet):sha(state_packet)}
- for rec in plan['records']:inputs[rec['target']]=rec['new_sha256']
+ for rec in plan['records']:inputs[rec['target']]=catalog_audit['current_index_sha256'] if Path(rec['target'])==LIB/'3d-assets/index.json' else rec['new_sha256']
+ for row in catalog_audit['changes']:inputs[row['descriptor']['path']]=row['descriptor']['sha256']
+ inputs[str(out/'current-catalog-audit.json')]=sha(out/'current-catalog-audit.json')
  for pin in states['pins']:inputs[pin['path']]=pin['sha256']
  runtime=dict(snapshot);runtime.update(inputs);dump(out/'runtime-inputs.json',runtime)
  shutil.copy2(OLD/'observe-library.js',out/'observe-library.js');shutil.copy2(OLD/'editor.tsx',out/'editor.tsx')
@@ -60,7 +62,8 @@ def prepare(plan_path,out):
  (out/'run.mjs').write_text(run)
  for f in ['editor.tsx','check.js','check-config.json','observe-library.js','runtime-authority.json','source-snapshot.json']:inputs[str(out/f)]=sha(out/f)
  dump(out/'inputs.json',inputs)
- dump(out/'request.json',{'status':'PREPARED_NOT_LAUNCHED','run':str(out/'run.mjs'),'run_sha256':sha(out/'run.mjs'),'plan':str(plan_path),'plan_sha256':sha(plan_path),'runtime':'Fresh current source snapshot at postpublication preparation; independent of prior private proof.','scope':'Actual canonical source map and selected state resources; normal map/group selection, source camera, controls. No save/reload or repeated clock claim.'})
+ dump(out/'request.json',{'status':'PREPARED_NOT_LAUNCHED','run':str(out/'run.mjs'),'run_sha256':sha(out/'run.mjs'),'plan':str(plan_path),'plan_sha256':sha(plan_path),'current_catalog_audit':{'path':str(out/'current-catalog-audit.json'),'sha256':sha(out/'current-catalog-audit.json')},'runtime':'Fresh current source snapshot at postpublication preparation; independent of prior private proof.','scope':'Actual canonical source map and selected state resources; normal map/group selection, source camera, controls. No save/reload or repeated clock claim.'})
+ for path,digest in inputs.items():assert sha(Path(path))==digest,'Input drift during preparation: '+path
  print(out)
 if __name__=='__main__':
  p=argparse.ArgumentParser();p.add_argument('--plan',type=Path,required=True);p.add_argument('--out',type=Path,required=True);a=p.parse_args();prepare(a.plan.resolve(),a.out.resolve())
