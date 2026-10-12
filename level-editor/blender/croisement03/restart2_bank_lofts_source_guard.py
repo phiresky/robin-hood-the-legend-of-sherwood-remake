@@ -7,12 +7,12 @@ from restart2_bank_boundary_ray import boundary_hits
 R=Path(__file__).resolve().parents[3];B=R/'level-editor/work/croisement03-refinement/restart2';O=B/'bank-boulder-fronts-cpu-v8';E=B/'bank-boulder-east-cpu-v8/geometry.json';S=math.sin(math.radians(35));C=math.cos(math.radians(35));ray=np.array([0.,-C,S])
 W=None
 def main():
- d=json.loads((O/'geometry.json').read_text());east=json.loads(E.read_text());old=json.loads((B/'bank-whole-geometry-plan-v4/geometry.json').read_text());west=json.loads((B/'bank-continuous-strata-plan-v1/geometry.json').read_text());pair=lambda m:(m['vertices'],m['faces']);before={'52':pair(old['52']),'53':pair(west),'54':pair(old['54'])}
+ d=json.loads((O/'geometry.json').read_text());east=json.loads(E.read_text());old=json.loads((B/'bank-whole-geometry-plan-v4/geometry.json').read_text());west=json.loads((B/'bank-continuous-strata-plan-v1/geometry.json').read_text());pair=lambda m:(np.asarray(m['vertices'],dtype=np.float64),np.asarray(m['faces'],dtype=int));before={'52':pair(old['52']),'53':pair(west),'54':pair(old['54'])}
  revised_west=json.loads(W.read_text())if W else west
+ right_meshes={'53':pair(revised_west),'54':pair(d['54']),'52-right':pair(east)}
+ left_meshes={**right_meshes,'52-left':pair(d['52'])}
  def after(x):
-  meshes={'53':pair(revised_west),'54':pair(d['54']),'52-right':pair(east)}
-  if x<=east['x_cut']:meshes['52-left']=pair(d['52'])
-  return meshes
+  return left_meshes if x<=east['x_cut']else right_meshes
  def hits(source,meshes):
   x,y=source;origin=np.array([x,-y/S,0.])+ray*5000;return boundary_hits(origin,-ray,meshes),origin
  failures=[];count=0
