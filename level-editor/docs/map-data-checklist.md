@@ -165,8 +165,10 @@ checks but produced a non-manifold GLB and is rejected. A subsequent asset-local
 wall-cut candidate avoids unstable mesh fragments, preserves the existing lower
 wall recess, and matches both repaired walls at 420,810 sampled occupancy points.
 All 32 native player-click stair routes and 32 missing/raised-landing rejections
-pass. It remains unpublished: texturing, full actor clearance, the step's plane
-discrepancy and a rendered roundtrip of the combined asset bundle remain open.
+pass. A private step-mesh repair now aligns its top with the authored plane:
+serialized height error is below 0.000073 units, and the combined metadata retains
+all 32 native stair traversals. It remains unpublished: texturing, full actor
+clearance and a rendered roundtrip of the combined asset bundle remain open.
 
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and

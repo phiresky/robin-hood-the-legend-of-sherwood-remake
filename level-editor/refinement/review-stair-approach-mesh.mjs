@@ -43,7 +43,7 @@ assert.equal(intersection([-1, 0, 0], [1, 0, 0], triangle.toReversed()), 0.5);
 assert.equal(intersection([-1, 5, 0], [1, 5, 0], triangle), undefined);
 assert.equal(intersection([1, -1, 0], [1, 1, 0], triangle), undefined);
 
-const [directory, stage, modelStage] = process.argv.slice(2);
+const [directory, stage, modelStage, stepModelStage] = process.argv.slice(2);
 assert.ok(directory && stage, "Supply isolated stair exports and their authoring stage");
 const manifest = JSON.parse(await fs.readFile(`${directory}/diagnostics.json`));
 assert.equal(manifest.complete, true);
@@ -57,6 +57,12 @@ const modelCandidate = modelStage
   ? {
       config: JSON.parse(await fs.readFile(`${modelStage}/opening.json`)),
       report: JSON.parse(await fs.readFile(`${modelStage}/mesh-build.json`)),
+    }
+  : undefined;
+const stepCandidate = stepModelStage
+  ? {
+      config: JSON.parse(await fs.readFile(`${stepModelStage}/mesh-plane.json`)),
+      report: JSON.parse(await fs.readFile(`${stepModelStage}/mesh-build.json`)),
     }
   : undefined;
 const models = new Map();
@@ -97,6 +103,18 @@ for (const { file } of manifest.results) {
             volumes: volumes.length,
           });
         }
+      } else if (stepCandidate && source.id === edit.asset) {
+        assert.equal(stepCandidate.config.modelSha256, source.model_sha256);
+        models.set(
+          source.id,
+          await loadSceneModel(stepModelStage, {
+            id: source.id,
+            role: "objects",
+            model: "model.glb",
+            model_sha256: stepCandidate.report.modelSha256,
+            resources: [],
+          }),
+        );
       } else models.set(source.id, await loadSceneModel("library", source));
     }
     for (const object of document.objects.filter((object) =>
@@ -161,6 +179,7 @@ const report = {
     "prepared-outdoor-stair-centerline-one-unit-above-floor-vs-mesh-not-full-actor-or-animation",
   audit_finished: true,
   ...(modelStage ? { unpublishedModelStage: modelStage, serializedSolids } : {}),
+  ...(stepModelStage ? { unpublishedStepModelStage: stepModelStage } : {}),
   clear: results.every((result) => result.hits.length === 0),
   approaches: results.length,
   crossingApproaches: results.filter((result) => result.hits.length > 0).length,

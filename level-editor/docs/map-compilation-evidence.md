@@ -2263,6 +2263,29 @@ roundtrip using the combined model/metadata bundle remain open. The unsuccessful
 generic volume-compaction experiment was removed; production compiler and runtime
 code are unchanged.
 
+The next private step candidate, `step-stair-sPEiZu`, aligns the five top corners
+of the step mesh with the authored planar walking footprint. The previous mesh
+used three slightly different planes. `build-step-walking-plane.py` preserves
+the lower geometry and UV coordinates, bounds each vertex adjustment to one game
+unit, welds texture-seam vertices for consistent winding, and exports a fresh GLB.
+The largest adjustment is 0.610104 game units. Candidate hash:
+`9bb2347cbce481b4241d27cfa7f2599ed1b8f3795cbd13ab5dbff9d3b1350348`.
+
+`review-step-walking-plane.mjs` verifies the serialized mesh is closed and its
+three top triangles agree with the receiving plane. Maximum height error is
+0.000072965 units, maximum corner error 0.000071304 units, and the symmetric
+footprint-difference area is 0.003642 square units. These tolerances cover the
+serialized coordinate precision; this is not an in-game rendering check.
+The staged projection footprint is updated to use those same planar corners.
+
+Combined metadata `turret-gameplay-5s2z2R` exports placement fixture
+`step-passage-assembly-dzwrtd`. All 32 native player-click traversals pass in
+2.08 seconds, along with the export helper's 32 missing/raised-landing rejections.
+The mesh-approach audit now accepts both private models and finds zero crossings
+across all 32 centerlines. Publication still requires combined rendered-bundle
+verification, floor texturing and full actor clearance. No library files or
+runtime code were changed.
+
 Neutral front/rear geometry renders show the new through-opening and floor. They
 are geometry inspections, not textured scene or animated-character verification.
 The new floor uses a provisional texel from the owning wall's cap because the

@@ -1,6 +1,7 @@
 // Unpublished explicit stair candidate from the step's own receiving plane.
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
+import path from "node:path";
 import { createHash } from "node:crypto";
 import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
@@ -33,6 +34,10 @@ const inset = (point, distance) => {
 };
 surface.polygon = footprint.map((point) => seat(point, point[2]).slice(0, 2));
 surface.height = surface.polygon.map((point) => planeHeight(plane, point));
+surface.projectionMaterials.footprint = surface.polygon.map((point, i) => [
+  ...point,
+  surface.height[i],
+]);
 surface.preserveMovementPrecision = true;
 const id = `${surface.node}-lift`;
 gameplay.doors = [];
@@ -83,5 +88,19 @@ await fs.writeFile(
 await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify({ low, high, direction, published: false }),
+);
+const scene = JSON.parse(await fs.readFile("library/scenes/lincoln.rhlos-map.json"));
+await fs.writeFile(
+  `${output}/mesh-plane.json`,
+  JSON.stringify({
+    scope: "unpublished-step-mesh-plane-repair",
+    inputModel: path.resolve(`${root}/model.glb`),
+    modelSha256: hash(await fs.readFile(`${root}/model.glb`)),
+    outputModel: path.resolve(`${output}/model.glb`),
+    node: surface.node,
+    camera: scene.camera,
+    footprint: surface.projectionMaterials.footprint,
+    maximumDisplacement: 1,
+  }),
 );
 console.log(output);
