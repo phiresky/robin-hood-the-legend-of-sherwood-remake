@@ -1704,10 +1704,10 @@ function compileAssetGameplayAttempt(
         });
       continue;
     }
-    // A folded floor can project to less than one pixel. Prepare its supported
+    // A sloping floor can project to less than one pixel. Prepare its supported
     // walking clearance before normalization can erase the receiving surface.
     // Holed or disconnected regions retain the existing obstacle preparation.
-    if (!lift && 1 + plane[1] < 0 && merged.length === 1 && merged[0]!.length === 1) {
+    if (!lift && merged.length === 1 && merged[0]!.length === 1) {
       const receivingPolygon = merged[0]![0]!;
       const worldBoundary = receivingPolygon.map((p): Point => [
         p[0],
@@ -1721,7 +1721,7 @@ function compileAssetGameplayAttempt(
         quantizeGeneratedMotionPolygon(
           [corrected],
           quantize,
-          "Folded navigation clearance",
+          "Projected navigation clearance",
           warnings,
         );
       if (rounded) {

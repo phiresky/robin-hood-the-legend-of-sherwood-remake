@@ -49,6 +49,7 @@ import {
 
 import { heightPlane, planeHeight } from "./gameplay-plane.ts";
 import { pointInGameplayPolygon } from "./navigation-anchor.ts";
+import { stairCenterRegion } from "./stair-center-region.ts";
 import { parseLevel3D, parseProjectionAssetDescriptor } from "./validation.ts";
 import nearEdgeOnStair from "../test-fixtures/near-edge-on-placed-stair.json" with { type: "json" };
 import rotatedTerrainBridge from "../test-fixtures/rotated-terrain-bridge-seam.json" with { type: "json" };
@@ -2706,30 +2707,37 @@ test("explicit joined roof receivers retain their fractional shared seam", () =>
     }
 });
 
-test("a nearly edge-on folded floor survives movement quantization with its receiving plane", () => {
-  const { document, assets, hut } = assetCompilerFixture();
-  hut.gameplay!.collision = "none";
-  hut.gameplay!.doors = [];
-  hut.gameplay!.surfaces = [
-    {
-      id: "edge-on-roof",
-      node: "building-999",
-      navigationRegion: "roof",
-      polygon: [
-        [0, 0],
-        [100, 0],
-        [100, 100],
-        [0, 100],
-      ],
-      height: [20, 20, 120.5, 120.5],
-      projectionMaterials: { defaultMaterial: 1, regions: [] },
-    },
-  ];
-  document.objects = document.objects.filter((object) => object.group);
-  const compiled = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
-  assert.ok(compiled.motion_data.layers.flat().length > 0);
-  assert.ok(compiled.sight_obstacles.some((shape) => shape.projection_area));
-});
+for (const upperHeight of [119.5, 120.5])
+  test(`a nearly edge-on floor at height ${upperHeight} survives movement quantization with its receiving plane`, () => {
+    const { document, assets, hut } = assetCompilerFixture();
+    hut.gameplay!.collision = "none";
+    hut.gameplay!.doors = [];
+    hut.gameplay!.surfaces = [
+      {
+        id: "edge-on-roof",
+        node: "building-999",
+        navigationRegion: "roof",
+        polygon: [
+          [0, 0],
+          [100, 0],
+          [100, 100],
+          [0, 100],
+        ],
+        height: [20, 20, upperHeight, upperHeight],
+        projectionMaterials: { defaultMaterial: 1, regions: [] },
+      },
+    ];
+    document.objects = document.objects.filter((object) => object.group);
+    const compiled = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+    assert.ok(compiled.motion_data.layers.flat().length > 0);
+    assert.ok(
+      compiled.motion_data.layers
+        .flat()
+        .some((area) => stairCenterRegion(area.polygon.points, [5, 2]).length >= 3),
+      "the emitted floor must fit a native walking footprint",
+    );
+    assert.ok(compiled.sight_obstacles.some((shape) => shape.projection_area));
+  });
 
 test("a rotated authored loop exports connected floors without an explicit precision flag", () => {
   const { document, assets, hut } = assetCompilerFixture();

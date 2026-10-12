@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Non-reversed projection clearance (2026-10-12)
+
+Pre-normalization clearance was restricted to folded projections. A simple
+100-by-100 floor rising from 20 to 119.5 retains a thin movement polygon under
+that condition, but its native walking-footprint center region is empty. The
+regression now checks the center region, not merely descriptor presence, for
+both 119.5 and 120.5 upper heights. Restoring the old folded-only condition
+reproduces failure at 119.5 while the 120.5 case passes.
+
+The compiler now tries the existing physical-support clearance preparation on
+simple unholed sloping regions regardless of projection orientation. The helper
+retains already usable floors and rejects unsupported or singular corrections;
+holed/disconnected regions keep their existing preparation. Runtime is unchanged.
+All 180 compiler, clearance and navigation-partition tests pass, along with app
+typechecking and targeted lint/format checks.
+
+The staged west-lane pair-55 matrix `connected-jump-placements-jChELV` passes
+native construction for all eight placements. Its 60/160 ordinary-click outcomes
+are identical case-by-case to `connected-jump-placements-FVLOdR`; interior sampler
+`interior-jump-clicks-2ccrXE` still cannot produce sixteen directions at 90/180
+degrees. This general narrow-floor fix does not resolve that concave asset.
+
 ## York interior jump clicks (2026-10-12)
 
 `check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,

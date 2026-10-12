@@ -27,6 +27,13 @@ two omitted exports to 60/160 probes, with no previously passing probe regressin
 The remaining 100 failures and full-map verification remain open. This changes
 export preparation only; the staged York edge edit remains unpublished.
 
+The same preparation now covers nearly edge-on floors whose projection does
+not reverse. A 100-unit floor rising 99.5 units previously exported a movement
+polygon with no room for a walking footprint; the regression now verifies usable
+clearance as well as receiving geometry on both sides of the projection limit.
+All 180 focused compiler/clearance tests pass. York's west-lane candidate remains
+at 60/160 traversal probes; this fix does not resolve its concave roof coverage.
+
 **Folded-roof export preparation (2026-10-12):** the compiler now prepares
 world-oriented joins, projection clearance and physically supported ordinary
 passages without runtime solving. Fresh copied assemblies load at 0/37/90/180
