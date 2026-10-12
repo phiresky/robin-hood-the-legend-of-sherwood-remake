@@ -96,6 +96,7 @@ await fs.writeFile(
     scope: "unpublished-step-mesh-plane-repair",
     inputModel: path.resolve(`${root}/model.glb`),
     modelSha256: hash(await fs.readFile(`${root}/model.glb`)),
+    modelScene: descriptor.model_scene ?? "default",
     outputModel: path.resolve(`${output}/model.glb`),
     node: surface.node,
     camera: scene.camera,

@@ -2286,6 +2286,34 @@ across all 32 centerlines. Publication still requires combined rendered-bundle
 verification, floor texturing and full actor clearance. No library files or
 runtime code were changed.
 
+The combined browser fixture first exposed a packaging defect: Blender exported
+the scene as `Scene`, while the asset descriptor selected `default`. Both mesh
+authoring tools now preserve the selected scene name, and the mesh review tools
+load that named scene explicitly. The corrected models are `step-stair-TNn4st`
+(SHA-256 `290fb67daa2adec3b289e3dbddf95591808105134a527ab78ea3c87dbf18f56f`)
+and `turret-opening-8Bxgbr`
+(`b9f6a50eb80e767bf3d17921a60771ad61acaefeb8bceee4f55d995dfdcfad75`).
+Their plane, topology, occupancy and approach checks retain the preceding results.
+
+`stage-saved-map-browser.mjs` accepts an optional model-override manifest together
+with the gameplay stage. It verifies candidate hashes, stages private model bytes,
+updates scene model pins, and disables stale derived previews in the private
+catalog. Every model override requires a staged descriptor. Fixture verification
+checks actual model bytes, descriptor hashes, embedded gameplay and scene names;
+published model and descriptor bytes remain unchanged.
+
+Combined metadata `turret-gameplay-Ox1d84` and fixture
+`connection-review-rendered-library-oWWc7r` contain two independent assemblies,
+rotated 37 degrees and raised 40 units. Their 2500×2500 export/reopen/rebake passes
+with matching gameplay and color/depth. `repaired-stair.zip` is 14,726,649 bytes,
+SHA-256 `3a8719b203fd641d5ae8603becbb04ebd77c5413777d95fbdf07173e271ef138`.
+Native loading without a base datadir passes in 1.32 seconds: 87 sight obstacles,
+four door projections, 10,560 grid blocks and no masks or appearance controls.
+All four directed stair clicks from the archived descriptor pass in 0.26 seconds.
+The baked color image was inspected; this angle hides much of the walkway and
+does not establish actor compositing or full body clearance. Those checks and the
+provisional floor texture remain outstanding; no candidate is published yet.
+
 Neutral front/rear geometry renders show the new through-opening and floor. They
 are geometry inspections, not textured scene or animated-character verification.
 The new floor uses a provisional texel from the owning wall's cap because the

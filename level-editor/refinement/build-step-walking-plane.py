@@ -17,6 +17,7 @@ output = Path(config["outputModel"])
 assert not output.exists(), "Do not overwrite an existing candidate"
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=str(source))
+bpy.context.scene.name = config["modelScene"]
 bpy.context.view_layer.update()
 root = bpy.data.objects[config["node"]]
 angle = math.radians(config["camera"]["elevation_deg"])

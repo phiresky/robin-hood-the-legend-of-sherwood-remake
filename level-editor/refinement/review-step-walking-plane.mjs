@@ -18,6 +18,7 @@ const model = await loadSceneModel(stage, {
   id: edit.asset,
   role: "objects",
   model: "model.glb",
+  model_scene: config.modelScene,
   model_sha256: build.modelSha256,
   resources: [],
 });

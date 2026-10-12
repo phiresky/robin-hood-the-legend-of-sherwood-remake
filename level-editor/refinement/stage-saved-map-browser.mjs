@@ -5,7 +5,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
-const [map, libraryArgument = "library", gameplayStage] = process.argv.slice(2);
+const [map, libraryArgument = "library", gameplayStage, modelManifest] = process.argv.slice(2);
+assert.ok(!modelManifest || gameplayStage, "Model candidates require staged gameplay definitions");
+const modelEdits = modelManifest ? JSON.parse(await fs.readFile(modelManifest)) : [];
+assert.equal(new Set(modelEdits.map((edit) => edit.asset)).size, modelEdits.length);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 assert.ok(map && /^[A-Za-z0-9_-]+$/.test(map), "Supply a saved map name");
 const library = path.resolve(libraryArgument);
@@ -46,12 +49,28 @@ if (gameplayStage) {
     assert.ok(entry.editor, `Missing embedded editor descriptor: ${edit.asset}`);
     entry.editor.gameplay = structuredClone(edit.gameplay);
     entry.descriptor_sha256 = source.descriptor_sha256;
+    const modelEdit = modelEdits.find((candidate) => candidate.asset === edit.asset);
+    if (modelEdit) {
+      const modelBytes = await fs.readFile(modelEdit.path);
+      assert.equal(hash(modelBytes), modelEdit.sha256, `Changed candidate model: ${edit.asset}`);
+      assert.ok(!replacements.has(source.model), "Duplicate staged model path");
+      replacements.set(source.model, modelBytes);
+      source.model_sha256 = modelEdit.sha256;
+      // Derived previews describe the published mesh and must not hide this candidate.
+      delete entry.lossy_model;
+      delete entry.preview_model;
+    }
     stagedAssets.push({
       id: edit.asset,
       before: edit.descriptorSha256,
       after: source.descriptor_sha256,
+      ...(modelEdit ? { modelBefore: edit.modelSha256, modelAfter: modelEdit.sha256 } : {}),
     });
   }
+  assert.ok(
+    modelEdits.every((edit) => stagedAssets.some((asset) => asset.id === edit.asset)),
+    "Every candidate model must have a staged descriptor",
+  );
   replacements.set("3d-assets/index.json", Buffer.from(JSON.stringify(catalog)));
 }
 // The HTTP mount rejects nested symlinks escaping its asset root. A staged

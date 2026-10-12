@@ -17,6 +17,7 @@ const model = await loadSceneModel(review.modelStage, {
   id: config.asset,
   role: "objects",
   model: "model.glb",
+  model_scene: config.source.model_scene,
   model_sha256: review.modelSha256,
   resources: [],
 });

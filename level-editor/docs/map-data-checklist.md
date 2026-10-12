@@ -167,8 +167,12 @@ wall recess, and matches both repaired walls at 420,810 sampled occupancy points
 All 32 native player-click stair routes and 32 missing/raised-landing rejections
 pass. A private step-mesh repair now aligns its top with the authored plane:
 serialized height error is below 0.000073 units, and the combined metadata retains
-all 32 native stair traversals. It remains unpublished: texturing, full actor
-clearance and a rendered roundtrip of the combined asset bundle remain open.
+all 32 native stair traversals. The combined two-copy bundle at 37 degrees and
+40 units elevation now passes rendered export/reopen/rebake, native archive loading
+without base data and all four archived stair directions. The browser test also
+caught and resolved an incorrect GLB scene name in the authoring tools. The assets
+remain unpublished: floor texturing, full actor clearance and animated contact
+remain open.
 
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair
 clearance from connected landing support, with matching-height, collision and

@@ -17,6 +17,7 @@ output = Path(config["outputModel"])
 assert not output.exists(), "Do not overwrite an existing candidate"
 bpy.ops.wm.read_factory_settings(use_empty=True)
 bpy.ops.import_scene.gltf(filepath=str(source))
+bpy.context.scene.name = config["source"].get("model_scene", "default")
 
 
 def prism(name, points):
