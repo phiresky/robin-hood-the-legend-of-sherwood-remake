@@ -13,16 +13,20 @@ from restart14_butterfly07_anatomy_contacts import clip_planes
 from resource_guard import guard_reader
 from render_slots import acquire,release
 DEST=q.OUT/'conformation-v4-cell-bounds'
+def cell_polygon(triangle,x,y):
+ attrs=np.c_[triangle,np.zeros((len(triangle),2))]
+ return clip_planes(attrs,np.array([[-1,0,0,x],[1,0,0,-x-1],[0,-1,0,y],[0,1,0,-y-1]],dtype=float))
 def main():
  assert not DEST.exists()
  guard_reader(reader,q.ROOT,DEST)
  oldpath=q.OUT/'conformation-v2/depth-field.json';contactpath=q.OUT/'geometry-v3-contacts/report.json'
  data=json.loads(oldpath.read_text());contacts=json.loads(contactpath.read_text());qualification=json.loads((q.OUT/'qualification.json').read_text());anchors=json.loads((q.OUT/'depth-proposal-v1.json').read_text())
  assert data['map']==contacts['map']==qualification['map']
- requests=collections.defaultdict(set)
+ requests=collections.defaultdict(set);witnesses=collections.defaultdict(list)
  for row in contacts['rows']:
   assert sum(row['triangle_cell_contacts'].values())==len(row['witnesses']), 'Capped witnesses cannot define complete requested cells'
-  for w in row['witnesses']:requests[(w['asset'],w['node'],w['triangle'])].add((row['profile'],*w['source_cell']))
+  for w in row['witnesses']:
+   key=(w['asset'],w['node'],w['triangle']);cell=(row['profile'],*w['source_cell']);requests[key].add(cell);witnesses[(key,cell)].append(np.array(w['camera_space_witness']))
  seen=collections.Counter();seeds={k:np.zeros_like(v['camera_ray_advance'],dtype=float) for k,v in data['rows'].items()};evidence=[]
  def base(n,x,y):
   a=anchors[str(n)];box=qualification['rows'][n-1]['source_union_box'];t=(x-box[0])/(box[2]-box[0]);wy=a['world_y_left']*(1-t)+a['world_y_right']*t+a['depth_bulge']*math.sin(math.pi*t)
@@ -31,11 +35,21 @@ def main():
   matching=[k for k in requests if k[:2]==(placed['id'],node.get('name'))]
   xyz=np.stack([tri[:,:,0],reader.SIN*tri[:,:,2]-reader.COS*tri[:,:,1],reader.COS*tri[:,:,2]+reader.SIN*tri[:,:,1]],axis=2)
   for key in matching:
-   assert key[2]<len(tri),key
-   seen[key]+=1
+   if key[2]>=len(tri):continue
    for n,x,y in sorted(requests[key]):
-    clipped=clip_planes(xyz[key[2]],np.array([[-1,0,0,x],[1,0,0,-x-1],[0,-1,0,y],[0,1,0,-y-1]],dtype=float))
-    assert len(clipped),key
+    clipped=cell_polygon(xyz[key[2]],x,y)
+    if not len(clipped):continue
+    triangle=xyz[key[2]];a,b,c=triangle;ab=b-a;ac=c-a;normal=np.cross(ab,ac);den=float(normal@normal)
+    def contains(point):
+     if den<=1e-18:return False
+     ap=point-a
+     if abs(float(ap@normal))/math.sqrt(den)>1e-4:return False
+     aa=float(ab@ab);bb=float(ab@ac);cc=float(ac@ac);det=aa*cc-bb*bb
+     if det<=1e-18:return False
+     u=(cc*float(ap@ab)-bb*float(ap@ac))/det;v=(aa*float(ap@ac)-bb*float(ap@ab))/det
+     return u>=-1e-5 and v>=-1e-5 and u+v<=1+1e-5
+    if not any(contains(p)for p in witnesses[(key,(n,x,y))]):continue
+    seen[(key,(n,x,y))]+=1
     corners=[(x,y),(x+1,y),(x+1,y+1),(x,y+1)];row=data['rows'][str(n)];box=row['box'];a=anchors[str(n)]
     assert all(box[0]<=xx<=box[2] and box[1]<=yy<=box[3] for xx,yy in corners)
     # Linear receiver depth reaches its maximum at a clipped polygon vertex.
@@ -44,7 +58,7 @@ def main():
     for xx,yy in corners:seeds[str(n)][yy-box[1],xx-box[0]]=max(seeds[str(n)][yy-box[1],xx-box[0]],bound)
     evidence.append(dict(asset=key[0],node=key[1],triangle=key[2],profile=n,cell=[x,y],receiver_depth_max=float(clipped[:,2].max()),advance=bound))
  def finish(rays,records,mp):
-  assert all(seen[k]==1 for k in requests),dict(seen)
+  assert all(seen[(k,cell)]==1 for k,cells in requests.items()for cell in cells),str([(k,cell,seen[(k,cell)])for k,cells in requests.items()for cell in cells if seen[(k,cell)]!=1])
   for n,row in data['rows'].items():
    old=np.array(row['camera_ray_advance']);required=np.maximum(old,seeds[n]);field=np.maximum(required,gaussian_filter(maximum_filter(required,size=5),1.0));row.update(camera_ray_advance=field.tolist(),maximum_advance=float(field.max()),maximum_added_advance=float((field-old).max()))
   data.update(status='PRIVATE_CLEARANCE_HYPOTHESIS_REQUIRES_MODEL_AND_FULL_RECHECK',input_field=q.pin(oldpath),contact_source=q.pin(contactpath),receiver_records=records,cell_bounds=evidence)
