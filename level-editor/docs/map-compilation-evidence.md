@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Unpublished roof-slab connection candidate (2026-10-12)
+
+`refinement/stage-roof-slab-contact.mjs` stages local boundary sockets between
+the north-street roof slab and north stone house. The shared-edge adjustments
+are 1.552 and 0.916 game units; keeping the slab planar adjusts its opposite
+corner height by 0.113 units. Receiving anchors, footprint and jump-zone anchor
+are updated with that floor. These changes are candidates, not reviewed mesh
+corrections, and have not been published.
+
+The first compilable candidate (`saved-map-exports-uohDGn`) loaded natively but
+omitted pair 32. Its 364/380 click result is not an improvement: the ten tested
+traversals of the affected connection were removed. Updating the landing
+anchor alone (`saved-map-exports-V8KsWf`) retained that omission. Diagnostic
+`saved-map-exports-MRwqhd` resolves the anchor's height to sector 246/layer 56
+at projected `[1591,534]`, but finds the point blocked.
+
+Replacing the old clearance slices with the candidate floor clearance restores
+all 39 pairs (`roof-slab-contact-bQyFIR`, export `saved-map-exports-J6Chjx`).
+Native construction passes, but upright clicks regress to 364/390: all ten
+samples on lines 64/65 fail, versus six previously. Source approaches are
+unauthorized and target clicks miss sectors or authorized arrivals. Matching
+the boundary and navigation sockets alone does not solve the receiving/blocking
+contract of this joined roof region. The candidate must remain unpublished;
+mesh coverage, collision ownership, placed routing and jump preservation all
+remain required. No engine changes were made.
+
 ## Courtyard wall jump inset (2026-10-12)
 
 Published `nottingham-castle-west-courtyard-wall` segment `jump-pair-7-side-0`

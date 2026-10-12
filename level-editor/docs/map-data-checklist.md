@@ -32,6 +32,8 @@ not certify full-map overlay interactions. See the
 [courtyard repair evidence](map-compilation-evidence.md#courtyard-wall-jump-inset-2026-10-12). All 239
 compiler/export tests passed at that stage. The subsequent copied-roof failure
 is repaired and verified above; full-map jump failures remain under review.
+The roof-slab socket candidate loads but worsens its click routes and remains
+unpublished; see the [candidate evidence](map-compilation-evidence.md#unpublished-roof-slab-connection-candidate-2026-10-12).
 See [partition verification](map-compilation-evidence.md#compiled-jump-receiving-face-partitions-2026-10-12).
 
 Fresh Wychford gameplay data loads natively and passes 96 sampled ordinary
