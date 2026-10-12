@@ -128,8 +128,10 @@ these drawbridge definitions but predates the separate step/turret repair below.
 Fresh installed-library export `saved-map-exports-h7ZuCA` combines both repairs
 and is byte-identical to the native-tested candidate: 192 ordinary routes, eighteen
 stairs, 100 jump clicks and all six drawbridge passages across open/closed/reset
-states pass. A new full-map rendered archive of both repairs together is still
-outstanding. Sampled bank seams retain gaps below one game unit, and animated
+states pass. Fresh complete-character checks of that installed export also pass
+all eighteen stair routes and eight climb routes. The combined full-map rendered
+round trip is running in `lincoln-rendered-library-N7St4K`; it is not yet verified.
+Sampled bank seams retain gaps below one game unit, and animated
 contact remains unverified; these are draft limitations, not full-parity claims.
 
 **Installed Lincoln step/turret repair (2026-10-13):** both reusable assets are now

@@ -2397,6 +2397,20 @@ stair directions (two more than the prior library), eight climb directions and
 all 100 upright jump-click traversals. This verifies the repaired assembly in
 the complete saved scene; it does not substitute for a fresh full-map rendered ZIP.
 
+### Combined installed Lincoln character checks (2026-10-13)
+
+Fresh native tests of `saved-map-exports-h7ZuCA` pass all eighteen complete-sprite
+stair routes in 1.78 seconds and eight complete-actor climb routes in 1.73 seconds,
+using the complete RobinTown and LittleJohn character definitions. Reports are
+`actor-stair-sprite-route-report.json` and `actor-climb-route-report.json` in that
+export directory. These checks exercise animation-driven movement; they do not
+render actors or certify sprite/mesh contact. The initial exact-name invocation
+matched zero tests and is not counted; both subsequent runs executed one test.
+
+The combined installed-library browser fixture is
+`lincoln-rendered-library-N7St4K`. Export/reopen/rebake is running through its
+45 appearance states; no completed archive or rendered parity result is claimed.
+
 ### Installed drawbridge and plateau definitions (2026-10-13)
 
 The verified `drawbridge-mesh-footprints-IXa2n5` definitions are now installed as
