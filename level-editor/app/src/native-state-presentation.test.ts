@@ -588,3 +588,81 @@ test("active pixel-empty effects retain order snapshots while inactive ones leav
   );
   player.dispose();
 });
+
+test("zero-elevation map effects refresh before ordered artwork and restore empty frames", async () => {
+  const f = await fixture();
+  const transparent = await f.image("empty.png", [0, 0, 0, 0]);
+  const target = f.contract.elements[0]!;
+  const animation = {
+    active: true,
+    display_polyline: [],
+    sprite: { position_x: 0, position_y: 0, elevation: 0 },
+  };
+  f.source.level.animations = [animation] as unknown as typeof f.source.level.animations;
+  f.contract.level_data_sha256 = await missionStateDataHash(f.source.level);
+  f.contract.elements.push({
+    ...target,
+    id: "background-fx",
+    source: { kind: "map-animation", index: 0, sha256: await missionStateDataHash(animation) },
+    display_order: 1000,
+    creation_order: 1,
+    frames: [target.frames[1]!, { ...transparent, offset: [0, 0], delay: 1 }],
+  });
+  const presentation = new NativeStatePresentation();
+  await presentation.set(f.contract, f.source, f.read);
+  const rgb = () => Array.from(presentation.pixels().data.slice(0, 3));
+  assert.deepEqual(rgb(), [200, 0, 0], "ordinary target covers background FX");
+  presentation.setElementState("sign", false);
+  assert.deepEqual(rgb(), [0, 200, 0], "background FX remains visible over map art");
+  presentation.setPlaying(true);
+  presentation.advance(2 / 25);
+  assert.deepEqual(rgb(), [20, 30, 40], "empty phase restores original receiver");
+  presentation.advance(2 / 25);
+  assert.deepEqual(rgb(), [0, 200, 0], "loop timing is preserved");
+  presentation.setElementState("background-fx", false);
+  assert.deepEqual(rgb(), [20, 30, 40]);
+  presentation.clear();
+  await presentation.set(f.contract, f.source, f.read);
+  assert.deepEqual(rgb(), [200, 0, 0], "rebinding restores source activation");
+  presentation.dispose();
+  animation.sprite.elevation = Number.NaN;
+  f.contract.level_data_sha256 = await missionStateDataHash(f.source.level);
+  f.contract.elements[1]!.source.sha256 = await missionStateDataHash(animation);
+  await assert.rejects(
+    new NativeStatePresentation().set(f.contract, f.source, f.read),
+    /Missing native effect elevation/,
+  );
+});
+
+test("background effects use registration order, while positive elevation retains display order", async () => {
+  const f = await fixture();
+  const template = f.contract.elements[0]!;
+  f.contract.elements = [];
+  for (const index of [0, 1]) {
+    const raw = {
+      active: true,
+      display_polyline: [],
+      sprite: { position_x: 0, position_y: 0, elevation: 0 },
+    };
+    f.source.level.animations.push(raw as unknown as (typeof f.source.level.animations)[number]);
+    f.contract.elements.push({
+      ...template,
+      id: `fx-${index}`,
+      source: { kind: "map-animation", index, sha256: await missionStateDataHash(raw) },
+      creation_order: 20 - index,
+      display_order: 100 - index,
+      frames: [template.frames[index]!],
+    });
+  }
+  f.contract.elements.reverse();
+  f.contract.level_data_sha256 = await missionStateDataHash(f.source.level);
+  const presentation = new NativeStatePresentation();
+  await presentation.set(f.contract, f.source, f.read);
+  assert.deepEqual(Array.from(presentation.pixels().data.slice(0, 3)), [0, 200, 0]);
+  f.source.level.animations[0]!.sprite.elevation = 1;
+  f.contract.elements[1]!.source.sha256 = await missionStateDataHash(f.source.level.animations[0]);
+  f.contract.level_data_sha256 = await missionStateDataHash(f.source.level);
+  await presentation.set(f.contract, f.source, f.read);
+  assert.deepEqual(Array.from(presentation.pixels().data.slice(0, 3)), [200, 0, 0]);
+  presentation.dispose();
+});

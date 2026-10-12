@@ -125,6 +125,23 @@ export function compositeNativePixels(
   }
 }
 
+/** Source elevation selects a drawing stage, not a physical model altitude. */
+function backgroundEffectIds(
+  contract: NativeStatePresentationContract,
+  source: MissionStateSource,
+) {
+  const ids = new Map<string, number>();
+  for (const element of contract.elements) {
+    if (element.source.kind !== "map-animation") continue;
+    const elevation = source.level.animations[element.source.index]?.sprite.elevation;
+    if (!Number.isFinite(elevation))
+      throw new Error(`Missing native effect elevation: ${element.id}`);
+    if (elevation === 0)
+      ids.set(element.id, (source.level.patches?.length ?? 0) + element.source.index);
+  }
+  return ids;
+}
+
 export async function verifyNativePresentationSource(
   contract: NativeStatePresentationContract,
   source: MissionStateSource,
@@ -263,12 +280,15 @@ export async function verifyNativePresentationSource(
     )
       throw new Error("Painted ordering contract changed");
   }
+  const backgroundIds = backgroundEffectIds(contract, source);
   nativePresentationOrder(
-    contract.elements.map((e) =>
-      !e.active && e.initial_frame
-        ? { ...e, active: true, frames: [e.initial_frame], loop: false }
-        : e,
-    ),
+    contract.elements
+      .filter((e) => !backgroundIds.has(e.id))
+      .map((e) =>
+        !e.active && e.initial_frame
+          ? { ...e, active: true, frames: [e.initial_frame], loop: false }
+          : e,
+      ),
     contract.painted_order_equivalence?.elements,
   );
 }
@@ -283,6 +303,7 @@ export class NativeStatePresentation {
   private coverApplied = new Set<string>();
   private visibleElements = new Map<string, boolean>();
   private activeElements = new Map<string, boolean>();
+  private backgroundEffectIds = new Map<string, number>();
   private verifiedDisjointPair: [string, string] | undefined;
   private patches = new Map<string, { phase: NativeBackgroundPhase; offset: number }>();
   private backgrounds = new Map<string, { phase: NativeBackgroundPhase; offset: number }>();
@@ -311,6 +332,7 @@ export class NativeStatePresentation {
     this.contract = undefined;
     this.offsets.clear();
     this.activeElements.clear();
+    this.backgroundEffectIds.clear();
     this.visibleElements.clear();
     this.coverApplied.clear();
     this.backgrounds.clear();
@@ -441,6 +463,7 @@ export class NativeStatePresentation {
         }
     }
     this.verifiedDisjointPair = pair;
+    this.backgroundEffectIds = backgroundEffectIds(frozen, frozenSource);
     this.contract = frozen;
     this.images = images;
     this.revision++;
@@ -679,6 +702,7 @@ export class NativeStatePresentation {
           ? { ...e, active: true, frames: [e.initial_frame], loop: false }
           : { ...e, active };
       });
+    const backgroundIds = new Map(this.backgroundEffectIds);
     for (const state of [...(this.contract.patch_states ?? [])].sort(
       (a, b) => a.creation_order - b.creation_order,
     )) {
@@ -689,17 +713,19 @@ export class NativeStatePresentation {
         Math.max(0, this.currentTick + selected.offset),
       );
       if (!frame) continue;
-      if (state.layer === "background")
-        compositeNativePixels(
-          pixels,
-          this.images.get(frame.path)!,
-          state.display_position[0] + frame.offset[0] - this.contract.origin[0],
-          state.display_position[1] + frame.offset[1] - this.contract.origin[1],
-          frame.shadow_key,
-        );
-      else elements.push({ ...state, active: true, frames: [frame], loop: false });
+      if (state.layer === "background") backgroundIds.set(state.id, state.creation_order);
+      elements.push({ ...state, active: true, frames: [frame], loop: false });
     }
-    for (const element of nativePresentationOrder(elements, this.verifiedDisjointPair)) {
+    // Refresh background FX in registration order before the ordinary display list.
+    // Rebuilding from the clean receiver also removes the preceding frame's pixels.
+    const backgroundEffects = elements
+      .filter((e) => e.active && backgroundIds.has(e.id))
+      .sort((a, b) => backgroundIds.get(a.id)! - backgroundIds.get(b.id)!);
+    const ordered = nativePresentationOrder(
+      elements.filter((e) => !backgroundIds.has(e.id)),
+      this.verifiedDisjointPair,
+    );
+    for (const element of [...backgroundEffects, ...ordered]) {
       const index = nativePresentationFrame(
         element,
         Math.max(0, this.currentTick + (this.offsets.get(element.id) ?? 0)),
