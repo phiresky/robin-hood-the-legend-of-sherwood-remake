@@ -38,6 +38,24 @@ The game build, Rust formatting check and focused startup audit pass.
 asset and the Nottingham descriptor pin. Only the ground click polygon changes;
 these checks do not establish ZIP or rendered traversal fidelity.
 
+## North-stone-house jump receiving overlap (2026-10-12)
+
+Fresh `saved-map-exports-36IIVl` still rejects all five ordinary clicks for
+Nottingham line 62. Its destination is the north-stone-house segment
+`jump-pair-33-side-1`, bound to `jump-zone-34/receiver/building-117-walk-0`.
+The midpoint click `[1712.7156,473.42233]` selects ordinary sector 249.
+Transforming the pinned asset's authored surfaces shows this point inside both
+`building-117-walk-0` and `building-118-walk-0`. Their projected plane heights
+are approximately 140.4233 and 155.5054 respectively. The existing destination
+zone already covers the point on the lower surface.
+
+This is evidence of overlapping receiving geometry, not a missing ground-style
+click band. It does not yet establish whether the asset has an erroneous roof
+surface or the intended landing requires hidden selection. Both the geometry
+and native selection behavior need verification before changing ownership or
+counting these five cases as expected occlusions. No asset or runtime change
+has been made for this finding.
+
 ## Wychford tower entrance requires an authored landing (2026-10-12)
 
 `refinement/audit-lift-supports.mjs` inspects saved editor scenes and pinned
