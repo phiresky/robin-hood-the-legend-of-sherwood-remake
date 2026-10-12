@@ -223,6 +223,14 @@ geometry/projection mismatch and requires a count/phase correction.
 Keep source-supported geometry separate from artistic inference. Document every
 inferred hidden surface and every unresolved limitation.
 
+During iteration, use focused source-camera, contact, or reverse-view diagnostics
+to resolve the specific defect before regenerating the full eight-view packet.
+After repeated failed variants, revisit the source interpretation or geometric
+assumption instead of producing more variants of the same approach. Preserve
+ambiguous source detail and disclose reasonable hidden-surface inference; do not
+invent unsupported geometry merely to eliminate isolated texture pixels. The
+complete saved-model review remains required before approval.
+
 Complete assets that extend beyond the source map. The image boundary is not
 an object boundary: infer the missing crown, trunk, rock, wall return or other
 continuation from the visible shape and permitted references instead of cutting
@@ -962,6 +970,18 @@ four slots: `refinement/render_slots.py`, locks in
 `work/lincoln-refinement/render-slots/`, FIFO waiters. All maps, workers and
 lossy derivation share that pool, so call `render_slots.acquire()` before
 loading a large scene and never start a private pool.
+
+Run inexpensive input, dependency, and runtime-contract checks before entering
+the heavy-work queue, and recheck mutable inputs after admission. Generate and
+verify canonical hashes with the same serialization rules; Python and JavaScript
+can serialize identical numeric values differently.
+
+Do not release a render lease and then wait for another lease while retaining a
+large loaded scene. For separate render and readback phases, save the result,
+exit the first process, and load it in a fresh process only after the next
+admission. Otherwise an apparently idle queued worker can consume the memory
+needed for every other worker to pass its resource guard. Keep network-only
+texture requests outside the render pool; their local bakes still use it.
 
 The following scripts form the reusable core. They should accept a map config,
 asset ID, source image, collection, camera set, and output directory rather
