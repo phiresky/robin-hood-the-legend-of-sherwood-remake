@@ -40,7 +40,8 @@ def main():
             if obj.type=='MESH':obj.hide_render=True
         with bpy.data.libraries.load(str(model),link=False)as(src,dst):
             dst.objects=[name for name in src.objects if name.startswith('Provisional Tree18 ')]
-        wood=dst.objects;assert len(wood)==4
+        wood=dst.objects;assert len(wood)in(1,4)
+        if len(wood)==1:assert wood[0].get('tree18_track')=='united_four_source_tracks'
         for obj in wood:scene.collection.objects.link(obj);obj.hide_render=False
         rows=[]
         for obj in wood:
@@ -71,11 +72,11 @@ def main():
             joints.append({'parts':[a.name,b.name],'intersection_volume':abs(float(bm.calc_volume())),
                            'intersection_faces':len(bm.faces),'closed':all(e.is_manifold for e in bm.edges)})
             bm.free();mesh=clone.data;bpy.data.objects.remove(clone,do_unlink=True);bpy.data.meshes.remove(mesh)
-        report={'status':'HOLD_PRIVATE_WOOD_ANATOMY_AND_CONTACT_REVIEW','pins':pins,'native_union':len(union),
+        report={'status':'HOLD_PRIVATE_WOOD_ANATOMY_AND_CONTACT_REVIEW','pins':pins,'saved_wood_objects':len(wood),'native_union':len(union),
                 'priority_measurement':'Current editor vertical-plane diagnostic only; authored native displayline priority is separate and not proved by these depths.','diagnostic_plane_native_ground_y':462,'blocked_native_union':len(blocked),'blocked_pixels':[{'xy':list(p),'hit':hit}for p,hit in blocked.items()],
                 'phase_blocked':[len(d&blocked.keys())for d in domains],'junction_intersections':joints,
                 'limits':['Exact saved geometry audit; static foliage, complete root contacts and runtime integration remain separate.',
-                          'Four closed sweeps are not yet a united branching trunk. No bark or native leaf source assignment.']}
+                          'Separate sweeps or united wood as recorded above still require full physical contacts. No bark or native leaf source assignment.']}
         (O/'receipt.json').write_text(json.dumps(report,indent=2)+'\n')
         scene.render.engine='CYCLES';scene.cycles.samples=16;scene.cycles.use_denoising=False
         scene.render.threads_mode='FIXED';scene.render.threads=2;scene.render.film_transparent=True
