@@ -4,6 +4,18 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Great hall rotation failures (2026-10-12)
+
+While the full placement generator `great-hall-neighbour-placements-gzhML3`
+continues, completed zero-elevation exports were copied into isolated audit
+`great-hall-four-angles-3beizfnx`. Native GateSearch traversal passes 12/12
+directions at zero degrees and reports two failures among twelve at 37 degrees.
+The audit then aborts loading the 90-degree export: ordinary door zero has no
+receiving floor at projected point `[1453,1260]`, layer nine, sector 64. The
+180-degree entry is not reached by this batch. No completed report or full
+matrix pass can be inferred from these results. The saved Lincoln scene's
+16 passing routes remain valid but do not certify rearranged hall connections.
+
 ## Sherwood stair clearance investigation (2026-10-12)
 
 Fresh published export `saved-map-exports-pxNvRF` passes 50 ordinary route
