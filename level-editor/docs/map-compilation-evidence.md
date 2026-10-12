@@ -61,8 +61,15 @@ across nine angles, two elevations and two copied assemblies. Offset failures
 remain at 135/180 degrees where the sampled start or landing lacks authorization
 or a receiver; these are retained as failures, not counted as successful routes.
 
-Full York candidate `saved-map-exports-D4r29E` is still compiling. The asset is
-not published yet; full-map regression checks and rendered traversal remain open.
+Full York candidate `saved-map-exports-D4r29E` compiles in 490.7 seconds and
+constructs native geometry. Its full audit has 696 successful traversals,
+eleven occluded lower-click cases and thirteen failures out of 720 probes,
+versus 681/11/28 before. Exact case comparison finds no regressions: lines 50/51
+gain ten successes from non-reversed projection clearance, and line 142 gains
+five from the roof correction. Remaining failures are lines 5 (five), 57 (five)
+and 65 (three). Interior subset `interior-jump-clicks-Cm54Ud` passes all ten
+directions, including the previously unavailable golden-house side; this does
+not clear the wider offset coverage failures.
 
 The published comparison at the five additional angles,
 `connected-jump-placements-c4g84t`, retains no jump pairs at either 135-degree
@@ -73,6 +80,15 @@ Published interior subset `interior-jump-clicks-RtTK62` passes 20/32, with both
 absent jump arrays as unavailable and exits nonzero, instead of throwing before
 writing the diagnostic. Publication preview for `york-west-lane-roof-HoTN5S`
 selects only the rear-house asset and York scene pin, with `applied: false`.
+
+`york-west-lane-roof-HoTN5S/publication/report.json` subsequently records
+`applied: true`. Published gameplay equals the reviewed definition exactly;
+the model pin is unchanged and the only saved-scene change is this asset's
+descriptor hash. Fresh published matrix `connected-jump-placements-ERCBGg`
+reproduces all eight native-validated `HyXC70` descriptors byte-for-byte.
+The definition retains its existing draft warnings. Rendered sprite contact,
+complete exported ZIP round trips for this correction and all-map parity remain
+unverified.
 
 `check-jump-interior-clicks.mjs` samples jump-zone interiors on a two-unit grid,
 ordered by distance to the takeoff edge. Each point must pass static corridor
