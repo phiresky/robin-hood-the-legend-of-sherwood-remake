@@ -182,8 +182,17 @@ descriptor bytes and pins. Corrected fixture `lincoln-rendered-library-9FBLqH`
 verifies that both representations match, both scene/catalog hashes match the
 descriptor bytes, and source-library descriptors remain unchanged. It contains
 the two drawbridge receiving surfaces and three plateau regions. A fresh no-watch
-browser roundtrip is running against that fixture; no completed ZIP result is
-claimed yet.
+browser roundtrip now passes: 2944×2176, 597 sight obstacles, 169,676,380 ZIP bytes,
+and matching reopened gameplay and rendered color/depth through 45 appearances.
+The runner is still transferring its final archive. The separately saved
+`lincoln-first-pass.zip` has SHA-256
+`77c807ac09373f79488cb47a6c20609b481a6544c7bf629db7ec5aaeae93cdba` and passes
+native loading without a base datadir in 12.20 seconds: 85 door projections,
+71,668 grid blocks, zero masks and three appearance regions for eleven controls.
+Its descriptor exactly matches `saved-map-exports-7Eod57`, binding the existing
+staged traversal checks to the actual browser output. The archived editor scene
+contains the corrected drawbridge/plateau descriptor pins. This does not certify
+animated character compositing or resolve the documented seam-contact findings.
 
 `lincoln-drawbridge-disconnections-GHKqj4` repeats all sixteen missing/raised
 neighbour cases against the three-region plateau. Each rejects the three
@@ -2204,13 +2213,32 @@ be repaired just by shortening its approach. The turret opening and its usable
 floor connection need asset-authoring work; the short-approach experiment is not
 part of the authoring helper or published library.
 
-An unpublished mesh repair is staged in `turret-opening-y4HYjo`. Its local opening
+An unpublished mesh repair was staged in `turret-opening-y4HYjo`. Its local opening
 and supporting floor are derived from the editor assembly's step approach, then
 written into a separate GLB. The wall's stacked shells are joined before cutting
 the passage. Both resulting wall halves have zero non-manifold edges and no
 zero-area faces; one tiny positive-area triangle remains at the internal shell
-interface (about 5.83e-9 square scene units). The 32-approach mesh audit now finds
+interface (about 5.83e-9 square scene units). Its 32-approach mesh audit found
 zero crossings, replacing the eight crossings against the published model.
+However, these topology measurements were taken before serialization: the GLB
+contains an edge with four incident faces. This candidate is invalid for solid
+recovery despite its successful Blender checks and centerline audit.
+
+The replacement `turret-opening-R8Saqu` uses manifold Boolean operations and
+preserves their final triangulation through export. Its GLB SHA-256 is
+`3c07b94d008b87064b9de3535a9096689faf8a1fc1ad7d293567447240bf0413`.
+The review helper now checks closed shells and capped-volume recovery from the
+serialized candidate before testing approaches. All six parts pass (seven closed
+shells and 176 raw capped fragments), and all 32 approach centerlines remain clear.
+The same helper rejects the previous GLB at its four-face edge, providing a
+regression check for the serialization defect.
+
+This does not yet make the new collision data usable: some raw fragments have
+no stable native cap plane. An unpublished compaction experiment encounters
+near-vertical slivers; rounding the mesh onto a 1/1024-unit grid then exposes
+intersecting cap faces. Neither conversion is accepted or published. The next
+authoring step must produce stable solids without removing the opening, filling
+cavities, or adding runtime geometry work.
 
 Neutral front/rear geometry renders show the new through-opening and floor. They
 are geometry inspections, not textured scene or animated-character verification.

@@ -142,7 +142,11 @@ drawbridge changes.
 The staged browser fixture required a correction to its catalog's embedded
 gameplay definitions; the earlier run baked baseline gameplay and is not staged
 parity evidence. Corrected fixture `lincoln-rendered-library-9FBLqH` has matching
-embedded definitions, descriptor bytes and pins; its rendered roundtrip is pending.
+embedded definitions, descriptor bytes and pins. Its browser export/reopen/rebake
+now passes with matching gameplay and rendered color/depth across 45 appearances.
+The 169,676,380-byte first-pass ZIP loads natively without a base datadir and its
+gameplay descriptor exactly matches the staged native traversal fixture.
+The browser runner's final archive transfer is still pending.
 
 The unpublished south-wall step stair candidate passes 32 directed player-click
 routes across four rotations and two elevations without navigation-preparation
@@ -155,8 +159,10 @@ The production compiler and runtime remain unchanged by this investigation.
 The 3D mesh review confirms the turret obstruction in all eight placed copies:
 the lower approach crosses its wall face. Shortening that approach loses the
 lower floor connection, so the opening and landing require asset-level repair.
-A private mesh repair now clears all 32 approach centerlines and has closed wall
-topology. It is still unpublished: matching collision/sight/floor metadata,
+A revised private mesh repair clears all 32 approach centerlines and passes
+closed-shell checks on the serialized GLB. The previous candidate passed Blender
+checks but produced a non-manifold GLB and is rejected. Its mesh-derived collision
+fragments still need stable native cap planes. It remains unpublished: collision/sight/floor metadata,
 texturing, full actor clearance and native moved-assembly checks remain open.
 
 **Sherwood stair recovery (2026-10-12):** the exporter now prepares short-stair

@@ -70,7 +70,7 @@ def join_stacked_shells(obj):
     bpy.context.view_layer.objects.active = obj
     union = obj.modifiers.new("Join wall shells", "BOOLEAN")
     union.operation = "UNION"
-    union.solver = "EXACT"
+    union.solver = "MANIFOLD"
     union.object = upper
     bpy.ops.object.modifier_apply(modifier=union.name)
     bpy.data.objects.remove(upper, do_unlink=True)
@@ -109,20 +109,18 @@ for root in roots.values():
         bpy.context.view_layer.objects.active = obj
         modifier = obj.modifiers.new("Draft through doorway", "BOOLEAN")
         modifier.operation = "DIFFERENCE"
-        modifier.solver = "EXACT"
-        modifier.use_self = True
+        modifier.solver = "MANIFOLD"
         modifier.object = cutter
         bpy.ops.object.modifier_apply(modifier=modifier.name)
         assert obj.data.polygons, f"Doorway removed the entire wall: {obj.name}"
         repaired = obj.data.validate(verbose=True)
         bm = bmesh.new()
         bm.from_mesh(obj.data)
-        # The GLB coordinates are f32; merge the few-ULP corner slivers left
-        # where the Boolean intersects the stacked shells' internal interface.
-        bmesh.ops.remove_doubles(bm, verts=list(bm.verts), dist=1e-4)
+        # Preserve the Boolean's topology and choose final diagonals here,
+        # before the GLB exporter processes material and texture seams.
         bmesh.ops.triangulate(bm, faces=list(bm.faces))
-        bmesh.ops.dissolve_degenerate(bm, edges=list(bm.edges), dist=1e-4)
         bmesh.ops.recalc_face_normals(bm, faces=list(bm.faces))
+        assert all(len(face.verts) == 3 for face in bm.faces)
         minimum_area = min(face.calc_area() for face in bm.faces)
         degenerate = sum(face.calc_area() <= 0 for face in bm.faces)
         small_faces = sum(face.calc_area() < 1e-8 for face in bm.faces)

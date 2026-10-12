@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import { loadSceneModel } from "../pipeline/src/scene-assets.ts";
 import { maskRecoveryMesh } from "../pipeline/src/mask-recovery-mesh.ts";
+import { closedMeshComponents } from "../pipeline/src/closed-mesh-components.ts";
+import { meshCappedVolumes } from "../pipeline/src/mesh-capped-volumes.ts";
 import { partMatrix } from "../shared/src/level3d.ts";
 import { gltfToScene, sceneToGame, applyAffineMatrix } from "../shared/src/geometry.ts";
 import { gameToScene } from "../shared/src/scene.ts";
@@ -57,6 +59,7 @@ const modelCandidate = modelStage
     }
   : undefined;
 const models = new Map();
+const serializedSolids = [];
 const results = [];
 for (const { file } of manifest.results) {
   const document = JSON.parse(await fs.readFile(`${directory}/${file}.scene.json`));
@@ -81,6 +84,18 @@ for (const { file } of manifest.results) {
             resources: [],
           }),
         );
+        for (const part of JSON.parse(await fs.readFile(`library/${source.descriptor}`)).parts) {
+          const mesh = maskRecoveryMesh(models.get(source.id), part.node, (point) =>
+            sceneToGame(document.camera, gltfToScene(point)),
+          );
+          const components = closedMeshComponents(mesh);
+          const volumes = components.flatMap((component) => meshCappedVolumes(component));
+          serializedSolids.push({
+            node: part.node,
+            components: components.length,
+            volumes: volumes.length,
+          });
+        }
       } else models.set(source.id, await loadSceneModel("library", source));
     }
     for (const object of document.objects.filter((object) =>
@@ -144,7 +159,7 @@ const report = {
   scope:
     "prepared-outdoor-stair-centerline-one-unit-above-floor-vs-mesh-not-full-actor-or-animation",
   audit_finished: true,
-  ...(modelStage ? { unpublishedModelStage: modelStage } : {}),
+  ...(modelStage ? { unpublishedModelStage: modelStage, serializedSolids } : {}),
   clear: results.every((result) => result.hits.length === 0),
   approaches: results.length,
   crossingApproaches: results.filter((result) => result.hits.length > 0).length,
