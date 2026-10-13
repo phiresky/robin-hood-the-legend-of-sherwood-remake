@@ -4,6 +4,40 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Ten-map native construction and entrance audit (2026-10-14)
+
+`saved-map-exports-JXjZlf` finishes all ten map-only exports, and
+`recovered_static_exports_construct_native_geometry` loads every descriptor
+successfully. This long-running compiler snapshot started at `24005941b`, before
+the subsequent doorstep compiler fixes and publication. A fresh York export is
+being measured separately; these counts must not be presented as its results.
+
+`prepare-saved-map-entrance-audit.mjs` snapshots completed export descriptors and
+prepares every building entrance for the native doorway-start round-trip test.
+It omits no entrance because of a compiler warning. The diagnostic does not
+claim terrain approach access or rendered contact. The native harness no longer
+requires an unused world source for a test starting directly at the doorway.
+`saved-map-entrances-T6aC3I` audits 277 entrances across eight maps; Crossroads 1
+and 3 contain no building entrances of this type.
+
+| Map | Passed / entrances | Remaining result |
+| --- | --- | --- |
+| Wychford | 20 / 24 | 4 receiving-surface mismatches |
+| Crossroads 2 | 1 / 1 | None in this scope |
+| Derby | 18 / 25 | 6 denied routes, 1 receiver mismatch |
+| Leicester | 24 / 24 | None in this scope |
+| Lincoln | 28 / 35 | 7 denied routes |
+| Nottingham | 33 / 69 | 36 denied routes |
+| Sherwood | 2 / 5 | 3 denied routes |
+| York | 43 / 94 | 48 denied routes, 3 receiver mismatches |
+
+Total: 169 passed, 100 denied and eight receiver mismatches. Of the denied
+routes, 99 carry a permanently unavailable exported passage condition; three of
+those are also authored locked. One additional route is authored locked without
+that collision condition. The audit requests entry at every doorway, so an
+intentional lock is not by itself a parity defect. Failed receiving ownership
+and unintended permanent corridor collisions require further investigation.
+
 ## Prepared ordinary floor clearance (2026-10-14)
 
 `doorstep-installed-20261014-verified` publishes only the narrow timber house and

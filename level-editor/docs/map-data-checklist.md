@@ -26,7 +26,14 @@ Socket counts alone
 are not traversal proof; see the
 [prepared floor clearance](map-compilation-evidence.md#prepared-ordinary-floor-clearance-2026-10-14).
 
-All ten current saved-map descriptors compile and pass native construction, with
+The completed ten-map sweep passes native construction. Its doorway-start
+audit passes 169 of 277 entrances, with 100 denied routes and eight receiving
+ownership mismatches; 99 denied routes have permanently unavailable exported
+corridors, and one is blocked only by an authored lock. This compiler snapshot
+predates the latest doorstep corrections and publication. See the
+[ten-map audit](map-compilation-evidence.md#ten-map-native-construction-and-entrance-audit-2026-10-14).
+
+The preceding saved-map checks recorded
 290 prepared stair routes and 71 control apply/reset checks passing. The current
 saved-York map-only export passes native construction and all 130
 prepared stair routes, but the latest export has 50 of its 95 room entrances

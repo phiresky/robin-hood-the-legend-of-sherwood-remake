@@ -361,11 +361,15 @@ fn audit_building_approaches(sprite: Option<&crate::sprite::Sprite>, round_trip:
                 .collect::<Vec<_>>();
             assert_eq!(matches.len(), 1, "ambiguous entrance probe: {probe}");
             let (index, door) = matches[0];
-            let world = &probe["source_world"];
-            let approach = MapPoint::new(
-                world[0].as_f64().unwrap() as f32,
-                (world[1].as_f64().unwrap() - world[2].as_f64().unwrap()) as f32,
-            );
+            let approach = if round_trip {
+                door.point_out
+            } else {
+                let world = &probe["source_world"];
+                MapPoint::new(
+                    world[0].as_f64().unwrap() as f32,
+                    (world[1].as_f64().unwrap() - world[2].as_f64().unwrap()) as f32,
+                )
+            };
             let sector_index = door
                 .sector_out_index
                 .expect("bound building outside sector")
