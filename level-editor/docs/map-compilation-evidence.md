@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Rendered connected roof archives (2026-10-13)
+
+`prepare-authored-render-library.mjs` stages previously authored diagnostic scenes
+for browser export without rebuilding their placements. It verifies every referenced
+descriptor/model hash and serializes the editor document with its asset definitions.
+Fixture `authored-render-library-BlnzyI` uses the 37°, height-40 two-copy scenes
+from the connection checks below, with no source map input.
+
+Both archives reopen and rebake to identical gameplay and rendered color/depth,
+including two independently removable prop appearances. Their archived gameplay
+is exactly equal to the respective native-tested diagnostic export:
+
+| Archive | Size / SHA-256 | Empty-base native load |
+| --- | --- | --- |
+| `curtain-dormer.zip` | 8,353,158 bytes; `5ca8dab6bc9d1b0f20d4a99bd13a31740af81cef85e28f6b02695329548b7fc6` | 31 sight obstacles, two masks, four door projections, 5,742 grid blocks |
+| `dormer-stone.zip` | 7,880,088 bytes; `6b5c817360fe603d5e2093c91cc77d51490a12073270290f1c76ffd79cb79883` | 43 sight obstacles, four masks, eight door projections, 11,484 grid blocks |
+
+Fresh traversal checks against the extracted archive descriptors pass all twenty
+ordinary-click curtain/dormer jumps. Dormer/stone retains ten ordinary-click passes
+and ten higher-roof occlusions; those ten pass hidden-click traversal and the
+independent geometric occlusion audit. Its ordinary-click-only report remains
+failed, as expected from the unobstructed-click assumption. No endpoint override
+is used. Both archives pass GPU independent state/transition/reset color/depth
+checks. The baked color images were inspected: both copied assemblies render
+intact within the map. This does not prove animated character contact or certify
+the draft models' visual quality. Formatting and lint pass; no runtime changes.
+
 ## Independently inserted dormer roof connections (2026-10-13)
 
 `check-inserted-canopy-jumps.mjs` now also prepares `--connection=dormer-stone`
@@ -33,8 +60,8 @@ Hidden-layer selection corresponds to the established Shift-click behavior.
 The original canopy fixture remains valid after the diagnostic extension:
 `inserted-canopy-jumps-Pv4bSX` passes all 160 ordinary-click traversals. Scoped
 formatting and lint pass. No asset publication, compiler or runtime changes were
-needed for these connection checks. New combined rendered ZIPs, animated contact,
-the stone house's crossing-height warning and offset landing samples remain open;
+needed for these connection checks. Combined rendered ZIPs are verified above.
+Animated contact, the stone house's crossing-height warning and offset landing samples remain open;
 these results do not certify all roof connections or full gameplay parity.
 
 ## Dormer roof support clearances (2026-10-13)

@@ -107,9 +107,13 @@ combination; the updated ZIP also passes round trip, native/GPU checks and 32
 fresh archived roof walks. Independently inserted curtain/dormer assemblies now
 pass 160 ordinary-click jumps; dormer/stone assemblies pass 120 ordinary-click
 jumps plus 40 hidden-click jumps whose higher-roof occlusion is verified
-separately. Detaching partners removes the connections with warnings. Connections
+separately. Both connected assemblies now also pass rendered ZIP round trip,
+empty-base native loading and GPU appearance checks, with fresh archived jump
+traversal reproducing the same ordinary/hidden-click behavior. Detaching partners
+removes the connections with warnings. Connections
 between roof planes, broader offset landing coverage and animated rendered
 contact remain open. See
+[the connected archives](map-compilation-evidence.md#rendered-connected-roof-archives-2026-10-13),
 [the inserted roof connections](map-compilation-evidence.md#independently-inserted-dormer-roof-connections-2026-10-13),
 [the roof clearance checks](map-compilation-evidence.md#dormer-roof-support-clearances-2026-10-13) and
 [the house checks](map-compilation-evidence.md#independent-dormer-house-with-usable-entrance-2026-10-13).
