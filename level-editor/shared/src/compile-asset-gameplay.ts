@@ -202,6 +202,14 @@ export interface CompiledScenerySource {
   animationId: string;
 }
 
+/** Optional authoring diagnostics; never included in runtime map data. */
+export interface CompiledPassageCollision {
+  door: string;
+  middle: Point;
+  endpoint: Point;
+  blockers: { owner: string; source: string; kind: "floor" | "volume" | "blocker" }[];
+}
+
 /** Compile only placed editor assets. There is deliberately no datadir, source-map or level-record input. */
 export function compileAssetGameplay(
   document: Level3D,
@@ -212,6 +220,7 @@ export function compileAssetGameplay(
     onProgress?: (stage: string) => void;
     onSceneryCompiled?: (sources: CompiledScenerySource[]) => void;
     onBuildingPassagesPrepared?: (doors: CompiledAssetGeometry["doors"]) => void;
+    onPassageCollision?: (collision: CompiledPassageCollision) => void;
   } = {},
 ): CompiledAssetGeometry {
   const omitted = new Set<string>();
@@ -307,7 +316,11 @@ function compileAssetGameplayAttempt(
   document: Level3D,
   descriptors: ReadonlyMap<string, ProjectionAssetDescriptor>,
   bounds: [number, number, number, number],
-  options: { bestEffort?: boolean; onProgress?: (stage: string) => void },
+  options: {
+    bestEffort?: boolean;
+    onProgress?: (stage: string) => void;
+    onPassageCollision?: (collision: CompiledPassageCollision) => void;
+  },
   omitted: ReadonlySet<string>,
   fixedTransitions: ReadonlySet<string>,
   scenerySources: CompiledScenerySource[],
@@ -3146,10 +3159,12 @@ function compileAssetGameplayAttempt(
       return [id, area] as const;
     }),
   );
-  const passageChecks = new Map<
-    HeightPlane,
-    Map<string, ReturnType<typeof prepareCorridorStates>>
-  >();
+  type CorridorCheck = ReturnType<typeof prepareCorridorStates>;
+  type PassageCheck = {
+    allowed: CorridorCheck;
+    contributors: { cut: PassageCut; allowed: CorridorCheck }[];
+  };
+  const passageChecks = new Map<HeightPlane, Map<string, PassageCheck>>();
   const passageCheck = (plane: HeightPlane, door: (typeof doors)[number]) => {
     const structure = door.definition.passageStructure;
     const key = structure ? door.name : door.interior ? "interior" : "";
@@ -3160,6 +3175,7 @@ function compileAssetGameplayAttempt(
     }
     let check = checks.get(key);
     if (!check) {
+      const contributors: PassageCheck["contributors"] = [];
       const obstacles = (permanentPassageCuts.get(plane) ?? []).flatMap((cut) => {
         // Virtual-room animation leaves the outdoor floor and may cross its
         // declared structure. Foreign and undeclared barriers remain checked.
@@ -3173,7 +3189,7 @@ function compileAssetGameplayAttempt(
           return [];
         const { vertices, holes, dimensions } = flatten(cut.polygon);
         const indices = earcut(vertices, holes, dimensions);
-        return Array.from({ length: indices.length / 3 }, (_, i) => ({
+        const triangles = Array.from({ length: indices.length / 3 }, (_, i) => ({
           state_id: 0,
           polygon: {
             points: indices
@@ -3184,8 +3200,11 @@ function compileAssetGameplayAttempt(
               ]),
           },
         }));
+        if (options.onPassageCollision)
+          contributors.push({ cut, allowed: prepareCorridorStates(triangles) });
+        return triangles;
       });
-      check = prepareCorridorStates(obstacles);
+      check = { allowed: prepareCorridorStates(obstacles), contributors };
       checks.set(key, check);
     }
     return check;
@@ -3230,13 +3249,27 @@ function compileAssetGameplayAttempt(
                 }),
             );
         if (door.interior && receiving) checkedBuildingPassages.add(door.name);
-        if (
+        const passage =
           receiving &&
-          !passageCheck(
+          passageCheck(
             door.interior ? (receiving.authoredPlane ?? receiving.plane) : receiving.plane,
             door,
-          )(door.middle, project(endpoint)).length
-        ) {
+          );
+        if (passage && !passage.allowed(door.middle, project(endpoint)).length) {
+          if (options.onPassageCollision) {
+            const blockers = new Map<string, CompiledPassageCollision["blockers"][number]>();
+            for (const { cut, allowed } of passage.contributors) {
+              if (allowed(door.middle, project(endpoint)).length) continue;
+              const { owner, source, kind } = cut;
+              blockers.set(JSON.stringify([owner, source, kind]), { owner, source, kind });
+            }
+            options.onPassageCollision({
+              door: door.name,
+              middle: [...door.middle],
+              endpoint: project(endpoint),
+              blockers: [...blockers.values()],
+            });
+          }
           const entry = motionBySector.get(area.sector)!;
           permanentStates.push({
             layer: area.layer,

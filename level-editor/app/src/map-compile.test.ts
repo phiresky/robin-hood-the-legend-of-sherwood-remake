@@ -6,6 +6,7 @@ import { unzipSync, strFromU8 } from "fflate";
 import * as THREE from "three";
 import { type Level3D, gameToScene, parseStoredMap } from "@rle/shared";
 import { compileMap, packageCompiledMap, validateBakeBounds } from "./map-compile.ts";
+import type { CompiledPassageCollision } from "../../shared/src/compile-asset-gameplay.ts";
 import {
   bakeScene,
   contentBakeBounds,
@@ -255,6 +256,19 @@ test("declared doorway structure preserves walking collision and independent pas
     { ...structuredClone(gameplay.movementBlockers[0]!), node: "scenery-marker" },
   ];
   const foreign = compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry!;
+  const collisions: CompiledPassageCollision[] = [];
+  const traced = compileMap(document, [0, 0, 2000, 2000], assets, {
+    onPassageCollision: (collision) => collisions.push(collision),
+  });
+  assert.deepEqual(
+    traced.descriptor.asset_geometry,
+    foreign,
+    "Tracing must not change export data",
+  );
+  assert.equal(collisions.length, 1);
+  assert.deepEqual(collisions[0]!.blockers, [
+    { owner: "marker/marker", source: "door-frame", kind: "blocker" },
+  ]);
   assert.ok(
     foreign.buildings![0]!.Building.doors[0]!.passage_states!.some((s) => !s.allowed_states.length),
     "An identical foreign blocker with the same local ID must still block the entrance",

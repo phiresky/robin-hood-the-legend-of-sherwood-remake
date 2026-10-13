@@ -9,11 +9,13 @@ import { savedMapWallCalibration } from "../app/tests/saved-map-wall-calibration
 // Descriptors exercise native geometry; this does not replace a browser ZIP bake.
 const arguments_ = process.argv.slice(2);
 const mapOnly = arguments_.includes("--map-only");
+const tracePassages = arguments_.includes("--trace-passages");
 const selectedMaps = arguments_
   .filter((argument) => argument.startsWith("--map="))
   .map((argument) => argument.slice(6));
 const stages = arguments_.filter(
-  (argument) => !argument.startsWith("--map=") && argument !== "--map-only",
+  (argument) =>
+    !argument.startsWith("--map=") && argument !== "--map-only" && argument !== "--trace-passages",
 );
 assert.ok(stages.length <= 1, "Provide at most one gameplay stage");
 const [stage] = stages;
@@ -82,8 +84,12 @@ for (const file of files) {
     const prepared = await savedMapWallCalibration(document, assets);
     finished();
     phase = "compile";
+    const passageCollisions = [];
     const compiled = compileMap(document, bounds, prepared.assets, {
       bestEffort: true,
+      ...(tracePassages
+        ? { onPassageCollision: (collision) => passageCollisions.push(collision) }
+        : {}),
       onProgress: (stage) => {
         finishGameplayPhase();
         gameplayPhaseStart = performance.now();
@@ -99,6 +105,11 @@ for (const file of files) {
     finished();
     phase = "write";
     await fs.writeFile(`${output}/${map}.level.json`, JSON.stringify(compiled.descriptor));
+    if (tracePassages)
+      await fs.writeFile(
+        `${output}/${map}.passage-collisions.json`,
+        JSON.stringify(passageCollisions, null, 2),
+      );
     finished();
     results.push({
       map,

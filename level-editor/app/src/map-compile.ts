@@ -4,6 +4,7 @@ import { strToU8, zip } from "fflate";
 import {
   compileAssetGameplay,
   type CompiledScenerySource,
+  type CompiledPassageCollision,
 } from "../../shared/src/compile-asset-gameplay.ts";
 import type { ProjectionAssetDescriptor } from "@rle/shared";
 import type { CompiledAssetGeometry } from "../../shared/src/asset-gameplay.ts";
@@ -105,6 +106,7 @@ export function compileMap(
   options: {
     bestEffort?: boolean;
     onProgress?: (stage: string) => void;
+    onPassageCollision?: (collision: CompiledPassageCollision) => void;
     missionMode?: "sandbox" | "native-scripted";
   } = {},
 ) {

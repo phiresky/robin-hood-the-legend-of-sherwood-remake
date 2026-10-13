@@ -13,6 +13,10 @@ prepared stair routes, but the latest export has 50 of its 95 room entrances
 blocked. A broader native audit finds three receiver mismatches in otherwise
 available entrances, also reproduced in the preceding export. One trapdoor is
 outside that audit's coverage. See the [York entrance audit](map-compilation-evidence.md#virtual-floor-boundaries-and-york-entrance-audit-2026-10-14).
+An optional export trace now identifies exact doorway collision owners without
+changing the descriptor. Two river-lane house corrections pass placement/native
+checks but remain unpublished pending browser ZIP checks; see the
+[collision diagnostics](map-compilation-evidence.md#exact-doorway-collision-diagnostics-2026-10-14).
 Leicester now passes native construction and all 24 building
 entry/exit round trips after published asset-local doorway corrections. Its
 sixteen stair routes and twelve control apply/reset checks passed previously;

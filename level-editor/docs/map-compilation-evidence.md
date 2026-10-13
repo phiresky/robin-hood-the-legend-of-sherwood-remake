@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Exact doorway collision diagnostics (2026-10-14)
+
+`check-saved-map-exports.mjs --trace-passages` optionally records the placed
+owner, local geometry ID and geometry kind responsible for each permanent
+doorway collision. Contributor checks run only when tracing is requested;
+diagnostics are separate from the runtime descriptor.
+
+York trace `saved-map-exports-DYkkcw` completed with 56 collision events. Its
+descriptor is identical to `saved-map-exports-ztv2mK`. Events are endpoint
+checks, not a count of distinct unavailable entrances. The trace identifies
+both local building structure and foreign placed geometry, including the
+west-town raised-terrain blocker. These require geometry review; foreign
+barriers must not be broadly exempted to make the entrance count pass.
+
+Candidate `york-river-lane-entrances-G6Fq9z` adds explicit local doorway
+structure to two houses. The west low house requires both its 722 and 729
+structural blockers: rounded animation endpoints intersect 729 after a
+180-degree rotation. Corrected fixture `asset-building-doors-i4oeWr` passes
+all sixteen copied/rotated/raised native entry/exit trips. The stone-house
+definition already passed sixteen trips in `asset-building-doors-XTZ6wb`.
+The independent two-house scene `york-river-lane-scene-L6d9W9` passes both
+native entry/exit trips. These candidates remain unpublished pending browser
+ZIP/reopen checks; the saved York entrance counts below have not changed.
+
+All 251 selected compiler/passage tests pass, including a traced/untraced
+descriptor equality regression. This adds no runtime engine work.
+
 ## Virtual floor boundaries and York entrance audit (2026-10-14)
 
 Virtual-room entrance animation may leave the outdoor floor without declaring a
