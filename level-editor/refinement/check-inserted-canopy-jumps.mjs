@@ -11,15 +11,38 @@ import { sceneToGame } from "../shared/src/geometry.ts";
 
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const ids = ["york-market-red-canopy-stall", "york-market-stepped-green-canopy-stall"];
+const fixtures = {
+  canopies: {
+    family: "york",
+    pair: 12,
+    ids: ["york-market-red-canopy-stall", "york-market-stepped-green-canopy-stall"],
+  },
+  "dormer-stone": {
+    family: "nottingham",
+    pair: 33,
+    ids: ["nottingham-north-dormer-house", "nottingham-north-stone-house"],
+  },
+  "curtain-dormer": {
+    family: "nottingham",
+    pair: 34,
+    ids: ["nottingham-north-curtain-wall", "nottingham-north-dormer-house"],
+  },
+};
+const connectionArgs = process.argv.slice(2).filter((arg) => arg.startsWith("--connection="));
+assert.ok(connectionArgs.length <= 1);
+const connection = connectionArgs[0]?.slice("--connection=".length) ?? "canopies";
+assert.ok(Object.hasOwn(fixtures, connection), "Unknown connection fixture");
+const { ids, family, pair } = fixtures[connection];
 const requireLevelSockets = process.argv.includes("--require-level-sockets");
-const positional = process.argv.slice(2).filter((arg) => arg !== "--require-level-sockets");
+const positional = process.argv
+  .slice(2)
+  .filter((arg) => arg !== "--require-level-sockets" && !arg.startsWith("--connection="));
 assert.ok(positional.length <= 1);
 const edits = positional.length ? JSON.parse(await fs.readFile(`${positional[0]}/edits.json`)) : [];
 assert.ok(edits.every((edit) => ids.includes(edit.asset)));
 const assets = [];
 for (const [side, id] of ids.entries()) {
-  const base = `3d-assets/york/${id}`;
+  const base = `3d-assets/${family}/${id}`;
   const bytes = await fs.readFile(`library/${base}/asset.json`);
   const descriptor = JSON.parse(bytes);
   const edit = edits.find((edit) => edit.asset === id);
@@ -29,7 +52,7 @@ for (const [side, id] of ids.entries()) {
     descriptor.gameplay = edit.gameplay;
   }
   const segment = descriptor.gameplay.jumpSegments.find(
-    (entry) => entry.id === `jump-pair-12-side-${side}`,
+    (entry) => entry.id === `jump-pair-${pair}-side-${side}`,
   );
   assert.ok(segment?.join);
   const reference = {
@@ -73,6 +96,7 @@ const save = (complete) =>
       scope: "inserted-asset-socket-connection-not-complete-gameplay-parity",
       complete,
       requireLevelSockets,
+      connection,
       gameplayStage: positional[0],
       assets: assets.map((asset) => asset.reference),
       results,
@@ -84,7 +108,7 @@ for (const height of [0, 40])
   for (const rotation of [0, 37, 90, 180]) {
     let document = {
       version: 1,
-      map: "Inserted canopy socket assemblies",
+      map: `Inserted ${connection} socket assemblies`,
       size: [1800, 1800],
       camera,
       objects: [],
@@ -154,7 +178,7 @@ for (const height of [0, 40])
     );
     assert.ok(
       disconnected.warnings.filter(
-        (warning) => warning.includes("jump-pair-12") && warning.includes("no matching edge"),
+        (warning) => warning.includes(`jump-pair-${pair}`) && warning.includes("no matching edge"),
       ).length >= 4,
     );
     const detachedFile = `detached-${file}`;

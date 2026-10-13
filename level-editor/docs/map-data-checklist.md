@@ -104,8 +104,13 @@ state/reset checks and fresh entrance traversal. Explicit roof clearances now
 prevent enclosing support volumes from fragmenting the usable roof. All 256
 character roof walks pass across four rotations, two elevations and every control
 combination; the updated ZIP also passes round trip, native/GPU checks and 32
-fresh archived roof walks. Connections between roof planes, cross-asset jumps and
-animated rendered contact remain open. See
+fresh archived roof walks. Independently inserted curtain/dormer assemblies now
+pass 160 ordinary-click jumps; dormer/stone assemblies pass 120 ordinary-click
+jumps plus 40 hidden-click jumps whose higher-roof occlusion is verified
+separately. Detaching partners removes the connections with warnings. Connections
+between roof planes, broader offset landing coverage and animated rendered
+contact remain open. See
+[the inserted roof connections](map-compilation-evidence.md#independently-inserted-dormer-roof-connections-2026-10-13),
 [the roof clearance checks](map-compilation-evidence.md#dormer-roof-support-clearances-2026-10-13) and
 [the house checks](map-compilation-evidence.md#independent-dormer-house-with-usable-entrance-2026-10-13).
 

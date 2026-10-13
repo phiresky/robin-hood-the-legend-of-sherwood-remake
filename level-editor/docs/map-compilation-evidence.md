@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Independently inserted dormer roof connections (2026-10-13)
+
+`check-inserted-canopy-jumps.mjs` now also prepares `--connection=dormer-stone`
+and `--connection=curtain-dormer`. Each reads only the two asset descriptors/models,
+inserts two independent copies of the connected assembly, aligns local sockets,
+and exports four rotations at two terrain elevations. Both pass
+`--require-level-sockets`: no vertical correction is needed after normal insertion.
+Each export retains two independent jump pairs. Moving the partners away removes
+both pairs and emits unmatched-socket warnings, with no stale connection.
+
+Curtain/dormer fixture `inserted-canopy-jumps-Uc1IkM` passes all 160 native
+ordinary-click walk/jump/walk cases: both directions, five edge positions, eight
+placements and both copied assemblies. There is no endpoint override. This is
+connected traversal evidence beyond walking within the dormer's individual roofs.
+
+Dormer/stone fixture `inserted-canopy-jumps-rbhenp` has 120 ordinary-click passes
+and 40 ordinary-click failures at 0°/37°. The latter select a higher roof instead
+of the target underneath it. All forty pass the separate hidden-click native
+traversal test. `check-jump-click-occlusions.mjs` matches each failed case to its
+successful hidden-click traversal, verifies both receiving polygons contain the
+click, and verifies the selected roof is above the intended target (10.40–15.96
+height units in these samples). Failed hidden traversals and a selected floor
+without greater height are rejected in negative checks. The ordinary-click report
+remains failed; this audit does not relabel it as 160 ordinary-click passes.
+Hidden-layer selection corresponds to the established Shift-click behavior.
+
+The original canopy fixture remains valid after the diagnostic extension:
+`inserted-canopy-jumps-Pv4bSX` passes all 160 ordinary-click traversals. Scoped
+formatting and lint pass. No asset publication, compiler or runtime changes were
+needed for these connection checks. New combined rendered ZIPs, animated contact,
+the stone house's crossing-height warning and offset landing samples remain open;
+these results do not certify all roof connections or full gameplay parity.
+
 ## Dormer roof support clearances (2026-10-13)
 
 The rotated dormer roof fragmentation came from enclosing house volumes cutting
