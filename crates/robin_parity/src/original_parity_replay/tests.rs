@@ -6276,3 +6276,105 @@ fn automatic_dump_window_retains_configured_prior_frames_and_current_frame() {
         (17..50).collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn replaced_sword_motion_retains_its_zero_distance_initialization() {
+    use robin_engine::order::OrderType as OT;
+    let pc = EntityId::new(282, robin_engine::element::EntityIdKind::Pc);
+    for (order, movement, current, prior, count, sprite, expected) in [
+        (
+            OT::WalkingWithSword,
+            true,
+            12179,
+            12113,
+            0,
+            OT::StrafingRightSword,
+            true,
+        ),
+        (
+            OT::WalkingWithSword,
+            true,
+            12179,
+            12177,
+            0,
+            OT::StrafingRightSword,
+            false,
+        ),
+        (
+            OT::WalkingWithSword,
+            true,
+            12176,
+            12113,
+            0,
+            OT::StrafingRightSword,
+            false,
+        ),
+        (
+            OT::WalkingWithSword,
+            true,
+            12179,
+            12113,
+            u16::MAX,
+            OT::StrafingRightSword,
+            false,
+        ),
+        (
+            OT::WalkingWithSword,
+            true,
+            12179,
+            12113,
+            1,
+            OT::StrafingRightSword,
+            false,
+        ),
+        (
+            OT::WalkingWithSword,
+            false,
+            12179,
+            12113,
+            0,
+            OT::StrafingRightSword,
+            false,
+        ),
+        (
+            OT::WaitingSword,
+            false,
+            12179,
+            12113,
+            0,
+            OT::StrafingRightSword,
+            false,
+        ),
+        (
+            OT::WalkingWithSword,
+            true,
+            12179,
+            12113,
+            0,
+            OT::BeingHitSword,
+            false,
+        ),
+    ] {
+        let actor = trace_actor_order(
+            order,
+            movement,
+            robin_engine::sprite::MotionState::InProgress,
+            current,
+        );
+        assert_eq!(
+            original_reset_blocked_box_this_frame(
+                &actor,
+                pc,
+                12177,
+                false,
+                None,
+                None,
+                Some(prior),
+                count,
+                Some(sprite as u32)
+            ),
+            expected,
+            "current={current} prior={prior} count={count} sprite={sprite:?}"
+        );
+    }
+}

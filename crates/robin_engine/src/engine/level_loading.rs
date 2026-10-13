@@ -2381,17 +2381,26 @@ impl EngineInner {
         let level_w = self.feedback.cutscene_camera.level_size.x as u16;
         let level_h = self.feedback.cutscene_camera.level_size.y as u16;
 
-        // Editor maps need not end on a cell boundary. Keep their partial edge
-        // cells reachable while excluding the unused portion from map bounds.
-        let grid_w = level_w.div_ceil(64);
-        let grid_h = level_h.div_ceil(64);
-        self.world.fast_grid_mut().size_map(grid_w, grid_h);
-        self.world.fast_grid_mut().level_mut().map_bbox = crate::coordinates::MapBBox::from_coords(
-            0.,
-            0.,
-            f32::from(level_w) - 1.,
-            f32::from(level_h) - 1.,
-        );
+        if motion_data.legacy_navigation {
+            // Binary levels use whole-cell navigation bounds. Their image may
+            // include a partial edge row that must not move reinforcement entries.
+            self.world
+                .fast_grid_mut()
+                .size_map(level_w / 64, level_h / 64);
+        } else {
+            // Editor maps keep partial edge cells reachable, but exclude the
+            // unused portion of those cells from the map bounds.
+            self.world
+                .fast_grid_mut()
+                .size_map(level_w.div_ceil(64), level_h.div_ceil(64));
+            self.world.fast_grid_mut().level_mut().map_bbox =
+                crate::coordinates::MapBBox::from_coords(
+                    0.,
+                    0.,
+                    f32::from(level_w) - 1.,
+                    f32::from(level_h) - 1.,
+                );
+        }
         let conventional_layers = u16::try_from(motion_data.layers.len())
             .expect("motion layer count exceeds u16")
             .checked_sub(1)
