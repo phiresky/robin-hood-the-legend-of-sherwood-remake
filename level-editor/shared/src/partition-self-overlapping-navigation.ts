@@ -163,8 +163,8 @@ export function partitionSelfOverlappingNavigation(
     }
   for (const { from, to, connection } of passages)
     for (const [x, y, z] of connection.from.edge) {
-      alignRoundedSeam(from.polygon, [x, y - z]);
-      alignRoundedSeam(to.polygon, [x, y - z]);
+      for (const ring of [from.polygon, ...from.blockers, to.polygon, ...to.blockers])
+        alignRoundedSeam(ring, [x, y - z]);
     }
   return { regions, passages };
 }
@@ -194,14 +194,23 @@ function alignRoundedSeam(polygon: Point[], precise: Point): void {
 function matchingSeams(a: NavigationPiece, b: NavigationPiece): [Vec3, Vec3][] {
   const result: [Vec3, Vec3][] = [];
   const edges = (piece: NavigationPiece) => {
-    const polygon = piece.receivingPolygon ?? piece.polygon;
-    const area = polygon.reduce((sum, p, i) => {
-      const q = polygon[(i + 1) % polygon.length]!;
-      return sum + p[0] * q[1] - p[1] * q[0];
-    }, 0);
-    return polygon.map((p, i): [Point, Point] => {
-      const q = polygon[(i + 1) % polygon.length]!;
-      return area * (1 + piece.plane[1]) >= 0 ? [p, q] : [q, p];
+    const rings = [
+      piece.receivingPolygon ?? piece.polygon,
+      ...(piece.preciseBlockers ?? []),
+      ...piece.blockers,
+    ];
+    return rings.flatMap((polygon, index) => {
+      const area = polygon.reduce((sum, p, i) => {
+        const q = polygon[(i + 1) % polygon.length]!;
+        return sum + p[0] * q[1] - p[1] * q[0];
+      }, 0);
+      // Hole boundaries put the walkable side outside their ring. Their seams
+      // can meet raised floors just like an exterior terrain edge can.
+      const direction = (index === 0 ? 1 : -1) * area * (1 + piece.plane[1]);
+      return polygon.map((p, i): [Point, Point] => {
+        const q = polygon[(i + 1) % polygon.length]!;
+        return direction >= 0 ? [p, q] : [q, p];
+      });
     });
   };
   for (const [p, q] of edges(a)) {

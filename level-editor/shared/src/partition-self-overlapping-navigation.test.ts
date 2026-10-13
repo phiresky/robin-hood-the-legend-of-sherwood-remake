@@ -196,3 +196,48 @@ test("adjacent boundaries at different heights do not produce a passage", () => 
   assert.equal(result.regions.length, 2);
   assert.deepEqual(result.passages, []);
 });
+
+test("a raised ramp reconnects along an internal ground hole", () => {
+  for (const reversed of [false, true]) {
+    const ground = rectangle([0, 0, 0], 0, 0, 300, 300);
+    const hole: Point[] = [
+      [100, 100],
+      [200, 100],
+      [200, 200],
+      [100, 200],
+    ];
+    ground.blockers = [reversed ? hole.toReversed() : hole];
+    const ramp = rectangle([0, 0.4, -40], 100, 100, 200, 250);
+    const [region] = assembleNavigationRegions([ground, ramp], []);
+    assert.ok(region);
+    const before = structuredClone(region);
+    const result = partitionSelfOverlappingNavigation(region, []);
+    assert.equal(result.regions.length, 2);
+    assert.equal(result.passages.length, 1);
+    const { from, to, connection } = result.passages[0]!;
+    assert.ok(connection.from.edge.every((p) => p[2] === 0));
+    assert.ok(
+      navigationPosturePassages(
+        connection,
+        { ...from, plane: from.pieces[0]!.plane },
+        { ...to, plane: to.pieces[0]!.plane },
+      ).length > 0,
+    );
+    const closed = structuredClone(to);
+    closed.blockers.push([
+      [100, 100],
+      [200, 100],
+      [200, 120],
+      [100, 120],
+    ]);
+    assert.deepEqual(
+      navigationPosturePassages(
+        connection,
+        { ...from, plane: from.pieces[0]!.plane },
+        { ...closed, plane: closed.pieces[0]!.plane },
+      ),
+      [],
+    );
+    assert.deepEqual(region, before);
+  }
+});

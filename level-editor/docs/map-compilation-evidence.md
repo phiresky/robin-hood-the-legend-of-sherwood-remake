@@ -4,6 +4,38 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Exported connections along internal floor holes (2026-10-14)
+
+Floor partitioning previously searched only outer receiving boundaries for
+matching-height seams. A raised doorstep can meet ground along the internal
+hole made by its supporting volume. Partitioning now considers both precise
+and integer hole contours with the walkable-side orientation reversed, and
+aligns their rounded seam vertices along obstacle boundaries too.
+
+Passage clearance subtracts each floor's exclusions before joining their free
+coverage. This prevents a supporting-volume hole below a raised floor from
+blocking the raised leg. Generated crossings must pass both precise and integer
+clearance checks; changing-obstacle conditions remain independent. Export passes
+the prepared static result through ordinary passage packaging without repeating
+the incorrect combined-obstacle veto. No runtime fields or engine changes are
+needed.
+
+The new regressions fail before the fix and pass afterwards: hole winding does
+not change connectivity, a real wall closes the crossing, and the final export
+keeps the valid passage available. All 268 selected compiler/passage tests pass,
+with app typechecking, scoped lint and formatting passing. Elevated fixture
+`floor-hole-passage-mHNZcc` passes two complete-sprite native routes using the
+prepared-passage verifier, including receiver transfer and footprint checks.
+The verifier's `foldedFloor` mode selects explicit destination layers and the
+passage-length contract; this fixture itself is an ordinary ramp/hole seam.
+
+The real doorstep batch `receiver-floor-placements-Lflr71` now passes its
+compiler connection checks at height 0 and rotations 0/37, emitting four
+generated passages in each case. It still stops at rotation 90 with a receiving
+overlap near [760.94, 2073.14]. Those real-asset passages have not yet passed
+native traversal, and their virtual room entrances still need local collision
+review. No doorstep or broad terrain candidate is published by this change.
+
 ## Raised-terrain exclusion ownership audit (2026-10-14)
 
 `audit-terrain-exclusion-ownership.mjs` compares each terrain-owned planar

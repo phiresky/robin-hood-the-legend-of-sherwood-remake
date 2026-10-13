@@ -125,6 +125,7 @@ export function compileMap(
   const name = `editor-${slug}`;
   let scenerySources: CompiledScenerySource[] = [];
   let preparedBuildingPassages = new Set<CompiledAssetGeometry["doors"][number]>();
+  let preparedNavigationPassages = new Set<CompiledAssetGeometry["doors"][number]>();
   const assetGeometry =
     assets || document.terrain?.cells.length || document.splines?.length
       ? compileAssetGameplay(document, assets ?? new Map(), bounds, {
@@ -134,6 +135,9 @@ export function compileMap(
           },
           onBuildingPassagesPrepared: (doors) => {
             preparedBuildingPassages = new Set(doors);
+          },
+          onNavigationPassagesPrepared: (doors) => {
+            preparedNavigationPassages = new Set(doors);
           },
         })
       : undefined;
@@ -146,7 +150,7 @@ export function compileMap(
     prepareOrdinaryStairPassages(assetGeometry);
     prepareStairPassages(assetGeometry);
     compileBuildingApproaches(assetGeometry);
-    const ordinaryStates = compileOrdinaryPassageStates(assetGeometry);
+    const ordinaryStates = compileOrdinaryPassageStates(assetGeometry, preparedNavigationPassages);
     assetGeometry.doors.forEach((door, index) => {
       const requirements = [...(door.passage_states ?? []), ...ordinaryStates[index]!];
       if (requirements.length) door.passage_states = requirements;

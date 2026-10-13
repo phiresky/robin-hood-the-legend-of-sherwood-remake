@@ -37,13 +37,18 @@ function passageAreas(geometry: CompiledAssetGeometry, changingOnly = false) {
 /** Prepare both legs of ordinary passages using each receiving area's state word. */
 export function compileOrdinaryPassageStates(
   geometry: CompiledAssetGeometry,
+  /** Generated crossings already checked against both floors' permanent free coverage. */
+  preparedPermanent: ReadonlySet<CompiledAssetGeometry["doors"][number]> = new Set(),
 ): PassageStateRequirement[][] {
   const areas = passageAreas(geometry);
+  const changing = preparedPermanent.size ? passageAreas(geometry, true) : areas;
   return geometry.doors.map((door, index) => {
     const result: PassageStateRequirement[] = [];
     for (const side of ["in", "out"] as const) {
       const layer = door[`layer_${side}`];
-      const entry = areas.get(`${door[`sector_${side}`]}/${layer}`);
+      const entry = (preparedPermanent.has(door) ? changing : areas).get(
+        `${door[`sector_${side}`]}/${layer}`,
+      );
       if (!entry) throw new Error(`Door ${index}: missing ${side} area`);
       const allowed_states = entry.allowed(door.point_mid, door[`point_${side}`]);
       if (allowed_states.length !== 1 || allowed_states[0] !== 0)

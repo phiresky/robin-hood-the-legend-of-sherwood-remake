@@ -38,14 +38,16 @@ export function navigationPosturePassages(
     }));
   const fromClear = prepareCorridorStates(obstacles(from), from.polygon);
   const toClear = prepareCorridorStates(obstacles(to), to.polygon);
-  const combined = polygonClipping.union([from.polygon], [to.polygon]);
+  // A supporting volume can leave a hole in the lower floor while its top is
+  // walkable. Subtract exclusions on their own floor before joining coverage.
+  const free = (area: NavigationAnchorArea) =>
+    area.blockers.length
+      ? polygonClipping.difference([area.polygon], ...area.blockers.map((ring) => [ring]))
+      : [[area.polygon]];
+  const combined = polygonClipping.union(free(from), free(to));
   const crossings = combined.map(([outer, ...holes]) =>
     prepareCorridorStates(
-      [
-        ...obstacles(from),
-        ...obstacles(to),
-        ...holes.map((points) => ({ polygon: { points }, state_id: 0 })),
-      ],
+      holes.map((points) => ({ polygon: { points }, state_id: 0 })),
       outer,
     ),
   );

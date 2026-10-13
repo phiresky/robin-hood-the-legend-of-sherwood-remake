@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { type Level3D, gameToScene, parseStoredMap } from "@rle/shared";
 import { compileMap, packageCompiledMap, validateBakeBounds } from "./map-compile.ts";
 import type { CompiledPassageCollision } from "../../shared/src/compile-asset-gameplay.ts";
+
 import {
   bakeScene,
   contentBakeBounds,
@@ -1763,4 +1764,71 @@ test("editor-connected rooms match the moved native fixture and remain in the ed
     assets,
   );
   assert.deepEqual(restored.interiorConnections, document.interiorConnections);
+});
+
+test("exported floor-hole crossings retain prepared clearance without opening solid barriers", () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  document.objects = document.objects.filter((object) => object.group);
+  const gameplay = hut.gameplay!;
+  gameplay.collision = "none";
+  gameplay.doors = [];
+  gameplay.surfaces = [
+    {
+      id: "ground",
+      node: "building-999",
+      navigationRegion: "joined",
+      polygon: [
+        [0, 0],
+        [300, 0],
+        [300, 300],
+        [0, 300],
+      ],
+      height: 0,
+      holes: [
+        [
+          [100, 100],
+          [200, 100],
+          [200, 200],
+          [100, 200],
+        ],
+      ],
+    },
+    {
+      id: "ramp",
+      node: "building-999",
+      navigationRegion: "joined",
+      polygon: [
+        [100, 100],
+        [200, 100],
+        [200, 310],
+        [100, 310],
+      ],
+      height: [0, 0, 60, 60],
+    },
+  ];
+  const compile = () => compileMap(document, [0, 0, 2000, 2000], assets, { bestEffort: true });
+  const open = compile();
+  assert.equal(open.descriptor.asset_geometry!.doors.length, 1, open.warnings.join("\n"));
+  assert.deepEqual(open.descriptor.asset_geometry!.doors[0]!.passage_states ?? [], []);
+  assert.ok(!open.warnings.some((warning) => warning.includes("receiving floors overlap")));
+  gameplay.volumes = [
+    {
+      id: "wall",
+      node: "building-999",
+      shape: {
+        solid: true,
+        opaque: true,
+        mouse: true,
+        show_shadow_polygon: false,
+        default_material: 0,
+        points: [
+          [90, 95],
+          [210, 95],
+          [210, 130],
+          [90, 130],
+        ].map(([x, y]) => ({ x: x!, y: y!, z_bottom: 0, z_top: 100 })),
+      },
+    },
+  ];
+  assert.equal(compile().descriptor.asset_geometry!.doors.length, 0);
 });

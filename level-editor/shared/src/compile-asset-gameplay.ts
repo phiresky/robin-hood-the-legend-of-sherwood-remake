@@ -220,6 +220,7 @@ export function compileAssetGameplay(
     onProgress?: (stage: string) => void;
     onSceneryCompiled?: (sources: CompiledScenerySource[]) => void;
     onBuildingPassagesPrepared?: (doors: CompiledAssetGeometry["doors"]) => void;
+    onNavigationPassagesPrepared?: (doors: CompiledAssetGeometry["doors"]) => void;
     onPassageCollision?: (collision: CompiledPassageCollision) => void;
   } = {},
 ): CompiledAssetGeometry {
@@ -235,6 +236,7 @@ export function compileAssetGameplay(
     try {
       const scenerySources: CompiledScenerySource[] = [];
       const buildingPassages: CompiledAssetGeometry["doors"] = [];
+      const navigationPassages: CompiledAssetGeometry["doors"] = [];
       const result = compileAssetGameplayAttempt(
         document,
         descriptors,
@@ -245,10 +247,12 @@ export function compileAssetGameplay(
         scenerySources,
         getTerrain,
         buildingPassages,
+        navigationPassages,
       );
       if (omissions.length) result.warnings = [...omissions, ...(result.warnings ?? [])];
       options.onSceneryCompiled?.(scenerySources);
       options.onBuildingPassagesPrepared?.(buildingPassages);
+      options.onNavigationPassagesPrepared?.(navigationPassages);
       return result;
     } catch (error) {
       if (
@@ -326,6 +330,7 @@ function compileAssetGameplayAttempt(
   scenerySources: CompiledScenerySource[],
   getTerrain: (document: Level3D) => ReturnType<typeof terrainGameplay>,
   buildingPassages: CompiledAssetGeometry["doors"],
+  navigationPassages: CompiledAssetGeometry["doors"],
 ): CompiledAssetGeometry {
   const warnings: string[] = [];
   options.onProgress?.("Preparing asset placements");
@@ -2966,6 +2971,7 @@ function compileAssetGameplayAttempt(
       label,
     );
   };
+  const preparedNavigationPassages = new Set<string>();
   const passageJobs = postureConnections.map(({ connection, fromCrouched, toCrouched }) => {
     const root = assembledNavigation.identities.get(connection.from.region)!;
     const members = (crouched: boolean) =>
@@ -3000,21 +3006,32 @@ function compileAssetGameplayAttempt(
     let emitted = 0;
     for (const from of representatives(fromAreas))
       for (const to of representatives(toAreas)) {
-        const floor = (area: (typeof areas)[number]) => {
+        const floor = (area: (typeof areas)[number], precise = false) => {
           const motion = motionBySector.get(area.sector)!;
           return {
             plane: area.plane,
-            polygon: motion.polygon.points,
+            polygon: precise
+              ? (motion.precise_polygon ?? motion.polygon.points)
+              : motion.polygon.points,
             receivingFloors: areas
               .filter((other) => other.sector === area.sector)
               .map((other) => ({
                 plane: other.plane,
                 polygon: other.receivingPolygon ?? other.polygon,
               })),
-            blockers: motion.obstacles.filter((o) => o.state_id === 0).map((o) => o.polygon.points),
+            blockers: motion.obstacles
+              .filter((o) => o.state_id === 0)
+              .map((o) => (precise ? (o.precise_polygon ?? o.polygon.points) : o.polygon.points)),
           };
         };
-        const candidates = navigationPosturePassages(connection, floor(from), floor(to));
+        const preciseCandidates = new Set(
+          navigationPosturePassages(connection, floor(from, true), floor(to, true)).map(
+            (candidate) => JSON.stringify(candidate),
+          ),
+        );
+        const candidates = navigationPosturePassages(connection, floor(from), floor(to)).filter(
+          (candidate) => preciseCandidates.has(JSON.stringify(candidate)),
+        );
         const [a, b] = connection.from.edge;
         const dx = b[0] - a[0],
           dy = b[1] - b[2] - (a[1] - a[2]);
@@ -3022,8 +3039,14 @@ function compileAssetGameplayAttempt(
           (a, b) => (a.middle[0] - b.middle[0]) * dx + (a.middle[1] - b.middle[1]) * dy,
         );
         const runs: (typeof candidates)[] = [];
-        const fromStates = prepareCorridorStates(motionBySector.get(from.sector)!.obstacles);
-        const toStates = prepareCorridorStates(motionBySector.get(to.sector)!.obstacles);
+        // Static clearance was checked on the joined free coverage above. A
+        // lower floor's supporting-volume hole must not veto the upper leg.
+        const fromStates = prepareCorridorStates(
+          motionBySector.get(from.sector)!.obstacles.filter((o) => o.state_id !== 0),
+        );
+        const toStates = prepareCorridorStates(
+          motionBySector.get(to.sector)!.obstacles.filter((o) => o.state_id !== 0),
+        );
         let previousStates: string | undefined;
         for (const candidate of candidates) {
           const outsideStates = fromStates(candidate.outside, candidate.middle);
@@ -3073,6 +3096,7 @@ function compileAssetGameplayAttempt(
             continue;
           }
           const name = `${namePrefix}/${emitted++}`;
+          preparedNavigationPassages.add(name);
           doors.push({
             name,
             allowChangingObstacleAnchors: true,
@@ -3231,7 +3255,7 @@ function compileAssetGameplayAttempt(
     const d = door.definition;
     const permanentStates: NonNullable<CompiledAssetGeometry["doors"][number]["passage_states"]> =
       [];
-    if (!door.lift) {
+    if (!door.lift && !preparedNavigationPassages.has(door.name)) {
       const legs = [
         [outside, door.outside, door.outsideAnchor],
         [inside, door.inside, door.insideAnchor],
@@ -3315,6 +3339,8 @@ function compileAssetGameplayAttempt(
   compiledDoors.forEach((compiled, index) => {
     if (compiled && checkedBuildingPassages.has(doors[index]!.name))
       buildingPassages.push(compiled);
+    if (compiled && preparedNavigationPassages.has(doors[index]!.name))
+      navigationPassages.push(compiled);
   });
   const selectDoors = (predicate: (door: (typeof doors)[number]) => boolean) =>
     compiledDoors.flatMap((compiled, i) => (compiled && predicate(doors[i]!) ? [compiled] : []));

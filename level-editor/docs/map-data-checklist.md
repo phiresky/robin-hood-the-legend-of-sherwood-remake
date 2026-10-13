@@ -6,6 +6,11 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
+Internal floor-hole seams now generate export-prepared connections between
+separate receiving floors, with two complete-sprite native crossings verified.
+The York doorstep batch still has a 90-degree receiving overlap and remains
+unpublished; see [floor-hole connections](map-compilation-evidence.md#exported-connections-along-internal-floor-holes-2026-10-14).
+
 All ten current saved-map descriptors compile and pass native construction, with
 290 prepared stair routes and 71 control apply/reset checks passing. The current
 saved-York map-only export passes native construction and all 130
