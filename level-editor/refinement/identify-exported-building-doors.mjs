@@ -50,12 +50,16 @@ for (const result of report.results) {
         const part = instance.parts.get(door.node);
         assert.ok(part, `Missing door frame ${instance.id}/${door.node}`);
         const matrix = partMatrix(document.camera, document, part);
-        const project = (point) => {
+        const world = (point) => {
           const [x, y, z] = sceneToGame(
             document.camera,
             applyAffineMatrix(matrix, gameToScene(document.camera, ...point)),
           );
-          return [Math.round(x - result.bounds[0]), Math.round(y - result.bounds[1] - z)];
+          return [x - result.bounds[0], y - result.bounds[1], z];
+        };
+        const project = (point) => {
+          const [x, y, z] = world(point);
+          return [Math.round(x), Math.round(y - z)];
         };
         candidates.push({
           asset: instance.descriptor.id,
@@ -63,6 +67,7 @@ for (const result of report.results) {
           room: room.id,
           door: door.id,
           node: door.node,
+          source_world: world(door.outside),
           point_out: project(door.outside),
           point_mid: project(door.middle),
           point_in: project(door.inside),

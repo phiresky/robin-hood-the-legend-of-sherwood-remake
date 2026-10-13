@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Cottage entrance veto regression (2026-10-13)
+
+`check-asset-building-doors.mjs 3d-assets/leicester/leicester-mill-north-cottage`
+places two copies on editor-authored flat terrain at four rotations and two
+elevations. Baseline `asset-building-doors-hmFOCw` reproduces 32/32 denied native
+room round trips. The generated fixture keeps every entrance and expects actual
+entry/exit; generating its descriptors is not a passing traversal result.
+
+A discarded asset-edit candidate (`mill-cottage-doorways-HQspaP`, placements
+`asset-building-doors-8gjaTO`) carved two local apertures through the cottage's
+static exclusions. All 32 isolated routes passed, and its rendered ZIP reopened
+with matching geometry and color/depth. The archived four routes and independent
+native load passed. However, the full Leicester candidate `saved-map-exports-K36CmI`
+still had eight blocked entrances, including both cottage doors: narrow terrain
+exclusion fragments also intersected their animated paths. **This candidate was
+not published and is not the proposed fix.** Its ZIP remains diagnostic evidence
+(`draft-scene-render-IMpR5F/mill-cottage-doors.zip`, 4,920,342 bytes, SHA-256
+`78596e5be694ae56bdc3108974ddd2208e7324fa84f23e3725c8d3620ea0c15a`).
+
+The decisive diagnostic `cottage-gate-diagnostic-mcd7_wwv` retains the baseline's
+original collision geometry and removes only the emitted building passage
+requirements. All 32 native round trips then pass. This modified descriptor is
+explicitly diagnostic and must not be published. It shows that cutting walkable
+doorway holes was compensating for an overly strict compiler veto: a virtual-room
+animation traverses the authored doorway while the wall remains a walking
+exclusion. The next fix must distinguish that structural doorway from unrelated
+placed barriers and state-controlled obstructions; blanket removal of all passage
+requirements would lose those checks. No gameplay definitions or engine behavior
+were changed by this investigation.
+
 ## Current saved-scene audit and raised receiver fix (2026-10-13)
 
 The ten-map baseline finishes with eight compiled descriptors and two receiving
@@ -11,8 +41,11 @@ alias errors (Wychford and Leicester). Its successful-output subset
 `saved-map-native-subset-xs3tlb3a` explicitly records those exclusions. All eight
 pass native construction. Prepared stair routes pass for Derby (28), Lincoln
 (18), Nottingham (92), Sherwood (2) and York (130); Croisement01–03 have no stair
-routes in these descriptors. Together with fixed Leicester's sixteen routes below,
-that is nine native-loaded maps and 286 prepared stair routes, not ten-map parity.
+routes in these descriptors. Fixed Leicester adds sixteen routes and Wychford
+adds four: all ten maps now compile and construct natively, with 290 prepared
+stair routes passing. All 71 compiled controls pass native apply/reset checks
+(56 in the eight-map subset, twelve in Leicester and three in Wychford).
+This does not establish complete gameplay or rendered parity.
 
 York map-only export `saved-map-exports-uPxhSz` compiles in 185 seconds in this
 run. Native construction passes with 162 areas, 1,236 sight obstacles, 254 doors,
@@ -41,11 +74,16 @@ involved. The same baseline error affected Leicester. Its fixed export
 boundaries. All sixteen prepared stair routes and twelve control apply/reset
 checks pass. Eight of its 24 building entrances still carry permanent blocking
 requirements; this is not a complete building-traversal result.
-Full Wychford revalidation in `saved-map-exports-iuBuAh` is still pending;
-the small regression is not whole-map export evidence.
+Wychford `saved-map-exports-iuBuAh` now compiles and passes native construction:
+87 areas, 15,581 sight obstacles, 31 doors, no jump pairs, 64,638 grid blocks and
+36,994 elevation boundaries. All four emitted stair routes pass with a complete
+sprite. The church-side tower's separate lift remains omitted: its outdoor
+endpoint is at 134.10 while the available terrain is at 88.33. This is an explicit
+placement warning, not an automatically supplied floor. Compilation took 1,238
+seconds in this run; the two walkable-geometry attempts took 374 and 484 seconds.
 
 Best-effort retry reasons now appear in export progress as well as final warnings.
-The initial Wychford run spent minutes rebuilding geometry after a failed
+The Wychford run spent minutes rebuilding geometry after a failed
 attachment; reporting the reason does not itself remove that export-time cost.
 
 ## Saved-scene map-only audit command

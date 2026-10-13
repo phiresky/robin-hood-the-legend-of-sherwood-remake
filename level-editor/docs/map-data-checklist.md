@@ -6,14 +6,18 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-Nine current saved-map descriptors pass native construction, with 286 prepared
-stair routes passing across maps that contain stairs. The current saved-York
-map-only export passes native construction and all 130
+All ten current saved-map descriptors compile and pass native construction, with
+290 prepared stair routes and 71 control apply/reset checks passing. The current
+saved-York map-only export passes native construction and all 130
 prepared stair routes, but 49 of its 95 building entrances remain blocked in the
 final descriptor. A receiving-plane lookup fix restores Leicester compilation,
 native loading, sixteen stair routes and twelve control apply/reset checks;
-eight of its 24 building entrances remain blocked. Wychford's full-map rerun
-against the same fix is pending. See the
+eight of its 24 building entrances remain blocked. Wychford passes native loading
+and four emitted stair routes; one unsupported tower lift is omitted with a warning.
+An isolated cottage audit identifies overly strict structural doorway vetoes as
+one cause of blocked entrances. The aperture-edit candidate was not published;
+the compiler needs to distinguish authored doorways from unrelated barriers.
+See the [entrance regression](map-compilation-evidence.md#cottage-entrance-veto-regression-2026-10-13) and
 [current saved-scene audit](map-compilation-evidence.md#current-saved-scene-audit-and-raised-receiver-fix-2026-10-13).
 
 **Current definition inventory (2026-10-13):** `gameplay-coverage-lLsDz7` checks
