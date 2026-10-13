@@ -1,4 +1,5 @@
 import { StateEventClocks, type StateClockBatch } from "../../shared/src/state-event-clocks.ts";
+import { StateAppearancePlayer } from "./state-appearance-player.ts";
 import { ReviewedNodePoses } from "./reviewed-node-poses.ts";
 import * as THREE from "three";
 import {
@@ -25,6 +26,7 @@ export class StateDelivery {
   private starts = new Map<string, number>();
   private sourceClocks: StateEventClocks | undefined;
   private nodePoses = new Map<string, ReviewedNodePoses>();
+  private clips = new Map<string, Partial<Record<"transition" | "final", StateAppearancePlayer>>>();
   private selectedFamily: string | undefined;
   private epoch = 0;
   private disposed = false;
@@ -57,6 +59,9 @@ export class StateDelivery {
     this.physical.visible = false;
     for (const poses of this.nodePoses.values()) poses.reset();
     this.nodePoses.clear();
+    for (const phases of this.clips.values())
+      for (const player of Object.values(phases)) player.dispose();
+    this.clips.clear();
     this.roots.clear();
     this.starts.clear();
     this.sourceClocks = undefined;
@@ -114,11 +119,47 @@ export class StateDelivery {
             const asset = await loader.load(binding);
             owned.add(asset);
             if (!current()) return false;
-            if (captureLoadedStateAppearance(asset))
-              throw new Error(
-                "Physical endpoint contains animation; endpoint-only contract required",
+            const motion = family.physical.motion;
+            const phase =
+              motion?.kind === "native-patch-clips"
+                ? index === 2
+                  ? "transition"
+                  : index === 1 && !("kind" in motion.final)
+                    ? "final"
+                    : undefined
+                : undefined;
+            const appearance = captureLoadedStateAppearance(asset);
+            let clone: THREE.Object3D;
+            if (phase && motion?.kind === "native-patch-clips") {
+              const binding = motion[phase];
+              if ("kind" in binding || !appearance)
+                throw new Error("Patch clip requires its pinned animated model");
+              if (appearance.clips.length !== 1 || appearance.clips[0]!.name !== binding.clip)
+                throw new Error("Patch clip identity differs from model");
+              if (
+                appearance.clips[0]!.tracks.some(
+                  (track) => track.track.times.at(-1)! < binding.duration_ticks,
+                )
+              )
+                throw new Error("Patch clip does not cover source phase duration");
+              const player = new StateAppearancePlayer(appearance, true);
+              const phases = this.clips.get(family.id) ?? {};
+              phases[phase] = player;
+              this.clips.set(family.id, phases);
+              player.select(
+                binding.clip,
+                phase === "final"
+                  ? { mode: "loop", cycleTicks: binding.duration_ticks }
+                  : { mode: "clamp", terminalTick: binding.duration_ticks },
               );
-            const clone = asset.clone(true);
+              clone = player.object;
+            } else {
+              if (appearance)
+                throw new Error(
+                  "Physical endpoint contains animation; endpoint-only contract required",
+                );
+              clone = asset.clone(true);
+            }
             if (binding.position) clone.position.add(new THREE.Vector3(...binding.position));
             clone.userData = {
               ...clone.userData,
@@ -191,6 +232,8 @@ export class StateDelivery {
     if (!["initial", "applied"].includes(endpoint)) throw new Error("Unknown physical endpoint");
     this.selectedFamily = id;
     for (const poses of this.nodePoses.values()) poses.reset();
+    for (const phases of this.clips.values())
+      for (const player of Object.values(phases)) player.sampleExternalTick(0);
     for (const [key, pair] of this.roots) {
       pair.initial.position.set(0, 0, 0);
       pair.applied.position.set(0, 0, 0);
@@ -275,6 +318,11 @@ export class StateDelivery {
       this.sourceClocks?.physicalPose(this.selectedFamily) ??
       physicalPatchPose(this.contract!, this.selectedFamily, this.familyTick(this.selectedFamily));
     const pair = this.roots.get(this.selectedFamily)!;
+    if (pose.clip_phase !== undefined) {
+      const player = this.clips.get(this.selectedFamily)?.[pose.clip_phase];
+      if (!player || pose.clip_tick === undefined) throw new Error("Patch clip player missing");
+      player.sampleExternalTick(pose.clip_tick);
+    }
     const nodes = this.nodePoses.get(this.selectedFamily);
     if (pose.node_frame === undefined) nodes?.reset();
     else {

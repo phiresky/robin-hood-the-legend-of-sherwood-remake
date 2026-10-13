@@ -1044,3 +1044,79 @@ test("staged preview rejects shared-clock activation and seek before any present
   assert.equal(p.physical.children[1]!.getObjectByName("whole-assembly")!.matrix.elements[12], 102);
   p.dispose();
 });
+
+test("patch clips retain independent applied clocks, reset, and reject missing clips", async () => {
+  const f = await motionFixture();
+  const family = f.contract.families[0]!;
+  const patch = f.contract.native.patch_states![0]!;
+  patch.final = Array.from({ length: 14 }, () => ({ ...f.contract.native.background, delay: 2 }));
+  f.source.data.mission_patches![0]!.end_animation_valid = true;
+  patch.source.sha256 = await missionStateDataHash(f.source.data.mission_patches![0]!);
+  f.contract.native.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  assert.ok(Array.isArray(family.physical.applied));
+  const finalBinding = family.physical.applied[0]!;
+  family.physical.motion = {
+    kind: "native-patch-clips",
+    patch_id: patch.id,
+    source_motion_sha256: "b".repeat(64),
+    transition: {
+      binding: { ...finalBinding, id: "lift", model: "lift.glb" },
+      clip: "lift",
+      duration_ticks: 90,
+    },
+    final: { binding: finalBinding, clip: "sway", duration_ticks: 42 },
+  };
+  const asset = (clip: string, duration: number) => {
+    const root = f.template.clone(true);
+    root.animations = [
+      new THREE.AnimationClip(clip, -1, [
+        new THREE.VectorKeyframeTrack(
+          root.uuid + ".position",
+          [0, duration / 25],
+          [0, 0, 0, duration, 0, 0],
+        ),
+      ]),
+    ];
+    return root;
+  };
+  const transition = asset("lift", 90),
+    final = asset("sway", 42);
+  const p = new StateDelivery(() => ({
+    load: async (binding) =>
+      binding.id === "lift" ? transition : binding.id === "applied" ? final : f.template,
+    dispose() {},
+  }));
+  await p.set(f.contract, f.source, f.library, f.read);
+  p.selectMode("physical-motion");
+  let sequence = 0;
+  const sample = (phase: "initial" | "forward" | "applied", tick: number) =>
+    p.sampleSourceState({
+      mission: f.contract.native.mission,
+      mission_data_sha256: f.contract.native.mission_data_sha256,
+      level_data_sha256: f.contract.native.level_data_sha256,
+      sequence: sequence++,
+      simulation_tick: sequence,
+      samples: [{ kind: "patch", id: patch.id, source: patch.source, phase, tick }],
+    });
+  const applied = p.physical.children[1]!;
+  const lift = p.physical.children[2]!;
+  const value = (group: THREE.Object3D) => group.children[0]!.children[0]!.position.x;
+  sample("forward", 12);
+  assert.equal(lift.visible, true);
+  assert.ok(Math.abs(value(lift) - 12) < 1e-5);
+  sample("applied", 7);
+  assert.equal(applied.visible, true);
+  assert.ok(Math.abs(value(applied) - 7) < 1e-5);
+  sample("applied", 49);
+  assert.ok(Math.abs(value(applied) - 7) < 1e-5);
+  sample("initial", 0);
+  assert.equal(p.physical.children[0]!.visible, true);
+  sample("applied", 0);
+  assert.equal(value(applied), 0);
+  p.dispose();
+  final.animations[0]!.name = "wrong";
+  const bad = new StateDelivery(() => ({ load: async () => final, dispose() {} }));
+  family.physical.initial = { kind: "absent" };
+  await assert.rejects(bad.set(f.contract, f.source, f.library, f.read), /clip identity/);
+  bad.dispose();
+});

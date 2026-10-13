@@ -396,3 +396,86 @@ test("discrete patch frames preserve complete multi-model endpoints and independ
     assert.throws(() => validateStateDelivery(invalid), /invalid reviewed patch motion binding/);
   }
 });
+
+test("patch clip contracts pin every phase and preserve separate clocks", async () => {
+  const { physicalPatchClipPose } = await import("./state-delivery.ts");
+  const { StateEventClocks } = await import("./state-event-clocks.ts");
+  const c = deliveryFixture(),
+    f = c.families[0]!,
+    frame = c.native.background;
+  c.native.elements = [];
+  f.element_ids = [];
+  f.patch_ids = ["net"];
+  f.body_terminal_tick = 5;
+  c.native.patch_states = [
+    {
+      id: "net",
+      source: { kind: "mission-patch", index: 0, sha256: "b".repeat(64) },
+      profile: { path: "net.json", sha256: "c".repeat(64), name: "net", center: [0, 0] },
+      integrate_in_background: false,
+      elevation: 1,
+      layer: "ordered",
+      display_position: [0, 0],
+      sort_position: [0, 0],
+      display_order: 0,
+      creation_order: 0,
+      polyline: [],
+      definitive: true,
+      initial: [],
+      transition: [frame, frame],
+      final: Array(14).fill(frame),
+      initial_loop: true,
+      final_loop: true,
+    },
+  ];
+  const binding = physicalEndpointSources(f.physical.applied)[0]!;
+  f.physical.motion = {
+    kind: "native-patch-clips",
+    patch_id: "net",
+    source_motion_sha256: "c".repeat(64),
+    transition: { binding: { ...binding, id: "lift" }, clip: "lift", duration_ticks: 6 },
+    final: { binding, clip: "sway", duration_ticks: 42 },
+  };
+  validateStateDelivery(c);
+  assert.equal(physicalPatchClipPose(c, f.id, "forward", 4).clip_tick, 4);
+  assert.equal(physicalPatchClipPose(c, f.id, "forward", 5).clip_tick, 0);
+  assert.equal(physicalPatchClipPose(c, f.id, "applied", 49).clip_tick, 7);
+  const clocks = new StateEventClocks(c);
+  clocks.apply({
+    mission: c.native.mission,
+    mission_data_sha256: c.native.mission_data_sha256,
+    level_data_sha256: c.native.level_data_sha256,
+    sequence: 0,
+    simulation_tick: 100,
+    samples: [
+      {
+        kind: "patch",
+        id: "net",
+        source: c.native.patch_states[0]!.source,
+        phase: "applied",
+        tick: 49,
+      },
+    ],
+  });
+  assert.equal(clocks.physicalPose(f.id).clip_tick, 7);
+  for (const mutate of [
+    (m: typeof f.physical.motion) => {
+      if (m?.kind === "native-patch-clips") m.transition.duration_ticks = 5;
+    },
+    (m: typeof f.physical.motion) => {
+      if (m?.kind === "native-patch-clips") m.transition.binding.model_sha256 = "bad";
+    },
+    (m: typeof f.physical.motion) => {
+      if (m?.kind === "native-patch-clips") m.final = { kind: "absent" };
+    },
+  ]) {
+    const bad = structuredClone(c);
+    mutate(bad.families[0]!.physical.motion);
+    assert.throws(() => validateStateDelivery(bad));
+  }
+  c.native.patch_states[0]!.final = [];
+  f.physical.applied = { kind: "absent" };
+  f.physical.motion.final = { kind: "absent" };
+  validateStateDelivery(c);
+  assert.equal(physicalPatchClipPose(c, f.id, "applied", 0).visible, false);
+});

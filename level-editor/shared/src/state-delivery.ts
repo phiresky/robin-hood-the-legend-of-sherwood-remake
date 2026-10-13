@@ -82,6 +82,20 @@ export interface PhysicalPatchModelFrames {
   model_frames: PhysicalStateBinding[][];
 }
 
+/** A patch phase binds one hash-pinned model and a named glTF clip. */
+export interface PhysicalPatchClip {
+  binding: PhysicalStateBinding;
+  clip: string;
+  duration_ticks: number;
+}
+export interface PhysicalPatchClips {
+  kind: "native-patch-clips";
+  patch_id: string;
+  source_motion_sha256: string;
+  transition: PhysicalPatchClip;
+  final: PhysicalPatchClip | { kind: "absent" };
+}
+
 /** Exact artwork transitions and independently reviewed physical endpoints. */
 export interface StateDeliveryContract {
   version: 1;
@@ -99,6 +113,7 @@ export interface StateDeliveryContract {
       initial: PhysicalEndpoint;
       applied: PhysicalEndpoint;
       motion?:
+        | PhysicalPatchClips
         | PhysicalPatchTranslation
         | PhysicalPatchNodePoses
         | PhysicalPatchModelFrames
@@ -192,7 +207,51 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
     }
     if (!family.physical) fail("missing physical endpoints");
     const motion = family.physical.motion;
-    if (motion?.kind === "native-element-stage-poses") {
+    if (motion?.kind === "native-patch-clips") {
+      const patch = c.native.patch_states?.find((p) => p.id === motion.patch_id);
+      if (
+        !hash(motion.source_motion_sha256) ||
+        !patch?.definitive ||
+        !family.patch_ids?.includes(motion.patch_id) ||
+        family.element_ids.length ||
+        patch.initial.length ||
+        !patch.transition.length
+      )
+        fail("invalid patch clip source binding");
+      const validateClip = (phase: PhysicalPatchClip, duration: number) => {
+        if (
+          !phase ||
+          typeof phase.clip !== "string" ||
+          !phase.clip.trim() ||
+          !Number.isSafeInteger(phase.duration_ticks) ||
+          phase.duration_ticks !== duration
+        )
+          fail("patch clip timing differs from source phase");
+      };
+      validateClip(
+        motion.transition,
+        patch!.transition.reduce((n, f) => n + f.delay + 1, 0),
+      );
+      if (!motion.final || typeof motion.final !== "object") fail("missing final clip phase");
+      if ("kind" in motion.final) {
+        if (
+          motion.final.kind !== "absent" ||
+          Object.keys(motion.final).length !== 1 ||
+          patch!.final.length ||
+          Array.isArray(family.physical.applied)
+        )
+          fail("invalid absent final clip phase");
+      } else {
+        if (!patch!.final.length || !patch!.final_loop)
+          fail("patch clips require a looping final phase or explicit absence");
+        validateClip(
+          motion.final,
+          patch!.final.reduce((n, f) => n + f.delay + 1, 0),
+        );
+        if (JSON.stringify(family.physical.applied) !== JSON.stringify([motion.final.binding]))
+          fail("final clip differs from applied model binding");
+      }
+    } else if (motion?.kind === "native-element-stage-poses") {
       if (
         !hash(motion.source_motion_sha256) ||
         !Array.isArray(motion.stages) ||
@@ -376,6 +435,7 @@ export function physicalFamilyEndpoints(
     initial,
     applied,
     ...(motion?.kind === "native-patch-model-frames" ? motion.model_frames : []),
+    ...(motion?.kind === "native-patch-clips" ? [[motion.transition.binding]] : []),
   ];
 }
 
@@ -390,6 +450,8 @@ export function physicalPatchPose(
   node_frame?: number;
   model_frame?: number;
   visible?: boolean;
+  clip_phase?: "transition" | "final";
+  clip_tick?: number;
 } {
   const family = contract.families.find((f) => f.id === id);
   const motion = family?.physical.motion;
@@ -400,6 +462,8 @@ export function physicalPatchPose(
     return { endpoint: "initial" as const, translation: [0, 0, 0] as [number, number, number] };
   if (motion.kind === "native-element-stage-poses")
     throw new Error("Staged motion requires independent source clocks");
+  if (motion.kind === "native-patch-clips")
+    return physicalPatchClipPose(contract, id, "forward", tick);
   if (tick >= family.body_terminal_tick)
     return { endpoint: "applied" as const, translation: [0, 0, 0] as [number, number, number] };
   const frames =
@@ -414,6 +478,39 @@ export function physicalPatchPose(
   const translation = motion.translation_frames[frame];
   if (!translation) throw new Error("Missing reviewed physical pose");
   return { endpoint: "initial" as const, translation };
+}
+
+/** Applied events carry a fresh final-animation clock, never a transition cursor. */
+export function physicalPatchClipPose(
+  contract: StateDeliveryContract,
+  id: string,
+  phase: "initial" | "forward" | "applied" | "reverse",
+  tick: number,
+): ReturnType<typeof physicalPatchPose> {
+  const family = contract.families.find((f) => f.id === id);
+  const motion = family?.physical.motion;
+  if (motion?.kind !== "native-patch-clips" || !Number.isSafeInteger(tick) || tick < 0)
+    throw new Error("Invalid patch clip clock");
+  if (phase === "initial") return { endpoint: "initial", translation: [0, 0, 0] };
+  if (phase === "reverse") throw new Error("Unreviewed reverse patch clip");
+  const terminal = Math.max(1, motion.transition.duration_ticks - 1);
+  if (phase === "forward" && tick < terminal)
+    return {
+      endpoint: "initial",
+      translation: [0, 0, 0],
+      model_frame: 0,
+      clip_phase: "transition",
+      clip_tick: tick,
+    };
+  const finalTick = phase === "forward" ? tick - terminal : tick;
+  return "kind" in motion.final
+    ? { endpoint: "applied", translation: [0, 0, 0], visible: false }
+    : {
+        endpoint: "applied",
+        translation: [0, 0, 0],
+        clip_phase: "final",
+        clip_tick: finalTick % motion.final.duration_ticks,
+      };
 }
 
 export interface PhysicalStageClock {

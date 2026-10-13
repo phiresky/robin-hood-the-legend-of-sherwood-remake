@@ -7,6 +7,7 @@ import {
 import {
   physicalElementStagePose,
   physicalPatchPose,
+  physicalPatchClipPose,
   type StateDeliveryContract,
 } from "./state-delivery.ts";
 
@@ -193,6 +194,12 @@ export class StateEventClocks {
     const family = this.contract.families.find((f) => f.id === familyId);
     if (family?.physical.motion?.kind === "native-element-stage-poses")
       return this.stagedPose(familyId, this.clocks);
+    if (family?.physical.motion?.kind === "native-patch-clips") {
+      const sample = this.sample("patch", family.physical.motion.patch_id);
+      if (!sample) return physicalPatchClipPose(this.contract, familyId, "initial", 0);
+      if (sample.kind !== "patch") throw new Error("Missing patch phase clock");
+      return physicalPatchClipPose(this.contract, familyId, sample.phase, sample.tick);
+    }
     return physicalPatchPose(this.contract, familyId, this.physicalTick(familyId));
   }
 
@@ -209,6 +216,7 @@ export class StateEventClocks {
     const sample = this.sample("patch", f.physical.motion.patch_id);
     if (!sample || sample.kind === "element" || sample.phase === "initial") return undefined;
     if (sample.phase === "reverse") throw new Error("Unreviewed reverse physical motion");
+    if (f.physical.motion.kind === "native-patch-clips") return sample.tick;
     return sample.phase === "applied" ? f.body_terminal_tick : sample.tick;
   }
 }
