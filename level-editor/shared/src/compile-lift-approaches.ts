@@ -2,6 +2,7 @@ import type { CompiledAssetGeometry } from "./asset-gameplay.ts";
 import type { Point } from "./level.ts";
 import { pointInGameplayPolygon } from "./navigation-anchor.ts";
 import { prepareDirectStairApproaches } from "./prepare-direct-stair-approaches.ts";
+import { prepareCorridorStates } from "./compile-navigation-graph.ts";
 
 type Area = CompiledAssetGeometry["motion_data"]["layers"][number][number];
 
@@ -210,6 +211,49 @@ function compileApproaches(geometry: CompiledAssetGeometry, buildingsOnly: boole
         }
         if (adjusted) door[`point_${side}`] = adjusted;
         else {
+          if (buildingsOnly) {
+            // A narrow landing may allow passage animations but no standalone
+            // walking destination. Share a checked passage endpoint so entering
+            // the room does not require an impossible intervening walk.
+            const clear = prepareCorridorStates(
+              blockers.map((obstacle) => ({
+                ...obstacle,
+                polygon: { points: obstacle.precise_polygon ?? obstacle.polygon.points },
+              })),
+              boundary,
+            );
+            const handoffs = geometry.doors
+              .filter((passage) => passage.door_type === 0)
+              .flatMap((passage) =>
+                (["in", "out"] as const).flatMap((endpoint) =>
+                  passage[`sector_${endpoint}`] === door.sector_out &&
+                  passage[`layer_${endpoint}`] === door.layer_out
+                    ? [passage[`point_${endpoint}`]]
+                    : [],
+                ),
+              )
+              .filter(
+                (candidate) =>
+                  Math.hypot(candidate[0] - point[0], candidate[1] - point[1]) <= 64 &&
+                  (!receivers.length ||
+                    receivers.some((polygon) =>
+                      pointInGameplayPolygon(candidate, polygon, true),
+                    )) &&
+                  clear(source, candidate).length > 0,
+              )
+              .sort(
+                (a, b) =>
+                  Math.hypot(a[0] - point[0], a[1] - point[1]) -
+                  Math.hypot(b[0] - point[0], b[1] - point[1]),
+              );
+            if (handoffs[0]) {
+              door.point_out = [...handoffs[0]];
+              (geometry.warnings ??= []).push(
+                `${label} door ${doorIndex}: shared passage handoff prepared on a narrow landing; no standalone actor-sized approach is available.`,
+              );
+              continue;
+            }
+          }
           const warning = `${label} door ${doorIndex}: no actor-sized ${side} approach near the authored passage; traversal may be unavailable.`;
           (geometry.warnings ??= []).push(warning);
           if (side === "in" && lift?.lift_type === 1)

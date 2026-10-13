@@ -146,3 +146,57 @@ test("building approaches fit outside actors without moving virtual rooms or cro
     else assert.deepEqual(geometry.warnings, []);
   }
 });
+
+test("narrow room landings reuse only reachable passage handoffs on their own floor", () => {
+  for (const kind of ["shared", "blocked", "other-sector", "other-layer"] as const) {
+    const { geometry, door } = fixture([50, 50]);
+    const area = geometry.motion_data.layers[0]![0]!;
+    area.is_lift = false;
+    area.polygon.points = [
+      [0, 0],
+      [12, 0],
+      [12, 100],
+      [0, 100],
+    ];
+    area.precise_polygon = [
+      [0, 0],
+      [11.5, 0],
+      [11.5, 100],
+      [0, 100],
+    ];
+    geometry.lifts = [];
+    geometry.sight_obstacles = [];
+    door.door_type = 1;
+    door.point_out = [6, 50];
+    door.point_mid = [20, 50];
+    door.sector_in = 999;
+    door.layer_in = 3;
+    const passage = structuredClone(door);
+    passage.door_type = 0;
+    passage.point_out = [6, 51];
+    if (kind === "other-sector") passage.sector_out = 99;
+    if (kind === "other-layer") passage.layer_out = 1;
+    if (kind === "blocked")
+      area.obstacles.push({
+        state_id: 0,
+        polygon: {
+          points: [
+            [0, 50.4],
+            [12, 50.4],
+            [12, 50.6],
+            [0, 50.6],
+          ],
+        },
+      });
+    geometry.doors = [passage];
+    geometry.buildings = [{ Building: { doors: [door] } }];
+    const before = structuredClone(geometry.motion_data);
+    compileBuildingApproaches(geometry);
+    assert.deepEqual(door.point_out, kind === "shared" ? [6, 51] : [6, 50]);
+    assert.deepEqual(geometry.motion_data, before);
+    assert.match(
+      geometry.warnings!.join("\n"),
+      kind === "shared" ? /shared passage handoff/ : /no actor-sized out approach/,
+    );
+  }
+});

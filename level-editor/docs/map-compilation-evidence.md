@@ -6,6 +6,20 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Prepared ordinary floor clearance (2026-10-14)
 
+`receiver-floor-placements-Mvbz2B` adds export-prepared room handoffs on narrow
+landings. When no standing-box approach is available, an existing ordinary
+passage endpoint on the same sector/layer may be shared, provided its receiving
+floor and the connecting movement corridor are clear. Normal building passage
+state checks still run afterwards. The compiler retains a warning that no
+standalone standing approach is available, and does not change floor geometry.
+This removes the otherwise impossible short walk between the terrain passage
+and the room animation. Native terrain-to-room entry/return now passes 28 of 32
+placements; only the timber house at 180 degrees fails, across both copies and
+heights. All 32 doorway-start round trips and 64 negative socket checks pass.
+All 252 selected compiler/app tests pass, including blocked and wrong-sector/layer
+handoff regressions. No runtime engine code changes. Publication remains pending
+the unresolved 180-degree approach and rendered ZIP verification.
+
 The next compiler correction recovers precise boundaries for single-piece floors
 as well as merged floors. Collinear source samples survive when their rounded
 vertices are required by the exported motion contour. Passage preparation closes

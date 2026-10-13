@@ -88,8 +88,10 @@
 - **Prepared doorstep connections.** Export recovers single-floor precision and
   keeps source samples needed to preserve rounded graph contours. Matched floor
   seams tolerate clipping-grid arithmetic without changing endpoint clearance.
-  Native player-click entry and return from surrounding terrain now pass 24 of
-  32 copied, rotated and raised candidate placements; eight timber-house cases
+  Narrow room landings can share a clearance-checked ordinary passage endpoint,
+  avoiding an unsupported intervening walk without enlarging the floor.
+  Native player-click entry and return from surrounding terrain now pass 28 of
+  32 copied, rotated and raised candidate placements; four timber-house cases
   remain unresolved. This preparation runs during export, with no runtime solver.
 
 - **Physical doorstep authoring experiments.** A staging helper can turn explicitly
