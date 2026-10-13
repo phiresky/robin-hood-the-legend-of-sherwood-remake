@@ -47,7 +47,9 @@ export function restoreReceivingBoundary(
   boundary: Point[],
   sources: MultiPolygon,
 ): Point[] | undefined {
-  return restoreBoundary(boundary, sources, false);
+  return (
+    restoreBoundary(boundary, sources, false) ?? restoreBoundary(boundary, sources, false, true)
+  );
 }
 
 /** Recover a rounded obstacle from any boundary of its exact blocked coverage,
@@ -109,6 +111,7 @@ function restoreBoundary(
   boundary: Point[],
   sources: MultiPolygon,
   obstacle: boolean,
+  retainSamples = false,
 ): Point[] | undefined {
   const restored: Point[][] = [];
   const contours = sources.flatMap((source) =>
@@ -161,8 +164,46 @@ function restoreBoundary(
         clipped = fixedPolygonBoolean("intersection", [candidate], [source]);
       }
       if (clipped.length !== 1 || clipped[0]!.length !== 1) continue;
+      if (retainSamples) {
+        // Boolean clipping removes collinear source samples, but their rounded
+        // vertices can form real grid corners. Keep those samples so the exact
+        // floor still rounds to the exported motion boundary.
+        const ring = simplifyMotionRing(clipped[0]![0]!).map(
+          (point) =>
+            candidate.find(
+              (sample) => Math.hypot(sample[0] - point[0], sample[1] - point[1]) < 2 / 1048576,
+            ) ?? point,
+        );
+        clipped[0]![0] = ring.flatMap((a, i) => {
+          const b = ring[(i + 1) % ring.length]!;
+          const dx = b[0] - a[0],
+            dy = b[1] - a[1];
+          const length2 = dx * dx + dy * dy;
+          const samples = candidate
+            .map((point) => ({
+              point,
+              t: ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / length2,
+            }))
+            .filter(
+              ({ point, t }) =>
+                t > 0 &&
+                t < 1 &&
+                Math.abs(dx * (point[1] - a[1]) - dy * (point[0] - a[0])) / Math.sqrt(length2) <
+                  2 / 1048576,
+            );
+          samples.sort((p, q) => p.t - q.t);
+          return [a, ...samples.map(({ point }) => point)].filter(
+            (point, index, points) =>
+              index === 0 ||
+              point[0] !== points[index - 1]![0] ||
+              point[1] !== points[index - 1]![1],
+          );
+        });
+      }
       const rounded = quantizeGeneratedMotionPolygon(
-        clipped[0]!,
+        retainSamples
+          ? clipped[0]!.map((ring) => ring.map(([x, y]): Point => [Math.round(x), Math.round(y)]))
+          : clipped[0]!,
         Math.round,
         "Receiving boundary",
         [],
@@ -172,7 +213,7 @@ function restoreBoundary(
     }
     if (!valid.length) continue;
     if (!obstacle) {
-      restored.push(simplifyMotionRing(valid[0]![0]!));
+      restored.push(retainSamples ? valid[0]![0]! : simplifyMotionRing(valid[0]![0]!));
       continue;
     }
     const combined = clipping.union(valid[0]!, ...valid.slice(1));

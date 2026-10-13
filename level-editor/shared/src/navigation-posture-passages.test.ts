@@ -48,6 +48,23 @@ function fixture() {
   return { from, to, connection };
 }
 
+test("matched seams tolerate clipping-grid noise but not an authored gap", () => {
+  for (const [gap, connects] of [
+    [1 / 1048576, true],
+    [1 / 512, false],
+  ] as const) {
+    const { from, to, connection } = fixture();
+    const preciseTo = {
+      ...to,
+      polygon: to.polygon.map(([x, y]): Point => [x === 100 ? x + gap : x, y]),
+    };
+    assert.equal(
+      navigationPosturePassages(connection, from, to, [from, preciseTo]).length > 0,
+      connects,
+    );
+  }
+});
+
 test("an oblique short landing connects without requiring symmetric approach offsets", () => {
   const from: NavigationAnchorArea = {
     plane: [0.9454810659191314, 0.8226182833327891, -19.5799325472492],

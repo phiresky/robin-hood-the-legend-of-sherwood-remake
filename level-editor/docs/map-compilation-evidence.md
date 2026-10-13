@@ -6,6 +6,25 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Prepared ordinary floor clearance (2026-10-14)
 
+The next compiler correction recovers precise boundaries for single-piece floors
+as well as merged floors. Collinear source samples survive when their rounded
+vertices are required by the exported motion contour. Passage preparation closes
+only clipping-grid cracks (four units of the 1/1,048,576 clipping grid) between
+matched floors; endpoint checks still use each floor separately. This changes
+export preparation, with no engine or per-tick changes.
+
+`receiver-floor-placements-2ZiaXh` recompiles the full 32-placement matrix and
+passes all 64 negative socket checks. Native player-click terrain entry/return
+now passes 24 of 32 placements, up from 16. All stone-house placements pass;
+all 32 doorway-start entry/exit round trips still pass.
+the timber house still fails at 90 and 180 degrees across both copies and heights.
+The independent 0-degree export `doorstep-precise-supported-EAeIwG` passes all
+four terrain-to-room round trips. The two new focused regressions cover retained
+grid corners without added receiving coverage and clipping-grid noise without
+accepting a larger authored gap. All 262 selected compiler/app tests and 31
+focused navigation/restoration tests pass; the app typecheck passes. These
+assets remain unpublished pending the remaining native and rendered checks.
+
 `receiver-floor-placements-w5WS0s` recompiles both candidate assets at rotations
 0, 37, 90 and 180 degrees, heights 0 and 40, with two copies per scene. All 32
 native complete-sprite doorway entry/exit round trips pass, along with the

@@ -7,6 +7,31 @@ import { restoreReceivingBoundary, restoreObstacleBoundary } from "./restore-rec
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
 
+test("collinear receiving samples retain the corners created by grid rounding", () => {
+  const source: Point[] = [
+    [0.2, 0.2],
+    [20.2, 6.2],
+    [20.2, 20.2],
+    [0.2, 20.2],
+  ];
+  const boundary: Point[] = [
+    [0, 0],
+    [9, 3],
+    [20, 6],
+    [20, 20],
+    [0, 20],
+  ];
+  const restored = restoreReceivingBoundary(boundary, [[source]]);
+  assert.ok(restored);
+  assert.deepEqual(
+    restored.map(([x, y]) => [Math.round(x), Math.round(y)]),
+    boundary,
+  );
+  assert.deepEqual(fixedPolygonBoolean("difference", [restored], [[source]]), []);
+  assert.deepEqual(restored[0], source[0]);
+  assert.equal(restoreReceivingBoundary(boundary, [[source], [source]]), undefined);
+});
+
 test("near-coincident terrain obstacle edges survive a floating sweep failure", () => {
   const boundary: Point[] = [
     [1639, 1439],

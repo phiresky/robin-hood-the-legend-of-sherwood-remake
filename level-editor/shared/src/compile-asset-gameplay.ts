@@ -2244,7 +2244,7 @@ function compileAssetGameplayAttempt(
     const recoveredBoundary =
       preciseBoundaries.length === 1
         ? preciseBoundaries[0]!.exact
-        : physicalLanding && pieces.length > 1
+        : physicalLanding && pieces.length > 0
           ? joinedReceivingBoundary(pieces, boundary)
           : undefined;
     const preciseBoundary =

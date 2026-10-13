@@ -6,6 +6,7 @@ import { prepareCorridorStates } from "./compile-navigation-graph.ts";
 import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
 import type { Point } from "./level.ts";
 import { prepareFoldedNavigationPassage } from "./folded-navigation-passage.ts";
+import { closeNavigationSeams } from "./close-navigation-seams.ts";
 
 /** Find collision-checked crossings on an explicitly matched projected seam. */
 export function navigationPosturePassages(
@@ -49,7 +50,13 @@ export function navigationPosturePassages(
   const views = representations.map(([source, target]) => ({
     from: prepareCorridorStates(obstacles(source), source.polygon),
     to: prepareCorridorStates(obstacles(target), target.polygon),
-    crossings: polygonClipping.union(free(source), free(target)).map(([outer, ...holes]) =>
+    // Independently clipped sides of an already matched seam can differ by
+    // a few fixed-point units. This export-only tolerance is below a pixel;
+    // endpoint authorization still checks each unchanged floor separately.
+    crossings: closeNavigationSeams(
+      polygonClipping.union(free(source), free(target)),
+      4 / 1048576,
+    ).map(([outer, ...holes]) =>
       prepareCorridorStates(
         holes.map((points) => ({ polygon: { points }, state_id: 0 })),
         outer,

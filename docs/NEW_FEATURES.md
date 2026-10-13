@@ -85,6 +85,13 @@
   copied, rotated and elevated placements pass native character traversal.
   Rendered integration remains unverified.
 
+- **Prepared doorstep connections.** Export recovers single-floor precision and
+  keeps source samples needed to preserve rounded graph contours. Matched floor
+  seams tolerate clipping-grid arithmetic without changing endpoint clearance.
+  Native player-click entry and return from surrounding terrain now pass 24 of
+  32 copied, rotated and raised candidate placements; eight timber-house cases
+  remain unresolved. This preparation runs during export, with no runtime solver.
+
 - **Physical doorstep authoring experiments.** A staging helper can turn explicitly
   selected asset receiver tops into walkable floors with exterior edge sockets.
   It retains the volume's fitted plane through rotation, checks descriptor pins
