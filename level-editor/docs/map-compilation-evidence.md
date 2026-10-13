@@ -6,6 +6,22 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Standalone hall restoration candidate (2026-10-13)
 
+`check-hall-tower-connection.mjs` adds independently placed watchtowers to both
+hall copies, using the editor insertion command and verifying the resulting
+model matrices. Fixture `hall-tower-connections-wRB2Pv` restores both upper-door
+receivers across all eight rotation/elevation layouts. The compiled room-door
+count rises from two to four per layout. This proves receiving-floor binding,
+not traversability: all 32 native full-sprite room round trips are denied by
+compiled empty passage-state requirements. The report is
+`actor-building-round-trip-report.json` in that fixture.
+
+The denial originates in the asset compiler's retained permanent passage cuts,
+before the later motion-obstacle corridor check. Checking the emitted motion
+obstacles alone finds no blocker on either outdoor leg. Review the authored
+clearances and retained cuts at the doorway mouths; do not remove authorization
+or add a runtime routing fallback. Three other entrances per hall still lack
+surrounding support. Full hall entrance parity remains open.
+
 `stage-nottingham-hall-gameplay.mjs` restores the standalone Nottingham hall from
 its assembly's asset-local metadata. It verifies all 30 part boundaries against
 one translated frame, retains five surfaces, two rooms, stairs and the hall-owned
