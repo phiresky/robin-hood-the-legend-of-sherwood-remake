@@ -69,6 +69,19 @@ fn subtract(a: Point, b: Point) -> Point {
 fn cross(a: Point, b: Point) -> f64 {
     a[0] * b[1] - a[1] * b[0]
 }
+
+fn distance_to_segment(point: Point, (a, b): Edge) -> f64 {
+    let direction = subtract(b, a);
+    let offset = subtract(point, a);
+    let length2 = direction[0] * direction[0] + direction[1] * direction[1];
+    let t = if length2 == 0. {
+        0.
+    } else {
+        ((offset[0] * direction[0] + offset[1] * direction[1]) / length2).clamp(0., 1.)
+    };
+    let nearest = interpolate(a, b, t);
+    (point[0] - nearest[0]).hypot(point[1] - nearest[1])
+}
 fn interpolate(a: Point, b: Point, t: f64) -> Point {
     [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
 }
@@ -717,8 +730,42 @@ fn derive_with_spatial_index(
             // counted as crossings after the door switches actor membership.
             let middle = [middle[0] + inward[0] * 0.25, middle[1] + inward[1] * 0.25];
             let tangent = [-inward[1], inward[0]];
-            let a = [middle[0] - tangent[0], middle[1] - tangent[1]];
-            let b = [middle[0] + tangent[0], middle[1] + tangent[1]];
+            // A nearby entrance's internal route must not cross this door's
+            // handoff. Bound its span using the static authored approaches and
+            // every direct route between inside endpoints on this flight.
+            let point = |p: (i16, i16)| [f64::from(p.0), f64::from(p.1)];
+            let mut radius = 1.0_f64;
+            for (i, other) in lift.doors.iter().enumerate() {
+                if !std::ptr::eq(other, door) {
+                    radius = radius.min(
+                        distance_to_segment(
+                            middle,
+                            (point(other.point_mid), point(other.point_in)),
+                        ) * 0.25,
+                    );
+                }
+                for previous in &lift.doors[..i] {
+                    radius = radius.min(
+                        distance_to_segment(
+                            middle,
+                            (point(previous.point_in), point(other.point_in)),
+                        ) * 0.25,
+                    );
+                }
+            }
+            let a = [
+                middle[0] - tangent[0] * radius,
+                middle[1] - tangent[1] * radius,
+            ];
+            let b = [
+                middle[0] + tangent[0] * radius,
+                middle[1] + tangent[1] * radius,
+            ];
+            if a.map(|x| x as f32) == b.map(|x| x as f32) {
+                return Err(
+                    "walking passage handoff intersects another authored stair route".into(),
+                );
+            }
             passages.push(RawElevationLine {
                 layer: door.layer_in,
                 point_a: rounded(a)?,
@@ -953,6 +1000,41 @@ mod tests {
             BTreeSet::from([internal.left_obstacle_index, internal.right_obstacle_index]),
             BTreeSet::from([1, 2])
         );
+
+        // A second entrance approaches the same flight. Its path to the first
+        // inside endpoint passes near, but must not activate, the first door.
+        geometry.lifts[0].doors[0].point_mid = (30, 50);
+        let mut neighbor = geometry.lifts[0].doors[0].clone();
+        neighbor.point_mid = (10, 70);
+        neighbor.point_in = (20, 51);
+        geometry.lifts[0].doors.push(neighbor);
+        let lines = derive(&geometry).unwrap();
+        let handoff = lines
+            .iter()
+            .find(|line| line.layer == 2 && line.map_endpoints().iter().all(|p| p[0] == 30.25))
+            .unwrap();
+        let endpoints = handoff.map_endpoints().map(|point| point.map(f64::from));
+        let mut own = vec![];
+        split_at(
+            ([30., 50.], [80., 50.]),
+            (endpoints[0], endpoints[1]),
+            &mut own,
+        );
+        assert_eq!(
+            own.len(),
+            1,
+            "the selected doorway still changes receiving plane"
+        );
+        let mut foreign = vec![];
+        split_at(
+            ([20., 51.], [80., 50.]),
+            (endpoints[0], endpoints[1]),
+            &mut foreign,
+        );
+        assert!(
+            foreign.is_empty(),
+            "internal movement must not activate another door"
+        );
     }
 
     #[test]
@@ -1059,8 +1141,9 @@ mod tests {
     fn joined_planes_have_one_shared_elevation_boundary() {
         let lines = derive(&fixture()).unwrap();
         assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0].point_a, (400, 260));
-        assert_eq!(lines[0].point_b, (400, 360));
+        // At x=400 the projected footprints overlap from 297-40 to 403-40.
+        assert_eq!(lines[0].point_a, (400, 257));
+        assert_eq!(lines[0].point_b, (400, 363));
         assert_eq!(
             (lines[0].left_obstacle_index, lines[0].right_obstacle_index),
             (1, 0)

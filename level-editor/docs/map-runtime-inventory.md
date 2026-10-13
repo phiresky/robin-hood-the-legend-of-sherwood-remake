@@ -1,5 +1,15 @@
 # Runtime changes introduced or extended for map compilation
 
+**2026-10-13 — neighboring stair entrances:** static elevation-line preparation
+now limits each stair doorway's receiving-plane boundary so that other authored
+approaches and direct internal routes do not cross it. This fixes four premature
+plane changes on a rotated three-door stair: the combined keep candidate passes
+all forty directed sprite routes; Lincoln's rendered archive passes all eighteen.
+The calculation runs only during compiled level loading when elevation lines
+need preparation. Existing binary maps and explicit elevation lines do not use
+it. No per-tick geometry queries, movement solver, format fields or actor changes
+are added. Degenerate, unrepresentable handoffs produce a preparation error.
+
 **2026-10-12 — ordinary passages touching stairs:** the existing level-load
 receiver cache now includes ordinary passages whose endpoints touch normal or
 stair lift surfaces. Previously the blanket lift exclusion left the old plane

@@ -20,10 +20,16 @@ height 40 complete. The frame-translation regression suite passes all 17 tests;
 scoped formatting and lint pass. This is an unpublished authoring candidate, not
 a usable-complete-keep claim. No library or runtime changes were made.
 
-The native complete-sprite stair audit checks forty directed routes: 36 pass;
-four fail at 180° on the three-door stair (`building-156-lift`). Those failures
-report an early handoff to the adjacent flat-floor receiver while the actor still
-belongs to the stair sector. The candidate also retains a `walk-region-27`
+The initial native complete-sprite stair audit passed 36 of forty directed routes;
+four failed at 180° on the three-door stair (`building-156-lift`). A short receiving
+plane boundary crossed neighboring entrances' internal routes, causing an early
+handoff to the adjacent flat floor while the actor still belonged to the stair.
+Static level-load preparation now bounds each doorway's handoff span using the
+other approaches and direct inside-endpoint routes on that flight. The unchanged
+candidate now passes all forty routes, and Lincoln's rendered archive passes all
+eighteen stair routes. No per-tick movement or route search changes are involved.
+A synthetic regression checks both the intended doorway crossing and exclusion
+of a neighboring internal route. The candidate also retains a `walk-region-27`
 overlap warning and crossing-height click-order warnings; those are not resolved
 by the successful stair samples.
 
@@ -39,7 +45,7 @@ The old combined GLB lacks the main-hall component's covered/revealed material
 metadata. That appearance migration must accompany any publication of the
 assembled gameplay; the authoring manifest explicitly records
 `publicationReady: false`. Next checks must address that model migration, supported
-entrance fixtures, the 180° stair handoff and the remaining mask/receiver warnings.
+entrance fixtures and the remaining mask/receiver warnings.
 
 ## Independent northwest timber house and entrance states (2026-10-13)
 

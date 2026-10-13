@@ -17,7 +17,8 @@ references, not just sight-state membership. Restoring them requires preserving
 those relationships or authoring explicit independent behavior.
 An unpublished combined Derby keep candidate now reassembles all 71 parts' local
 gameplay from its four components. It preserves floors, stairs, rooms, masks,
-lights and sounds, but four of forty native stair routes fail at 180°. Elevated
+lights and sounds. All forty native stair routes now pass after static handoff
+preparation was narrowed to avoid neighboring entrances' internal routes. Elevated
 outside entrances also need supported assembly fixtures, and the old combined
 model lacks a component's reveal metadata. It remains outside the published
 definition count; see [the keep candidate](map-compilation-evidence.md#combined-derby-keep-authoring-candidate-2026-10-13).
