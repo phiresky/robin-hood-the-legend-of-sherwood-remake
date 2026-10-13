@@ -1,0 +1,61 @@
+{
+  "reviewed_on": "2026-10-13",
+  "scope": "Recent native reports from the 284-report local database snapshot. Browser reports excluded by request. This supplements the October 6 and October 9 audits; it does not mark every historical report resolved.",
+  "reports": [
+    {
+      "id_prefix": "bb470ae9",
+      "status": "fixed_previously_regression_verified",
+      "finding": "Inactive money retains its element position while AI still remembers it. The existing fix removes the requirement for an active spatial AI view when reading that position.",
+      "fix_commit": "9bd9ec897713ab09c8ee10ee161480ecc44461ec",
+      "validation": "remembered_inactive_money_retains_position_without_spatial_ai_view passes."
+    },
+    {
+      "id_prefixes": [
+        "6285698a",
+        "e4e01b4c",
+        "a1a49f5d",
+        "a4d7d623",
+        "87049971cc8d"
+      ],
+      "status": "needs_rejected_save_and_affected_content",
+      "finding": "H01_Lin_VL logs show 189 baseline sectors. Authored ambience 1 adds no shadow sectors, ambience 4 adds 27 (216 total), and ambience 2 adds 17 (206 total). These match the incompatible sizes in the reports. Logs contain different authored header ambience values across loads. The supplied replay attachments contain startup only, not the rejected save. The precise source of the content change is unproven.",
+      "action": "Keep topology validation strict: equalizing array lengths would not establish sector identity. Native restoration failures now retain the rejected save as a bounded diagnostic attachment.",
+      "limitation": "The user confirmed that the historical rejected saves and affected game/mod files are unavailable."
+    },
+    {
+      "id_prefix": "92d7a378",
+      "status": "producer_guard_added_historical_cause_unconfirmed",
+      "finding": "Header mission 16979 disagrees with campaign-selected profile 18760. Save provenance previously accepted any mission present in the campaign, even if another mission was active. New saves require the requested mission ID to equal the active campaign mission profile ID.",
+      "validation": "Regression confirms a stale request cannot replace the existing Continue payload or metadata. Historical root cause cannot be proved without the rejected save."
+    },
+    {
+      "id_prefix": "5130d85d",
+      "status": "needs_rejected_save_and_affected_content",
+      "finding": "Saved WomanCivilianRich/Femme A primary sprite is absent from the loaded content. Do not substitute an unrelated sprite or drop saved actors. The affected save/mod files are unavailable. Restoration diagnostics now retain rejected saves."
+    },
+    {
+      "id_prefix": "4b9e765c",
+      "status": "requires_complete_mission_installation",
+      "finding": "Custom H06_Lin_VL requires Data/Levels/H06_Lin_VL.scb, absent from the mounted installation. A blank replacement would silently disable mission behavior. Affected content is unavailable."
+    },
+    {
+      "id_prefix": "02dbfadb",
+      "status": "startup_guidance_improved_external_path_still_required",
+      "finding": "Explicit Linux game-data path no longer exists. The error now identifies the selected path and explains how to correct or remove the override. Missing Data-folder errors report the selected installation instead of process working directory.",
+      "validation": "Regression exercises nonexistent and empty explicitly selected directories."
+    }
+  ],
+  "diagnostics": {
+    "attachment": "failed-save.json",
+    "limit_bytes": 33554432,
+    "behavior": "Attach only to a matching error report on the loading thread. Oversize payloads produce a warning. Reuse already encoded replay bytes after restore failure; preflight failures serialize through a bounded writer. Existing replay attachment budget includes the rejected save.",
+    "coverage": "Native cold-save preparation, cross-mission preparation, and consuming save restoration. Not every possible failure before a save can be decoded produces an attachment."
+  },
+  "validation": {
+    "client_library": "2235 passed, 0 failed, 22 ignored",
+    "engine_projectile_regression": "1 passed",
+    "native_build": "cargo build -p robin_rs --bin robin passed",
+    "package_suite": "Library and all integration tests passed. The unchanged batch_run example has two failures: synthetic scripts use opcode 58 (0x3a), rejected by the current decoder. The four remaining enabled example test targets pass (12 tests).",
+    "doctests": "21 passed"
+  }
+}

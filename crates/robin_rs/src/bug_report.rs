@@ -13,6 +13,80 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
+// Load errors are reported after the consuming loader has returned. Keep the
+// rejected payload on that thread until its matching report is captured; never
+// attach a previous load's save to an unrelated crash.
+thread_local! {
+    static FAILED_SAVE: std::cell::RefCell<Option<FailedSave>> = const { std::cell::RefCell::new(None) };
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+struct FailedSave {
+    error: String,
+    content: Result<String, String>,
+}
+const FAILED_SAVE_LIMIT: usize = 32 * 1024 * 1024;
+
+pub(crate) fn remember_failed_save(error: &str, save: &crate::save_file::GameSaveFile) {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct BoundedBytes(Vec<u8>);
+    impl Write for BoundedBytes {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > FAILED_SAVE_LIMIT.saturating_sub(self.0.len()) {
+                return Err(std::io::Error::other(
+                    "failed save exceeds diagnostic attachment budget",
+                ));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut bytes = BoundedBytes(Vec::new());
+    let content = serde_json::to_writer(&mut bytes, save)
+        .map_err(|error| error.to_string())
+        .and_then(|()| String::from_utf8(bytes.0).map_err(|error| error.to_string()));
+    FAILED_SAVE.with_borrow_mut(|pending| {
+        *pending = Some(FailedSave {
+            error: error.to_owned(),
+            content,
+        })
+    });
+}
+
+pub(crate) fn remember_failed_save_bytes(error: &str, bytes: Vec<u8>) {
+    let content = if bytes.len() > FAILED_SAVE_LIMIT {
+        Err("failed save exceeds diagnostic attachment budget".into())
+    } else {
+        String::from_utf8(bytes).map_err(|error| error.to_string())
+    };
+    FAILED_SAVE.with_borrow_mut(|pending| {
+        *pending = Some(FailedSave {
+            error: error.to_owned(),
+            content,
+        });
+    });
+}
+
+fn attach_failed_save(report: &mut DiagnosticReportV1, pending: Option<FailedSave>) {
+    let Some(pending) = pending else {
+        return;
+    };
+    if pending.error.is_empty() || !report.description.contains(&pending.error) {
+        return;
+    }
+    match pending.content {
+        Ok(content) => report.attachments.push(DiagnosticAttachmentV1 {
+            filename: "failed-save.json".into(),
+            content,
+        }),
+        Err(error) => report
+            .warnings
+            .push(format!("Failed save attachment unavailable: {error}")),
+    }
+}
+
 const LOG_LIMIT: usize = MAX_DIAGNOSTIC_LOG_BYTES;
 static LOG: Mutex<VecDeque<u8>> = Mutex::new(VecDeque::new());
 static DROPPED_LOG_BYTES: AtomicUsize = AtomicUsize::new(0);
@@ -127,6 +201,7 @@ pub fn capture(
             "{dropped} log bytes omitted due to concurrent logging."
         ));
     }
+    attach_failed_save(&mut report, FAILED_SAVE.with_borrow_mut(Option::take));
     collect_replay(&mut report, replay.as_deref());
     persist(&directory()?, &report)
 }
@@ -452,6 +527,63 @@ mod tests {
             warnings: vec![],
         }
     }
+    #[test]
+    fn rejected_save_retention_roundtrips_payload_and_bounds_size() {
+        let (engine, _) = robin_engine::test_support::fresh_engine();
+        let host = crate::host::Host::scratch(800.0, 600.0);
+        let save = crate::save_file::GameSaveFile::capture(&engine, &host, 7, "Rejected".into());
+        let expected = serde_json::to_value(&save).unwrap();
+        remember_failed_save("restore failed", &save);
+        let pending = FAILED_SAVE.with_borrow_mut(Option::take).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&pending.content.unwrap()).unwrap(),
+            expected
+        );
+        remember_failed_save_bytes("restore failed", serde_json::to_vec(&save).unwrap());
+        let pending = FAILED_SAVE.with_borrow_mut(Option::take).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&pending.content.unwrap()).unwrap(),
+            expected
+        );
+        remember_failed_save_bytes("restore failed", vec![b' '; FAILED_SAVE_LIMIT + 1]);
+        assert!(
+            FAILED_SAVE
+                .with_borrow_mut(Option::take)
+                .unwrap()
+                .content
+                .is_err()
+        );
+        assert!(FAILED_SAVE.with_borrow_mut(Option::take).is_none());
+    }
+
+    #[test]
+    fn rejected_save_attachment_requires_the_matching_error() {
+        let mut matching = report();
+        matching.description = "Mission launch failed: snapshot sectors differ".into();
+        let content = "{\"header\":{},\"engine\":{}}";
+        let failed = || FailedSave {
+            error: "snapshot sectors differ".into(),
+            content: Ok(content.into()),
+        };
+        attach_failed_save(&mut matching, Some(failed()));
+        assert_eq!(matching.attachments[0].filename, "failed-save.json");
+        assert_eq!(matching.attachments[0].content, content);
+        let mut unrelated = report();
+        attach_failed_save(&mut unrelated, Some(failed()));
+        assert!(unrelated.attachments.is_empty());
+        let mut oversized = report();
+        oversized.description = matching.description.clone();
+        attach_failed_save(
+            &mut oversized,
+            Some(FailedSave {
+                error: "snapshot sectors differ".into(),
+                content: Err("over budget".into()),
+            }),
+        );
+        assert!(oversized.attachments.is_empty());
+        assert!(oversized.warnings[0].contains("over budget"));
+    }
+
     #[test]
     fn queue_is_durable_unique_and_roundtrips() {
         let root = tempfile::tempdir().unwrap();

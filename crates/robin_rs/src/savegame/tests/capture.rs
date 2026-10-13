@@ -729,7 +729,7 @@ fn multiplayer_diagnostic_tag_is_written_to_payload_and_index() {
 fn missing_explicit_slot_never_falls_back_to_continue() {
     let tmp = tempfile::tempdir().unwrap();
     let mut mgr = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
-    let (engine, _assets, profiles, mut host) = fresh_save_session("Alice");
+    let (engine, _assets, profiles, mut host) = fresh_save_session_for_mission("Alice", 1);
     let game = game_for_save(&profiles, 1);
     mgr.write_continue_save(&mut host, &game, &engine, 1, Some(&profiles), None)
         .unwrap();
@@ -750,7 +750,7 @@ fn quick_save_rotates_previous() {
     let tmp = tempdir().unwrap();
     let mut mgr = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
 
-    let (mut engine, assets, profiles, mut host) = fresh_save_session("Alice");
+    let (mut engine, assets, profiles, mut host) = fresh_save_session_for_mission("Alice", 3);
     let game = game_for_save(&profiles, 3);
 
     engine.test_set_frame_counter(1);
@@ -787,7 +787,7 @@ fn quick_save_recovers_payloads_after_index_publication_failure() {
     let tmp = tempfile::tempdir().unwrap();
     let directory = tmp.path().to_string_lossy().into_owned();
     let mut manager = SaveGameManager::new(directory.clone());
-    let (mut engine, _, profiles, mut host) = fresh_save_session("Recovery");
+    let (mut engine, _, profiles, mut host) = fresh_save_session_for_mission("Recovery", 3);
     let game = game_for_save(&profiles, 3);
     engine.test_set_frame_counter(1);
     manager
@@ -823,7 +823,7 @@ fn quick_save_recovers_payloads_after_index_publication_failure() {
 fn quick_save_preparation_failure_does_not_rotate_existing_payloads() {
     let tmp = tempfile::tempdir().unwrap();
     let mut manager = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
-    let (engine, _, profiles, mut host) = fresh_save_session("Preparation");
+    let (engine, _, profiles, mut host) = fresh_save_session_for_mission("Preparation", 3);
     let game = game_for_save(&profiles, 3);
     manager
         .write_quick_save(&mut host, &game, &engine, 3, Some(&profiles), None)
@@ -862,7 +862,7 @@ fn missing_rotation_source_preserves_previous_payload() {
 fn save_write_rejects_missing_profiles_or_active_player() {
     let tmp = tempfile::tempdir().unwrap();
     let mut mgr = SaveGameManager::new(tmp.path().to_string_lossy().into_owned());
-    let (engine, _assets, profiles, _host) = fresh_save_session("Alice");
+    let (engine, _assets, profiles, _host) = fresh_save_session_for_mission("Alice", 1);
     let mut scratch_host = Host::scratch(800.0, 600.0);
     let game = game_for_save(&profiles, 1);
     let slot = mgr.create("Strict metadata".into(), 1);
@@ -891,7 +891,7 @@ fn save_write_rejects_missing_profiles_or_active_player() {
         "{missing_player:#}"
     );
 
-    let (_engine, _assets, profiles, mut host) = fresh_save_session("Alice");
+    let (_engine, _assets, profiles, mut host) = fresh_save_session_for_mission("Alice", 1);
     let missing_slot = mgr
         .write_save_from_engine(
             &mut host,
@@ -966,7 +966,7 @@ fn per_profile_save_managers_are_isolated() {
     let mut mgr0 = SaveGameManager::new(p0_dir.to_string_lossy().into_owned());
     let mut mgr1 = SaveGameManager::new(p1_dir.to_string_lossy().into_owned());
 
-    let (mut engine, assets, profiles, mut host) = fresh_save_session("Alice");
+    let (mut engine, assets, profiles, mut host) = fresh_save_session_for_mission("Alice", 1);
     let game = game_for_save(&profiles, 1);
 
     // Profile 0 saves frame=100 into QuickSave.
@@ -1168,4 +1168,29 @@ fn cold_save_restores_multiple_session_generated_mission_profiles() {
             .is_err()
     );
     assert_eq!(unchanged.missions, base.missions);
+}
+
+#[test]
+fn stale_save_mission_id_cannot_replace_a_valid_continue_slot() {
+    let root = tempfile::tempdir().unwrap();
+    let (engine, _, profiles, mut host) = fresh_save_session("Stale save request");
+    let game = game_for_save(&profiles, 17);
+    let mut manager = SaveGameManager::new(root.path().to_string_lossy().into_owned());
+    manager
+        .write_continue_save(&mut host, &game, &engine, 17, Some(&profiles), None)
+        .unwrap();
+    let index = manager.find_by_filename(special_slots::CONTINUE).unwrap();
+    let before = std::fs::read(manager.save_path(index)).unwrap();
+    // Mission 1 exists in the campaign, but its world is not the loaded world.
+    let error = manager
+        .write_continue_save(&mut host, &game, &engine, 1, Some(&profiles), None)
+        .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("differs from active mission ID 17"),
+        "{error:#}"
+    );
+    assert_eq!(std::fs::read(manager.save_path(index)).unwrap(), before);
+    assert_eq!(manager.get(index).unwrap().mission_id, 17);
 }
