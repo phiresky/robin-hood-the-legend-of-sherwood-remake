@@ -34,6 +34,20 @@ changes are needed. Formatting and lint pass. Full rendered-state round trip,
 actor activation and animated contact remain unverified; the installed definition
 is a warned draft. No runtime code changes.
 
+The subsequent published-asset fixture `standalone-render-library-FRO6Ed` closes
+the rendered-state round-trip gap. `prepare-standalone-render-library.mjs` inserts
+two published copies through the normal editor command, at 37 degrees and height
+40 on authored terrain. Browser export/reopen/rebake preserves gameplay, color,
+depth and both independent two-state appearance regions. Each control changes
+both color and depth. `fragment-102.zip` is 2,721,495 bytes, SHA-256
+`d2252e68e04a6978727c961efb36f4e1397e385976eecc75f5250746a874e2ec`.
+Native loading without a base datadir passes: 1000×1000, three sight obstacles,
+960 grid blocks and two appearance regions/controls. The OpenGL contract check
+passes independent states, transition and reset color/depth probes for both
+regions. The exact archived descriptor also passes two apply/reset cycles with
+twelve boundary-crossing route checks. GPU state flags are assigned directly;
+actor-triggered activation and animated contact remain open.
+
 ## Expanded asset state ownership audit (2026-10-13)
 
 The ownership audit previously checked only direct initial/applied sight-node

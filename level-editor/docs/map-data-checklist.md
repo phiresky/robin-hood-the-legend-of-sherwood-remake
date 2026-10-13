@@ -23,7 +23,9 @@ assets; lighting and visual contact remain under review. See
 Fragment 102 now has an independent activation draft: absence leaves its footprint
 walkable, activation blocks it, and reset restores walkability. Eight moved/copied
 exports pass 16 native apply/reset cycles and 96 route probes. The assembly retains
-its separate permanent exclusion. Rendered-state and actor checks remain open; see
+its separate permanent exclusion. The published two-copy ZIP now reopens/rebakes
+identically, loads natively without base data, and passes independent GPU
+color/depth state/reset checks. Actor activation and animated contact remain open; see
 [the fragment checks](map-compilation-evidence.md#independently-activated-fragment-102-2026-10-13).
 
 **Current Wychford export (2026-10-12):** `saved-map-exports-ab3hoH` completes
