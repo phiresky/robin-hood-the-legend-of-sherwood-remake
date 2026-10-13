@@ -6,12 +6,12 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-**Current definition inventory (2026-10-13):** `gameplay-coverage-G8kCHU` checks
+**Current definition inventory (2026-10-13):** `gameplay-coverage-MZjGJa` checks
 1,279 indexed assets and finds zero missing definitions among placed assets in
-the saved scenes. Nineteen unused assets lack definitions, including two background
+the saved scenes. Eighteen unused assets lack definitions, including two background
 assets that cannot be inserted as objects. This checks library
 definition presence and index hashes, not scene pins or gameplay completeness.
-All seventeen remaining insertable assets have known state dependencies in their
+All sixteen remaining insertable assets have known state dependencies in their
 candidate owners. These include movement, mask, door, control and appearance
 references, not just sight-state membership. Restoring them requires preserving
 those relationships or authoring explicit independent behavior.
@@ -29,6 +29,12 @@ its separate permanent exclusion. The published two-copy ZIP now reopens/rebakes
 identically, loads natively without base data, and passes independent GPU
 color/depth state/reset checks. Actor activation and animated contact remain open; see
 [the fragment checks](map-compilation-evidence.md#independently-activated-fragment-102-2026-10-13).
+The standalone York canvas screen now has independent raised/lowered gameplay.
+Eight placement variants pass sixteen native apply/reset cycles, 48 route probes
+and sixteen complete-sprite walks beneath the raised state. Its published ZIP
+reopens/rebakes identically, loads without base data and passes independent GPU
+state/reset checks. Actor-triggered activation and visual refinement remain open;
+see [the screen checks](map-compilation-evidence.md#independent-york-canvas-screen-states-2026-10-13).
 
 **Current Wychford export (2026-10-12):** `saved-map-exports-ab3hoH` completes
 in 825 seconds, including final stair-clearance preparation. This verifies the

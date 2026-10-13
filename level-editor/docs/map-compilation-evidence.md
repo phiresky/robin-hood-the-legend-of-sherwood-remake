@@ -4,6 +4,38 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Independent York canvas-screen states (2026-10-13)
+
+`stage-york-canvas-screen.mjs` authors the previously undefined standalone screen
+using its own two collision parts. Pinned owner metadata identifies the raised
+part in the initial sight state and the lowered part in the applied sight state.
+World-space collision coordinates match after converting the two asset-local
+origins, within 0.001 units. No owner permanent blocker belongs to either part.
+The placement ground comes from the lowered part's bottom; the raised part has
+more than forty units of ground clearance. The independent control swaps sight
+parts and explicit visual hide/show bindings, and applies only its own lowered
+footprint. Shared market contours and remote triggers are not inherited.
+
+Stage `york-canvas-screen-2Yy48r` passes eight native exports, sixteen apply/reset
+cycles and 48 boundary-route checks across two copies at rotations 0/37/90/180
+and heights 0/40. Robin also completes all sixteen initial-state walks under the
+raised panels using the full sprite and stops upright. Publication backup
+`york-canvas-screen-installed-20261013` changes only descriptor/index data;
+models and saved scene placements remain unchanged. The definition is a warned
+draft, not a claim of complete interaction or visual parity.
+
+Published fixture `standalone-render-library-7S8HSI` passes browser export,
+reopen and identical rebake of gameplay, color, depth and two independent
+appearance regions. `canvas-screen.zip` is 2,781,694 bytes, SHA-256
+`58cfe525d8e5eda5a646efb878cdca88ae2a69fcf5a3c4816884efc32360304e`.
+Native loading without base data passes (1000×1000, five sight obstacles,
+960 grid blocks). GPU independent-state/transition/reset color and depth checks
+pass. Archived gameplay geometry exactly matches the tested 37-degree/height-40
+descriptor and passes a fresh apply/reset check. Initial and lowered color images
+were inspected; the coarse raised panel and lowered volume remain appearance
+drafts. Actor-triggered activation, detailed sprite contact and visual refinement
+remain open. Scoped formatting and lint pass; no runtime code changes.
+
 ## Independently activated fragment 102 (2026-10-13)
 
 `stage-croisement03-activated-fragments.mjs 102` authors this single-part asset
