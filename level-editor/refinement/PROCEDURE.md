@@ -114,6 +114,11 @@ the original map crop, not a synthesized texture. Back or unseen surfaces are
 shown as neutral gray so the worker can distinguish source evidence from
 inferred geometry.
 
+Use a background that clearly contrasts with neutral gray model surfaces in
+review renders. Gray unknown surfaces must not disappear into a matching gray
+background. Keep the original source context unchanged; distinguish empty
+background using the renderer's object coverage, not a color threshold.
+
 Workers may create extra close-ups, reverse views, or alternative camera
 angles when needed. These supplements must not replace the frozen eight-view
 packet.
@@ -442,6 +447,15 @@ After geometry approval, prepare two fixed-camera inputs for texture synthesis:
 
 1. source-preserved textured views, with unknown areas neutral gray;
 2. pure gray solid views with the desired fixed-world lighting.
+
+Before submitting either image, inspect the actual API input sheets for clear
+separation between the background and gray unknown surfaces, including thin
+parts and translucent edges. Use a contrasting background and explicit object
+coverage to keep every background pixel protected in the local editable mask.
+Do not classify gray pixels by color alone or rely on a remotely supplied mask
+to explain an ambiguous gray-on-gray image; an API intermediary may discard
+that mask. Record the background/coverage check with the input hashes. Preserve
+known source pixels and keep cameras, object appearance and crop metadata fixed.
 
 Use the approved image model and high quality with no API mask when that is the
 map workflow. Preserve the raw response, protected/source-preserved composite,
