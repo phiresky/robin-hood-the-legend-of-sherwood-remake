@@ -38,7 +38,9 @@ see [the screen checks](map-compilation-evidence.md#independent-york-canvas-scre
 York tavern furniture now has independent removal gameplay. Eight placement
 variants pass sixteen removal/reset cycles and 144 native boundary-route checks.
 Its two-copy ZIP passes editor round trip, native loading and GPU state/reset
-checks. Actor traversal after removal and detailed contact remain open; see
+checks. Robin completes 96 walks after removal across all placement variants,
+plus twelve on the exact published archive. Actor-triggered activation and rendered
+contact remain open; see
 [the furniture checks](map-compilation-evidence.md#independent-york-furniture-removal-2026-10-13).
 
 **Current Wychford export (2026-10-12):** `saved-map-exports-ab3hoH` completes

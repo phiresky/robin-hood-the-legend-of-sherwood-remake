@@ -193,7 +193,25 @@ for (const height of [0, 40])
     const file = `${rotation}-${height}.level.json`;
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
-    results.push({ file, transition_probes: probes, warnings: compiled.warnings });
+    const receivers = geometry.sight_obstacles.filter((obstacle) => obstacle.projection_area);
+    assert.equal(receivers.length, 1);
+    assert.deepEqual(receivers[0].projection_area, [0, 0]);
+    const routeProbes = probes.flatMap((probe) =>
+      [false, true].map((reverse) => ({
+        start: reverse ? probe.end : probe.start,
+        end: reverse ? probe.start : probe.end,
+        layer: 0,
+        sector: 0,
+        applied_transitions: [probe.id],
+        max_length: Math.hypot(probe.end[0] - probe.start[0], probe.end[1] - probe.start[1]) + 1,
+      })),
+    );
+    results.push({
+      file,
+      transition_probes: probes,
+      route_probes: routeProbes,
+      warnings: compiled.warnings,
+    });
     await report(false);
   }
 await report(true);

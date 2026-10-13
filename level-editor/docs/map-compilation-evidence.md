@@ -33,6 +33,19 @@ activation; complete actor traversal after removal, actor-triggered activation
 and detailed rendered contact remain open. The asset stays a warned draft.
 Scoped formatting/lint pass, and no runtime source changes were required.
 
+The subsequent complete-sprite check closes the actor-traversal-after-removal gap.
+The test-only opening harness accepts explicit `applied_transitions` IDs per probe,
+rejects missing or repeated IDs, and applies each through the engine's existing
+patch path before dispatching movement. It records those IDs in its result.
+`york-removable-furniture-rEJbID` passes 96 actual Robin walks after removal:
+both directions across every grounded footprint, two copies, four rotations and
+two elevations. Walks take 12–27 moving ticks and finish upright on the correct
+receiver. The exact published archive in `standalone-render-library-L90bpy`
+passes all twelve corresponding walks (12–20 moving ticks). The unchanged
+initial-state path also passes all sixteen raised-screen routes.
+These tests invoke controls directly; mission/actor-triggered activation and
+rendered sprite contact remain separate gaps. Production movement code is unchanged.
+
 ## Independent York canvas-screen states (2026-10-13)
 
 `stage-york-canvas-screen.mjs` authors the previously undefined standalone screen

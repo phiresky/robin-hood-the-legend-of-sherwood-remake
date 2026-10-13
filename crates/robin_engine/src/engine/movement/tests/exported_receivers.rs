@@ -26,6 +26,33 @@ fn exported_openings_support_complete_sprite_routes() {
                     dims[1].as_f64().unwrap() as f32 + 1.,
                 ),
             );
+            let sim = crate::sim_rng::test_context();
+            let applied_ids: Vec<&str> = probe
+                .get("applied_transitions")
+                .map(|ids| {
+                    ids.as_array()
+                        .expect("applied_transitions must be an array")
+                        .iter()
+                        .map(|id| id.as_str().expect("transition ID must be a string"))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let mut seen = std::collections::HashSet::new();
+            for id in &applied_ids {
+                assert!(seen.insert(*id), "{file}: duplicate applied control {id}");
+                let transitions = descriptor["asset_geometry"]["movement_transitions"]
+                    .as_array()
+                    .expect("export has no movement transitions");
+                let patch_index = transitions
+                    .iter()
+                    .position(|transition| transition["id"].as_str() == Some(*id))
+                    .unwrap_or_else(|| panic!("{file}: missing applied control {id}"));
+                assert_eq!(engine.script_domains.interactables.patches.len(), transitions.len());
+                let patch = crate::patch::PatchIndex::new(u32::try_from(patch_index).unwrap())
+                    .unwrap();
+                engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                assert!(engine.script_domains.interactables.patches[patch_index].applied);
+            }
             let point = |name: &str| {
                 MapPoint::new(
                     probe[name][0].as_f64().unwrap() as f32,
@@ -63,7 +90,6 @@ fn exported_openings_support_complete_sprite_routes() {
             *target_layer = layer;
             *target_sector = Some(handle);
             let sequence = engine.t_launch_in_progress(&assets, movement);
-            let sim = crate::sim_rng::test_context();
             engine.try_dispatch_move_path(
                 TickCtx::new(&sim, &assets),
                 owner,
@@ -170,7 +196,7 @@ fn exported_openings_support_complete_sprite_routes() {
             let waiting_position = engine.ent(owner).element_data().position_map();
             assert!((waiting_position - previous).length() < 0.001);
             assert_actor_receiver(&engine, &assets, owner, handle, layer, waiting_position);
-            results.push(serde_json::json!({"file":file,"start":probe["start"],"end":probe["end"],"distance":distance,"moving_ticks":moved_ticks,"waiting_posture":format!("{expected_posture:?}")}));
+            results.push(serde_json::json!({"file":file,"start":probe["start"],"end":probe["end"],"distance":distance,"moving_ticks":moved_ticks,"waiting_posture":format!("{expected_posture:?}"),"applied_transitions":applied_ids}));
         }
     }
     assert!(!results.is_empty());
