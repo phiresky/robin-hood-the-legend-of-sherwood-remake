@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Independent York furniture removal (2026-10-13)
+
+`stage-york-removable-furniture.mjs` restores the four-part tavern furniture as
+an independently removable asset. Pinned owner metadata puts all four parts in
+the initial sight state, with no part-owned permanent exclusion. The parts'
+collision coordinates match after converting local origins, within 0.001 units.
+Three parts meet the authored ground plane; the fourth is more than forty units
+above it. Only the three grounded footprints block movement. An explicit local
+control removes all four sight/visual parts and all three movement footprints;
+the full market assembly's contours and remote trigger are not copied.
+
+Stage `york-removable-furniture-rEJbID` passes native construction for two copies
+at rotations 0/37/90/180 and heights 0/40, sixteen removal/reset cycles, and
+144 initial/applied/reset boundary-route checks across all grounded pieces.
+Publication backup `york-furniture-installed-20261013` changes descriptor/index
+data only. Saved placements and model geometry remain unchanged.
+
+Published fixture `standalone-render-library-L90bpy` passes browser export,
+reopen and identical rebake of gameplay, color, depth and two independent
+appearance regions. `furniture.zip` is 6,618,582 bytes, SHA-256
+`95ff8d1fe925c424b848faefea84a7bf786e6ca080ab6efaadd0bb64943d13f4`.
+The archived gameplay geometry exactly matches the tested 37-degree/height-40
+fixture. Native loading without base data passes: 1000×1000, nine sight obstacles,
+960 grid blocks and two appearance regions/controls. Native GPU independent
+state/transition/reset color and depth probes pass. These use direct control
+activation; complete actor traversal after removal, actor-triggered activation
+and detailed rendered contact remain open. The asset stays a warned draft.
+Scoped formatting/lint pass, and no runtime source changes were required.
+
 ## Independent York canvas-screen states (2026-10-13)
 
 `stage-york-canvas-screen.mjs` authors the previously undefined standalone screen

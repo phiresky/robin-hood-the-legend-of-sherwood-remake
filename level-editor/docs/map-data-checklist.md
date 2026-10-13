@@ -6,12 +6,12 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-**Current definition inventory (2026-10-13):** `gameplay-coverage-MZjGJa` checks
+**Current definition inventory (2026-10-13):** `gameplay-coverage-XaxhKo` checks
 1,279 indexed assets and finds zero missing definitions among placed assets in
-the saved scenes. Eighteen unused assets lack definitions, including two background
+the saved scenes. Seventeen unused assets lack definitions, including two background
 assets that cannot be inserted as objects. This checks library
 definition presence and index hashes, not scene pins or gameplay completeness.
-All sixteen remaining insertable assets have known state dependencies in their
+All fifteen remaining insertable assets have known state dependencies in their
 candidate owners. These include movement, mask, door, control and appearance
 references, not just sight-state membership. Restoring them requires preserving
 those relationships or authoring explicit independent behavior.
@@ -35,6 +35,11 @@ and sixteen complete-sprite walks beneath the raised state. Its published ZIP
 reopens/rebakes identically, loads without base data and passes independent GPU
 state/reset checks. Actor-triggered activation and visual refinement remain open;
 see [the screen checks](map-compilation-evidence.md#independent-york-canvas-screen-states-2026-10-13).
+York tavern furniture now has independent removal gameplay. Eight placement
+variants pass sixteen removal/reset cycles and 144 native boundary-route checks.
+Its two-copy ZIP passes editor round trip, native loading and GPU state/reset
+checks. Actor traversal after removal and detailed contact remain open; see
+[the furniture checks](map-compilation-evidence.md#independent-york-furniture-removal-2026-10-13).
 
 **Current Wychford export (2026-10-12):** `saved-map-exports-ab3hoH` completes
 in 825 seconds, including final stair-clearance preparation. This verifies the
