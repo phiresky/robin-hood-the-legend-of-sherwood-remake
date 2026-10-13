@@ -617,6 +617,44 @@ image was inspected; this does not establish rendered character contact or
 sprite depth compositing. The offset-coverage failures and previously measured
 airborne anchor/solid contacts remain recorded, not excused by these routes.
 
+### Recorded roof-jump sprite captures (2026-10-13)
+
+Optional native jump traces now include animation row/frame, profile selection,
+posture, layer and sector. These fields are test-only. A fresh complete-character
+run retains all 288 supported interior clicks in `interior-jump-clicks-zX6jIx`.
+The character capture helper can now use the existing keyed-sprite decoder as
+well as RGBA frames; production decoding and rendering are unchanged.
+
+`prepare-jump-character-captures.py` requires a completed traversal report,
+matches the entire archived geometry apart from warnings, checks the sprite-bank
+signature against the movement profile, and binds each recorded animation row
+to its actual frame and hotspot. It retains recorded posture/layer/sector,
+including the landing handoff. It does not substitute an idle character frame.
+
+`roof-character-captures-pf65xv68` captures seventeen recorded poses using five
+actual jump frames against the verified 37-degree/elevation-40 central-roof ZIP.
+All five native headless OpenGL runs pass. Images 005, 008, 012, 016 and 021 were
+inspected: the character remains visible across takeoff, flight and landing;
+the first contact frame has no obvious clipping defect corresponding to its
+2.101-unit anchor penetration. This is limited visual evidence from one route,
+not a cleared geometric-contact warning or complete animated traversal proof.
+The map has no masks, and flying characters use their separate masking path.
+Earlier green-background captures in `roof-character-captures-sskctefv/images`
+used the wrong sprite-decoding mode and are not visual evidence.
+
+The corresponding height-only experiments remain unpublished. Flattening each
+rounded endpoint pair to its sampled maximum receiving height preserves 288
+interior traversals but retains 72 observed anchor contacts (maximum 2.391359).
+Adding two/four/eight height units preserves those traversals; eight clears all
+4,656 sampled airborne anchors in `roof-flight-height-NTAIR9`. However, all
+sixteen connections still report intersections in the broader flight-envelope
+audit. Neither those samples nor the static captures justify publishing the
+height adjustment. No compiler, asset or runtime flight behavior was changed.
+
+The engine test build, fresh traversal test, five GPU captures, game binary build
+and Rust formatting check pass. The Python preparation helper runs successfully
+against the exact archive and trace used for the captures.
+
 ### Final jump receiver coverage diagnostics (2026-10-13)
 
 The compiler now checks final jump pairs after receiver partitioning and integer
@@ -2472,7 +2510,7 @@ The combined installed-library browser fixture
 45 appearance states. Editor data, gameplay, warnings, color and 16-bit depth
 match. Its `lincoln-installed.zip` is 169,700,442 bytes, SHA-256
 `a0359b12ceca1831853a77b4fbbc1270b109fced822b7d4a0341b0b477fb5fe7`.
-The archived descriptor is byte-for-byte equivalent as parsed JSON to
+The complete archived descriptor, parsed as JSON, equals
 `saved-map-exports-h7ZuCA/lincoln.level.json`, retaining the combined traversal
 and drawbridge-control evidence without substituting another geometry version.
 

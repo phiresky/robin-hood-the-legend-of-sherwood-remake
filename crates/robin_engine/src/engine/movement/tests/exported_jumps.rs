@@ -1187,6 +1187,12 @@ fn dispatch_jump(
                 "motion": format!("{:?}", element.sprite.last_motion_state),
                 "position": [position.x, position.y, position.z],
                 "receiver": format!("{:?}", element.sprite.position_iface.get_obstacle()),
+                "sprite_row": element.sprite.current_row,
+                "sprite_frame": element.sprite.current_frame,
+                "sprite_alternate_profile": element.sprite.use_alternate_profile,
+                "posture": format!("{:?}", element.posture()),
+                "layer": element.layer(),
+                "sector": element.sector().and_then(|sector| sector.arena_index()),
             }));
         }
         if approach && flew {

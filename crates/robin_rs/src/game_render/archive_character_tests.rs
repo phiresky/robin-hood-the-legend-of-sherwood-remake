@@ -10,6 +10,8 @@ struct Capture {
     sprite_sheet: PathBuf,
     sprite_rect: [u32; 4],
     sprite_offset: [i16; 2],
+    #[serde(default)]
+    legacy_color_keys: bool,
     output: PathBuf,
     probes: Vec<Probe>,
 }
@@ -118,11 +120,19 @@ pub(crate) fn capture(gpu: GpuContext, configuration: &std::path::Path) {
         pixels.extend_from_slice(&sheet[start..start + (width * 4) as usize]);
     }
     let mut holder = robin_assets::frame_holder::FrameHolder::new();
-    let bank = holder.append_rgba_sprite(
-        width.try_into().unwrap(),
-        height.try_into().unwrap(),
-        &pixels,
-    );
+    let bank = if config.legacy_color_keys {
+        holder.append_legacy_keyed_rgba_sprite(
+            width.try_into().unwrap(),
+            height.try_into().unwrap(),
+            &pixels,
+        )
+    } else {
+        holder.append_rgba_sprite(
+            width.try_into().unwrap(),
+            height.try_into().unwrap(),
+            &pixels,
+        )
+    };
     host.frontend
         .resources
         .install_frame_holder_before_publication(holder);

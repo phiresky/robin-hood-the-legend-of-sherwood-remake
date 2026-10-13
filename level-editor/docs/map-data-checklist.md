@@ -251,7 +251,11 @@ Export now checks the final rounded landing spans against their receiving-face
 coverage after partitioning. It reports both unsupported copied connections at
 180 degrees at each tested elevation, preserving the connections for best-effort
 review. This checks coverage, not flight clearance or animated contact.
-Rendered character contact and the offset-coverage limits remain open.
+Seventeen actual recorded jump poses now have native GPU captures at 37 degrees
+and elevation forty, using five animation frames and the recorded landing sector.
+Inspected takeoff/flight/landing frames show no obvious clipping corresponding to
+the first small anchor contact. This limited visual check does not clear broader
+flight-envelope warnings, animated-contact coverage or offset-click limitations.
 See [central-roof archive evidence](map-compilation-evidence.md#published-central-roofs-and-archive-verification).
 
 The published west-lane roof correction passes all **72 interior-click traversals**
