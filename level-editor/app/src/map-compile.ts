@@ -6,6 +6,7 @@ import {
   type CompiledScenerySource,
 } from "../../shared/src/compile-asset-gameplay.ts";
 import type { ProjectionAssetDescriptor } from "@rle/shared";
+import type { CompiledAssetGeometry } from "../../shared/src/asset-gameplay.ts";
 import { packageAppearanceRegions, type BakedAppearanceRegion } from "./map-appearance.ts";
 import { compileMission } from "./compile-mission.ts";
 import {
@@ -121,12 +122,16 @@ export function compileMap(
   // Namespace map and mission names so installation cannot replace a base-game map.
   const name = `editor-${slug}`;
   let scenerySources: CompiledScenerySource[] = [];
+  let structuralPassages = new Set<CompiledAssetGeometry["doors"][number]>();
   const assetGeometry =
     assets || document.terrain?.cells.length || document.splines?.length
       ? compileAssetGameplay(document, assets ?? new Map(), bounds, {
           ...options,
           onSceneryCompiled: (sources) => {
             scenerySources = sources;
+          },
+          onStructuralPassagesCompiled: (doors) => {
+            structuralPassages = new Set(doors);
           },
         })
       : undefined;
@@ -148,7 +153,7 @@ export function compileMap(
           `Door ${index}: the animated passage intersects a permanent movement obstacle; this passage is unavailable.`,
         );
     });
-    const buildingStates = compileBuildingPassageStates(assetGeometry);
+    const buildingStates = compileBuildingPassageStates(assetGeometry, structuralPassages);
     assetGeometry.buildings?.forEach(({ Building }, index) => {
       Building.doors.forEach((door, doorIndex) => {
         const requirements = [

@@ -88,6 +88,8 @@ export interface AssetDoor {
   outsideReceiverSegment?: [[number, number, number], [number, number, number]];
   /** Ordinary passage destination follows its own finite receiver; virtual rooms and lifts remain authored. */
   insideReceiverSegment?: [[number, number, number], [number, number, number]];
+  /** Static local structure crossed by this virtual-room animation; walking collision remains intact. */
+  passageStructure?: { volumes: string[]; blockers: string[] };
   type: number;
   locked: boolean;
   unlockable: boolean;
@@ -1358,6 +1360,24 @@ export function validateAssetGameplay(
       if (door[key] !== undefined && !point(door[key], 3)) fail(`invalid door ${door.id} ${key}`);
     if (kind === "interior" && door.insideAnchor !== undefined)
       fail(`interior door ${door.id} cannot override its shared room with an inside anchor`);
+    if (door.passageStructure !== undefined) {
+      const structure = door.passageStructure;
+      if (
+        kind !== "interior" ||
+        !structure ||
+        typeof structure !== "object" ||
+        !Array.isArray(structure.volumes) ||
+        !Array.isArray(structure.blockers) ||
+        (!structure.volumes.length && !structure.blockers.length) ||
+        new Set(structure.volumes).size !== structure.volumes.length ||
+        new Set(structure.blockers).size !== structure.blockers.length ||
+        structure.volumes.some((id) => !nodes.has(id) && !volumes.has(id)) ||
+        structure.blockers.some(
+          (id) => !data.movementBlockers?.some((blocker) => blocker.id === id),
+        )
+      )
+        fail(`invalid interior door passage structure ${door.id}`);
+    }
     if (
       door.outsideReceiverSegment !== undefined &&
       ((kind !== "interior" && !(kind === "ordinary" && door.type === 0)) ||

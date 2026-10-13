@@ -176,10 +176,76 @@ test("interior passage states affect only their own outdoor entrance", async () 
   }
 });
 
-test("interior passage states follow rotated and raised building copies", () => {
+test("declared doorway structure preserves walking collision and independent passage barriers", () => {
+  const { document, assets, hut } = interiorPassageBarrierCompilerFixture();
+  const gameplay = hut.gameplay!;
+  gameplay.movementBlockers = [
+    {
+      id: "door-frame",
+      node: "building-999",
+      height: 0,
+      polygon: [
+        [15, 91],
+        [25, 91],
+        [25, 94],
+        [15, 94],
+      ],
+    },
+  ];
+  const blocked = compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry!;
+  assert.ok(
+    blocked.buildings![0]!.Building.doors[0]!.passage_states!.some((s) => !s.allowed_states.length),
+  );
+  gameplay.interiors![0]!.doors[0]!.passageStructure = { volumes: [], blockers: ["door-frame"] };
+  const allowed = compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry!;
+  assert.deepEqual(
+    allowed.motion_data,
+    blocked.motion_data,
+    "Door animations must not carve walking collision",
+  );
+  for (const { Building } of allowed.buildings!) {
+    assert.deepEqual(
+      Building.doors[0]!.passage_states!.map((s) => s.allowed_states),
+      [[1]],
+    );
+    assert.equal(Building.doors[1]!.passage_states, undefined);
+  }
+  const marker = assets.get("marker")!;
+  marker.gameplay!.movementBlockers = [
+    { ...structuredClone(gameplay.movementBlockers[0]!), node: "scenery-marker" },
+  ];
+  const foreign = compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry!;
+  assert.ok(
+    foreign.buildings![0]!.Building.doors[0]!.passage_states!.some((s) => !s.allowed_states.length),
+    "An identical foreign blocker with the same local ID must still block the entrance",
+  );
+  assert.deepEqual(
+    foreign.buildings![1]!.Building.doors[0]!.passage_states!.map((s) => s.allowed_states),
+    [[1]],
+  );
+});
+
+test("interior passage states and local structure follow rotated and raised building copies", () => {
   for (const rotation of [0, 37, 90, 180])
     for (const elevation of [0, 40]) {
-      const { document, assets } = interiorPassageBarrierCompilerFixture();
+      const { document, assets, hut } = interiorPassageBarrierCompilerFixture();
+      hut.gameplay!.movementBlockers = [
+        {
+          id: "door-frame",
+          node: "building-999",
+          height: 0,
+          polygon: [
+            [15, 91],
+            [25, 91],
+            [25, 94],
+            [15, 94],
+          ],
+        },
+      ];
+      hut.gameplay!.interiors![0]!.doors[0]!.passageStructure = {
+        volumes: [],
+        blockers: ["door-frame"],
+      };
       document.size = [3000, 2000];
       document.groups.forEach((group, index) => {
         group.transform = { dx: 900 + index * 700, dy: 900, dz: elevation, rot_deg: rotation };

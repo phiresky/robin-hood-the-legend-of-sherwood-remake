@@ -56,6 +56,26 @@ import rotatedTerrainBridge from "../test-fixtures/rotated-terrain-bridge-seam.j
 import completeRoofJumps from "../test-fixtures/complete-roof-jumps.json" with { type: "json" };
 import { roofJumpPlacement } from "../test-fixtures/roof-jump-placements.ts";
 
+test("doorway structure references are local, explicit, and limited to virtual interiors", () => {
+  const { hut } = interiorAssetCompilerFixture();
+  const gameplay = hut.gameplay!;
+  const door = gameplay.interiors![0]!.doors[0]!;
+  door.passageStructure = { volumes: ["building-999"], blockers: [] };
+  validateAssetGameplay(gameplay, hut);
+  for (const structure of [
+    { volumes: [], blockers: [] },
+    { volumes: ["missing"], blockers: [] },
+    { volumes: ["building-999", "building-999"], blockers: [] },
+    { volumes: [], blockers: ["missing"] },
+  ]) {
+    door.passageStructure = structure;
+    assert.throws(() => validateAssetGameplay(gameplay, hut), /passage structure/);
+  }
+  door.passageStructure = { volumes: ["building-999"], blockers: [] };
+  gameplay.doors[0]!.passageStructure = door.passageStructure;
+  assert.throws(() => validateAssetGameplay(gameplay, hut), /passage structure/);
+});
+
 test("copied roof takeoffs follow precise floor contours without fictitious ground drops", () => {
   const source = parseLevel3D(completeRoofJumps.document);
   const asset = parseProjectionAssetDescriptor(completeRoofJumps.asset);

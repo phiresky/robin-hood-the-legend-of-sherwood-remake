@@ -15,12 +15,19 @@ export interface PassageStateRequirement {
  * to those areas, so equal bit numbers never couple unrelated placed assets.
  * This prepares data only; callers must bind it to native gate authorization.
  */
-function passageAreas(geometry: CompiledAssetGeometry) {
+function passageAreas(geometry: CompiledAssetGeometry, changingOnly = false) {
   const areas = new Map<string, { area: number; allowed: (a: Point, b: Point) => number[] }>();
   let sector = 0;
   geometry.motion_data.layers.forEach((entries, layer) => {
     entries.forEach((entry, area) => {
-      areas.set(`${sector}/${layer}`, { area, allowed: prepareCorridorStates(entry.obstacles) });
+      areas.set(`${sector}/${layer}`, {
+        area,
+        allowed: prepareCorridorStates(
+          changingOnly
+            ? entry.obstacles.filter((obstacle) => obstacle.state_id !== 0)
+            : entry.obstacles,
+        ),
+      });
       sector += 1 + entry.obstacles.length;
     });
   });
@@ -49,12 +56,17 @@ export function compileOrdinaryPassageStates(
 /** Virtual interiors have no motion-area state word; check only the outdoor leg. */
 export function compileBuildingPassageStates(
   geometry: CompiledAssetGeometry,
+  /** Doors whose permanent structural/foreign collision was checked during placement compilation. */
+  preparedPermanent: ReadonlySet<CompiledAssetGeometry["doors"][number]> = new Set(),
 ): PassageStateRequirement[][][] {
   const areas = passageAreas(geometry);
+  const changing = preparedPermanent.size ? passageAreas(geometry, true) : areas;
   return (geometry.buildings ?? []).map(({ Building }, buildingIndex) =>
     Building.doors.map((door, doorIndex) => {
       const layer = door.layer_out;
-      const entry = areas.get(`${door.sector_out}/${layer}`);
+      const entry = (preparedPermanent.has(door) ? changing : areas).get(
+        `${door.sector_out}/${layer}`,
+      );
       if (!entry) throw new Error(`Building ${buildingIndex} door ${doorIndex}: missing out area`);
       const allowed_states = entry.allowed(door.point_mid, door.point_out);
       return allowed_states.length === 1 && allowed_states[0] === 0

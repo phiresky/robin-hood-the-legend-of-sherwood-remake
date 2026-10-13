@@ -12,11 +12,15 @@ saved-York map-only export passes native construction and all 130
 prepared stair routes, but 49 of its 95 building entrances remain blocked in the
 final descriptor. A receiving-plane lookup fix restores Leicester compilation,
 native loading, sixteen stair routes and twelve control apply/reset checks;
-eight of its 24 building entrances remain blocked. Wychford passes native loading
+eight of its 24 building entrances remain blocked in that baseline. Wychford passes native loading
 and four emitted stair routes; one unsupported tower lift is omitted with a warning.
-An isolated cottage audit identifies overly strict structural doorway vetoes as
-one cause of blocked entrances. The aperture-edit candidate was not published;
-the compiler needs to distinguish authored doorways from unrelated barriers.
+An export-only doorway correction lets virtual-room entrances name their local
+static structure without carving walking collision. Unrelated placed barriers and
+changing obstacles remain checked. The published cottage correction passes 32 native room
+round trips; recompiling Leicester reduces blocked entrances from eight to six.
+Its rendered ZIP reopens identically, loads without base data, and passes all four
+archived entrance round trips. The earlier aperture-edit candidate was discarded.
+See the [structural doorway fix](map-compilation-evidence.md#explicit-doorway-structure-2026-10-13).
 See the [entrance regression](map-compilation-evidence.md#cottage-entrance-veto-regression-2026-10-13) and
 [current saved-scene audit](map-compilation-evidence.md#current-saved-scene-audit-and-raised-receiver-fix-2026-10-13).
 

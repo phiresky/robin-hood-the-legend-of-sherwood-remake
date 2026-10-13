@@ -211,6 +211,7 @@ export function compileAssetGameplay(
     bestEffort?: boolean;
     onProgress?: (stage: string) => void;
     onSceneryCompiled?: (sources: CompiledScenerySource[]) => void;
+    onStructuralPassagesCompiled?: (doors: CompiledAssetGeometry["doors"]) => void;
   } = {},
 ): CompiledAssetGeometry {
   const omitted = new Set<string>();
@@ -224,6 +225,7 @@ export function compileAssetGameplay(
   for (;;) {
     try {
       const scenerySources: CompiledScenerySource[] = [];
+      const structuralPassages: CompiledAssetGeometry["doors"] = [];
       const result = compileAssetGameplayAttempt(
         document,
         descriptors,
@@ -233,9 +235,11 @@ export function compileAssetGameplay(
         fixedTransitions,
         scenerySources,
         getTerrain,
+        structuralPassages,
       );
       if (omissions.length) result.warnings = [...omissions, ...(result.warnings ?? [])];
       options.onSceneryCompiled?.(scenerySources);
+      options.onStructuralPassagesCompiled?.(structuralPassages);
       return result;
     } catch (error) {
       if (
@@ -308,6 +312,7 @@ function compileAssetGameplayAttempt(
   fixedTransitions: ReadonlySet<string>,
   scenerySources: CompiledScenerySource[],
   getTerrain: (document: Level3D) => ReturnType<typeof terrainGameplay>,
+  structuralPassages: CompiledAssetGeometry["doors"],
 ): CompiledAssetGeometry {
   const warnings: string[] = [];
   options.onProgress?.("Preparing asset placements");
@@ -391,6 +396,7 @@ function compileAssetGameplayAttempt(
   const warnedDraftAssets = new Set<string>();
   const surfaces: {
     owner: string;
+    source: string;
     polygon: Point[];
     holes: Point[][];
     plane: HeightPlane;
@@ -413,7 +419,12 @@ function compileAssetGameplayAttempt(
     shape: SightObstacle;
   }[] = [];
   const navigationJoins: PlacedNavigationJoin[] = [];
-  const movementSolids: { owner: string; shape: SightObstacle; headroom?: number }[] = [];
+  const movementSolids: {
+    owner: string;
+    source: string;
+    shape: SightObstacle;
+    headroom?: number;
+  }[] = [];
   const movementClearances: typeof surfaces = [];
   const transitionBlockers: (PlacedTransitionBlocker & {
     worldPlane: HeightPlane;
@@ -478,6 +489,7 @@ function compileAssetGameplayAttempt(
     /** Generated approaches already checked against permanent collision. */
     allowChangingObstacleAnchors?: true;
     name: string;
+    owner?: string;
     lift?: string;
     interior?: string;
     definition: AssetGameplay["doors"][number];
@@ -710,7 +722,8 @@ function compileAssetGameplayAttempt(
             edge: [transform(node, edge[0]), transform(node, edge[1])],
           });
         }
-        if (movementSolid(node)) movementSolids.push({ owner: placement.id, shape: sight.at(-1)! });
+        if (movementSolid(node))
+          movementSolids.push({ owner: placement.id, source: node, shape: sight.at(-1)! });
       }
     for (const volume of gameplay.volumes ?? []) {
       const shape: SightObstacle = {
@@ -732,7 +745,12 @@ function compileAssetGameplayAttempt(
       const order = queryOrder.get(volume.id);
       if (order !== undefined) sightOrders.set(sight.length - 1, order);
       if (movementSolid(volume.id))
-        movementSolids.push({ owner: placement.id, shape, headroom: volume.movementHeadroom });
+        movementSolids.push({
+          owner: placement.id,
+          source: volume.id,
+          shape,
+          headroom: volume.movementHeadroom,
+        });
     }
     for (const transition of gameplay.movementTransitions ?? []) {
       if (!fixedTransitions.has(`${placement.id}/${transition.id}`)) continue;
@@ -1019,6 +1037,7 @@ function compileAssetGameplayAttempt(
       const minimumArea = continuous ? 1e-8 : 0.5;
       const placed = {
         owner: placement.id,
+        source: surface.id,
         forceCrouched: surface.forceCrouched === true,
         acceptsNavigationJoins:
           surface.acceptsNavigationJoins || placement.id === "authored-terrain",
@@ -1146,6 +1165,7 @@ function compileAssetGameplayAttempt(
     }
     const placeDoor = (door: AssetGameplay["doors"][number], lift?: string, interior?: string) =>
       doors.push({
+        owner: placement.id,
         lift,
         interior,
         name: `${placement.id}/${door.id}`,
@@ -1503,10 +1523,11 @@ function compileAssetGameplayAttempt(
   );
   const solidGeometry = movementSolids
     .filter(({ shape }) => shape.solid)
-    .map(({ owner, shape, headroom = 0 }) => {
+    .map(({ owner, source, shape, headroom = 0 }) => {
       const footprint = shape.points.map((p): Point => [p.x, p.y]);
       return {
         owner,
+        source,
         footprint,
         bounds: boundsOf(footprint),
         top: heightPlane(
@@ -1529,22 +1550,39 @@ function compileAssetGameplayAttempt(
         group.navigationRegion,
         (navigationPlaneCounts.get(group.navigationRegion) ?? 0) + 1,
       );
-  const permanentPassageCuts = new Map<HeightPlane, Polygon[]>();
+  type PassageCut = {
+    polygon: Polygon;
+    owner: string;
+    source: string;
+    kind: "floor" | "volume" | "blocker";
+  };
+  const permanentPassageCuts = new Map<HeightPlane, PassageCut[]>();
   const passageCutKeys = new Map<HeightPlane, Set<string>>();
   for (const { layer, plane, lift, navigationRegion, forceCrouched, surfaces: group } of groups) {
     const passageCuts = permanentPassageCuts.get(plane) ?? [];
     permanentPassageCuts.set(plane, passageCuts);
     const cutKeys = passageCutKeys.get(plane) ?? new Set<string>();
     passageCutKeys.set(plane, cutKeys);
-    const recordPassageCuts = (cuts: Polygon[]) => {
+    const recordPassageCuts = (
+      cuts: Polygon[],
+      owner: string,
+      source: string,
+      kind: PassageCut["kind"],
+    ) => {
       for (const cut of cuts) {
-        const key = JSON.stringify(cut);
+        const key = JSON.stringify([owner, source, kind, cut]);
         if (cutKeys.has(key)) continue;
         cutKeys.add(key);
-        passageCuts.push(cut);
+        passageCuts.push({ polygon: cut, owner, source, kind });
       }
     };
-    recordPassageCuts(group.flatMap((surface) => surface.holes.map((hole) => polygon(hole))));
+    for (const surface of group)
+      recordPassageCuts(
+        surface.holes.map((hole) => polygon(hole)),
+        surface.owner,
+        surface.source,
+        "floor",
+      );
     const joinedWall =
       navigationRegion !== undefined &&
       (navigationPlaneCounts.get(navigationRegion) ?? 0) > 1 &&
@@ -1572,9 +1610,12 @@ function compileAssetGameplayAttempt(
     // Subtract whole polygons so holes in blockers remain walkable islands.
     for (const blocker of movementBlockers) {
       if (!plane.every((n, i) => Math.abs(n - blocker.plane[i]!) < 1e-7)) continue;
-      recordPassageCuts([
-        [polygon(blocker.polygon)[0]!, ...blocker.holes.map((hole) => polygon(hole)[0]!)],
-      ]);
+      recordPassageCuts(
+        [[polygon(blocker.polygon)[0]!, ...blocker.holes.map((hole) => polygon(hole)[0]!)]],
+        blocker.owner,
+        blocker.source,
+        "blocker",
+      );
       if (preserve) {
         cutouts.push([polygon(blocker.polygon)[0]!, ...blocker.holes.map((h) => polygon(h)[0]!)]);
         contourGroups.push(blocker.movementContour);
@@ -1606,7 +1647,7 @@ function compileAssetGameplayAttempt(
       group.every((s) => s.owner === group[0]!.owner && completeClearances.has(clearanceKey(s)))
         ? group[0]!.owner
         : undefined;
-    for (const { owner, footprint, bounds: solidBounds, top, bottom } of solidGeometry) {
+    for (const { owner, source, footprint, bounds: solidBounds, top, bottom } of solidGeometry) {
       if (owner === clearedOwner) continue;
       // Most grid triangles are far from most placed solids. Their disjoint
       // world-space bounds exclude intersection before any polygon operations.
@@ -1639,7 +1680,7 @@ function compileAssetGameplayAttempt(
             [polygon(clearance.polygon)[0]!, ...clearance.holes.map((h) => polygon(h)[0]!)],
           ]);
         }
-        recordPassageCuts(regions);
+        recordPassageCuts(regions, owner, source, "volume");
         if (preserve) {
           cutouts.push(...regions);
           contourGroups.push(...regions.map(() => undefined));
@@ -3105,12 +3146,33 @@ function compileAssetGameplayAttempt(
       return [id, area] as const;
     }),
   );
-  const passageChecks = new Map<HeightPlane, ReturnType<typeof prepareCorridorStates>>();
-  const passageCheck = (plane: HeightPlane) => {
-    let check = passageChecks.get(plane);
+  const passageChecks = new Map<
+    HeightPlane,
+    Map<string, ReturnType<typeof prepareCorridorStates>>
+  >();
+  const passageCheck = (plane: HeightPlane, door: (typeof doors)[number]) => {
+    const structure = door.definition.passageStructure;
+    const key = structure ? door.name : "";
+    let checks = passageChecks.get(plane);
+    if (!checks) {
+      checks = new Map();
+      passageChecks.set(plane, checks);
+    }
+    let check = checks.get(key);
     if (!check) {
       const obstacles = (permanentPassageCuts.get(plane) ?? []).flatMap((cut) => {
-        const { vertices, holes, dimensions } = flatten(cut);
+        // Virtual-room animation crosses its declared structure; the outside
+        // anchor still needs a floor. Foreign and undeclared barriers remain.
+        if (
+          structure &&
+          (cut.kind === "floor" ||
+            (cut.owner === door.owner &&
+              (cut.kind === "volume" ? structure.volumes : structure.blockers).includes(
+                cut.source,
+              )))
+        )
+          return [];
+        const { vertices, holes, dimensions } = flatten(cut.polygon);
         const indices = earcut(vertices, holes, dimensions);
         return Array.from({ length: indices.length / 3 }, (_, i) => ({
           state_id: 0,
@@ -3125,7 +3187,7 @@ function compileAssetGameplayAttempt(
         }));
       });
       check = prepareCorridorStates(obstacles);
-      passageChecks.set(plane, check);
+      checks.set(key, check);
     }
     return check;
   };
@@ -3163,7 +3225,15 @@ function compileAssetGameplayAttempt(
               allowBlocked: door.allowChangingObstacleAnchors === true,
             }),
         );
-        if (receiving && !passageCheck(receiving.plane)(door.middle, project(endpoint)).length) {
+        if (
+          receiving &&
+          !passageCheck(
+            door.definition.passageStructure
+              ? (receiving.authoredPlane ?? receiving.plane)
+              : receiving.plane,
+            door,
+          )(door.middle, project(endpoint)).length
+        ) {
           const entry = motionBySector.get(area.sector)!;
           permanentStates.push({
             layer: area.layer,
@@ -3205,6 +3275,9 @@ function compileAssetGameplayAttempt(
       sector_in: inside.sector,
       layer_in: inside.layer,
     };
+  });
+  compiledDoors.forEach((compiled, index) => {
+    if (compiled && doors[index]!.definition.passageStructure) structuralPassages.push(compiled);
   });
   const selectDoors = (predicate: (door: (typeof doors)[number]) => boolean) =>
     compiledDoors.flatMap((compiled, i) => (compiled && predicate(doors[i]!) ? [compiled] : []));

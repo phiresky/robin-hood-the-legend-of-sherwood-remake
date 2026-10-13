@@ -4,6 +4,47 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Explicit doorway structure (2026-10-13)
+
+Virtual-room doors can declare `passageStructure: { volumes, blockers }` using
+local asset IDs. Export retains normal walking collision, binds the outdoor
+anchor to a real floor, and checks the animation against all undeclared and
+foreign static barriers. Only the named structure is exempted. Floor holes
+still constrain the outdoor anchor but do not veto the animated indoor leg.
+Changing movement obstacles continue to produce native passage-state requirements.
+The runtime descriptor and engine are unchanged.
+
+Regression tests preserve identical walking data before/after annotation,
+retain a foreign blocker with an identical local ID, and retain independent
+changing barriers through rotated/raised copies. Validation rejects absent,
+duplicate and invalid references and annotations on ordinary doors. All 250
+selected compiler/export/passage tests, app typecheck and scoped lint/format pass.
+
+`stage-mill-cottage-passage-structure.mjs` adds only two local blocker references;
+it changes no collision, surfaces or rendered geometry. Candidate
+`mill-cottage-passage-structure-Trp013` passes all 32 native complete-character
+room round trips in `asset-building-doors-gV7Tiv`. Full Leicester candidate
+`saved-map-exports-SUWWLY` compiles and loads natively with unchanged counts
+(57 areas, 460 sight obstacles, 105 doors, 23 jump pairs, 65,170 grid blocks).
+Its blocked building entrances fall from eight to six, with both cottage doors
+now available. This count is not a full-map traversal claim.
+
+`draft-scene-render-1S9Nyz` exports two cottages on editor-authored terrain.
+Browser reopening preserves gameplay and rendered color/depth. The ZIP loads
+without base data (21 sight obstacles, two masks, four door projections and
+1,725 grid blocks). Its archived geometry matches the placement fixture and
+all four native entrance round trips pass (`cottage-structure-archived-03i8et65`).
+Detailed in-game contact/rendering and the remaining entrance owners are open.
+
+Published with guarded backups in `cottage-structure-installed-20261013`;
+Leicester and Wychford scene pins are updated. Descriptor SHA-256 is
+`4671beccfc3ca10f05bdc33e50188a3010d7f157b73d545b7da2537715ff47f2`;
+model and current browser/preview derivatives are unchanged. The final archive
+`mill-cottage-structure-published.zip` is 4,512,627 bytes, SHA-256
+`7c7fd9aaf09d644dd00d9ced46480e87dc36bae8b8583df17bae8cd20be430a3`.
+Its payload matches the native-tested archive, and all installed hashes match
+the publication report. Publication does not certify the remaining gameplay gaps.
+
 ## Cottage entrance veto regression (2026-10-13)
 
 `check-asset-building-doors.mjs 3d-assets/leicester/leicester-mill-north-cottage`
