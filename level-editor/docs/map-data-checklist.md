@@ -6,15 +6,18 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-**Current definition inventory (2026-10-13):** `gameplay-coverage-xF3TXG` checks
+**Current definition inventory (2026-10-13):** `gameplay-coverage-lLsDz7` checks
 1,286 indexed assets and finds zero missing definitions among placed assets in
-the saved scenes. Three unused assets lack definitions, including two background
-assets that cannot be inserted as objects. This checks library
+the saved scenes. Only two background assets that cannot be inserted as objects
+lack definitions; all insertable assets now have definitions. This checks library
 definition presence and index hashes, not scene pins or gameplay completeness.
-The remaining insertable asset has known state dependencies in its
-candidate owners. These include movement, mask, door, control and appearance
-references, not just sight-state membership. Restoring them requires preserving
-those relationships or authoring explicit independent behavior.
+Definition presence does not certify feature completeness or full-map parity.
+The green timber house draft now preserves its permanent structure/counter and
+independent removable awning. Door-height placement passes 64 native room round
+trips across copied/rotated/elevated state combinations. Its ZIP reopens identically,
+loads without base data, passes GPU state/reset checks and eight archived room
+round trips. Rear texture quality, actor activation and detailed contact remain
+under review; see [the green-house checks](map-compilation-evidence.md#green-timber-house-publication-2026-10-13).
 The north display-piece draft is published after independent removal/reset checks,
 permanent-neighbor collision checks and 32 full-character walks. Its ZIP reopens
 identically, loads without base data and passes GPU state/reset checks including

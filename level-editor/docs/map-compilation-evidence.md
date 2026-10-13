@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Green timber house publication (2026-10-13)
+
+`stage-york-green-house.mjs` reassembles the matching permanent asset definition
+and independently removable awning from asset-local owners. It verifies identical
+part geometry/local origins and preserves the counter, permanent volumes, room
+and exclusion definitions. Placement aligns the entrance floor; the foundation
+extends 90 units below it. Shared market mission triggers are not inherited.
+
+Candidate `york-green-house-x8HVzp` passes 16 native removal/reset cycles with
+permanent sight assertions and 64 complete-sprite room round trips: two copies,
+four rotations, two elevations and all four independent awning-state combinations.
+Fixture `draft-scene-render-C83NE9/green-house.zip` is 1,819,416 bytes, SHA-256
+`621097d2ac3082b5a019690c7bd741cab7fc63fbbacdcdb8a552129de99d2933`.
+Reopening/rebaking preserves gameplay, color/depth and both independent appearances.
+Native loading without base data passes with 15 sight obstacles, two door
+projections, 960 grid blocks and two appearance regions/controls. Archived
+geometry matches the staged descriptor apart from warnings; all eight archived
+room round trips pass across the state combinations. GPU color/depth state,
+transition and reset checks pass. The rendered rear surfaces are visibly dark;
+detailed contact, headroom and actor-triggered activation remain unverified.
+
+Publication `green-house-installed-20261013` retains draft warnings, current
+derivatives and backups; installed hashes match the report. No saved scene pins
+needed updates. Fresh inventory `gameplay-coverage-lLsDz7` finds definitions on
+every insertable asset among 1,286 indexed entries, and none missing among placed
+assets. Only two noninsertable backgrounds remain without definitions. This closes
+definition presence coverage, not full gameplay or whole-map round-trip parity.
+
 ## North display-piece archive and publication (2026-10-13)
 
 Fixture `draft-scene-render-o5nIv0/display-pieces.zip` is 2,637,643 bytes,
