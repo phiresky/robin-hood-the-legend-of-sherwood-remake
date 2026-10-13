@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Expanded asset state ownership audit (2026-10-13)
+
+The ownership audit previously checked only direct initial/applied sight-node
+membership. It now also follows movement contours, anchored gameplay volumes,
+mask frames and mask obstacle dependencies, ordinary/interior door links and
+room owners, transition control frames and explicit part appearance bindings.
+The report records which references require each part. Control-only dependencies
+may have both state-membership flags false and must still block blind extraction.
+
+`gameplay-coverage-qd1XhX` finds 20 unused assets without definitions, of which two
+are non-insertable backgrounds and all eighteen others have state dependencies.
+The previously missed `derby-great-keep` dependencies are `building-239` through
+the west tower's `mask-change-1` applied mask/control, and `building-233` through
+the main hall's `interior-reveal` control. The five standalone watchtower parts
+were rechecked against the expanded audit and still have no detected transition
+dependencies. This does not certify geometry equivalence or complete independence.
+Two focused tests cover direct/shared sight membership and each indirect reference
+category, including unrelated parts. These are authoring diagnostics only; the
+compiler and runtime are unchanged.
+
 ## Standalone Nottingham watchtower gameplay (2026-10-13)
 
 `stage-watchtower-gameplay.mjs` restores the unused standalone tower from matching

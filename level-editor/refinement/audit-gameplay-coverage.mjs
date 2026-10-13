@@ -92,7 +92,7 @@ await fs.writeFile(
     {
       scope:
         "Current library definition presence, not gameplay completeness or scene pin validation",
-      note: "Matching part names identify authoring candidates, not equivalent geometry or local frames. Reported initial/applied sight membership exposes known state dependencies; an empty list does not certify complete dependency independence.",
+      note: "Matching part names identify authoring candidates, not equivalent geometry or local frames. References include state movement contours, sight parts and anchored volumes, masks and their obstacle dependencies, linked doors and rooms, control frames and appearance bindings. Initial/applied flags describe state membership; control-only dependencies can have both flags false. An empty list does not certify complete dependency independence.",
       indexSha256: hash(indexBytes),
       ...summary,
       scenes,
