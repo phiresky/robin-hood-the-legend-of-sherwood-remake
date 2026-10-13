@@ -18,7 +18,9 @@ those relationships or authoring explicit independent behavior.
 The standalone Nottingham watchtower now has a published gameplay draft: two
 copies across four rotations and two elevations retain their collision and upper
 floors, and all 48 sampled native routes pass. Access must come from surrounding
-assets; lighting and visual contact remain under review. See
+assets. A two-copy rendered ZIP now reopens/rebakes identically and loads without
+base data; Robin completes both directions across each exported roof and stops
+on the correct receiver. Lighting and rendered character contact remain under review. See
 [the tower checks](map-compilation-evidence.md#standalone-nottingham-watchtower-gameplay-2026-10-13).
 Fragment 102 now has an independent activation draft: absence leaves its footprint
 walkable, activation blocks it, and reset restores walkability. Eight moved/copied

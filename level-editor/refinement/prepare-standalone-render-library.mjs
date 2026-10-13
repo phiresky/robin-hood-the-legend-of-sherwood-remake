@@ -7,11 +7,13 @@ import { insertProjectionAsset } from "../app/src/asset-commands.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 import { serializeStoredMap } from "../shared/src/stored-level.ts";
 
-const [id, rotationText = "37", heightText = "40"] = process.argv.slice(2);
+const [id, rotationText = "37", heightText = "40", sizeText = "1000"] = process.argv.slice(2);
 assert.ok(id, "Supply a published asset ID");
 const rotation = Number(rotationText),
   height = Number(heightText);
 assert.ok(Number.isFinite(rotation) && Number.isFinite(height));
+const size = Number(sizeText);
+assert.ok(Number.isSafeInteger(size) && size >= 1000);
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json"));
 const entry = index.assets.find((entry) => entry.id === id);
 assert.ok(entry);
@@ -34,16 +36,20 @@ const reference = {
 let document = {
   version: 1,
   map: "standalone-review",
-  size: [1000, 1000],
+  size: [size, size],
   camera: { kind: "oblique-orthographic", elevation_deg: 35 },
   objects: [],
   groups: [],
   sceneAssets: [],
   assetSources: [],
-  terrain: createTerrainGrid([0, 0, 1000, 1000], 500, height),
+  terrain: createTerrainGrid([0, 0, size, size], size / 2, height),
 };
-for (const x of [250.25, 700.25]) {
-  const inserted = insertProjectionAsset(document, descriptor, reference, [x, 500.75, height]);
+for (const x of [size * 0.25 + 0.25, size * 0.7 + 0.25]) {
+  const inserted = insertProjectionAsset(document, descriptor, reference, [
+    x,
+    size * 0.5 + 0.75,
+    height,
+  ]);
   document = inserted.document;
   document.groups.find((group) => group.id === inserted.selection.id).transform.rot_deg = rotation;
 }

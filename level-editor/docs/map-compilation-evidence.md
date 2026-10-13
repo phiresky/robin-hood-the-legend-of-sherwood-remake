@@ -91,6 +91,25 @@ and all 48 sampled ordinary routes pass. This is initial-state routing evidence,
 not rendered archive, animated contact or externally connected access certification.
 Both new scripts pass scoped formatting and lint checks. No runtime code changes.
 
+The subsequent `standalone-render-library-hUVeBP` fixture places two published
+towers at 37 degrees and height 40 on authored terrain. Its 3000×3000 browser
+export/reopen/rebake preserves gameplay, color and depth. `watchtower.zip` is
+19,211,298 bytes, SHA-256
+`a222b43acb2f0e4d36af3824dc38d505d670523f99950a4a09736b8c8fb46361`.
+Native loading without base data passes with 17 sight obstacles and 9,588 grid
+blocks. The exported color image was inspected and both towers fit inside the
+frame. An earlier 1000×1000 fixture (`5WWaHz`) correctly warned about clipping
+and omitted both out-of-frame roof receivers; it is not rooftop gameplay evidence.
+
+`prepare-upper-floor-route-probes.mjs` selects conservative spans inside each
+archived upper receiver, at least twelve units from its boundary. The existing
+complete-sprite movement harness passes four routes on the exact archived
+descriptor: both directions on both roofs, about 115.99 units each, 31 movement
+ticks each, followed by upright waiting on the correct receiver. The probe tool
+refuses to overwrite an existing diagnostic manifest. These are actual native
+sprite movement/receiver checks, not rendered character contact or neighboring
+asset access certification. No engine source changes were required.
+
 ## Full Derby rendered archive (2026-10-12)
 
 The subsequent `derby-unlit-library-syww3455` check resolves the black shelter
