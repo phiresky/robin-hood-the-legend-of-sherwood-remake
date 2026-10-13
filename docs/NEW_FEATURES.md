@@ -5,6 +5,9 @@
   timing from wall time. Reviewed physical motion follows its bound patch or target owner, while
   endpoint preview remains available. The event port requires observed phase and
   animation ticks; it does not infer raw gameplay events or unreviewed motion.
+  A prepared runtime adapter binds exact native entity indices and action rows to
+  contract identities, validating independent frame counters and visibility before
+  emitting a complete state sample. Reverse patch playback requires separate support.
 
 - **Compiled floor passages.** Export partitions joined floors that overlap at
   different heights and prepares ordinary passages at matching-height seams.
