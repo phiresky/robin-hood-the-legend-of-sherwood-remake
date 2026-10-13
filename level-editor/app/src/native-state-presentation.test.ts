@@ -839,3 +839,159 @@ test("immutable ordered patch context retains source identity, first frame and f
   assert.throws(() => p.setPatchState(state.id, "forward"), /Immutable/);
   p.dispose();
 });
+
+async function loadingFixture() {
+  const f = await fixture();
+  for (let index = 0; index < 6; index++) {
+    const image = await f.image(`frame-${index}.png`, [index + 1, 20, 30, 255]);
+    f.contract.elements[0]!.frames.push({ ...image, offset: [0, 0], delay: 1 });
+  }
+  return f;
+}
+
+async function until(condition: () => boolean) {
+  for (let iteration = 0; iteration < 1000; iteration++) {
+    if (condition()) return;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.fail("Resource scheduling did not reach the expected state");
+}
+
+function controlledReads() {
+  const pending = new Map<
+    string,
+    {
+      resolve: (bytes: Uint8Array) => void;
+      reject: (error: Error) => void;
+    }
+  >();
+  const started: string[] = [];
+  let active = 0,
+    peak = 0;
+  return {
+    pending,
+    started,
+    get peak() {
+      return peak;
+    },
+    read: async ({ path }: { path: string }) => {
+      started.push(path);
+      active++;
+      peak = Math.max(peak, active);
+      try {
+        return await new Promise<Uint8Array>((resolve, reject) => {
+          pending.set(path, {
+            resolve: (bytes) => {
+              pending.delete(path);
+              resolve(bytes);
+            },
+            reject: (error) => {
+              pending.delete(path);
+              reject(error);
+            },
+          });
+        });
+      } finally {
+        active--;
+      }
+    },
+  };
+}
+
+test("four concurrent native reads preserve frame pixels and draw order despite reverse completion", async () => {
+  const f = await loadingFixture();
+  const animation = {
+    active: true,
+    display_polyline: [],
+    sprite: { position_x: 0, position_y: 0, elevation: 0 },
+  };
+  f.source.level.animations = [animation] as unknown as typeof f.source.level.animations;
+  f.contract.level_data_sha256 = await missionStateDataHash(f.source.level);
+  f.contract.elements.push({
+    ...structuredClone(f.contract.elements[0]!),
+    id: "background-fx",
+    source: { kind: "map-animation", index: 0, sha256: await missionStateDataHash(animation) },
+    creation_order: 1,
+    display_order: 1000,
+    frames: [f.contract.elements[0]!.frames[1]!],
+  });
+  const player = new NativeStatePresentation(),
+    reads = controlledReads();
+  const loading = player.set(f.contract, f.source, reads.read);
+  for (const count of [4, 8, 9]) {
+    await until(() => reads.started.length === count);
+    assert.equal(player.ready, false, "no partial source scene is adopted");
+    for (const [path, gate] of [...reads.pending].reverse()) gate.resolve(f.files.get(path)!);
+  }
+  assert.equal(await loading, true);
+  assert.equal(reads.peak, 4);
+  assert.equal(reads.started.length, f.files.size);
+  assert.equal(new Set(reads.started).size, f.files.size);
+  assert.deepEqual(Array.from(player.pixels().data.slice(0, 3)), [200, 0, 0]);
+  player.seek(2);
+  assert.deepEqual(Array.from(player.pixels().data.slice(0, 3)), [0, 200, 0]);
+  player.seek(4);
+  assert.deepEqual(Array.from(player.pixels().data.slice(0, 3)), [1, 20, 30]);
+  player.setElementState("sign", false);
+  assert.deepEqual(
+    Array.from(player.pixels().data.slice(0, 3)),
+    [0, 200, 0],
+    "target still sorts above background FX",
+  );
+  player.dispose();
+});
+
+test("retiring a four-read batch immediately releases set and stops scheduling", async () => {
+  const old = await loadingFixture(),
+    next = await fixture();
+  const player = new NativeStatePresentation(),
+    reads = controlledReads();
+  const loading = player.set(old.contract, old.source, reads.read);
+  await until(() => reads.started.length === 4);
+  player.clear();
+  assert.equal(await loading, false, "retirement does not wait for obsolete I/O");
+  assert.equal(await player.set(next.contract, next.source, next.read), true);
+  for (const [path, gate] of reads.pending) {
+    if (path === "red.png") gate.reject(Error("late retired read"));
+    else gate.resolve(old.files.get(path)!);
+  }
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(reads.started.length, 4);
+  assert.equal(player.ready, true);
+  assert.deepEqual(Array.from(player.pixels().data.slice(0, 3)), [200, 0, 0]);
+  player.dispose();
+});
+
+test("dispose cancels a batch without waiting for stalled resource readers", async () => {
+  const f = await loadingFixture(),
+    player = new NativeStatePresentation(),
+    reads = controlledReads();
+  const loading = player.set(f.contract, f.source, reads.read);
+  await until(() => reads.started.length === 4);
+  player.dispose();
+  assert.equal(await loading, false);
+  for (const gate of reads.pending.values()) gate.reject(Error("disposed reader"));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(reads.started.length, 4);
+  assert.equal(player.ready, false);
+});
+
+test("failed batch adopts nothing, stops further reads and observes late sibling failures", async () => {
+  const f = await loadingFixture(),
+    player = new NativeStatePresentation(),
+    reads = controlledReads();
+  const loading = player.set(f.contract, f.source, reads.read);
+  const rejected = assert.rejects(loading, /Native artwork resource changed/);
+  await until(() => reads.started.length === 4);
+  reads.pending.get("background.png")!.resolve(f.files.get("red.png")!);
+  await rejected;
+  assert.equal(player.ready, false);
+  assert.equal(reads.started.length, 4);
+  assert.equal(await player.set(f.contract, f.source, f.read), true);
+  for (const gate of reads.pending.values()) gate.reject(Error("late sibling failure"));
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(reads.started.length, 4);
+  assert.equal(player.ready, true);
+  assert.deepEqual(Array.from(player.pixels().data.slice(0, 3)), [200, 0, 0]);
+  player.dispose();
+});

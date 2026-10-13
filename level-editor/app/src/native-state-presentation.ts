@@ -64,12 +64,16 @@ export function nativeLibraryReader(root: FileSystemDirectoryHandle): NativeReso
 export async function decodeNativeResource(
   resource: NativeImageResource,
   read: NativeResourceReader,
+  signal?: AbortSignal,
 ): Promise<NativePixels> {
+  signal?.throwIfAborted();
   const bytes = await read(resource);
+  signal?.throwIfAborted();
   const digest = Array.from(
     new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))),
     (n) => n.toString(16).padStart(2, "0"),
   ).join("");
+  signal?.throwIfAborted();
   if (digest !== resource.sha256)
     throw new Error(`Native artwork resource changed: ${resource.path}`);
   const image = decode(bytes, { checkCrc: true });
@@ -88,6 +92,51 @@ export async function decodeNativeResource(
     data[pixel * 4 + 3] = image.channels === 4 ? image.data[pixel * 4 + 3]! : 255;
   }
   return { width: image.width, height: image.height, data };
+}
+
+/** Keep resource order independent of I/O completion order, with four jobs at most. */
+async function decodeNativeResources(
+  resources: NativeImageResource[],
+  read: NativeResourceReader,
+  signal: AbortSignal,
+): Promise<Map<string, NativePixels> | undefined> {
+  type Result = { image: NativePixels } | { error: unknown };
+  const pending = new Map<number, Promise<Result>>();
+  const images = new Map<string, NativePixels>();
+  let failed = false;
+  let cancel!: () => void;
+  const cancelled = new Promise<undefined>((resolve) => {
+    cancel = () => resolve(undefined);
+  });
+  signal.addEventListener("abort", cancel, { once: true });
+  const start = (index: number) => {
+    // Observe every rejection immediately, including reads that finish after retirement.
+    pending.set(
+      index,
+      decodeNativeResource(resources[index]!, read, signal).then(
+        (image) => ({ image }),
+        (error: unknown) => {
+          failed = true;
+          return { error };
+        },
+      ),
+    );
+  };
+  try {
+    if (signal.aborted) return undefined;
+    for (let index = 0; index < Math.min(4, resources.length); index++) start(index);
+    for (let index = 0; index < resources.length; index++) {
+      const result = await Promise.race([pending.get(index)!, cancelled]);
+      if (!result || signal.aborted) return undefined;
+      if ("error" in result) throw result.error;
+      pending.delete(index);
+      images.set(resources[index]!.path, result.image);
+      if (!failed && index + 4 < resources.length) start(index + 4);
+    }
+    return images;
+  } finally {
+    signal.removeEventListener("abort", cancel);
+  }
 }
 
 /** Source-over with explicitly declared destination darkening, clipped to the background. */
@@ -342,6 +391,7 @@ export class NativeStatePresentation {
   private epoch = 0;
   private disposed = false;
   private images = new Map<string, NativePixels>();
+  private resourceLoad: AbortController | undefined;
   private contract: NativeStatePresentationContract | undefined;
   private initialContext: NativeInitialContextMode | undefined;
   private initialElements: NativeLoopDrawElement[] = [];
@@ -375,6 +425,8 @@ export class NativeStatePresentation {
   }
   clear() {
     this.epoch++;
+    this.resourceLoad?.abort();
+    this.resourceLoad = undefined;
     this.images.clear();
     this.contract = undefined;
     this.initialContext = undefined;
@@ -471,18 +523,19 @@ export class NativeStatePresentation {
       )
         throw new Error(`Native patch center changed: ${state.id}`);
     }
-    const images = new Map<string, NativePixels>();
-    // Bound decoding work while allowing mission changes between files.
-    for (const resource of resources.values()) {
+    const load = new AbortController();
+    this.resourceLoad = load;
+    let images: Map<string, NativePixels> | undefined;
+    try {
+      images = await decodeNativeResources([...resources.values()], read, load.signal);
+    } catch (error) {
+      load.abort();
       if (this.disposed || epoch !== this.epoch) return false;
-      try {
-        images.set(resource.path, await decodeNativeResource(resource, read));
-      } catch (error) {
-        if (this.disposed || epoch !== this.epoch) return false;
-        throw error;
-      }
+      throw error;
+    } finally {
+      if (this.resourceLoad === load) this.resourceLoad = undefined;
     }
-    if (this.disposed || epoch !== this.epoch) return false;
+    if (!images || this.disposed || epoch !== this.epoch) return false;
     for (const frame of frames) {
       if (!frame.shadow_key) continue;
       const data = images.get(frame.path)!.data;
