@@ -366,3 +366,31 @@ test("ownership display hook cannot launder prior or subsequently changed shader
   after.onBeforeCompile = () => {};
   assert.throws(() => validateNativeEffectMaterial(after));
 });
+
+
+test("opaque source-only emission accepts the sign material without allowing lighting or coverage modifiers", () => {
+  const make = () => new THREE.MeshStandardMaterial({
+    color: 0,
+    emissive: 0xffffff,
+    emissiveMap: new THREE.Texture(),
+    metalness: 1,
+    roughness: 1,
+    side: THREE.DoubleSide,
+  });
+  assert.doesNotThrow(() => validateNativeEffectMaterial(make()));
+  for (const alter of [
+    (m: THREE.MeshStandardMaterial) => { m.color.set(0xffffff); },
+    (m: THREE.MeshStandardMaterial) => { m.emissiveIntensity = 0.8; },
+    (m: THREE.MeshStandardMaterial) => { m.map = new THREE.Texture(); },
+    (m: THREE.MeshStandardMaterial) => { m.envMap = new THREE.Texture(); },
+    (m: THREE.MeshStandardMaterial) => { m.alphaTest = 0.5; },
+    (m: THREE.MeshStandardMaterial) => { m.vertexColors = true; },
+    (m: THREE.MeshStandardMaterial) => { m.onBeforeCompile = () => {}; },
+    (m: THREE.MeshStandardMaterial) => { m.userData.source_ownership_semantics = "separate-mask"; },
+    (m: THREE.MeshStandardMaterial) => { m.emissiveMap!.channel = 1; },
+  ]) {
+    const material = make();
+    alter(material);
+    assert.throws(() => validateNativeEffectMaterial(material), /unsupported source-emissive/);
+  }
+});

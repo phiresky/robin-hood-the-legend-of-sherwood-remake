@@ -21,6 +21,41 @@ export function validateNativeEffectMaterial(material: THREE.Material) {
     emissive = material.emissiveMap;
   if (map?.matrixAutoUpdate) map.updateMatrix();
   if (emissive?.matrixAutoUpdate) emissive.updateMatrix();
+  // Opaque timber exports carry their source RGB only in emission. With no
+  // lights or environment, a black base adds no reflected contribution.
+  const opaqueEmission =
+    hasQualifiedSourceDisplayShader(material) &&
+    material.color.equals(new THREE.Color(0, 0, 0)) &&
+    material.emissive.equals(new THREE.Color(1, 1, 1)) &&
+    material.emissiveIntensity === 1 &&
+    emissive instanceof THREE.Texture &&
+    emissive.channel === 0 &&
+    map === null &&
+    !material.vertexColors &&
+    material.side === THREE.DoubleSide &&
+    material.opacity === 1 &&
+    !material.transparent &&
+    !material.alphaHash &&
+    !material.alphaToCoverage &&
+    material.blending === THREE.NormalBlending &&
+    !material.premultipliedAlpha &&
+    material.alphaTest === 0 &&
+    !material.alphaMap &&
+    !material.envMap &&
+    !material.lightMap &&
+    !material.aoMap &&
+    !material.normalMap &&
+    !material.bumpMap &&
+    !material.displacementMap &&
+    !material.metalnessMap &&
+    !material.roughnessMap &&
+    !material.wireframe &&
+    !material.flatShading &&
+    !material.clippingPlanes?.length &&
+    !material.userData.foliage_physical_opacity &&
+    !material.userData.source_ownership_semantics &&
+    (!material.defines || Object.keys(material.defines).every((key) => key === "STANDARD"));
+  if (opaqueEmission) return;
   const sameTexture =
     map &&
     emissive &&
