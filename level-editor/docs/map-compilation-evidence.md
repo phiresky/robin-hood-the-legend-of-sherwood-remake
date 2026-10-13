@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Raised-terrain exclusion ownership audit (2026-10-14)
+
+`audit-terrain-exclusion-ownership.mjs` compares each terrain-owned planar
+exclusion with the physical-height slices of other placed solid parts, using
+only pinned editor assets and scene placements. It writes overlap contributors
+and residual polygons without editing gameplay. This snapshot diagnostic
+requires an unrotated terrain placement; it is not a compiler restriction.
+
+`terrain-exclusion-ownership-wuPdAd` audits all nineteen west-town terrain
+exclusions in York. Their summed area is 859,033.097 square game units;
+475,014.358 (55.3%) remains outside the compared solid parts. There are 179
+distinct contributing parts. Eight large exclusions are implicated by the
+doorway collision trace, each overlapping between eight and twenty-nine parts.
+This quantifies the assembled-layout ownership problem rather than treating
+the terrain exclusions as individual building collision definitions.
+
+The comparison includes unselected, mission-profile and changing solid parts,
+and omits mesh details, planar clearances and other planar blockers. Therefore
+neither overlap nor lack of overlap authorizes a gameplay change by itself.
+The published terrain remains unchanged. A replacement must preserve actual
+terrain boundaries, independently placed building collision, receiving floors
+and existing stair/door routes; the earlier unpublished physical-deck candidate
+does not establish these requirements against the current compiler.
+
 ## Exact doorway collision diagnostics (2026-10-14)
 
 `check-saved-map-exports.mjs --trace-passages` optionally records the placed
