@@ -4,6 +4,42 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Stepped-canopy insertion ground datum (2026-10-13)
+
+`york-market-stepped-green-canopy-stall` now declares a local placement ground
+height of zero. Its elevated part remains at height 150 instead of being lowered
+onto terrain when inserted. This is asset metadata: the editor's existing explicit
+ground-height behavior is used, with no compiler or runtime special case. The
+draft warns that supporting geometry and access belong to the assembled map.
+
+Stage `stepped-canopy-ground-cUf0E9` and fixture `inserted-canopy-jumps-vqqKIy`
+verify both sockets have equal heights immediately after insertion, before any
+vertical correction. All 160 native player-click jumps pass across eight moved,
+rotated and elevated two-assembly exports. Detached partners still lose their
+connections with warnings. Eight previously saved fixture documents compile to
+identical geometry, excluding exactly the newly authored warning.
+
+Publication backup `stepped-canopy-ground-installed-20261013` confirms that the
+saved York document changes only its descriptor hash at `assetSources[86]`;
+placements and all other scene content are identical. Published fixture
+`inserted-canopy-jumps-aRHiZR` passes the same default-height assertion, and all
+eight exports exactly match the native-tested staged geometry. Formatting and
+lint pass. No runtime code changes.
+
+Fresh standalone archive `standalone-render-library-AjJsFR/stepped-canopy.zip`
+(1,766,599 bytes; SHA-256
+`0e12f2e8df6b5252aec574b0e6c349e3509d87eb58e9b25ee0c16988d1ce7351`)
+passes identical editor gameplay and color/depth reopening/rebaking. Native loading
+without base data passes with five sight obstacles and 1,280 grid blocks. Both
+roof receivers sit at 192.5 on terrain height 40, preserving the authored 152.5
+roof elevation. Four complete Robin roof walks against that exact archive pass
+and stop upright on their expected receivers. This static asset has no appearance
+controls; no state-rendering check is claimed. Connected rendered archives and
+detailed sprite contact remain open.
+
+Coverage `gameplay-coverage-3GoqYG` confirms eight missing definitions, including
+six insertable assets, and zero missing definitions among placed assets.
+
 ## Connections between independently inserted canopies (2026-10-13)
 
 `check-inserted-canopy-jumps.mjs` inserts the published red and stepped-green

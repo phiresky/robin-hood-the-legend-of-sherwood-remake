@@ -12,11 +12,22 @@ import { sceneToGame } from "../shared/src/geometry.ts";
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const ids = ["york-market-red-canopy-stall", "york-market-stepped-green-canopy-stall"];
+const requireLevelSockets = process.argv.includes("--require-level-sockets");
+const positional = process.argv.slice(2).filter((arg) => arg !== "--require-level-sockets");
+assert.ok(positional.length <= 1);
+const edits = positional.length ? JSON.parse(await fs.readFile(`${positional[0]}/edits.json`)) : [];
+assert.ok(edits.every((edit) => ids.includes(edit.asset)));
 const assets = [];
 for (const [side, id] of ids.entries()) {
   const base = `3d-assets/york/${id}`;
   const bytes = await fs.readFile(`library/${base}/asset.json`);
   const descriptor = JSON.parse(bytes);
+  const edit = edits.find((edit) => edit.asset === id);
+  if (edit) {
+    assert.equal(edit.descriptorSha256, hash(bytes));
+    assert.equal(edit.modelSha256, hash(await fs.readFile(`library/${base}/model.glb`)));
+    descriptor.gameplay = edit.gameplay;
+  }
   const segment = descriptor.gameplay.jumpSegments.find(
     (entry) => entry.id === `jump-pair-12-side-${side}`,
   );
@@ -61,6 +72,8 @@ const save = (complete) =>
     JSON.stringify({
       scope: "inserted-asset-socket-connection-not-complete-gameplay-parity",
       complete,
+      requireLevelSockets,
+      gameplayStage: positional[0],
       assets: assets.map((asset) => asset.reference),
       results,
       detached,
@@ -95,6 +108,11 @@ for (const height of [0, 40])
       }
       const a = worldSocket(document, groups[0], assets[0]),
         b = worldSocket(document, groups[1], assets[1]);
+      if (requireLevelSockets)
+        assert.ok(
+          Math.abs(a[2] - b[2]) < 1e-6,
+          "Default insertion must align socket heights without vertical correction",
+        );
       groups[1].transform.dx += a[0] - b[0];
       groups[1].transform.dy += a[1] - b[1];
       groups[1].transform.dz += a[2] - b[2];

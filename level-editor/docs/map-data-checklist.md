@@ -6,7 +6,7 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-**Current definition inventory (2026-10-13):** `gameplay-coverage-Z9YFPM` checks
+**Current definition inventory (2026-10-13):** `gameplay-coverage-3GoqYG` checks
 1,279 indexed assets and finds zero missing definitions among placed assets in
 the saved scenes. Eight unused assets lack definitions, including two background
 assets that cannot be inserted as objects. This checks library
@@ -90,7 +90,11 @@ The red/stepped-green canopy connection now passes 160 native player-click jumps
 across independently inserted, socket-aligned copies, rotations and elevations.
 Moving the partners apart removes their jumps with explicit warnings. This
 certifies that particular connection, not every retained socket. The stepped-green
-canopy's default placement ground height still needs review; see
+canopy now has an explicit ground datum, preserving its roof elevation during
+insertion without changing saved placements. The default-height connection checks
+pass all 160 native jumps, and a fresh standalone ZIP passes editor round trip,
+native loading and four character roof walks. See
+[the placement fix](map-compilation-evidence.md#stepped-canopy-insertion-ground-datum-2026-10-13) and
 [the connection checks](map-compilation-evidence.md#connections-between-independently-inserted-canopies-2026-10-13).
 
 **Current Wychford export (2026-10-12):** `saved-map-exports-ab3hoH` completes
