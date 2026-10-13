@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Independent north display-piece draft (2026-10-13)
+
+`stage-york-display-tables.mjs` stages the two-piece York north display asset.
+Its model contains thin raised pieces without supporting legs. The explicit
+placement height grounds the lowest underside; elevated use requires authored
+supporting scenery. Only `building-937` inherits removal membership from its
+asset-local owner, with an independent control and appearance. `building-041`
+stays visible and blocking. Remote market triggers/exclusions are not inherited.
+
+Native checking exposed a missing permanent ground footprint: the thin raised
+piece's sight solid did not block ground routing after its neighbor disappeared.
+The draft now authors its own permanent movement exclusion. The first horizontal
+walk probe also ran into that retained piece; final probes cross the removed
+piece's short axis, testing the cleared opening without walking through its
+neighbor. Candidate `york-display-tables-JDEZq6` passes 16 apply/reset cycles,
+144 route-state checks (including both copies' permanent pieces), and 32 complete
+sprite walks across two copies, four rotations and two elevations. No runtime
+code changed. Rendered states, archive reopening, actor activation and detailed
+mesh contact remain unverified, so this candidate is not yet published.
+
 ## Hall/tower archive and draft publication (2026-10-13)
 
 `prepare-draft-scene-render.mjs` stages existing editor placements with hash-checked

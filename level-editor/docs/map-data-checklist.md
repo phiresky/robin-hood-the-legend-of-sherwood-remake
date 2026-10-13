@@ -15,6 +15,11 @@ Both remaining insertable assets have known state dependencies in their
 candidate owners. These include movement, mask, door, control and appearance
 references, not just sight-state membership. Restoring them requires preserving
 those relationships or authoring explicit independent behavior.
+The north display-piece candidate now passes independent removal/reset checks,
+permanent-neighbor collision checks and 32 full-character walks. Its rendered
+states and archive round trip remain unverified, so it is still outside the
+published definition count; see
+[the display checks](map-compilation-evidence.md#independent-north-display-piece-draft-2026-10-13).
 The standalone Nottingham hall now has a published local-definition draft.
 Separate hall/tower placements pass 32 room entry/exit round trips and 32 stair
 routes after authoring doorway apertures on each owning asset. Other entrance
