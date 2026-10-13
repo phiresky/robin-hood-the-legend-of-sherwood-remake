@@ -4,6 +4,46 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Red canopy with persistent walkable roof (2026-10-13)
+
+`york-market-red-canopy-stall` now has an independent `lower-canopy` control,
+retaining the permanent remainder's surface, three jump sockets, sight order and
+solid parts in the same local frame. Its two initial pieces both reach the ground;
+their footprints block initially and are replaced by the lowered piece's footprint.
+Neither state promises an unobstructed ground passage. Static definitions with
+unsupported additional features are still rejected by the authoring tool rather
+than silently discarded.
+
+Stage `york-canvas-screen-csMCDN` passes eight moved/copied exports, sixteen native
+apply/reset cycles, 336 boundary-route checks and permanent sight retention.
+`red-canopy-roofs-_zn07_rv` passes 128 complete Robin roof walks: both directions,
+two copies, four rotations, two elevations and all four control combinations.
+Walks take 16–17 moving ticks and finish upright on their expected receivers.
+The isolated fixture reports all three unmatched sockets per copy as unavailable;
+it does not invent remote destinations. This proves retained roof walking, not
+connected jump traversal. Publication backup `red-canopy-installed-20261013`
+changes only descriptor/index data. No runtime code changes.
+
+Rendered archive `standalone-render-library-pz0msb/red-canopy.zip`
+(3,534,937 bytes; SHA-256
+`af1dfaa47d043fa1a34965effbc856491ed285895f27ab3bc3b302816b20911d`)
+passes identical gameplay and color/depth reopening/rebaking. Native loading
+without base data passes with 15 sight obstacles, 1,600 grid blocks and two controls
+and appearance regions. Independent GPU color/depth states, transition and reset
+pass. Archived geometry exactly matches the native-tested 37°, height-40 placement.
+The reusable roof-probe helper's `--all-control-states` option also passes sixteen
+fresh character walks against that exact archived descriptor, covering both roofs
+in both directions for every control combination.
+Coverage `gameplay-coverage-d6CAyP` finds nine missing definitions, seven insertable,
+and none among placed assets. Actor-triggered activation and detailed rendered
+contact remain unverified. Formatting and lint pass.
+
+The remaining north display-table asset needs separate placement review. Its
+two collision parts have bottoms at local game heights 110.385 and 111.908005,
+and its GLB likewise contains elevated thin geometry. Treating that minimum as
+the intended ground datum would erase the elevation. No gameplay or placement
+change was published for that asset during this review.
+
 ## Pottery canopy with initial and permanent ground props (2026-10-13)
 
 `york-market-striped-canopy-pottery-stall` now preserves three permanent props

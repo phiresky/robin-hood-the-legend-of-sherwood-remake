@@ -3,8 +3,9 @@ import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 
-const [directory, filename, minimumHeightText = "500"] = process.argv.slice(2);
+const [directory, filename, minimumHeightText = "500", stateOption] = process.argv.slice(2);
 assert.ok(directory && filename);
+assert.ok(stateOption === undefined || stateOption === "--all-control-states");
 const minimumHeight = Number(minimumHeightText);
 assert.ok(Number.isFinite(minimumHeight));
 const descriptor = JSON.parse(await fs.readFile(`${directory}/${filename}`));
@@ -52,13 +53,28 @@ for (const receiver of receivers) {
       max_length: best.length + 1,
     });
 }
+const controls = descriptor.asset_geometry.movement_transitions ?? [];
+assert.ok(
+  !stateOption || controls.length <= 6,
+  "Exhaustive diagnostics support at most six controls",
+);
+const routeProbes = stateOption
+  ? Array.from({ length: 2 ** controls.length }, (_, bits) =>
+      probes.map((probe) => ({
+        ...probe,
+        applied_transitions: controls
+          .filter((_, i) => (bits & (1 << i)) !== 0)
+          .map((control) => control.id),
+      })),
+    ).flat()
+  : probes;
 await fs.writeFile(
   `${directory}/diagnostics.json`,
   JSON.stringify({
     scope: "upper-floor-sprite-routes-not-visual-contact-proof",
     complete: true,
-    results: [{ file: filename, route_probes: probes }],
+    results: [{ file: filename, route_probes: routeProbes }],
   }),
   { flag: "wx" },
 );
-console.log(JSON.stringify({ receivers: receivers.length, routes: probes.length }));
+console.log(JSON.stringify({ receivers: receivers.length, routes: routeProbes.length }));

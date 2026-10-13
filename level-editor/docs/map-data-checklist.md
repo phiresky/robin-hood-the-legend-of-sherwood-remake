@@ -6,12 +6,12 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-**Current definition inventory (2026-10-13):** `gameplay-coverage-dj4hFK` checks
+**Current definition inventory (2026-10-13):** `gameplay-coverage-d6CAyP` checks
 1,279 indexed assets and finds zero missing definitions among placed assets in
-the saved scenes. Ten unused assets lack definitions, including two background
+the saved scenes. Nine unused assets lack definitions, including two background
 assets that cannot be inserted as objects. This checks library
 definition presence and index hashes, not scene pins or gameplay completeness.
-All eight remaining insertable assets have known state dependencies in their
+All seven remaining insertable assets have known state dependencies in their
 candidate owners. These include movement, mask, door, control and appearance
 references, not just sight-state membership. Restoring them requires preserving
 those relationships or authoring explicit independent behavior.
@@ -74,6 +74,12 @@ three permanent props. Eight placement variants pass sixteen state cycles,
 round trip, native loading and independent GPU state/reset checks. Actor-triggered
 activation and rendered contact remain open; see
 [the pottery-canopy checks](map-compilation-evidence.md#pottery-canopy-with-initial-and-permanent-ground-props-2026-10-13).
+The red canopy retains its permanent walkable roof and jump sockets while swapping
+grounded pieces. Eight placement variants pass sixteen state cycles, 336 route
+checks and 128 character roof walks across all control combinations. Its ZIP
+passes editor round trip, native loading and GPU state/reset checks. Connected
+jump traversal, actor-triggered activation and rendered contact remain open; see
+[the red-canopy checks](map-compilation-evidence.md#red-canopy-with-persistent-walkable-roof-2026-10-13).
 
 **Current Wychford export (2026-10-12):** `saved-map-exports-ab3hoH` completes
 in 825 seconds, including final stair-clearance preparation. This verifies the
