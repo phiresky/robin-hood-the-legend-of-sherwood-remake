@@ -4,6 +4,42 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Green canopy with permanent ground collision (2026-10-13)
+
+`york-market-southeast-green-canopy-stall` now combines its permanent grounded
+prop with independently controlled raised/lowered panels. The reviewed static
+remainder has the same local frame. Its explicit movement blocker is retained
+without the assembly-specific contour grouping label, alongside its physical
+movement solid and sight query order. The two assembly-only exclusions attached
+to the lowered piece are explicitly reviewed and remain with the full assembly.
+The standalone asset's own permanent prop continues blocking in both states.
+
+`select-panel-route.mjs` chooses diagnostic passages through the changing
+footprint while avoiding permanent props. It samples candidate lines with a
+twelve-unit edge margin and rejects fixtures without a conservative passage;
+native movement remains the actual acceptance check. Additional blocked probes
+cross each permanent prop before activation, after activation and after reset.
+This changes test fixture selection, not exported navigation or runtime routing.
+
+Stage `york-canvas-screen-AefalU` passes eight moved/copied exports, sixteen
+native apply/reset cycles, 144 route checks (including permanent blocking),
+permanent sight-retention checks and sixteen complete-sprite walks through the
+raised-state free space. Walks take 42–45 moving ticks and stop upright.
+Final stage `york-canvas-screen-KuETJo` changes only draft warning text; all eight
+descriptors were compared and are otherwise identical to that tested stage.
+`green-canopy-installed-20261013` backs up publication. The warning explicitly
+distinguishes permanent asset collision from assembly-only exclusions.
+Models, saved scene placements and runtime code are unchanged.
+
+Published fixture `standalone-render-library-rnG40o` passes editor export/reopen
+and identical gameplay/color/depth rebake. `green-canopy.zip` is 3,112,864 bytes,
+SHA-256 `4d5db7a422efe3d635e5b95511e944c196aa61b0c743d2c7f8fe468d887eb7b4`.
+Its archived gameplay exactly matches the final 37-degree/height-40 fixture.
+Native loading without base data passes (1000×1000, nine sight obstacles,
+960 grid blocks, two controls/appearance regions), and native GPU independent
+state/transition/reset color and depth probes pass. Script formatting and lint
+pass. Actor-triggered activation and detailed rendered contact remain open.
+
 ## North canopy with permanent and stateful parts (2026-10-13)
 
 The reviewed-panel authoring path now supports `york-market-north-cream-canopy-stall`.

@@ -7,9 +7,22 @@ import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 import { insertProjectionAsset } from "../app/src/asset-commands.ts";
 import { compileMap } from "../app/src/map-compile.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
+import { selectPanelRoute } from "./select-panel-route.mjs";
 
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 const reviewed = {
+  "york-market-southeast-green-canopy-stall": {
+    descriptor: "8563e8add8ad3a35de3fe0d7d66456df46c4575aebd1e4a765b1c442aa73198d",
+    model: "a8ca058bb43788666e27dca2865bd35697445a66c066b99e80ae5136829cb8eb",
+    parts: ["building-031", "building-949", "building-962", "building-971"],
+    control: "lower-canopy",
+    staticOwner: "york-market-southeast-green-canopy-stall-remainder",
+    staticDescriptor: "34d77d0d4877386ba2792e4b19116517f23599290cb6665d469814f2e0e592ff",
+    assemblyExclusions: [
+      "building-971-ground-blocker-63-0-0",
+      "building-971-ground-blocker-63-1-0",
+    ],
+  },
   "york-market-north-cream-canopy-stall": {
     descriptor: "96d6682f24ba8e1ae4425e3ba708fd1342226f7fab0b8a3be6e610d754f470ca",
     model: "79a9dcbd2e7518b93043e91199126c2690b6f5b3109c035cecb56da124120856",
@@ -73,6 +86,7 @@ if (review.staticOwner) {
         "collision",
         "surfaces",
         "sightOrder",
+        "movementBlockers",
         "doors",
         "lifts",
         "interiors",
@@ -82,6 +96,11 @@ if (review.staticOwner) {
     "Static owner has additional gameplay requiring explicit migration",
   );
   assert.equal(gameplay.collision, "parts");
+  assert.deepEqual(
+    staticOwner.source_origin_scene,
+    descriptor.source_origin_scene,
+    "Permanent contours require matching local frames",
+  );
   for (const key of ["surfaces", "doors", "lifts", "interiors"])
     assert.equal(
       gameplay[key]?.length ?? 0,
@@ -163,7 +182,12 @@ descriptor.gameplay = {
   collision: "parts",
   surfaces: [],
   doors: [],
-  movementBlockers: [],
+  movementBlockers: (staticOwner?.gameplay.movementBlockers ?? []).map(
+    ({ movementContour: _movementContour, ...blocker }) => {
+      assert.ok(staticNodes.has(blocker.node), "Permanent contour must belong to a retained part");
+      return structuredClone(blocker);
+    },
+  ),
   ...(staticNodes.size
     ? {
         movementSolids: [...staticNodes],
@@ -204,11 +228,11 @@ descriptor.gameplay = {
   draft: {
     issues: [
       "Independent raised/lowered panel draft; full gameplay parity is not certified.",
-      "Starts raised with a clear ground footprint. Explicit activation swaps to the lowered blocking geometry; no surrounding market exclusion or remote trigger is inherited.",
+      "Raised panels preserve permanent asset collision. Explicit activation swaps to the lowered blocking geometry; no surrounding market exclusion or remote trigger is inherited.",
       "Rendered state appearance, actor interaction and mesh contact require review.",
       ...(assemblyExclusions.length
         ? [
-            "The standalone raised state remains walkable beneath its elevated parts. The full market assembly retains its separate permanent exclusion; it is not inherited by this independent asset.",
+            "Assembly-only exclusions attached to lowered pieces are not inherited. Permanent parts of this standalone asset retain their own collision in both states.",
           ]
         : []),
     ],
@@ -289,14 +313,15 @@ for (const height of [0, 40])
       assert.equal(control.initial_sight.length, raised.length);
       assert.equal(control.applied_sight.length, 1);
       const shape = geometry.sight_obstacles[control.applied_sight[0]];
-      const xs = shape.points.map((point) => point.x),
-        ys = shape.points.map((point) => point.y - point.z_bottom);
-      const y = ys.reduce((a, b) => a + b) / ys.length;
+      const passage = selectPanelRoute(
+        shape,
+        permanentSight.map((index) => geometry.sight_obstacles[index]),
+        height,
+      );
       return {
         id: control.id,
         layer: 0,
-        start: [Math.min(...xs) - 15, y],
-        end: [Math.max(...xs) + 15, y],
+        ...passage,
         initial: true,
         applied: false,
       };
@@ -314,6 +339,23 @@ for (const height of [0, 40])
       sector: 0,
       max_length: Math.hypot(probe.end[0] - probe.start[0], probe.end[1] - probe.start[1]) + 1,
     }));
+    for (const control of geometry.movement_transitions)
+      for (const index of permanentSight) {
+        const shape = geometry.sight_obstacles[index];
+        if (!shape.points.every((point) => Math.abs(point.z_bottom - height) < 0.001)) continue;
+        const xs = shape.points.map((point) => point.x);
+        const y =
+          shape.points.reduce((sum, point) => sum + point.y - point.z_bottom, 0) /
+          shape.points.length;
+        probes.push({
+          id: control.id,
+          layer: 0,
+          start: [Math.min(...xs) - 15, y],
+          end: [Math.max(...xs) + 15, y],
+          initial: false,
+          applied: false,
+        });
+      }
     results.push({
       file,
       transition_probes: probes,

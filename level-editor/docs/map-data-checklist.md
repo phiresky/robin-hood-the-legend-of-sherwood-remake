@@ -6,12 +6,12 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-**Current definition inventory (2026-10-13):** `gameplay-coverage-YhDd4W` checks
+**Current definition inventory (2026-10-13):** `gameplay-coverage-umUt7g` checks
 1,279 indexed assets and finds zero missing definitions among placed assets in
-the saved scenes. Thirteen unused assets lack definitions, including two background
+the saved scenes. Twelve unused assets lack definitions, including two background
 assets that cannot be inserted as objects. This checks library
 definition presence and index hashes, not scene pins or gameplay completeness.
-All eleven remaining insertable assets have known state dependencies in their
+All ten remaining insertable assets have known state dependencies in their
 candidate owners. These include movement, mask, door, control and appearance
 references, not just sight-state membership. Restoring them requires preserving
 those relationships or authoring explicit independent behavior.
@@ -58,6 +58,11 @@ pieces. Eight placement variants pass native state checks, including permanent
 sight retention, and sixteen character walks. Its ZIP passes editor round trip,
 native loading and GPU state/reset checks; actor-triggered activation and rendered
 contact remain open. See [the mixed canopy checks](map-compilation-evidence.md#north-canopy-with-permanent-and-stateful-parts-2026-10-13).
+The southeast green canopy retains permanent ground collision while its panels
+change state. Eight placement variants pass sixteen state cycles, 144 route checks
+and sixteen character walks through the free space. Its ZIP passes editor round
+trip, native loading and GPU state/reset checks. Actor-triggered activation and
+rendered contact remain open; see [the ground-prop checks](map-compilation-evidence.md#green-canopy-with-permanent-ground-collision-2026-10-13).
 
 **Current Wychford export (2026-10-12):** `saved-map-exports-ab3hoH` completes
 in 825 seconds, including final stair-clearance preparation. This verifies the
