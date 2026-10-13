@@ -4,6 +4,29 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Standalone Nottingham watchtower gameplay (2026-10-13)
+
+`stage-watchtower-gameplay.mjs` restores the unused standalone tower from matching
+parts in its existing asset-local assembly definition. It verifies descriptor and
+model hashes, matching local frames, collision geometry and movement dependencies.
+It retains one upper floor, five collision parts and seven local clearances.
+The adjoining hall's doorway and hall-targeted lights are deliberately excluded:
+a transform anchor or supported outside endpoint alone does not establish ownership.
+The standalone tower has no authored interior; surrounding assets must supply access.
+
+`watchtower-gameplay-ks02Zu` is installed through the guarded gameplay publisher,
+with backups in `watchtower-installed-20261013`. Models and scene placements are
+unchanged. The asset remains a draft with explicit access, lighting and contact
+review warnings. The complete hall-and-watchtower assembly is unchanged.
+
+`standalone-asset-placements-u4ifZA` uses the editor's actual asset insertion command
+to place two independent copies at rotations 0, 37, 90 and 180 degrees and elevations
+0 and 40. All eight exports preserve ten collision parts and two upper floor
+receivers with separate navigation sectors and the expected height. Native loading
+and all 48 sampled ordinary routes pass. This is initial-state routing evidence,
+not rendered archive, animated contact or externally connected access certification.
+Both new scripts pass scoped formatting and lint checks. No runtime code changes.
+
 ## Full Derby rendered archive (2026-10-12)
 
 The subsequent `derby-unlit-library-syww3455` check resolves the black shelter
