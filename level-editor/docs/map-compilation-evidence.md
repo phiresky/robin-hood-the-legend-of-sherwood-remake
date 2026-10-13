@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Independently activated fragment 102 (2026-10-13)
+
+`stage-croisement03-activated-fragments.mjs 102` authors this single-part asset
+with its own activation control, applied collision footprint, sight obstacle and
+visual `show` binding. It reads only asset descriptors and checks descriptor/model
+hashes, matching local frames and collision geometry against the containing
+assembly. The complete assembly retains its existing behavior.
+
+The assembly also associates a partial permanent ground exclusion with this part.
+Blindly retaining that exclusion in a completely hidden standalone asset would
+leave an invisible barrier. Neutral mesh renders in
+`croisement03-activated-fragments-EgGOaC` show a single solid piece, with no separate
+permanent component. The standalone definition therefore explicitly authors
+absence as walkable and activation as blocking the complete footprint. This is
+independent asset behavior for new maps, not a reconstruction of the assembly's
+entire state. A draft warning explains the difference.
+
+Final stage `croisement03-activated-fragments-xWrPb1` passes native construction
+and 16 apply/reset cycles across two copies, rotations 0/37/90/180 and elevations
+0/40. Two boundary-crossing probes per copy check both the former permanent
+exclusion and the remaining footprint in initial/applied/reset states: 96 checks.
+An earlier probe wholly inside the footprint was invalid for the runtime's
+boundary-intersection API; final probes cross the boundary after rotation.
+The earlier permanent-exclusion experiment is not the final definition.
+
+Publication backup is `fragment-102-installed-20261013`. No model or placed scene
+changes are needed. Formatting and lint pass. Full rendered-state round trip,
+actor activation and animated contact remain unverified; the installed definition
+is a warned draft. No runtime code changes.
+
 ## Expanded asset state ownership audit (2026-10-13)
 
 The ownership audit previously checked only direct initial/applied sight-node

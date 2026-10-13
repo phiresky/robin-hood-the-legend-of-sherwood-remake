@@ -24,23 +24,33 @@ assert.deepEqual(control.appliedSight, [
   "building-104",
   "building-105",
 ]);
-const reviewed = [
-  [
-    "103",
-    "d1a40e068f8b33ca4dc7d531bf7920356577e38b83f0aec9feade97313be5c9b",
-    "4005309e60214e404d5f873ba2d8e24227d700c185d7bd0483f28060203bed97",
-  ],
-  [
-    "104",
-    "f2fb722296a2128754c5d34be0d080565d49acb1e5369f1a7e2deb6718361921",
-    "809a2c823133f78a0383914485e8b6f2470e79a69eb7f71dcf6c005ce35a7a28",
-  ],
-  [
-    "105",
-    "583daf05cd879b76dc63f8d6ece687f2a7f7e97f74659a8ed12144920079f4ac",
-    "dddb7cf19c5d4f48713a7f7683da350003fc1d29411f14420c1060e866134144",
-  ],
-];
+const fragment102 = process.argv[2] === "102";
+assert.ok(process.argv[2] === undefined || fragment102, "Only optional fragment 102 is supported");
+const reviewed = fragment102
+  ? [
+      [
+        "102",
+        "7226f52acc8add6fc271a9e58a854bbecbc4fdd2e7cf63fede7dd4851ea76406",
+        "7620847d756fd3a41b4db75033fe0bc9c4345b360c0d25bdc6f9ff5d637704af",
+      ],
+    ]
+  : [
+      [
+        "103",
+        "d1a40e068f8b33ca4dc7d531bf7920356577e38b83f0aec9feade97313be5c9b",
+        "4005309e60214e404d5f873ba2d8e24227d700c185d7bd0483f28060203bed97",
+      ],
+      [
+        "104",
+        "f2fb722296a2128754c5d34be0d080565d49acb1e5369f1a7e2deb6718361921",
+        "809a2c823133f78a0383914485e8b6f2470e79a69eb7f71dcf6c005ce35a7a28",
+      ],
+      [
+        "105",
+        "583daf05cd879b76dc63f8d6ece687f2a7f7e97f74659a8ed12144920079f4ac",
+        "dddb7cf19c5d4f48713a7f7683da350003fc1d29411f14420c1060e866134144",
+      ],
+    ];
 const assets = new Map(),
   references = new Map(),
   edits = [];
@@ -56,10 +66,17 @@ for (const [suffix, descriptorSha256, modelSha256] of reviewed) {
   const part = descriptor.parts[0];
   assert.equal(part.node, `building-${suffix}`);
   assert.ok(control.appliedSight.includes(part.node));
-  assert.ok(
-    owner.gameplay.movementBlockers.every((blocker) => blocker.node !== part.node),
-    "A fragment with permanent collision needs separate authoring",
+  const permanentBlockers = owner.gameplay.movementBlockers.filter(
+    (blocker) => blocker.node === part.node,
   );
+  assert.equal(permanentBlockers.length, fragment102 ? 1 : 0);
+  if (fragment102) {
+    assert.deepEqual(descriptor.source_origin_scene, owner.source_origin_scene);
+    assert.deepEqual(
+      part.obstacle_local_game,
+      owner.parts.find((candidate) => candidate.node === part.node).obstacle_local_game,
+    );
+  }
   assert.equal(owner.gameplay.surfaces.length, 0);
   assert.equal(owner.gameplay.doors.length, 0);
   assert.equal(owner.gameplay.lifts.length, 0);
@@ -74,6 +91,8 @@ for (const [suffix, descriptorSha256, modelSha256] of reviewed) {
     collision: "parts",
     surfaces: [],
     doors: [],
+    // The standalone fragment disappears as a whole. Its assembly's static
+    // exclusion remains on the assembly, not on this independently hidden mesh.
     movementBlockers: [],
     movementTransitions: [
       {
@@ -104,6 +123,11 @@ for (const [suffix, descriptorSha256, modelSha256] of reviewed) {
         "Independent activated-fragment draft; full gameplay parity is not certified.",
         "Ground blocking is derived from this fragment's solid footprint; shared assembly exclusion and remote trigger placement are deliberately not inherited.",
         "The control starts unapplied. Activate it explicitly to enable this fragment; rendered state appearance and mesh contact still require review.",
+        ...(fragment102
+          ? [
+              "Independent activation does not inherit the assembly's permanent ground exclusion: the inactive standalone mesh is absent and its footprint remains walkable. Use the complete assembly when its permanent exclusion is required.",
+            ]
+          : []),
       ],
     },
   };
@@ -167,8 +191,12 @@ for (const height of [0, 40])
       }
     const compiled = compileMap(document, [0, 0, 1000, 1500], assets);
     const geometry = compiled.descriptor.asset_geometry;
-    assert.equal(geometry.movement_transitions.length, 6);
-    assert.equal(geometry.sight_obstacles.length, 7, "Six fragments plus the terrain receiver");
+    assert.equal(geometry.movement_transitions.length, 2 * assets.size);
+    assert.equal(
+      geometry.sight_obstacles.length,
+      2 * assets.size + 1,
+      "Fragments plus the terrain receiver",
+    );
     const probes = geometry.movement_transitions.map((transition) => {
       assert.equal(transition.initial_sight?.length ?? 0, 0);
       assert.equal(transition.applied_sight.length, 1);
@@ -185,6 +213,25 @@ for (const height of [0, 40])
         applied: false,
       };
     });
+    if (fragment102)
+      for (const transition of geometry.movement_transitions) {
+        const points = geometry.sight_obstacles[transition.applied_sight[0]].points;
+        const point = (weights) => [
+          points.reduce((sum, p, i) => sum + p.x * weights[i], 0),
+          points.reduce((sum, p, i) => sum + (p.y - p.z_bottom) * weights[i], 0),
+        ];
+        const formerExclusionProbe = probes.find((probe) => probe.id === transition.id);
+        formerExclusionProbe.start = point([0.28, -0.08, -0.32, 1.12]);
+        formerExclusionProbe.end = point([-0.08, 0.28, 1.12, -0.32]);
+        probes.push({
+          id: transition.id,
+          layer: 0,
+          start: point([1.12, -0.32, -0.08, 0.28]),
+          end: point([-0.32, 1.12, 0.28, -0.08]),
+          initial: true,
+          applied: false,
+        });
+      }
     const file = `fragments-${height}-${rotation}.level.json`;
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
