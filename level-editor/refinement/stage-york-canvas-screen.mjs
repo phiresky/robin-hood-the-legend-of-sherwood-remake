@@ -22,6 +22,20 @@ const reviewed = {
     parts: ["building-935", "building-936", "building-956", "building-957", "building-973"],
     control: "lower-awning",
   },
+  "york-market-southeast-canopy-stall": {
+    descriptor: "d2ab4d94b4a0afb69e852e940127d010429b08e5f37d4cd054f15e8fa57a4f8e",
+    model: "76113b9db889a2fb73ad9847b44af44b5a6c92e1aebde434609228f4a1b05a58",
+    parts: ["building-948", "building-960", "building-961", "building-970"],
+    control: "lower-canopy",
+    assemblyExclusions: ["building-970-ground-blocker-62-0-0"],
+  },
+  "york-market-west-long-canopy-stall": {
+    descriptor: "00075650b779162aa91a6d375e5973918b909c286f4ad97be2c99d7856bec943",
+    model: "fee08743d2517d7d6135597fc4d7164359815fd90225c332ccdfef951edd8a69",
+    parts: ["building-955", "building-958", "building-959", "building-975"],
+    control: "lower-canopy",
+    assemblyExclusions: ["building-975-ground-blocker-71-0-0"],
+  },
 };
 const id = process.argv[2] ?? "york-market-freestanding-canvas-screen";
 const review = reviewed[id];
@@ -69,10 +83,20 @@ for (const part of descriptor.parts) {
         "Part geometry/frame differs from owner",
       );
     }
-  assert.ok(!owner.gameplay.movementBlockers.some((blocker) => blocker.node === part.node));
 }
 const raised = descriptor.parts.slice(0, -1),
   lowered = descriptor.parts.at(-1);
+const assemblyExclusions = owner.gameplay.movementBlockers.filter((blocker) =>
+  review.parts.includes(blocker.node),
+);
+assert.deepEqual(
+  assemblyExclusions.map((blocker) => blocker.id),
+  review.assemblyExclusions ?? [],
+);
+assert.ok(
+  assemblyExclusions.every((blocker) => blocker.node === lowered.node),
+  "A permanent exclusion on a raised piece needs separate authoring",
+);
 for (const part of raised)
   assert.ok(
     transition.initialSight.includes(part.node) && !transition.appliedSight.includes(part.node),
@@ -129,6 +153,11 @@ descriptor.gameplay = {
       "Independent raised/lowered panel draft; full gameplay parity is not certified.",
       "Starts raised with a clear ground footprint. Explicit activation swaps to the lowered blocking geometry; no surrounding market exclusion or remote trigger is inherited.",
       "Rendered state appearance, actor interaction and mesh contact require review.",
+      ...(assemblyExclusions.length
+        ? [
+            "The standalone raised state remains walkable beneath its elevated parts. The full market assembly retains its separate permanent exclusion; it is not inherited by this independent asset.",
+          ]
+        : []),
     ],
   },
 };

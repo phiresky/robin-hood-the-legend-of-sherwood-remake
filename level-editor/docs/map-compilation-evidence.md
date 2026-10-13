@@ -4,6 +4,45 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Independent southeast and west canopy states (2026-10-13)
+
+The reviewed-panel authoring script now covers `york-market-southeast-canopy-stall`
+and `york-market-west-long-canopy-stall`. Each has three initially raised pieces
+and one lowered piece. Descriptor/model hashes, local-frame conversion and all
+part collision coordinates are checked against the existing owner metadata.
+The script explicitly checks the two known assembly-only exclusion IDs and
+requires that each belongs to the lowered piece; a permanent exclusion attached
+to any raised piece still rejects this authoring path.
+
+For standalone use, the raised state leaves the ground beneath the elevated
+pieces walkable. Activation swaps to the lowered part and its complete footprint.
+The containing market assembly keeps its existing permanent exclusions. This
+independent behavior is recorded in each draft warning, alongside outstanding
+actor-triggered interaction and visual-contact review.
+
+Stages `york-canvas-screen-e6UHE0` (southeast) and `york-canvas-screen-s2QD6a`
+(west) pass sixteen exports in total: two copies at four rotations and two
+elevations for each asset. Native tests pass 32 apply/reset cycles, 96 boundary
+route checks and 32 complete-sprite walks beneath the raised geometry. The walks
+take 45–49 moving ticks for southeast and 45–53 for west, ending upright on the
+correct receiver. `canopy-pair-installed-20261013` backs up publication of both
+warned definitions; models, saved scene placements and the market assembly are
+unchanged. No runtime source changes.
+
+`prepare-standalone-render-library.mjs` now accepts comma-separated asset IDs,
+placing two copies of each in separate rows. Combined published fixture
+`standalone-render-library-3ltBYV` contains both canopies at 37 degrees/height 40.
+The four identically named asset-local controls compile as four independent
+controls and appearance regions. Browser export/reopen/rebake preserves gameplay,
+color, depth and all four independent two-state regions.
+`canopy-pair.zip` is 5,947,018 bytes, SHA-256
+`cb568670e3ec77d63b4893fe36afcc23ca8f017c94d8e9de85c6c20a21399ad0`.
+Native loading without base data passes (1000×1000, seventeen sight obstacles,
+960 grid blocks). GPU color/depth checks cover all sixteen control combinations,
+transition suppression and reset. The exact archived descriptor passes four
+apply/reset cycles, twelve boundary-route checks and four complete-sprite walks.
+These do not certify actor-triggered activation or detailed rendered contact.
+
 ## Independent stone-house awning states (2026-10-13)
 
 The reviewed-panel authoring script `stage-york-canvas-screen.mjs` also accepts
