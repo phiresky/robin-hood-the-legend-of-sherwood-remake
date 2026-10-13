@@ -91,15 +91,22 @@ export function projectStairClearance(
   )
     return undefined;
   const result: Point[] = [];
+  let redundantEdge = false;
   for (const [i, first] of lines.entries()) {
     const second = lines[(i + 1) % lines.length]!;
     const determinant = first[0] * second[1] - first[1] * second[0];
-    if (Math.abs(determinant) < 1e-8) return undefined;
+    if (Math.abs(determinant) < 1e-8) {
+      redundantEdge = true;
+      break;
+    }
     const point: Point = [
       (first[2] * second[1] - first[1] * second[2]) / determinant,
       (first[0] * second[2] - first[2] * second[0]) / determinant,
     ];
-    if (lines.some(([x, y, limit]) => x * point[0] + y * point[1] > limit + 1e-6)) return undefined;
+    if (lines.some(([x, y, limit]) => x * point[0] + y * point[1] > limit + 1e-6)) {
+      redundantEdge = true;
+      break;
+    }
     result.push(point);
   }
   // Offset planes can form arbitrarily long miters at acute projected corners.
@@ -109,6 +116,18 @@ export function projectStairClearance(
   const xs = projected.map(([x]) => x);
   const ys = projected.map(([, y]) => y);
   let bounded = result;
+  if (redundantEdge) {
+    // Offsetting a short chamfer can make its constraint redundant. Intersect
+    // all constraints instead of requiring each adjacent pair to be a vertex.
+    bounded = [
+      [Math.min(...xs) - half[0], Math.min(...ys) - half[1]],
+      [Math.max(...xs) + half[0], Math.min(...ys) - half[1]],
+      [Math.max(...xs) + half[0], Math.max(...ys) + half[1]],
+      [Math.min(...xs) - half[0], Math.max(...ys) + half[1]],
+    ];
+    for (const [x, y, limit] of lines) bounded = clipHeight(bounded, [-x, -y, limit]);
+    if (bounded.length < 3) return undefined;
+  }
   for (const limit of [
     [1, 0, -Math.min(...xs) + half[0]],
     [-1, 0, Math.max(...xs) + half[0]],

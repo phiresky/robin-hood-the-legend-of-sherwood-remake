@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Chamfered projection-clearance correction (2026-10-14)
+
+Tracing the remaining 90-degree doorstep case finds five proposed floor
+partitions and four matching seams, but no usable crossings. Two narrow timber
+doorstep copies have no integer projected position accepted by the native
+footprint clearance check, despite 74 sampled integer centers fitting each
+physical floor. The stone-tower copies have 36 accepted projected centers but
+none accepted by the current perpendicular seam approach search.
+
+The narrow floor's clearance correction failed when offsetting its short chamfer
+made an edge redundant. The helper required every adjacent pair of offset lines
+to produce a vertex inside all other constraints. It now intersects the same
+constraints within the existing bounded footprint envelope when that assumption
+fails; successful existing offsets retain their previous construction.
+
+A regression using the affected floor fails before this change and passes
+afterwards, checking full 6-by-3 physical footprint support for every admitted
+integer center in its sampled bounds. The corrected shape has 75 centers
+accepted by the corridor check. All 285 selected compiler, passage, partition
+and stair tests pass; app typechecking, scoped lint and formatting pass.
+
+`receiver-floor-placements-bJ8Ptm` still rejects rotation 90: clearance recovery
+alone does not resolve the seam approach selection. The asset candidate remains
+unpublished and needs native traversal after its remaining connection and room
+collision issues are resolved. This change is confined to export geometry.
+
 ## Exported connections along internal floor holes (2026-10-14)
 
 Floor partitioning previously searched only outer receiving boundaries for

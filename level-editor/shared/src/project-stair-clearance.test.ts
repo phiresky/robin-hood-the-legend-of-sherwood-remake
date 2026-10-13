@@ -16,6 +16,37 @@ const corners: Point[] = [
 const fits = (center: Point, boundary: Point[]) =>
   corners.every(([x, y]) => pointInGameplayPolygon([center[0] + x, center[1] + y], boundary));
 
+test("projected clearance retains a supported chamfer when an offset edge becomes redundant", () => {
+  const boundary: Point[] = [
+    [747.5817355295376, 787.2261659742442],
+    [767.2150385843861, 764.6603210635683],
+    [781.4644035896769, 768.7390345739896],
+    [763.0119414781483, 789.9476506376063],
+    [761.8009024539087, 791.2962241911714],
+  ];
+  const plane: HeightPlane = [0.46072507521333467, 0.40085159950522936, -569.9895091331064];
+  const corrected = projectStairClearance(boundary, plane, true, { movementHalf: [6, 3] });
+  assert.ok(corrected, "offsetting the chamfer must not erase the entire supported floor");
+  let supported = 0;
+  for (let y = 665; y <= 705; y++)
+    for (let x = 740; x <= 790; x++) {
+      if (
+        ![-6, 6].every((dx) =>
+          [-3, 3].every((dy) => pointInGameplayPolygon([x + dx, y + dy], corrected, true)),
+        )
+      )
+        continue;
+      const worldY = (y + plane[0] * x + plane[2]) / (1 - plane[1]);
+      assert.ok(
+        [-6, 6].every((dx) =>
+          [-3, 3].every((dy) => pointInGameplayPolygon([x + dx, worldY + dy], boundary, true)),
+        ),
+      );
+      supported++;
+    }
+  assert.ok(supported > 0);
+});
+
 test("projected stair collision admits only physically supported movement footprints", () => {
   let corrected = 0;
   for (const degrees of [0, 37, 90, 137, 180, 270])
