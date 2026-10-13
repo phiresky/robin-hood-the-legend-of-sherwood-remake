@@ -4,6 +4,49 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Supported keep entrances and receiving holes (2026-10-13)
+
+`check-keep-supported-entrances.mjs` creates ordinary editor terrain around the
+two elevated entrance positions of the combined keep candidate. It authors
+plateaus and surrounding slopes, retains the editor scene, and compiles at
+0°, 37°, 90° and 180°. These are assembly fixtures, not automatic compiler floors
+or additions to the keep asset. All twelve building entrances and both reveal
+controls bind at each rotation.
+
+This exposed a general export bug: receiving-segment binding with collision
+allowed also treated navigation holes as real floor. Beneath the raised plateau,
+it reported intersections at both the real height and nonexistent ground. The
+compiler now checks the authored coplanar footprints and their holes before
+accepting a receiving intersection. Genuine stacked floors remain ambiguous and
+still warn; blocked points with real support still bind. Diagnostic warnings now
+include intersection counts, positions and sector/layer identities. A failing
+floor-hole regression now passes, as do all 166 gameplay-compiler tests and 75
+map-export tests. No engine/runtime code changed.
+
+The compact-plateau 37° fixture `keep-supported-entrances-RVhId5` passed twelve
+complete native entry/exit round trips before the receiver correction, but omitted
+the west control. Corrected four-rotation fixture `keep-supported-entrances-S7T5NJ`
+binds both controls and passes 45/48 routes. The wider, gentler-slope fixture
+`keep-supported-entrances-bIOJXr` also passes 45/48: door 7 stalls at 90° and loses
+its receiver at 180°, and door 8 loses its receiver at 90°. These failures remain
+open. The broader slopes also cover the three low ordinary passages; export
+reports and omits them. Neither fixture certifies complete assembly navigation.
+
+The latter fixture's 37° `keep-supported.zip` is 24,196,748 bytes, SHA-256
+`f615599c9f9907273fb760c65b285e96d8eb0037d91bad42585cdb35a5f89b8a`.
+Browser reopening/rebaking preserves gameplay, color, depth and all four combined
+visual states. Its appearance manifest has one overlapping region with two
+controls and four states; it does not require separate nonoverlapping regions.
+This verifies packaged state combinations, not actors activating those controls.
+Native loading without a base datadir passes with 223 sight obstacles, four masks,
+nineteen door projections and 27,132 fast-find grid blocks. The GPU state test
+passes independent state selection, transition/reset, color and depth for both
+controls. The archived geometry matches the staged 37° geometry except warnings.
+All twelve native building entry/exit round trips pass again from that archived
+descriptor; the failures at the other rotations remain recorded above.
+The combined asset still needs current publication derivatives; route/mask
+limitations must remain explicit in its gameplay draft when published.
+
 ## Combined keep model and rendered archive (2026-10-13)
 
 `stage-derby-keep-model.mjs` consumes the pinned combined-gameplay candidate and

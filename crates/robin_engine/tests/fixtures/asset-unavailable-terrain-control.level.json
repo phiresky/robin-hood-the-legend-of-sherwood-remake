@@ -248,7 +248,7 @@
     ],
     "doors": [],
     "warnings": [
-      "Transition hut-a/hut/barriers: control omitted; retained its initial movement barriers, masks and door permissions; hut-a/hut/barriers waypoint: receiving segment must intersect exactly one surface",
+      "Transition hut-a/hut/barriers: control omitted; retained its initial movement barriers, masks and door permissions; hut-a/hut/barriers waypoint: receiving segment must intersect exactly one surface (found 2); intersections [{\"sector\":0,\"layer\":0,\"point\":[350,350.00000000000006,3]},{\"sector\":3,\"layer\":1,\"point\":[350,350.00000000000006,7]}]",
       "Appearance gate-cover on hut-a-body: transition omitted; exported in its initial visual state."
     ]
   }

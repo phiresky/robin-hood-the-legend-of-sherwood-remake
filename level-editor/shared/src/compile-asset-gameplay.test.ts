@@ -3563,6 +3563,24 @@ test("rotated copies of terrain gates keep independent controls on shared ground
   );
 });
 
+test("terrain control receiver segments exclude holes even when collision is allowed", () => {
+  const { document, assets } = terrainTransitionCompilerFixture();
+  const floors = assets.get("marker")!.gameplay!.surfaces;
+  floors[0]!.height = 0;
+  floors[0]!.holes = [
+    [
+      [30, 30],
+      [70, 30],
+      [70, 70],
+      [30, 70],
+    ],
+  ];
+  floors[1]!.height = 5;
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.equal(compiled.movement_transitions!.length, 1);
+  assert.deepEqual(compiled.movement_transitions![0]!.waypoint, [350, 345]);
+});
+
 test("terrain gate controls reject ambiguous or malformed receiving segments", () => {
   const { document, assets, hut } = terrainTransitionCompilerFixture();
   const transition = hut.gameplay!.movementTransitions![0]!;

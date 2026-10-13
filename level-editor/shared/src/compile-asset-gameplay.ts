@@ -2420,6 +2420,18 @@ function compileAssetGameplayAttempt(
       }
       if (!point) return [];
       const projected = project(point);
+      // Ignoring collision permits a control beneath scenery, not inside a hole
+      // in its receiving floor. Navigation contours can encode both as blockers.
+      const authored = planeSurfaces.get(area.plane);
+      if (!authored) throw new Error(`${label}: receiving area has no authored plane`);
+      if (
+        !authored.some(
+          (surface) =>
+            inside(projected, surface.polygon, true) &&
+            !surface.holes.some((hole) => inside(projected, hole, true)),
+        )
+      )
+        return [];
       if (
         !inside(projected, area.polygon) ||
         (!allowBlocked && area.blockers.some((b) => inside(projected, b)))
@@ -2441,7 +2453,7 @@ function compileAssetGameplayAttempt(
       )
     )
       throw new UnresolvedSurface(
-        `${label}: receiving segment must intersect exactly one ${allowBlocked ? "" : "unblocked "}surface`,
+        `${label}: receiving segment must intersect exactly one ${allowBlocked ? "" : "unblocked "}surface (found ${matches.length}); intersections ${JSON.stringify(matches.slice(0, 8).map(({ area, point }) => ({ sector: area.sector, layer: area.layer, point })))}`,
       );
     return first.point;
   };
