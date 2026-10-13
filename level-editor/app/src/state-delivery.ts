@@ -130,7 +130,10 @@ export class StateDelivery {
           }
           groups[index]!.visible = false;
         }
-        if (family.physical.motion?.kind === "native-patch-node-poses")
+        if (
+          family.physical.motion?.kind === "native-patch-node-poses" ||
+          family.physical.motion?.kind === "native-element-node-poses"
+        )
           this.nodePoses.set(
             family.id,
             new ReviewedNodePoses(pair.applied, family.physical.motion.node_frames),

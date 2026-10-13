@@ -791,3 +791,58 @@ test("a foreign native clock owner rejects before consuming delivery sequence or
   assert.equal(p.physical.children[1]!.visible, false);
   p.dispose();
 });
+
+test("reviewed target node poses follow owner samples instead of elapsed preview time", async () => {
+  const f = await fixture();
+  const family = f.contract.families[0]!;
+  const link = f.template.children[0]!;
+  link.name = "stone";
+  const pose = new THREE.Matrix4().makeTranslation(0, 7, 0).toArray();
+  family.physical.motion = {
+    kind: "native-element-node-poses",
+    element_id: "body",
+    source_motion_sha256: "c".repeat(64),
+    node_frames: [
+      [{ node: "stone", matrix: pose }],
+      [{ node: "stone", matrix: new THREE.Matrix4().toArray() }],
+    ],
+  };
+  const p = new StateDelivery(() => ({ load: async () => f.template, dispose() {} }));
+  await p.set(f.contract, f.source, f.library, f.read);
+  p.selectMode("physical-motion");
+  const element = f.contract.native.elements[0]!;
+  const send = (sequence: number, active: boolean, tick: number) =>
+    p.sampleSourceState({
+      mission: f.contract.native.mission,
+      mission_data_sha256: f.contract.native.mission_data_sha256,
+      level_data_sha256: f.contract.native.level_data_sha256,
+      sequence,
+      simulation_tick: sequence,
+      samples: [{ kind: "element", id: element.id, source: element.source, active, tick }],
+    });
+  send(0, false, 0);
+  assert.equal(p.physical.children[0]!.visible, true);
+  send(1, true, 0);
+  assert.equal(p.physical.children[1]!.visible, true);
+  assert.deepEqual(p.physical.children[1]!.getObjectByName("stone")!.matrix.toArray(), pose);
+  assert.equal(p.advance(100), false);
+  assert.equal(p.familyTick("trap"), 0);
+  send(2, true, 3);
+  assert.deepEqual(
+    p.physical.children[1]!.getObjectByName("stone")!.matrix.toArray(),
+    new THREE.Matrix4().toArray(),
+  );
+  send(3, false, 0);
+  assert.equal(p.physical.children[0]!.visible, true);
+  p.dispose();
+  const invalid = structuredClone(f.contract);
+  invalid.families[0]!.physical.motion!.source_motion_sha256 = "wrong";
+  const rejected = new StateDelivery(() => {
+    throw new Error("must not load unreviewed target motion");
+  });
+  await assert.rejects(
+    rejected.set(invalid, f.source, f.library, f.read),
+    /invalid reviewed target motion/,
+  );
+  rejected.dispose();
+});

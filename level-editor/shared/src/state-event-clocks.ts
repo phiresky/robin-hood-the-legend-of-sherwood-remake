@@ -118,7 +118,12 @@ export class StateEventClocks {
       if (
         s.kind !== "element" &&
         s.phase === "reverse" &&
-        this.contract.families.some((f) => f.physical.motion?.patch_id === s.id)
+        this.contract.families.some(
+          (f) =>
+            f.physical.motion &&
+            "patch_id" in f.physical.motion &&
+            f.physical.motion.patch_id === s.id,
+        )
       )
         throw new Error("Reviewed physical motion does not support reverse source events");
     }
@@ -139,6 +144,10 @@ export class StateEventClocks {
     const f = this.contract.families.find((f) => f.id === familyId);
     if (!f) throw new Error(`Unknown state family: ${familyId}`);
     if (!f.physical.motion) return undefined;
+    if (f.physical.motion.kind === "native-element-node-poses") {
+      const element = this.sample("element", f.physical.motion.element_id);
+      return element?.kind === "element" && element.active ? element.tick : undefined;
+    }
     const sample = this.sample("patch", f.physical.motion.patch_id);
     if (!sample || sample.kind === "element" || sample.phase === "initial") return undefined;
     if (sample.phase === "reverse") throw new Error("Unreviewed reverse physical motion");

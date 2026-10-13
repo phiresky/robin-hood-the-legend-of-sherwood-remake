@@ -2,7 +2,7 @@
 
 - **Independent state event clocks.** The editor can sample source-pinned element,
   patch and background clocks without activating sibling state or deriving their
-  timing from wall time. Reviewed physical motion follows its bound patch, while
+  timing from wall time. Reviewed physical motion follows its bound patch or target owner, while
   endpoint preview remains available. The event port requires observed phase and
   animation ticks; it does not infer raw gameplay events or unreviewed motion.
 

@@ -55,6 +55,14 @@ export interface PhysicalPatchNodePoses {
   node_frames: ReviewedNodePose[][];
 }
 
+/** Reviewed node poses driven by one target's action frames, independently of receiver patches. */
+export interface PhysicalElementNodePoses {
+  kind: "native-element-node-poses";
+  element_id: string;
+  source_motion_sha256: string;
+  node_frames: ReviewedNodePose[][];
+}
+
 /** Reviewed discrete models retain the last transition model as their applied state. */
 export interface PhysicalPatchModelFrames {
   kind: "native-patch-model-frames";
@@ -79,7 +87,11 @@ export interface StateDeliveryContract {
     physical: {
       initial: PhysicalEndpoint;
       applied: PhysicalEndpoint;
-      motion?: PhysicalPatchTranslation | PhysicalPatchNodePoses | PhysicalPatchModelFrames;
+      motion?:
+        | PhysicalPatchTranslation
+        | PhysicalPatchNodePoses
+        | PhysicalPatchModelFrames
+        | PhysicalElementNodePoses;
     };
     static_replacements?: { initial: StaticStateReplacement[]; applied: StaticStateReplacement[] };
   }[];
@@ -168,7 +180,30 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
     }
     if (!family.physical) fail("missing physical endpoints");
     const motion = family.physical.motion;
-    if (motion !== undefined) {
+    if (motion?.kind === "native-element-node-poses") {
+      const element = c.native.elements.find((e) => e.id === motion.element_id);
+      if (
+        !hash(motion.source_motion_sha256) ||
+        family.element_ids.length !== 1 ||
+        family.element_ids[0] !== motion.element_id ||
+        family.patch_ids?.length ||
+        family.hidden_initial_element_ids?.length ||
+        !element?.frames.length ||
+        element.loop ||
+        !Array.isArray(family.physical.applied) ||
+        family.physical.applied.length !== 1 ||
+        !Array.isArray(motion.node_frames) ||
+        motion.node_frames.length !== element.frames.length
+      )
+        fail("invalid reviewed target motion binding");
+      validateReviewedNodePoses(motion.node_frames);
+      if (
+        motion.node_frames
+          .at(-1)!
+          .some(({ matrix }) => matrix.some((v, i) => v !== (i % 5 === 0 ? 1 : 0)))
+      )
+        fail("terminal node pose differs from baked applied model");
+    } else if (motion !== undefined) {
       const patch = c.native.patch_states?.find((p) => p.id === motion?.patch_id);
       if (
         !motion ||
@@ -320,9 +355,12 @@ export function physicalPatchPose(
     return { endpoint: "initial" as const, translation: [0, 0, 0] as [number, number, number] };
   if (tick >= family.body_terminal_tick)
     return { endpoint: "applied" as const, translation: [0, 0, 0] as [number, number, number] };
-  const patch = contract.native.patch_states!.find((p) => p.id === motion.patch_id)!;
-  const frame = nativePresentationFrame({ frames: patch.transition, loop: false }, tick);
-  if (motion.kind === "native-patch-node-poses")
+  const frames =
+    motion.kind === "native-element-node-poses"
+      ? contract.native.elements.find((e) => e.id === motion.element_id)!.frames
+      : contract.native.patch_states!.find((p) => p.id === motion.patch_id)!.transition;
+  const frame = nativePresentationFrame({ frames, loop: false }, tick);
+  if (motion.kind === "native-patch-node-poses" || motion.kind === "native-element-node-poses")
     return { endpoint: "applied", translation: [0, 0, 0], node_frame: frame };
   if (motion.kind === "native-patch-model-frames")
     return { endpoint: "initial", translation: [0, 0, 0], model_frame: frame };
