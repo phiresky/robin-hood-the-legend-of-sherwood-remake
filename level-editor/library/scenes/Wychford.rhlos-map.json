@@ -677,9 +677,9 @@
     },
     {
       "model": "3d-assets/derby/derby-great-keep/model.glb",
-      "model_sha256": "2ec310e014d06e401adb0331e4d11aeb578dd2718c7b82fdf653236165b61628",
+      "model_sha256": "8aa64a05906e4b38472587d52f8b3c4cdeb21ba533e0bd01b7c367da40c5afba",
       "descriptor": "3d-assets/derby/derby-great-keep/asset.json",
-      "descriptor_sha256": "09723b8fc9da1464276c6b1ce9678961cf991f4d9508ad4d19c667197b73c393",
+      "descriptor_sha256": "6d8ee5b030a4adbbf52117a7cd600dc8656a51df47791f5e447edb6be30ca2ff",
       "id": "derby-great-keep"
     },
     {
