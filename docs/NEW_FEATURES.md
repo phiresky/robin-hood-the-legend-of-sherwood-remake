@@ -1,5 +1,12 @@
 # Post-port Features
 
+- **Prepared clearance for narrow ordinary floors.** Export retains corrected
+  subpixel movement contours independently of the physical receiving surface.
+  The loader uses those contours when constructing static collision lines and
+  sectors for ordinary floors as well as stairs. Navigation links are checked
+  against the same contour during export; ordinary graph coordinates stay on
+  their existing integer grid. This adds no per-tick geometry preparation.
+
 - **Independent state event clocks.** The editor can sample source-pinned element,
   patch and background clocks without activating sibling state or deriving their
   timing from wall time. Reviewed physical motion follows its bound patch or target owner, while

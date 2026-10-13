@@ -19,6 +19,38 @@ test("native routing fixture contains the graph generated from its motion geomet
   assert.ok(motion.graph_bytes.length > 100);
 });
 
+test("ordinary floors compile the same precise contour used by static collision", () => {
+  const area: CompiledAssetGeometry["motion_data"]["layers"][number][number] = {
+    is_lift: false,
+    state_id: 0,
+    flags: 0,
+    obstacles: [],
+    skeleton_segments: [],
+    polygon: {
+      points: [
+        [0, 0],
+        [100, 0],
+        [100, 5],
+        [5, 5],
+        [5, 100],
+        [0, 100],
+      ],
+    },
+    precise_polygon: [
+      [0, -0.4],
+      [100, 0],
+      [100, 5],
+      [5, 5],
+      [5, 100],
+      [0, 100],
+    ],
+  };
+  const ordinary = compileNavigationGraph([[area]]);
+  const rounded = structuredClone(area);
+  delete rounded.precise_polygon;
+  assert.notDeepEqual(ordinary, compileNavigationGraph([[rounded]]));
+});
+
 test("large authored obstacle layouts export extended link indices", () => {
   const bytes = compileNavigationGraph([
     [

@@ -41,7 +41,14 @@ export function partitionSelfOverlappingNavigation(
       "Folded navigation clearance",
       warnings,
     );
-    return rounded ? { ...piece, polygon: rounded[0]!, blockers: rounded.slice(1) } : piece;
+    return rounded
+      ? {
+          ...piece,
+          polygon: rounded[0]!,
+          preciseMovementPolygon: corrected,
+          blockers: rounded.slice(1),
+        }
+      : piece;
   });
   const corrected = pieces.some((piece, i) => piece !== region.pieces[i]);
   if (corrected) {
@@ -163,8 +170,13 @@ export function partitionSelfOverlappingNavigation(
     }
   for (const { from, to, connection } of passages)
     for (const [x, y, z] of connection.from.edge) {
-      for (const ring of [from.polygon, ...from.blockers, to.polygon, ...to.blockers])
-        alignRoundedSeam(ring, [x, y - z]);
+      for (const region of [from, to]) {
+        // Corrected clearance is offset from the physical seam. Inserting a
+        // rounded receiving vertex into it can erase the usable center strip.
+        if (!region.pieces.some((piece) => piece.preciseMovementPolygon))
+          alignRoundedSeam(region.polygon, [x, y - z]);
+        for (const ring of region.blockers) alignRoundedSeam(ring, [x, y - z]);
+      }
     }
   return { regions, passages };
 }

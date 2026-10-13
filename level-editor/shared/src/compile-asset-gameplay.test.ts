@@ -2794,6 +2794,40 @@ for (const upperHeight of [119.5, 120.5])
     assert.ok(compiled.sight_obstacles.some((shape) => shape.projection_area));
   });
 
+test("a narrow sloping landing retains its prepared movement contour separately from its receiver", () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  const world: [number, number][] = [
+    [747.5817355295376, 787.2261659742442],
+    [767.2150385843861, 764.6603210635683],
+    [781.4644035896769, 768.7390345739896],
+    [763.0119414781483, 789.9476506376063],
+    [761.8009024539087, 791.2962241911714],
+  ];
+  const height = world.map(
+    ([x, y]) => 0.46072507521333467 * x + 0.40085159950522936 * y - 569.9895091331064,
+  );
+  hut.gameplay!.collision = "none";
+  hut.gameplay!.doors = [];
+  hut.gameplay!.surfaces = [
+    {
+      id: "landing",
+      node: "building-999",
+      preserveMovementPrecision: true,
+      polygon: world.map(([x, y]) => [x - 740, y - 760]),
+      height,
+    },
+  ];
+  document.objects = document.objects.filter((object) => object.group);
+  const compiled = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+  const area = compiled.motion_data.layers.flat()[0]!;
+  assert.ok(area.precise_polygon);
+  assert.ok(
+    stairCenterRegion(area.precise_polygon, [6, 3]).length >= 3,
+    "full-size destinations must survive static contour construction",
+  );
+  assert.ok(compiled.sight_obstacles.some((obstacle) => obstacle.projection_area));
+});
+
 test("a rotated authored loop exports connected floors without an explicit precision flag", () => {
   const { document, assets, hut } = assetCompilerFixture();
   const surface = (

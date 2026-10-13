@@ -8,12 +8,13 @@ Connections and runtime indices are rebuilt after placement, rotation and copyin
 
 Internal floor-hole seams now generate export-prepared connections between
 separate receiving floors, with two complete-sprite native crossings verified.
-The York doorstep candidate remains unpublished. An experimental approach search
-gets all placements through the socket-count check, but native traversal exposes
-a rounded midpoint outside its receiver; a stricter experimental check then
-exposes a rejected reverse destination and removes established rotated connections.
-Socket counts alone are not traversal proof; see the
-[doorstep native rejection](map-compilation-evidence.md#doorstep-candidate-native-rejection-2026-10-14).
+The York doorstep candidate remains unpublished. Preserving prepared movement
+precision and selecting supported approaches now lets the isolated 90-degree
+stone-tower doorstep pass both native directions. The narrow timber doorstep at
+that rotation has no full standing-box position on its physical floor; building
+access and the remaining placements still need verification. Socket counts alone
+are not traversal proof; see the
+[prepared floor clearance](map-compilation-evidence.md#prepared-ordinary-floor-clearance-2026-10-14).
 
 All ten current saved-map descriptors compile and pass native construction, with
 290 prepared stair routes and 71 control apply/reset checks passing. The current

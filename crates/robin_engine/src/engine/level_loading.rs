@@ -13,9 +13,9 @@ mod pcs;
 #[cfg(test)]
 mod stage_tests;
 
-/// Resolve authored stair precision once while constructing static navigation.
+/// Resolve authored contour precision once while constructing static navigation.
 fn motion_area_points(area: &crate::level_data::RawMotionArea) -> Vec<MapPoint> {
-    if area.is_lift && !area.precise_polygon.is_empty() {
+    if !area.precise_polygon.is_empty() {
         area.precise_polygon
             .iter()
             .map(|&[x, y]| MapPoint::new(x as f32, y as f32))

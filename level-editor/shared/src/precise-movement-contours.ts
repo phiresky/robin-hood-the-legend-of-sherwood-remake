@@ -63,7 +63,9 @@ export function joinedReceivingBoundary(
 ): Point[] | undefined {
   // Motion regions merge outer contours before compiling holes as separate
   // obstacles. Subtracting those holes here would change the boundary identity.
-  const floors = joinFloorContours(pieces.map((p) => [p.receivingPolygon ?? p.polygon]));
+  const floors = joinFloorContours(
+    pieces.map((p) => [p.preciseMovementPolygon ?? p.receivingPolygon ?? p.polygon]),
+  );
   const candidates = (
     indexPreciseBlockers(floors.map((p) => p[0]!)).get(motionBoundsKey(boundary)) ?? []
   ).filter(({ rounded }) => clipping.xor([rounded], [boundary]).length === 0);

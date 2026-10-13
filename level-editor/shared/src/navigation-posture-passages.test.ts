@@ -48,6 +48,88 @@ function fixture() {
   return { from, to, connection };
 }
 
+test("an oblique short landing connects without requiring symmetric approach offsets", () => {
+  const from: NavigationAnchorArea = {
+    plane: [0.9454810659191314, 0.8226182833327891, -19.5799325472492],
+    polygon: [
+      [33, 90],
+      [52, 69],
+      [68, 64],
+      [73, 64],
+      [64, 74],
+      [56, 83],
+      [54, 85],
+      [43, 89],
+      [38, 91],
+      [33, 91],
+    ],
+    blockers: [],
+  };
+  const to: NavigationAnchorArea = {
+    plane: [0, 0, 90.00101],
+    polygon: [
+      [-100, -100],
+      [200, -100],
+      [200, 200],
+      [-100, 200],
+    ],
+    blockers: [
+      [
+        [52, 92],
+        [39, 88],
+        [54, 71],
+        [64, 74],
+        [67, 75],
+        [56, 87],
+        [66, 77],
+        [140, 100],
+        [103, 139],
+        [29, 116],
+      ],
+    ],
+  };
+  const edge: NavigationConnection["from"]["edge"] = [
+    [39.317038377274, 178.0216979187835, 90.00100999999995],
+    [54.044107636543, 161.09505597167572, 90.00100999999995],
+  ];
+  const connection: NavigationConnection = {
+    from: { owner: "ramp", region: "ramp", edge },
+    to: { owner: "ground", region: "ground", edge: [edge[1], edge[0]] },
+    overlap: [0, 1],
+  };
+  const before = structuredClone({ from, to, connection });
+  assert.ok(navigationPosturePassages(connection, from, to).length > 0);
+  assert.ok(
+    navigationPosturePassages({ ...connection, from: connection.to, to: connection.from }, to, from)
+      .length > 0,
+  );
+  const closed = structuredClone(from);
+  closed.blockers.push([
+    [20, 50],
+    [90, 50],
+    [90, 110],
+    [20, 110],
+  ]);
+  assert.deepEqual(navigationPosturePassages(connection, closed, to), []);
+  assert.deepEqual({ from, to, connection }, before);
+});
+
+test("approach selection checks precise collision as well as integer geometry", () => {
+  const { from, to, connection } = fixture();
+  assert.ok(navigationPosturePassages(connection, from, to).length > 0);
+  const preciseFrom = structuredClone(from);
+  preciseFrom.blockers = [
+    [
+      [90, 0],
+      [100, 0],
+      [100, 100],
+      [90, 100],
+    ],
+  ];
+  assert.deepEqual(navigationPosturePassages(connection, from, to, [preciseFrom, to]), []);
+  assert.deepEqual(from.blockers, []);
+});
+
 test("posture crossings reserve both approaches and survive rotated placement", () => {
   for (const degrees of [0, 37, 90, 180]) {
     const { from, to, connection } = fixture();

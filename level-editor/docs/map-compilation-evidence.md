@@ -4,6 +4,44 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Prepared ordinary floor clearance (2026-10-14)
+
+The stone doorstep's physical floor has full 6-by-3 standing-box positions, but
+its rounded movement polygon has none. Export previously discarded the prepared
+subpixel clearance. Joining floors also clipped the corrected piece back to a
+rounded union and introduced a false corner cut. Corrected pieces now retain
+their own movement contour through a single connected union and partitioning,
+separately from their unchanged receiving geometry.
+
+The native loader previously read precise motion contours only for stairs. It
+now uses them for ordinary static sectors and collision lines as well. This is
+the existing level-loading construction step, not a runtime solver or additional
+per-tick preparation. Exported navigation links use the same precise boundary;
+ordinary graph coordinates retain the integer format.
+
+The bounded approach search checks both precise and integer collision, avoids
+off-axis handoff points outside the receivers, and prefers full-box destinations
+where available. `stone-doorstep-native-JPiYTe` passes both complete-sprite native
+directions for the isolated 90-degree stone-tower placement. The preceding combined
+`doorstep-precise-supported-ZEfTza` passes those two directions and the timber
+forward direction, then rejects the timber reverse destination. That timber
+receiver has no full 6-by-3 center region in physical coordinates either; export
+does not enlarge its physical floor to make the destination test pass. Its
+building access and the complete placement matrix remain unverified.
+
+All 303 selected compiler tests and 4,386 non-ignored engine library tests pass
+(72 ignored engine tests remain outside that suite). All 72 non-ignored native
+asset-map integration tests also pass, including the updated multi-plane fixture
+(seven data-dependent integration tests remain ignored). The existing two native
+floor-hole crossings still pass. The main game build, app typecheck, scoped lint
+and Rust formatting checks pass. `york-precise-loader-stairs-njLvIy` rechecks the
+published York baseline with the updated loader: all 130 complete-sprite stair
+routes pass, with zero failures and zero forbidden routes. It is a loader
+regression check, not a fresh full-map compile. The multi-plane golden descriptor changes only
+the cyclic starting vertices of two receiving rings, with identical point sets
+and every other descriptor field unchanged. The asset candidate remains
+unpublished and these checks do not establish all-map parity.
+
 ## Doorstep candidate native rejection (2026-10-14)
 
 The experimental bounded approach search completes the socket-count verifier in

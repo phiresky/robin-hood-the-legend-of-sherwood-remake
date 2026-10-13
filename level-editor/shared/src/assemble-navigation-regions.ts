@@ -19,6 +19,8 @@ export interface NavigationPiece {
   polygon: Point[];
   /** Source-clipped outer receiving boundary that rounds to this navigation piece. */
   receivingPolygon?: Point[];
+  /** Prepared movement clearance before integer rounding; receiving geometry stays separate. */
+  preciseMovementPolygon?: Point[];
   /** Unrounded hole contours, matched to final obstacles before export. */
   preciseBlockers?: Point[][];
   blockers: Point[][];
@@ -148,28 +150,33 @@ export function assembleNavigationRegions(
         lift: first.lift,
         polygon: movementRing(region[0]!),
         blockers: region.slice(1).map((hole) => movementRing(hole)),
+        // A single union contains every contributing piece. Clipping those
+        // pieces back to its rounded outline introduces false corner cuts that
+        // can erase their independently prepared subpixel clearance.
         pieces: members.flatMap((member) =>
-          clipping.intersection(shape(member), region).flatMap((part) => {
-            // Intersections can leave fractional slivers at a rounded union edge.
-            // A receiver that collapses to a point or line on the movement grid
-            // cannot own a playable pixel; omit it without changing navigation.
-            if (
-              !quantizeGeneratedMotionPolygon(
-                part,
-                Math.round,
-                "Joined receiving fragment",
-                warnings,
-              )
-            )
-              return [];
-            return [
-              {
-                ...member,
-                polygon: movementRing(part[0]!, 1e-7),
-                blockers: part.slice(1).map((hole) => movementRing(hole, 1e-7)),
-              },
-            ];
-          }),
+          merged.length === 1 && member.preciseMovementPolygon
+            ? [member]
+            : clipping.intersection(shape(member), region).flatMap((part) => {
+                // Intersections can leave fractional slivers at a rounded union edge.
+                // A receiver that collapses to a point or line on the movement grid
+                // cannot own a playable pixel; omit it without changing navigation.
+                if (
+                  !quantizeGeneratedMotionPolygon(
+                    part,
+                    Math.round,
+                    "Joined receiving fragment",
+                    warnings,
+                  )
+                )
+                  return [];
+                return [
+                  {
+                    ...member,
+                    polygon: movementRing(part[0]!, 1e-7),
+                    blockers: part.slice(1).map((hole) => movementRing(hole, 1e-7)),
+                  },
+                ];
+              }),
         ),
       }));
       const supported = assembled.filter((region) => {

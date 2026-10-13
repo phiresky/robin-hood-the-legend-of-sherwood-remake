@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn ordinary_floor_precision_prepares_static_collision_lines() {
+    let area: crate::level_data::RawMotionArea = serde_json::from_value(serde_json::json!({
+        "is_lift": false, "state_id": 0,
+        "polygon": {"points": [[0,0],[20,0],[20,20],[0,20]]},
+        "precise_polygon": [[0.25,0.25],[20.25,0.25],[20.25,20.25],[0.25,20.25]],
+        "skeleton_segments": [], "flags": 0, "obstacles": []
+    }))
+    .unwrap();
+    let mut engine = EngineInner::new();
+    let mut assets = LevelAssets::new();
+    let motion = crate::level_data::RawMotionData {
+        legacy_navigation: false,
+        layers: vec![vec![area]],
+        graph_bytes: Vec::new(),
+    };
+    engine.register_motion_obstacle_lines(&mut assets, &motion);
+    let lines = &engine.world.fast_grid.level.lines;
+    assert_eq!(lines.len(), 4);
+    assert_eq!(lines[0].a, MapPoint::new(0.25, 20.25));
+    assert_eq!(lines[0].b, MapPoint::new(0.25, 0.25));
+}
+
+#[test]
 fn named_scrolls_bind_to_spawned_entities_including_inactive_slots() {
     let config = SimConfig {
         script_enabled: false,

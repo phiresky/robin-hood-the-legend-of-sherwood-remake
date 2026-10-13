@@ -165,13 +165,11 @@ export function compileNavigationGraph(layers: Layers): number[] {
   const hierarchy = layers.map((areas, layer) =>
     areas.map((area, areaIndex) => {
       // These are the contours consumed by the native movement grid.
-      const boundary = area.is_lift
-        ? (area.precise_polygon ?? area.polygon.points)
-        : area.polygon.points;
+      const boundary = area.precise_polygon ?? area.polygon.points;
       const allowed = prepareCorridorStates(area.obstacles, boundary);
       const nodes: Node[] = [];
       for (const [ringIndex, raw] of [
-        boundary,
+        area.is_lift ? boundary : area.polygon.points,
         ...area.obstacles.map((obstacle) => obstacle.polygon.points),
       ].entries()) {
         const ring =

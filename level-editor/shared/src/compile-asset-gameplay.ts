@@ -1798,6 +1798,7 @@ function compileAssetGameplayAttempt(
           forceCrouched,
           polygon: rounded[0]!,
           receivingPolygon,
+          preciseMovementPolygon: corrected,
           blockers: [],
         });
         continue;
@@ -2228,7 +2229,10 @@ function compileAssetGameplayAttempt(
     const preciseBoundaries = physicalLanding
       ? (
           indexPreciseBlockers(
-            pieces.flatMap((piece) => (piece.receivingPolygon ? [piece.receivingPolygon] : [])),
+            pieces.flatMap((piece) => {
+              const contour = piece.preciseMovementPolygon ?? piece.receivingPolygon;
+              return contour ? [contour] : [];
+            }),
           ).get(motionBoundsKey(boundary)) ?? []
         ).filter(
           ({ exact, rounded }) =>
@@ -3024,13 +3028,23 @@ function compileAssetGameplayAttempt(
               .map((o) => (precise ? (o.precise_polygon ?? o.polygon.points) : o.polygon.points)),
           };
         };
-        const preciseCandidates = new Set(
-          navigationPosturePassages(connection, floor(from, true), floor(to, true)).map(
-            (candidate) => JSON.stringify(candidate),
-          ),
-        );
-        const candidates = navigationPosturePassages(connection, floor(from), floor(to)).filter(
-          (candidate) => preciseCandidates.has(JSON.stringify(candidate)),
+        const folded = (1 + from.plane[1]) * (1 + to.plane[1]) < 0;
+        const preciseCandidates = folded
+          ? new Set(
+              navigationPosturePassages(connection, floor(from, true), floor(to, true)).map(
+                (candidate) => JSON.stringify(candidate),
+              ),
+            )
+          : undefined;
+        // Choose ordinary endpoints against both representations together;
+        // independently choosing their first valid candidates can miss a shared one.
+        const candidates = navigationPosturePassages(
+          connection,
+          floor(from),
+          floor(to),
+          folded ? undefined : [floor(from, true), floor(to, true)],
+        ).filter(
+          (candidate) => !preciseCandidates || preciseCandidates.has(JSON.stringify(candidate)),
         );
         const [a, b] = connection.from.edge;
         const dx = b[0] - a[0],
