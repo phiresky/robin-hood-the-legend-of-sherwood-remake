@@ -4,6 +4,50 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Current saved-scene audit and raised receiver fix (2026-10-13)
+
+The ten-map baseline finishes with eight compiled descriptors and two receiving
+alias errors (Wychford and Leicester). Its successful-output subset
+`saved-map-native-subset-xs3tlb3a` explicitly records those exclusions. All eight
+pass native construction. Prepared stair routes pass for Derby (28), Lincoln
+(18), Nottingham (92), Sherwood (2) and York (130); Croisement01–03 have no stair
+routes in these descriptors. Together with fixed Leicester's sixteen routes below,
+that is nine native-loaded maps and 286 prepared stair routes, not ten-map parity.
+
+York map-only export `saved-map-exports-uPxhSz` compiles in 185 seconds in this
+run. Native construction passes with 162 areas, 1,236 sight obstacles, 254 doors,
+72 jump pairs, 269,206 grid blocks and 332 elevation boundaries. All 130 directed
+stair routes pass with a complete sprite and no permission skips. These use
+prepared dispatch; they do not certify player clicks or building traversal.
+All six compiled controls also pass native apply/reset checks.
+`identify-exported-building-doors.mjs` uniquely matches all 95 building entrances
+to current asset-local room/door definitions using their indoor and middle points.
+Outside points may move during receiving-floor binding. The final descriptor
+marks 49 entrances blocked; 54 warnings were emitted during compilation, so warning
+counts alone do not describe final entrance availability. Floor-overlap and jump
+receiver warnings also remain. Ownership output is `building-owners.json`.
+
+The broader pre-fix batch `saved-map-exports-wD2ILy` exposed a Wychford hard error:
+a cottage entrance's receiving segment encountered a raised receiver alias with
+no entry in the authored floor-plane table. Aliases now retain their underlying
+authored plane for coverage/hole checks while keeping the raised receiving plane
+for intersection and height. A focused regression reproduced the hard error,
+then passed both raised-entrance binding and rejection of an entrance over a
+floor hole. All 258 selected compiler, terrain and map-export tests, app
+typechecking and scoped formatting/lint checks pass. No engine changes are
+involved. The same baseline error affected Leicester. Its fixed export
+`saved-map-exports-wItyBG` now compiles and passes native construction: 57 areas,
+460 sight obstacles, 105 doors, 23 jump pairs, 65,170 grid blocks and 238 elevation
+boundaries. All sixteen prepared stair routes and twelve control apply/reset
+checks pass. Eight of its 24 building entrances still carry permanent blocking
+requirements; this is not a complete building-traversal result.
+Full Wychford revalidation in `saved-map-exports-iuBuAh` is still pending;
+the small regression is not whole-map export evidence.
+
+Best-effort retry reasons now appear in export progress as well as final warnings.
+The initial Wychford run spent minutes rebuilding geometry after a failed
+attachment; reporting the reason does not itself remove that export-time cost.
+
 ## Saved-scene map-only audit command
 
 From `level-editor`, run `node refinement/check-saved-map-exports.mjs --map-only`.

@@ -6,6 +6,16 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
+Nine current saved-map descriptors pass native construction, with 286 prepared
+stair routes passing across maps that contain stairs. The current saved-York
+map-only export passes native construction and all 130
+prepared stair routes, but 49 of its 95 building entrances remain blocked in the
+final descriptor. A receiving-plane lookup fix restores Leicester compilation,
+native loading, sixteen stair routes and twelve control apply/reset checks;
+eight of its 24 building entrances remain blocked. Wychford's full-map rerun
+against the same fix is pending. See the
+[current saved-scene audit](map-compilation-evidence.md#current-saved-scene-audit-and-raised-receiver-fix-2026-10-13).
+
 **Current definition inventory (2026-10-13):** `gameplay-coverage-lLsDz7` checks
 1,286 indexed assets and finds zero missing definitions among placed assets in
 the saved scenes. Only two background assets that cannot be inserted as objects

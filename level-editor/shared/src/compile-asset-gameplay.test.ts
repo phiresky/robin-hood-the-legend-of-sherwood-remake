@@ -1313,6 +1313,41 @@ test("physical receiver anchors share ground navigation without cutting a separa
   );
 });
 
+test("entrance segments bind raised receiver aliases without losing floor holes", () => {
+  const { document, assets, hut } = anchoredReceiverCompilerFixture();
+  hut.gameplay!.interiors = interiorAssetCompilerFixture().hut.gameplay!.interiors!;
+  for (const door of hut.gameplay!.interiors[0]!.doors) {
+    const height = door.outside[0] / 2;
+    door.outside[2] = height;
+    door.middle[2] = height;
+    door.inside[2] = height;
+    door.outsideReceiverSegment = [
+      [door.outside[0], door.outside[1], height - 5],
+      [door.outside[0], door.outside[1], height + 5],
+    ];
+  }
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.deepEqual(
+    compiled.buildings![0]!.Building.doors.map((door) => door.point_out),
+    [
+      [320, 370],
+      [380, 340],
+    ],
+  );
+  assets.get("marker")!.gameplay!.surfaces[0]!.holes = [
+    [
+      [10, 60],
+      [30, 60],
+      [30, 80],
+      [10, 80],
+    ],
+  ];
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /receiving segment/);
+  const partial = compileAssetGameplay(document, assets, bounds, { bestEffort: true });
+  assert.equal(partial.buildings![0]!.Building.doors.length, 1);
+  assert.deepEqual(partial.buildings![0]!.Building.doors[0]!.point_out, [380, 340]);
+});
+
 test("physical receiver anchors reject dangling and conflicting ownership", () => {
   const { document, assets, hut } = anchoredReceiverCompilerFixture();
   const receiver = hut.gameplay!.projectionReceivers![0]!;

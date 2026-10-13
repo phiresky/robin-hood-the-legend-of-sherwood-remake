@@ -1476,6 +1476,8 @@ function compileAssetGameplayAttempt(
     });
   const areas: (NavigationAnchorArea & {
     receivingPolygon?: Point[];
+    /** A raised receiver aliases this floor's coverage and holes. */
+    authoredPlane?: HeightPlane;
     physical?: NavigationAnchorArea;
     lift?: string;
     navigationRegion?: string;
@@ -2425,7 +2427,7 @@ function compileAssetGameplayAttempt(
       const projected = project(point);
       // Ignoring collision permits a control beneath scenery, not inside a hole
       // in its receiving floor. Navigation contours can encode both as blockers.
-      const authored = planeSurfaces.get(area.plane);
+      const authored = planeSurfaces.get(area.authoredPlane ?? area.plane);
       if (!authored) throw new Error(`${label}: receiving area has no authored plane`);
       if (
         !authored.some(
@@ -2495,6 +2497,7 @@ function compileAssetGameplayAttempt(
     for (const region of coverage)
       areas.push({
         ...area,
+        authoredPlane: area.authoredPlane ?? area.plane,
         plane,
         polygon: region[0]!,
         blockers: [...area.blockers, ...region.slice(1)],
