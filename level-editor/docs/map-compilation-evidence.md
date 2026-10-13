@@ -4,6 +4,43 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Combined Derby keep authoring candidate (2026-10-13)
+
+`stage-derby-keep-gameplay.mjs` assembles a candidate exclusively from the four
+published keep component descriptors. It pins all five descriptor identities,
+verifies unique ownership of all 71 parts and each collision vertex/flag, translates
+all gameplay into the complete keep's local frames, and rejects unreviewed fields
+or duplicate feature identities. Appearance names receive component prefixes so
+the two distinct controls cannot accidentally share `appearance-1`.
+
+Candidate `derby-keep-gameplay-RIgawJ` retains 18 walkable surfaces, three ordinary
+passages, three stair systems, six interiors, four masks, four lights, two sounds,
+51 movement clearances and two authored controls. Four rotated exports at terrain
+height 40 complete. The frame-translation regression suite passes all 17 tests;
+scoped formatting and lint pass. This is an unpublished authoring candidate, not
+a usable-complete-keep claim. No library or runtime changes were made.
+
+The native complete-sprite stair audit checks forty directed routes: 36 pass;
+four fail at 180° on the three-door stair (`building-156-lift`). Those failures
+report an early handoff to the adjacent flat-floor receiver while the actor still
+belongs to the stair sector. The candidate also retains a `walk-region-27`
+overlap warning and crossing-height click-order warnings; those are not resolved
+by the successful stair samples.
+
+On this flat-terrain fixture, `interior-1/door-0` and `interior-4/door-0` have no
+outside receiving floor at their elevated heights. The latter also prevents the
+interior-reveal control's waypoint from binding, leaving only one compiled
+control. Surrounding authored landing/terrain support must be tested before
+deciding whether these are asset omissions or missing assembly context. Export
+warns explicitly and does not invent receiving geometry. The 90° variant also
+reports a collapsed mask character boundary.
+
+The old combined GLB lacks the main-hall component's covered/revealed material
+metadata. That appearance migration must accompany any publication of the
+assembled gameplay; the authoring manifest explicitly records
+`publicationReady: false`. Next checks must address that model migration, supported
+entrance fixtures, the 180° stair handoff and the remaining mask/receiver warnings.
+
 ## Independent northwest timber house and entrance states (2026-10-13)
 
 `nottingham-northwest-timber-house` now combines its permanent local collision and

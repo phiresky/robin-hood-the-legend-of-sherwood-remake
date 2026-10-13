@@ -15,6 +15,12 @@ All four remaining insertable assets have known state dependencies in their
 candidate owners. These include movement, mask, door, control and appearance
 references, not just sight-state membership. Restoring them requires preserving
 those relationships or authoring explicit independent behavior.
+An unpublished combined Derby keep candidate now reassembles all 71 parts' local
+gameplay from its four components. It preserves floors, stairs, rooms, masks,
+lights and sounds, but four of forty native stair routes fail at 180°. Elevated
+outside entrances also need supported assembly fixtures, and the old combined
+model lacks a component's reveal metadata. It remains outside the published
+definition count; see [the keep candidate](map-compilation-evidence.md#combined-derby-keep-authoring-candidate-2026-10-13).
 The standalone Nottingham watchtower now has a published gameplay draft: two
 copies across four rotations and two elevations retain their collision and upper
 floors, and all 48 sampled native routes pass. Access must come from surrounding
