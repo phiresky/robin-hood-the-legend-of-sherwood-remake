@@ -130,7 +130,9 @@ and is byte-identical to the native-tested candidate: 192 ordinary routes, eight
 stairs, 100 jump clicks and all six drawbridge passages across open/closed/reset
 states pass. Fresh complete-character checks of that installed export also pass
 all eighteen stair routes and eight climb routes. The combined full-map rendered
-round trip is running in `lincoln-rendered-library-N7St4K`; it is not yet verified.
+round trip now passes in `lincoln-rendered-library-N7St4K`: the 170 MB ZIP reopens
+and rebakes all 45 appearances identically, loads natively without base data, and
+contains the exact previously tested gameplay descriptor.
 Sampled bank seams retain gaps below one game unit, and animated
 contact remains unverified; these are draft limitations, not full-parity claims.
 
@@ -148,7 +150,8 @@ export/reopen/rebake, native loading without base data and all four archived sta
 directions. The sixteen placement fixtures pass 32 directed stair clicks and 32
 missing/raised-landing rejections. Fresh full Lincoln passes 182 ordinary routes,
 18 stair directions (including the repaired step), eight climbs and its jump-click
-audit. The full-map check is static/native, not a new full-map rendered archive.
+audit. The combined full-map rendered archive is now verified above; in-game
+animated character contact remains separate from that bake/reopen check.
 Floor texturing and animated contact remain draft warnings. General lift-approach
 clearance still needs broader export-time review; no runtime solver was added.
 

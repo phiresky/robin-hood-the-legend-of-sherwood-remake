@@ -2467,9 +2467,21 @@ export directory. These checks exercise animation-driven movement; they do not
 render actors or certify sprite/mesh contact. The initial exact-name invocation
 matched zero tests and is not counted; both subsequent runs executed one test.
 
-The combined installed-library browser fixture is
-`lincoln-rendered-library-N7St4K`. Export/reopen/rebake is running through its
-45 appearance states; no completed archive or rendered parity result is claimed.
+The combined installed-library browser fixture
+`lincoln-rendered-library-N7St4K` now completes export/reopen/rebake through all
+45 appearance states. Editor data, gameplay, warnings, color and 16-bit depth
+match. Its `lincoln-installed.zip` is 169,700,442 bytes, SHA-256
+`a0359b12ceca1831853a77b4fbbc1270b109fced822b7d4a0341b0b477fb5fe7`.
+The archived descriptor is byte-for-byte equivalent as parsed JSON to
+`saved-map-exports-h7ZuCA/lincoln.level.json`, retaining the combined traversal
+and drawbridge-control evidence without substituting another geometry version.
+
+The exact ZIP loads natively over an empty base filesystem in 18.13 seconds:
+2944×2176 color/depth, minimap, 605 sight obstacles, no masks, 87 door projections,
+71,668 grid blocks and three appearance regions for eleven controls. The editable
+scene is retained and no mission content is added. This verifies archive delivery
+and rendered rebaking, not in-game animated contact or exhaustive GPU control
+combinations.
 
 ### Installed drawbridge and plateau definitions (2026-10-13)
 
