@@ -7,6 +7,7 @@ sys.path[:0]=[str(Path(__file__).parent),str(ROOT/'level-editor/refinement'),str
 from catalog import OUT
 from evidence_io import sha,write_json
 from render_slots import acquire,release
+from sign_shadow_material import qualify_native_shadow_export
 
 def main():
  base=OUT/'state-sign-candidate';source=base/'phase-appearance-v1/model.blend';digest=sha(source);assert digest==json.loads((base/'phase-appearance-v1/evidence.json').read_text())['model_sha256'];dst=base/'animation-export-v2';dst.mkdir(exist_ok=False);bpy.ops.wm.open_mainfile(filepath=str(source));scene=bpy.context.scene;scene.frame_set(1);bpy.ops.object.select_all(action='DESELECT');selected=[o for o in scene.objects if o.type in {'MESH','EMPTY'}]
@@ -21,7 +22,7 @@ def main():
  # the generic shader exporter does not recognize its transparent/emission mix.
  sampler=len(doc.setdefault('samplers',[]));doc['samplers'].append(dict(magFilter=9728,minFilter=9728,wrapS=33071,wrapT=33071));doc.setdefault('extensionsUsed',[]).append('KHR_materials_unlit')
  for _,node in shadows:
-  phase=node['extras']['native_frame'];image_path=base/f'painted-shadow-v2/shadow-{phase:02}.png';png=image_path.read_bytes();binary.extend(b'\0'*(-len(binary)%4));view=len(doc['bufferViews']);doc['bufferViews'].append(dict(buffer=0,byteOffset=len(binary),byteLength=len(png)));binary.extend(png);image_index=len(doc['images']);doc['images'].append(dict(bufferView=view,mimeType='image/png',name=f'Native shadow phase {phase:02}'));texture=len(doc['textures']);doc['textures'].append(dict(sampler=sampler,source=image_index));primitives=doc['meshes'][node['mesh']]['primitives'];assert len(primitives)==1;material=doc['materials'][primitives[0]['material']];material.update(alphaMode='MASK',alphaCutoff=.5,doubleSided=True,pbrMetallicRoughness=dict(baseColorFactor=[1,1,1,1],baseColorTexture=dict(index=texture),metallicFactor=0,roughnessFactor=1),extensions={'KHR_materials_unlit':{}})
+  phase=node['extras']['native_frame'];image_path=base/f'painted-shadow-v2/shadow-{phase:02}.png';png=image_path.read_bytes();binary.extend(b'\0'*(-len(binary)%4));view=len(doc['bufferViews']);doc['bufferViews'].append(dict(buffer=0,byteOffset=len(binary),byteLength=len(png)));binary.extend(png);image_index=len(doc['images']);doc['images'].append(dict(bufferView=view,mimeType='image/png',name=f'Native shadow phase {phase:02}'));texture=len(doc['textures']);doc['textures'].append(dict(sampler=sampler,source=image_index));primitives=doc['meshes'][node['mesh']]['primitives'];assert len(primitives)==1;material=doc['materials'][primitives[0]['material']];material.update(alphaMode='MASK',alphaCutoff=.5,doubleSided=True,pbrMetallicRoughness=dict(baseColorFactor=[1,1,1,1],baseColorTexture=dict(index=texture),metallicFactor=0,roughnessFactor=1),extensions={'KHR_materials_unlit':{}});qualify_native_shadow_export(node,material)
  times=acc(np.arange(33)*.08,'SCALAR');animation=dict(name='Panneau native 64 ticks',samplers=[],channels=[])
  def channel(node,path,values,kind):
   index=len(animation['samplers']);animation['samplers'].append(dict(input=times,output=acc(values,kind),interpolation='STEP'));animation['channels'].append(dict(sampler=index,target=dict(node=node,path=path)))
