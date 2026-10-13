@@ -93,81 +93,14 @@
   32 tested complete-sprite building entry/exit round trips pass; rendered review
   and broader terrain integration remain incomplete, so the assets stay unpublished.
 
-- **Physical walking on receiving floors (integration in progress).** Precise receiving
-  floors support world-coordinate routes and bounded source recovery, retaining
-  holes and current collision. Walking clearance uses its normal inset; source
-  authorization checks the full standing box and recovery adds a half-unit margin.
-  Recovery retains the receiving plane and rejects newly unsupported swept space.
-  Generated receiving polygons carry independent plane anchors spanning their
-  projected bounds. Clipping can no longer redefine a floor through nearly
-  collinear leading vertices; authored anchors retain their explicit definition.
-  The loader binds complete ordinary receivers to their motion regions, including
-  coplanar pieces, holes and live obstacle identities. This works without a lift
-  and keeps floors available when their artwork is hidden. Disconnected patches
-  and different receiving planes remain separate.
-  Point moves and gate approaches on one bound floor now execute these queries
-  with live barriers and compatible-height neighbours, preserving physical
-  position, receiver identity and material. Failed expanded source recovery can
-  retain a position supported by the normal movement footprint. Connected stairs
-  can support footprints at their landing; climb walls cannot. Ordinary floors
-  also share foot support across nonzero height-matched edges in the same motion
-  region. Gaps, incompatible heights, holes and live neighbour obstacles remain
-  blocked. Receiving contours retain authored precision without requiring a lift.
-  The character's center remains owned by its current floor. Seek/line orders,
-  cross-floor routing and ordinary soft repulsion still need integration.
-  Same-floor dispatch now checks the destination's actual receiver before
-  unprojecting its position. A raised neighbour cannot accidentally select the
-  flat floor underneath; moves onto another receiver retain their existing
-  transition path instead of walking at the wrong height.
-  Explicit destinations on a different layer or sector also retain normal
-  routing rather than being reinterpreted on the actor's current floor.
-  Building exits onto compiled physical floors select their receiver at the
-  actual handoff position. A later doorstep boundary crossing then installs
-  the raised floor instead of switching a prematurely selected receiver back
-  to the ground underneath. Retaining exact floor seams and adjoining foot support
-  resolves the remaining rotated doorstep source-authorization failures.
-  Physical floor and stair-landing bindings fit receiver anchors in double
-  precision, avoiding translation-sensitive edge gaps caused by rounding plane
-  coefficients before reconstructing collision contours. Compatibility movement
-  retains its existing plane evaluation.
-  Raised receiver landings also retain matched precise navigation-hole contours.
-  A climb midpoint may meet a hole boundary, as on an ordinary floor; outside
-  anchors and hole interiors still require unblocked support.
-  Obstacle island triangulation tolerates collinear bridge triangles while
-  checking the complete collision coverage; degenerate authored boundaries
-  still fail explicitly instead of becoming empty collision.
-  When rounding joins separate solids, each unambiguous fractional landing edge
-  can still be recovered. Other islands and uncertain corners retain collision,
-  and the compatibility contour must remain unchanged on the integer grid.
-
-- **Physical ladder and wall navigation.** Compatible planar climbs export world-space
-  floors and live collision alongside stairs. Ladder entry/exit climbing orders
-  retain exact endpoints after placement, while transition animations keep their
-  posture and membership effects. Landing surfaces retain precision until final
-  grid rounding. Physical routes can resume when a barrier reopens before their
-  blocked-motion timeout; projected routes retain their existing failed-request
-  behavior. Steep-floor validation accounts for independently rounded runtime
-  coordinates without accepting real height gaps. Asset contact corrections and
-  complete rendered climbing integration remain unfinished.
-  Climbing clearance preserves the actor's dimensions along the supporting plane,
-  avoiding the oversized uphill footprint caused by applying horizontal walking
-  clearance to a steep surface. Routes, closing obstacles and neighbour bounds
-  use the same surface footprint. Compound climbs conservatively include every
-  patch's footprint; ordinary stairs retain horizontal clearance. This does not
-  yet support truly vertical or overhanging floors, or certify every asset contact.
-  Clipped landing obstacles retain their computed precision through routing and
-  footprint collision, avoiding self-intersecting contours after float rounding.
-  Raised receiving volumes can supply a ladder landing when their point anchor
-  binds to one walking region. Boundary and hole checks still require actual
-  navigation support; receiver height alone cannot bridge a gap.
-  Physical lift entrances preserve their fractional world coordinates through
-  sector resolution and receiver binding. Integer compatibility coordinates no
-  longer discard a supported entrance merely because rounding crosses a roof
-  edge. This does not extend receiver geometry or relax collision clearance.
-  Such landings can retain an optional precise walking-area boundary, validated
-  against the existing integer-grid polygon. Runtime binding intersects it with
-  the actual receiver while retaining obstacle states. Replay schema 61 accounts
-  for the additional loaded motion data.
+- **Export-prepared floor and climb navigation.** The editor constructs static
+  motion contours, route graphs and passage approaches from placed asset geometry.
+  The engine prepares collision lines and navigation grids when loading the level
+  and uses its existing movement and obstacle-control paths during play. The
+  experimental runtime physical routing solver has been removed. Previous
+  world-space solver experiments do not certify current export behavior; current
+  verification and outstanding gaps are recorded in the
+  [map-data checklist](../level-editor/docs/map-data-checklist.md).
 
 - **Mission state previews.** Crossroads 2's 05 · Ambush mission offers log and
   rock trap artwork playback, seeking, and independently reviewed 3D endpoint
@@ -182,70 +115,6 @@
   controls the whole preview. These controlled previews do not run
   mission scripts or synthesize physical motion between endpoints. See
   [the editor controls and scope](../level-editor/docs/state-previews.md).
-
-- **Physical stair navigation infrastructure (integration in progress).** Lift
-  descriptors can retain placed ground-coordinate floors, collision pieces and
-  world-coordinate door anchors. Collision pieces reference the owning motion
-  area's obstacle identities, so physical route queries read normal live control
-  state, including restored state. The loader validates ownership and forward
-  projection. Explicit physical distance orders now execute through the actor
-  loop, including live barriers and hard neighbour collision. Door orders retain
-  physical endpoints, and entry/exit callbacks transfer floor ownership without
-  inverting the stair projection. Normal editor exports now emit this metadata
-  for compatible planar stairs; unsupported assemblies warn and retain projected
-  navigation. Edge-on surface assembly remains unfinished.
-  Optional piecewise floors retain distinct connected flight planes and spend
-  each movement step's distance across their seams. Loading rejects gaps,
-  inconsistent overlaps and missing floor coverage. Native actor and door
-  movement follow the current flight, including live barriers and landing
-  handoffs; ambiguous screen inverses reject. Replay schema 64 retains the new
-  floor metadata. Editor exports now emit each joined stair flight's plane,
-  split projected boundaries at slope changes, and assemble collision and
-  control bindings per flight. Cropping retains each surviving floor's height.
-  Ladders and climbable walls also accept connected piecewise floors. Their
-  compiler checks cover rotated and copied assemblies; native climbing tests
-  cross both planes in both directions and retain live barrier apply/reset.
-  Invalid seam heights and missing support still reject for all three lift types.
-  A shared compiler-generated fixture
-  passes native bidirectional actor traversal and live barrier apply/reset;
-  published multi-plane asset verification remains open.
-  Local point Move requests resolve supported goals on invertible floors to
-  physical orders. Ambiguous edge-on point requests reject; seek/line requests
-  and full movement effects remain unfinished.
-  Movement-source authorization preserves supported world positions on physical
-  stairs and rejects unsupported sources without projected relocation; physical
-  source recovery remains unfinished.
-  Normal gate routes retain physical door identities and traverse between
-  landings, including closure/reopening of an in-flight barrier. Loading binds
-  landing support from the actual motion/receiver
-  geometry and its own live collision state. Physical movement accounts for
-  the actor footprint across adjoining floors while constraining its center to
-  the stair; complete passes at edge-on door endpoints have native coverage.
-  A shared world-space stair compilation primitive preserves joined floors,
-  holes and endpoint identities, but the main compiler still needs to integrate
-  it through surface/collision assembly before exporting the new metadata.
-  Its motion-area emitter allocates holes and live collision identities together;
-  native edge-on traversal tests consume compiler-generated area/navigation data.
-  Main compilation retains world planes through static and changing collision
-  slicing; physical surface assembly and final emission remain in progress.
-  Changing barriers can also compile in world coordinates, retaining fractional
-  geometry, holes and shared control states before physical area emission.
-  Physical region assembly combines these with solid height slices and
-  owner-scoped clearances; it shares volume-height slicing with ordinary export.
-  Export-frame clipping preserves world-space floors and holes even when their
-  screen projection collapses, rebuilding collision identities after cropping.
-  Asset surface placement now retains world-space floor and hole geometry before
-  projection, including separate physical/navigation heights for clearances.
-  Main compiler anchor queries can distinguish world-space floors, heights and
-  holes independently of coincident or rounded screen positions.
-  Physical stair steps now share ordinary movement's water-splash emission,
-  using committed world positions even when the screen position is stationary.
-  Their collision queries also include actors on bound adjoining landings,
-  checking receiver height and ownership and retaining overlapping collision radii.
-  Closing controls also test full actor footprints across bound stair/landing
-  boundaries in both directions, using the existing crushing damage path.
-  Physical transition animations retain world-space goals through arrival waits
-  and unfinished-distance continuation orders using the normal handoff lifecycle.
 
 - **Asset-authored movement headroom.** A permanent gameplay volume can set
   `movementHeadroom` in game-height units. Export excludes walking space that

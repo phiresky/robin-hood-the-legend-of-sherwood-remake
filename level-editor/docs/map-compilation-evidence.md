@@ -6,6 +6,26 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Prepared ordinary floor clearance (2026-10-14)
 
+`receiver-floor-placements-w5WS0s` recompiles both candidate assets at rotations
+0, 37, 90 and 180 degrees, heights 0 and 40, with two copies per scene. All 32
+native complete-sprite doorway entry/exit round trips pass, along with the
+compiler's 64 missing/raised-terrain negative socket checks. The verifier now
+matches the unchanged interior point and tests the actual prepared exterior
+approach, including its bounded displacement from the authored endpoint.
+
+The new `exported_building_clicks_enter_from_terrain_and_return` native diagnostic
+starts on surrounding terrain, resolves a visible entrance click through normal
+sector selection, and issues normal player movement both into the room and back
+to its starting point. It does not inject a gate or start at the doorway. Its
+terrain/interior control fixture passes in `building-terrain-click-control-bivs7tey`.
+In the placement matrix, 16 of 32 complete the trip. Stone houses fail at 37
+degrees; timber houses fail at 0, 90 and 180 degrees, consistently across copies
+and heights. The 90-degree timber actor reaches a doorstep sector before stalling;
+the other failures remain on terrain. These are unresolved approach/connection
+failures, not successful gameplay certification. The assets remain unpublished.
+The diagnostic selects an actual clickable polygon point: the animation midpoint
+is not necessarily inside the clickable region.
+
 The follow-up approach-preparation correction also uses precise ordinary motion
 contours when locating building and lift endpoints. In
 `doorstep-native-buildings-b2HQOH`, both isolated 90-degree house candidates pass
@@ -36,7 +56,8 @@ directions for the isolated 90-degree stone-tower placement. The preceding combi
 forward direction, then rejects the timber reverse destination. That timber
 receiver has no full 6-by-3 center region in physical coordinates either; export
 does not enlarge its physical floor to make the destination test pass. Its
-building access and the complete placement matrix remain unverified.
+standalone destination clearance remains unresolved; doorway and terrain-access
+checks above distinguish the working animation from the remaining approach gaps.
 
 All 303 selected compiler tests and 4,386 non-ignored engine library tests pass
 (72 ignored engine tests remain outside that suite). All 72 non-ignored native

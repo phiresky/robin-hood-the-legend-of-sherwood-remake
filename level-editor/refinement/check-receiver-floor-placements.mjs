@@ -154,14 +154,22 @@ for (const height of [0, 40])
       ];
       const door = gameplay.interiors[0].doors[0];
       const outside = transform(door.node, door.outside);
-      const pointOut = [Math.round(outside[0]), Math.round(outside[1] - outside[2])];
+      const authoredOutside = [Math.round(outside[0]), Math.round(outside[1] - outside[2])];
+      const inside = transform(door.node, door.inside);
+      const pointIn = [Math.round(inside[0]), Math.round(inside[1] - inside[2])];
       const matches = compiled.descriptor.asset_geometry.buildings
         .flatMap((building) => building.Building?.doors ?? [])
-        .filter((door) => door.point_out.every((value, index) => value === pointOut[index]));
+        .filter((door) => door.point_in.every((value, index) => value === pointIn[index]));
       assert.equal(matches.length, 1, `${group.id}: ambiguous compiled entrance`);
+      const pointOut = matches[0].point_out;
+      assert.ok(
+        Math.hypot(pointOut[0] - authoredOutside[0], pointOut[1] - authoredOutside[1]) <= 64,
+        `${group.id}: prepared approach moved beyond its local search radius`,
+      );
       return {
         id: `${group.id}/${door.id}`,
         source_world: source,
+        source_layer: 0,
         point_out: pointOut,
         layer: matches[0].layer_out,
         sector: matches[0].sector_out,

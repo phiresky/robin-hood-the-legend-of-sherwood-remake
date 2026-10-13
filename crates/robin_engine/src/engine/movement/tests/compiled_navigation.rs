@@ -36,6 +36,10 @@ mod compiled_spline_floors {
     include!("compiled_spline_floors.rs");
 }
 
+mod compiled_building_clicks {
+    include!("compiled_building_clicks.rs");
+}
+
 #[test]
 fn exported_floor_flags_require_crouching_only_in_the_authored_room() {
     let bytes = include_bytes!(concat!(
