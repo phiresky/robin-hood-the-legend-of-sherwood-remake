@@ -6,10 +6,12 @@ import { compileMap } from "../app/src/map-compile.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
-const [directory, stage] = process.argv.slice(2);
+const [directory, stage, terrainOffsetArgument = "0"] = process.argv.slice(2);
+const terrainOffset = Number(terrainOffsetArgument);
+assert.ok(Number.isFinite(terrainOffset), "Terrain offset must be finite");
 assert.ok(
   directory,
-  "Supply an asset directory relative to library, and optionally a gameplay stage",
+  "Supply an asset directory relative to library, optionally a gameplay stage and terrain height offset",
 );
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const bytes = await fs.readFile(`library/${directory}/asset.json`);
@@ -48,6 +50,7 @@ const save = (complete) =>
       descriptorSha256,
       modelSha256,
       stage,
+      terrainOffset,
       complete,
       results,
     }),
@@ -64,7 +67,7 @@ for (const height of [0, 40])
       groups: [],
       sceneAssets: [],
       assetSources: [],
-      terrain: createTerrainGrid([0, 0, 1600, 1200], 400, height),
+      terrain: createTerrainGrid([0, 0, 1600, 1200], 400, height + terrainOffset),
     };
     for (const x of [450.25, 1150.25]) {
       const inserted = insertProjectionAsset(document, descriptor, reference, [x, 600.75, height]);

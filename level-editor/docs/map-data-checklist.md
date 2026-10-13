@@ -10,16 +10,18 @@ All ten current saved-map descriptors compile and pass native construction, with
 290 prepared stair routes and 71 control apply/reset checks passing. The current
 saved-York map-only export passes native construction and all 130
 prepared stair routes, but 49 of its 95 building entrances remain blocked in the
-final descriptor. A receiving-plane lookup fix restores Leicester compilation,
-native loading, sixteen stair routes and twelve control apply/reset checks;
-eight of its 24 building entrances remain blocked in that baseline. Wychford passes native loading
+final descriptor. Leicester now passes native construction and all 24 building
+entry/exit round trips after published asset-local doorway corrections. Its
+sixteen stair routes and twelve control apply/reset checks passed previously;
+the doorway corrections leave their geometry unchanged. Wychford passes native loading
 and four emitted stair routes; one unsupported tower lift is omitted with a warning.
 An export-only doorway correction lets virtual-room entrances name their local
 static structure without carving walking collision. Unrelated placed barriers and
-changing obstacles remain checked. The published cottage correction passes 32 native room
-round trips; recompiling Leicester reduces blocked entrances from eight to six.
-Its rendered ZIP reopens identically, loads without base data, and passes all four
-archived entrance round trips. The earlier aperture-edit candidate was discarded.
+changing obstacles remain checked. Six corrected assets pass 160 native room
+round trips across copied, rotated and raised placements. Their rendered ZIPs
+reopen identically, load without base data, and pass twelve archived entrance
+round trips. The earlier aperture-edit candidate was discarded.
+See the [remaining Leicester entrance corrections](map-compilation-evidence.md#remaining-leicester-entrance-corrections-2026-10-13).
 See the [structural doorway fix](map-compilation-evidence.md#explicit-doorway-structure-2026-10-13).
 See the [entrance regression](map-compilation-evidence.md#cottage-entrance-veto-regression-2026-10-13) and
 [current saved-scene audit](map-compilation-evidence.md#current-saved-scene-audit-and-raised-receiver-fix-2026-10-13).

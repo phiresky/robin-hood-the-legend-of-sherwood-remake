@@ -4,6 +4,46 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Remaining Leicester entrance corrections (2026-10-13)
+
+`stage-leicester-entrance-structure.mjs` supplies explicit local references for
+the north village cottage, northeast gabled house, northeast longhouse, south
+hall and watermill. The three houses cross their own named movement blockers;
+the hall crosses `building-105`. The watermill's second and third entrances cross
+`building-077` and `building-078`, rather than the room's anchor node. A rejected
+candidate naming only the anchor leaves 32/48 watermill routes denied; the
+corrected references pass all 48. No geometry is carved or removed.
+
+Candidate `leicester-entrance-structure-PPLjWl` passes 128 native complete-sprite
+round trips across two copies, four rotations and two elevations: sixteen each
+for the three houses, 32 for the hall and 48 for the mill. Fixture directories are
+`asset-building-doors-6DkgDV`, `asset-building-doors-OKrEmA`,
+`asset-building-doors-tFrK59`, `asset-building-doors-vHPcnd` and
+`asset-building-doors-9awBI9`. The hall needs external terrain 150.001 units above
+its foundation; the audit now accepts an explicit terrain offset. Unsupported
+empty-ground placement fails instead of gaining an invented floor.
+
+Full-map export `saved-map-exports-Pbhl8y` passes native construction and has zero
+blocked building entrances. All 24 actual entry/exit round trips pass in
+`leicester-building-routes-lu534flg`, with no expected-denial exceptions. Comparison
+against the preceding export proves every geometry field unchanged except
+building passage requirements and warning text. This establishes initial-state
+room traversal, not full-map gameplay or rendering parity.
+
+The independently assembled five-asset scene `leicester-entrance-scene-PjQLwb`
+passes all eight entrances. Its hall foundation sits below the authored ground
+so the doors meet that ground. `draft-scene-render-kNxzIf/leicester-entrances.zip`
+reopens with identical gameplay/color/depth and loads without base data. All eight
+archived native room round trips pass (`leicester-entrances-archived-dcmlhdyj`).
+The 2,400×1,600 render was inspected; detailed actor contact remains unverified.
+ZIP size is 11,562,330 bytes; SHA-256 is
+`cdec8f59914b03859b5d7fa45eaf31725b65f036603ac09f0ee97509ef9a210e`.
+
+The five definitions are published with guarded backups in
+`leicester-entrances-installed-20261013`, updating Leicester and Wychford pins.
+Models and verified lossy/preview derivatives are unchanged. Existing draft
+limitations remain in the asset definitions. No engine changes were needed.
+
 ## Explicit doorway structure (2026-10-13)
 
 Virtual-room doors can declare `passageStructure: { volumes, blockers }` using

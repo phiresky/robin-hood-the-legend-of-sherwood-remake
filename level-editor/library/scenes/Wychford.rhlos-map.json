@@ -55,21 +55,21 @@
       "model": "3d-assets/leicester/leicester-south-hall/model.glb",
       "model_sha256": "911e8b958895edb864820bfae9843c0cc85b08e4f11fb806220c7879afd00879",
       "descriptor": "3d-assets/leicester/leicester-south-hall/asset.json",
-      "descriptor_sha256": "45a2c8618e2cbbc22d1f0ecdff6f258b7bbd64bc648220156fd43861d0e02194",
+      "descriptor_sha256": "37c72df49b367e7f79ac556e7ec63f4cef5417814325c5308e4a8a6f4026e6cd",
       "id": "leicester-south-hall"
     },
     {
       "model": "3d-assets/leicester/leicester-north-village-cottage/model.glb",
       "model_sha256": "44c31f284d5c8c923669b2a84c77c6e70453726d0905987fc62407293ad7ca88",
       "descriptor": "3d-assets/leicester/leicester-north-village-cottage/asset.json",
-      "descriptor_sha256": "de2d38272c333baf63c4a6ba91ee49f74690262fcbbf618856ab9e8783ae0c61",
+      "descriptor_sha256": "fecd2b222d4a5682d82c2f5ee822772599dab5b7a1a6fcd529cc3c260be0ea20",
       "id": "leicester-north-village-cottage"
     },
     {
       "model": "3d-assets/leicester/leicester-northeast-gabled-house/model.glb",
       "model_sha256": "0b148ca23e32eac4a33137fcac277d050fe2c150527cc6b03a408228990a98f2",
       "descriptor": "3d-assets/leicester/leicester-northeast-gabled-house/asset.json",
-      "descriptor_sha256": "75e823050da859cc057d53cf1936ee4d9f4159f634c1c99c6bd0cbc524b2ed21",
+      "descriptor_sha256": "7b1fd0764eff332877c2991823f2656c0c27654a64b9ac725ac019164e9ce91e",
       "id": "leicester-northeast-gabled-house"
     },
     {
@@ -97,7 +97,7 @@
       "model": "3d-assets/leicester/leicester-northeast-longhouse/model.glb",
       "model_sha256": "23b1f47bf4922afdb9d8d9a2f3274168033a183a8c5872f4d9402ee2b4dddd17",
       "descriptor": "3d-assets/leicester/leicester-northeast-longhouse/asset.json",
-      "descriptor_sha256": "08505dd9c1ecfde8815bc25ed51a232850a64366b9ce801aab41e59223b93376",
+      "descriptor_sha256": "ba4b9e7c93e61e6b2b59ab8bd7218db60f4482d07a691734223d590a171126ec",
       "id": "leicester-northeast-longhouse"
     },
     {
@@ -125,7 +125,7 @@
       "model": "3d-assets/leicester/leicester-watermill/model.glb",
       "model_sha256": "ba0b9fc1d5047e0bffc876e357408270651414e3d31c8190bee86466a133dc11",
       "descriptor": "3d-assets/leicester/leicester-watermill/asset.json",
-      "descriptor_sha256": "1698ac81ef7d101986e6809e0902538a4b02d15e19f4f57bcf98c9f60811138c",
+      "descriptor_sha256": "bbaebbcec66e51f06a4400f819696b66837510d7ece6bfea9696ec1cf87ae014",
       "id": "leicester-watermill"
     },
     {
