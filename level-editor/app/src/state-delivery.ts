@@ -224,6 +224,8 @@ export class StateDelivery {
     if (this.sourceClocks)
       throw new Error("Source events own state clocks; reload to use preview playback");
     const family = this.family(id);
+    if (family.physical.motion?.kind === "native-element-stage-poses")
+      throw new Error("Staged motion requires independent source clocks");
     if (!Number.isSafeInteger(tick) || tick < 0) throw new Error("Invalid state delivery tick");
     this.starts.set(id, this.native.tick - tick);
     for (const element of [...family.element_ids, ...(family.hidden_initial_element_ids ?? [])])
@@ -259,6 +261,12 @@ export class StateDelivery {
     if (!this.ready) throw new Error("State delivery is not ready");
     if (playing && this.mode === "physical-endpoint")
       throw new Error("Physical endpoints have no transition playback");
+    if (
+      playing &&
+      this.selectedFamily &&
+      this.family(this.selectedFamily).physical.motion?.kind === "native-element-stage-poses"
+    )
+      throw new Error("Staged motion requires independent source clocks");
     this.native.setPlaying(playing);
   }
   private sampleMotion() {

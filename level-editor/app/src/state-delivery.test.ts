@@ -1004,3 +1004,43 @@ test("staged rigs reject missing owners, drifting node identity and nonterminal 
     p.dispose();
   }
 });
+
+test("staged preview rejects shared-clock activation and seek before any presentation mutation", async () => {
+  const f = await stagedAssemblyFixture();
+  const p = new StateDelivery(() => ({ load: async () => f.template, dispose() {} }));
+  await p.set(f.contract, f.source, f.library, f.read);
+  p.selectMode("physical-motion");
+  const before = p.native.loopDrawSnapshot();
+  for (const action of [
+    () => p.activate("trap"),
+    () => p.seekFamily("trap", 30),
+    () => p.setPlaying(true),
+  ]) {
+    assert.throws(action, /independent source clocks/);
+    assert.equal(p.familyTick("trap"), undefined);
+    assert.deepEqual(p.native.loopDrawSnapshot(), before);
+    assert.equal(p.physical.children[0]!.visible, true);
+    assert.equal(p.physical.children[1]!.visible, false);
+    assert.equal(p.advance(1), false);
+  }
+  const { physicalPatchPose } = await import("../../shared/src/state-delivery.ts");
+  assert.throws(() => physicalPatchPose(f.contract, "trap", 30), /independent source clocks/);
+  // A rejected preview action must not prevent the first authentic independent sample.
+  p.sampleSourceState({
+    mission: f.contract.native.mission,
+    mission_data_sha256: f.contract.native.mission_data_sha256,
+    level_data_sha256: f.contract.native.level_data_sha256,
+    sequence: 0,
+    simulation_tick: 600,
+    samples: f.contract.native.elements.map((e, index) => ({
+      kind: "element",
+      id: e.id,
+      source: e.source,
+      active: true,
+      tick: [30, 30, 0][index]!,
+    })),
+  });
+  assert.equal(p.physical.children[1]!.visible, true);
+  assert.equal(p.physical.children[1]!.getObjectByName("whole-assembly")!.matrix.elements[12], 102);
+  p.dispose();
+});

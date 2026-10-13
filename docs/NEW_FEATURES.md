@@ -11,7 +11,9 @@
   Multi-owner assembly stages retain one physical rig, select reviewed poses from
   each owner’s native frame, hide explicit transparent gaps, and reject overlapping
   visible stages before consuming an event batch. No single elapsed family clock
-  replaces the observed owner clocks.
+  replaces the observed owner clocks. Staged activation, seeking and playback
+  require independent source samples; the shared-tick preview controls reject
+  these families before changing presentation state.
 
 - **Compiled floor passages.** Export partitions joined floors that overlap at
   different heights and prepares ordinary passages at matching-height seams.

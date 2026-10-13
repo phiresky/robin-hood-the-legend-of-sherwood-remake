@@ -399,15 +399,7 @@ export function physicalPatchPose(
   if (tick === undefined)
     return { endpoint: "initial" as const, translation: [0, 0, 0] as [number, number, number] };
   if (motion.kind === "native-element-stage-poses")
-    return physicalElementStagePose(
-      contract,
-      id,
-      motion.stages.map((stage) => ({
-        element_id: stage.element_id,
-        active: true,
-        tick,
-      })),
-    );
+    throw new Error("Staged motion requires independent source clocks");
   if (tick >= family.body_terminal_tick)
     return { endpoint: "applied" as const, translation: [0, 0, 0] as [number, number, number] };
   const frames =
