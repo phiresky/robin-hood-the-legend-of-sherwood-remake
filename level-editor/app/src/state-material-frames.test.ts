@@ -102,3 +102,71 @@ test("phase binding rejects material identity, texture, slot, alpha and UV misma
   assert.throws(() => new StateMaterialFrames(f.source, f.player.content, f.frames), /UV/);
   f.player.dispose();
 });
+
+test("inactive material phases receive existing ownership shaders and display preferences", async () => {
+  const { TextureDisplay, hasQualifiedSourceDisplayShader } = await import("./texture-display.ts");
+  const f = fixture();
+  f.materials.forEach((material) => (material.userData.source_ownership_fill = "synthesized"));
+  const binding = new StateMaterialFrames(f.source, f.player.content, f.frames);
+  const display = new TextureDisplay();
+  display.smooth = false;
+  display.synthesized.value = false;
+  display.apply(f.player.object);
+  const mesh = f.player.content.getObjectByName("net") as THREE.Mesh<
+    THREE.BufferGeometry,
+    THREE.MeshBasicMaterial
+  >;
+  binding.sample(3);
+  assert.equal(mesh.material.map!.magFilter, THREE.NearestFilter);
+  assert.equal(hasQualifiedSourceDisplayShader(mesh.material), true);
+  const shader = {
+    uniforms: {},
+    fragmentShader: "#include <map_fragment>",
+  } as unknown as THREE.WebGLProgramParametersWithUniforms;
+  mesh.material.onBeforeCompile(shader, {} as THREE.WebGLRenderer);
+  assert.equal(shader.uniforms.showSynthesized, display.synthesized);
+  assert.match(shader.fragmentShader, /sampledDiffuseColor.a = 1.0/);
+  display.synthesized.value = true;
+  display.smooth = true;
+  display.apply(f.player.object);
+  binding.sample(0);
+  assert.equal(mesh.material.map!.magFilter, THREE.LinearFilter);
+  assert.equal(hasQualifiedSourceDisplayShader(mesh.material), true);
+  binding.dispose();
+  f.player.dispose();
+});
+
+test("display-created binary ownership texture copies are released with their phase owner", async () => {
+  const { TextureDisplay } = await import("./texture-display.ts");
+  const f = fixture();
+  f.materials.forEach((material) => {
+    material.userData.export_complementary_binary_ownership = true;
+    material.alphaTest = 0.5;
+    material.transparent = false;
+  });
+  const binding = new StateMaterialFrames(f.source, f.player.content, f.frames);
+  new TextureDisplay().apply(f.player.object);
+  const mesh = f.player.content.getObjectByName("net") as THREE.Mesh<
+    THREE.BufferGeometry,
+    THREE.MeshBasicMaterial
+  >;
+  let disposed = 0;
+  for (const tick of [0, 3]) {
+    binding.sample(tick);
+    assert.ok(!f.textures.includes(mesh.material.map!));
+    mesh.material.map!.addEventListener("dispose", () => disposed++);
+  }
+  binding.dispose();
+  assert.equal(disposed, 2);
+  f.player.dispose();
+});
+
+test("inactive foliage phases cannot bypass existing ownership qualification", async () => {
+  const { TextureDisplay } = await import("./texture-display.ts");
+  const f = fixture();
+  f.materials[1]!.userData.foliage_physical_opacity = true;
+  const binding = new StateMaterialFrames(f.source, f.player.content, f.frames);
+  assert.throws(() => new TextureDisplay().apply(f.player.object), /missing.*COLOR_0/);
+  binding.dispose();
+  f.player.dispose();
+});

@@ -1,5 +1,23 @@
 import * as THREE from "three";
 
+const variants = new WeakMap<THREE.Mesh, readonly THREE.Material[]>();
+/** Include inactive appearance frames in the same display policy as their receiving mesh. */
+export function retainDisplayMaterialVariants(
+  mesh: THREE.Mesh,
+  materials: readonly THREE.Material[],
+) {
+  if (materials.length) variants.set(mesh, materials);
+  else variants.delete(mesh);
+}
+function displayMaterials(mesh: THREE.Mesh): THREE.Material[] {
+  return [
+    ...new Set([
+      ...(Array.isArray(mesh.material) ? mesh.material : [mesh.material]),
+      ...(variants.get(mesh) ?? []),
+    ]),
+  ];
+}
+
 const sourceDisplayHooks = new WeakMap<
   THREE.Material,
   {
@@ -102,8 +120,7 @@ export class TextureDisplay {
     const unrelated = new Set<THREE.Material>();
     root.traverse((object) => {
       if (!(object instanceof THREE.Mesh) || roomFloor(object)) return;
-      for (const material of Array.isArray(object.material) ? object.material : [object.material])
-        unrelated.add(material);
+      for (const material of displayMaterials(object)) unrelated.add(material);
     });
     const textures = new Set<THREE.Texture>();
     root.traverse((object) => {
@@ -120,7 +137,7 @@ export class TextureDisplay {
           ? object.material.map(offset)
           : offset(object.material);
       }
-      for (const material of Array.isArray(object.material) ? object.material : [object.material]) {
+      for (const material of displayMaterials(object)) {
         if (
           material.userData.foliage_physical_opacity === true &&
           !object.geometry.getAttribute("color")

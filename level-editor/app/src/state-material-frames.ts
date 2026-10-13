@@ -1,3 +1,4 @@
+import { retainDisplayMaterialVariants } from "./texture-display.ts";
 import * as THREE from "three";
 import type { PhysicalMaterialFrame } from "../../shared/src/state-delivery.ts";
 export type LoadedPhaseMaterial = {
@@ -22,6 +23,7 @@ export class StateMaterialFrames {
   }[] = [];
   private originals = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
   private owned = new Set<THREE.Material>();
+  private sharedTextures = new Set<THREE.Texture>();
   private disposed = false;
   constructor(
     source: THREE.Object3D,
@@ -64,9 +66,17 @@ export class StateMaterialFrames {
           if ("flatShading" in material)
             material.flatShading = !mesh.geometry.getAttribute("normal");
           this.owned.add(material);
+          for (const value of Object.values(material))
+            if (value instanceof THREE.Texture) this.sharedTextures.add(value);
           return { mesh, slot: binding.slot, material };
         }),
       }));
+      for (const mesh of this.originals.keys()) {
+        const materials = this.frames.flatMap((frame) =>
+          frame.bindings.filter((b) => b.mesh === mesh).map((b) => b.material),
+        );
+        retainDisplayMaterialVariants(mesh, materials);
+      }
       this.sample(0);
     } catch (error) {
       this.dispose();
@@ -88,8 +98,18 @@ export class StateMaterialFrames {
   }
   dispose() {
     if (this.disposed) return;
-    for (const [mesh, material] of this.originals) mesh.material = material;
-    for (const material of this.owned) material.dispose();
+    for (const [mesh, material] of this.originals) {
+      retainDisplayMaterialVariants(mesh, []);
+      mesh.material = material;
+    }
+    const displayTextures = new Set<THREE.Texture>();
+    for (const material of this.owned) {
+      for (const value of Object.values(material))
+        if (value instanceof THREE.Texture && !this.sharedTextures.has(value))
+          displayTextures.add(value);
+      material.dispose();
+    }
+    for (const texture of displayTextures) texture.dispose();
     this.owned.clear();
     this.disposed = true;
   }
