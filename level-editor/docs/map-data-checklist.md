@@ -11,8 +11,10 @@ separate receiving floors, with two complete-sprite native crossings verified.
 The York doorstep candidate remains unpublished. Preserving prepared movement
 precision and selecting supported approaches now lets the isolated 90-degree
 stone-tower doorstep pass both native directions. The narrow timber doorstep at
-that rotation has no full standing-box position on its physical floor; building
-access and the remaining placements still need verification. Socket counts alone
+that rotation has no full standing-box position on its physical floor. Both
+isolated houses pass building entry/exit round trips from their door approaches;
+access from surrounding terrain and the remaining placements still need
+verification. Socket counts alone
 are not traversal proof; see the
 [prepared floor clearance](map-compilation-evidence.md#prepared-ordinary-floor-clearance-2026-10-14).
 

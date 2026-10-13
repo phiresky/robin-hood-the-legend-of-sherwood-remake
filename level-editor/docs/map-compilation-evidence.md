@@ -6,6 +6,15 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Prepared ordinary floor clearance (2026-10-14)
 
+The follow-up approach-preparation correction also uses precise ordinary motion
+contours when locating building and lift endpoints. In
+`doorstep-native-buildings-b2HQOH`, both isolated 90-degree house candidates pass
+complete-character building entry/exit round trips. The stone house's spurious
+missing-approach warning is gone. The timber house still warns about full-box
+approach clearance, but its entry/exit animation works from the authored approach.
+These tests start at each door; they do not prove a route from surrounding
+terrain. The focused approach/compiler tests, lint and formatting checks pass.
+
 The stone doorstep's physical floor has full 6-by-3 standing-box positions, but
 its rounded movement polygon has none. Export previously discarded the prepared
 subpixel clearance. Joining floors also clipped the corrected piece back to a

@@ -96,6 +96,25 @@ test("switchable barriers preserve a shared approach for their open state", () =
   }
 });
 
+test("ordinary approaches use the prepared contour consumed by native collision", () => {
+  const { geometry, door } = fixture([6, 50]);
+  const area = geometry.motion_data.layers[0]![0]!;
+  area.is_lift = false;
+  area.precise_polygon = [
+    [-0.25, 0],
+    [100, 0],
+    [100, 100],
+    [-0.25, 100],
+  ];
+  compileLiftApproaches(geometry);
+  assert.deepEqual(
+    door.point_in,
+    [6, 50],
+    "the precise boundary already fits the full standing box",
+  );
+  assert.deepEqual(geometry.warnings, []);
+});
+
 test("building approaches fit outside actors without moving virtual rooms or crossing barriers", () => {
   for (const blocked of [false, true]) {
     const { geometry, door } = fixture([99, 99], blocked ? 0 : undefined);

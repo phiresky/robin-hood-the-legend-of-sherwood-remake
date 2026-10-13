@@ -107,9 +107,7 @@ function compileApproaches(geometry: CompiledAssetGeometry, buildingsOnly: boole
       for (const side of sides) {
         const area = areas.get(`${door[`sector_${side}`]}/${door[`layer_${side}`]}`);
         if (!area) throw new Error(`${label} door ${doorIndex}: missing ${side} area`);
-        const boundary = area.is_lift
-          ? (area.precise_polygon ?? area.polygon.points)
-          : area.polygon.points;
+        const boundary = area.precise_polygon ?? area.polygon.points;
         const blockers = area.obstacles.filter((obstacle) => obstacle.state_id === 0);
         const half: Point = side === "in" && directStairs.has(door) ? [5, 2] : [6, 3];
         const receivers = buildingsOnly
