@@ -6,6 +6,21 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Standalone hall restoration candidate (2026-10-13)
 
+The retained-cut failures below are now resolved in candidate
+`watchtower-doorway-clearance-OGVtJJ`. `stage-hall-tower-apertures.mjs` authors
+small horizontal clearance polygons around the existing upper/lower shaft
+approaches, in each asset's own frame. The upper obstruction belongs to the
+tower; the lower obstruction comes from both adjoining assets. Each receives
+its own aperture, so no clearance can remove another placed asset's solids.
+These are reusable asset definitions, not a compiler bypass or runtime change.
+
+Fixture `hall-tower-connections-ycwkWW` passes all 32 full-sprite room entry/exit
+round trips across two copies, four rotations and two elevations. All 32 stair
+routes still pass. The staged aperture dimensions include the character's
+approach footprint; rendered wall/contact validation and ZIP round trips remain
+open. Three other entrances per hall still require surrounding support. Neither
+the hall draft nor these tower amendments have been published yet.
+
 `check-hall-tower-connection.mjs` adds independently placed watchtowers to both
 hall copies, using the editor insertion command and verifying the resulting
 model matrices. Fixture `hall-tower-connections-wRB2Pv` restores both upper-door

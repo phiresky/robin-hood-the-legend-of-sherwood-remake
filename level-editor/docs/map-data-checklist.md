@@ -15,6 +15,11 @@ All three remaining insertable assets have known state dependencies in their
 candidate owners. These include movement, mask, door, control and appearance
 references, not just sight-state membership. Restoring them requires preserving
 those relationships or authoring explicit independent behavior.
+The standalone Nottingham hall now has an unpublished local-definition candidate.
+Separate hall/tower placements pass 32 room entry/exit round trips and 32 stair
+routes after authoring doorway apertures on each owning asset. Other entrance
+support and rendered/archive validation remain open; see
+[the hall checks](map-compilation-evidence.md#standalone-hall-restoration-candidate-2026-10-13).
 A published combined Derby keep draft now reassembles all 71 parts' local
 gameplay from its four components. It preserves floors, stairs, rooms, masks,
 lights and sounds. All forty native stair routes now pass after static handoff

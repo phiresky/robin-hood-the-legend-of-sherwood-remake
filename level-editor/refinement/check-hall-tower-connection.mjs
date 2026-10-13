@@ -35,6 +35,20 @@ const hall = await read(edit.asset),
 assert.equal(hall.reference.descriptor_sha256, edit.descriptorSha256);
 assert.equal(hall.reference.model_sha256, edit.modelSha256);
 hall.descriptor.gameplay = edit.gameplay;
+if (process.argv[3]) {
+  const edits = JSON.parse(await fs.readFile(`${process.argv[3]}/edits.json`));
+  const towerEdit = edits.find((row) => row.asset === tower.descriptor.id);
+  assert.equal(towerEdit.asset, tower.descriptor.id);
+  assert.equal(towerEdit.descriptorSha256, tower.reference.descriptor_sha256);
+  assert.equal(towerEdit.modelSha256, tower.reference.model_sha256);
+  tower.descriptor.gameplay = towerEdit.gameplay;
+  const hallEdit = edits.find((row) => row.asset === hall.descriptor.id);
+  if (hallEdit) {
+    assert.equal(hallEdit.descriptorSha256, hall.reference.descriptor_sha256);
+    assert.equal(hallEdit.modelSha256, hall.reference.model_sha256);
+    hall.descriptor.gameplay = hallEdit.gameplay;
+  }
+}
 const assets = new Map([hall, tower].map(({ descriptor }) => [descriptor.id, descriptor]));
 const offset = tower.descriptor.source_origin_scene.map(
   (v, i) => v - hall.descriptor.source_origin_scene[i],
