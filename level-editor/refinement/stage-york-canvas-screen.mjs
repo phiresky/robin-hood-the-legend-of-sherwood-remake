@@ -1,4 +1,4 @@
-// Author an independent raised/lowered screen from its own part geometry.
+// Author independent raised/lowered panels from reviewed part geometry.
 import fs from "node:fs/promises";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -9,14 +9,30 @@ import { compileMap } from "../app/src/map-compile.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
-const id = "york-market-freestanding-canvas-screen";
+const reviewed = {
+  "york-market-freestanding-canvas-screen": {
+    descriptor: "f18fbd5bd78a247ec6ed54aa5ce49eefdbe29a8afe1723bbbdf6cea7754e4b6e",
+    model: "767cba16aea4ffb31deea408d46f3379f07b727deece329ff72eb603a61d3663",
+    parts: ["building-965", "building-977"],
+    control: "lower-screen",
+  },
+  "york-market-stone-house-striped-awning": {
+    descriptor: "be808cc0527ea7f78a959ae3eda292656815ce5a8336f674f06dea89836dca3e",
+    model: "b34b841fd2d27efe13a7c195205fe15ed23c9426347eb338895eb94fc92d29e7",
+    parts: ["building-935", "building-936", "building-956", "building-957", "building-973"],
+    control: "lower-awning",
+  },
+};
+const id = process.argv[2] ?? "york-market-freestanding-canvas-screen";
+const review = reviewed[id];
+assert.ok(review, "Supply a reviewed panel asset ID");
 const base = `3d-assets/york/${id}`;
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const bytes = await fs.readFile(`library/${base}/asset.json`);
 const descriptorSha256 = hash(bytes);
-assert.equal(descriptorSha256, "f18fbd5bd78a247ec6ed54aa5ce49eefdbe29a8afe1723bbbdf6cea7754e4b6e");
+assert.equal(descriptorSha256, review.descriptor);
 const modelSha256 = hash(await fs.readFile(`library/${base}/model.glb`));
-assert.equal(modelSha256, "767cba16aea4ffb31deea408d46f3379f07b727deece329ff72eb603a61d3663");
+assert.equal(modelSha256, review.model);
 const descriptor = JSON.parse(bytes);
 assert.equal(descriptor.gameplay, undefined);
 const ownerBytes = await fs.readFile("library/3d-assets/york-market-state-assembly/asset.json");
@@ -28,7 +44,7 @@ const transition = owner.gameplay.movementTransitions.find(
 assert.ok(transition);
 assert.deepEqual(
   descriptor.parts.map((part) => part.node),
-  ["building-965", "building-977"],
+  review.parts,
 );
 const origin = sceneToGame(camera, descriptor.source_origin_scene);
 const ownerOrigin = sceneToGame(camera, owner.source_origin_scene);
@@ -55,15 +71,18 @@ for (const part of descriptor.parts) {
     }
   assert.ok(!owner.gameplay.movementBlockers.some((blocker) => blocker.node === part.node));
 }
-const [raised, lowered] = descriptor.parts;
-assert.ok(
-  transition.initialSight.includes(raised.node) && !transition.appliedSight.includes(raised.node),
-);
+const raised = descriptor.parts.slice(0, -1),
+  lowered = descriptor.parts.at(-1);
+for (const part of raised)
+  assert.ok(
+    transition.initialSight.includes(part.node) && !transition.appliedSight.includes(part.node),
+  );
 assert.ok(
   transition.appliedSight.includes(lowered.node) && !transition.initialSight.includes(lowered.node),
 );
 const ground = Math.min(...lowered.obstacle_local_game.points.map((point) => point.z_bottom));
-assert.ok(raised.obstacle_local_game.points.every((point) => point.z_bottom - ground > 40));
+for (const part of raised)
+  assert.ok(part.obstacle_local_game.points.every((point) => point.z_bottom - ground > 40));
 assert.ok(
   lowered.obstacle_local_game.points.every((point) => Math.abs(point.z_bottom - ground) < 1e-6),
 );
@@ -72,8 +91,8 @@ const center = [0, 1].map(
   (axis) =>
     shape.points.reduce((sum, point) => sum + (axis ? point.y : point.x), 0) / shape.points.length,
 );
-raised.appearance = { hide: ["lower-screen"] };
-lowered.appearance = { show: ["lower-screen"] };
+for (const part of raised) part.appearance = { hide: [review.control] };
+lowered.appearance = { show: [review.control] };
 descriptor.gameplay = {
   version: 1,
   placementGroundHeight: ground,
@@ -83,8 +102,8 @@ descriptor.gameplay = {
   movementBlockers: [],
   movementTransitions: [
     {
-      id: "lower-screen",
-      appearances: ["lower-screen"],
+      id: review.control,
+      appearances: [review.control],
       node: lowered.node,
       waypoint: [...center, ground],
       active: transition.active,
@@ -101,14 +120,14 @@ descriptor.gameplay = {
           preserveMovementPrecision: true,
         },
       ],
-      initialSight: [raised.node],
+      initialSight: raised.map((part) => part.node),
       appliedSight: [lowered.node],
     },
   ],
   draft: {
     issues: [
-      "Independent canvas-screen state draft; full gameplay parity is not certified.",
-      "Starts raised with a clear ground footprint. Explicit activation swaps to the lowered blocking screen; no surrounding market exclusion or remote trigger is inherited.",
+      "Independent raised/lowered panel draft; full gameplay parity is not certified.",
+      "Starts raised with a clear ground footprint. Explicit activation swaps to the lowered blocking geometry; no surrounding market exclusion or remote trigger is inherited.",
       "Rendered state appearance, actor interaction and mesh contact require review.",
     ],
   },
@@ -173,7 +192,7 @@ for (const height of [0, 40])
     const geometry = compiled.descriptor.asset_geometry;
     assert.equal(geometry.movement_transitions.length, 2);
     const probes = geometry.movement_transitions.map((control) => {
-      assert.equal(control.initial_sight.length, 1);
+      assert.equal(control.initial_sight.length, raised.length);
       assert.equal(control.applied_sight.length, 1);
       const shape = geometry.sight_obstacles[control.applied_sight[0]];
       const xs = shape.points.map((point) => point.x),

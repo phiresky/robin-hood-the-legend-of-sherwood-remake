@@ -4,6 +4,35 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Independent stone-house awning states (2026-10-13)
+
+The reviewed-panel authoring script `stage-york-canvas-screen.mjs` also accepts
+`york-market-stone-house-striped-awning`. Its four raised parts and one lowered
+part match their state owner's world-space collision coordinates after local
+origin conversion, within 0.001 units. No permanent exclusion belongs to them.
+The standalone `lower-awning` control swaps all four initial sight/visual parts
+for the lowered part and its own ground footprint. Placement height follows the
+lowered part's bottom. It does not import other market contours or remote triggers.
+
+Stage `york-canvas-screen-9WLsyR` passes native construction, sixteen apply/reset
+cycles and 48 boundary-route checks across two copies, rotations 0/37/90/180 and
+heights 0/40. Robin completes all sixteen initial-state walks beneath the raised
+panels, taking 42–64 moving ticks and stopping upright on the correct receiver.
+Publication backup `york-awning-installed-20261013` changes descriptor/index data
+only. Models and saved scene placements are unchanged. The asset is a warned
+draft; actor-triggered activation, detailed rendered contact and visual quality
+remain under review. No runtime source changes.
+
+Published fixture `standalone-render-library-1NYzVq` passes editor export/reopen
+and identical gameplay/color/depth rebake, with two independent appearance
+regions. `stone-awning.zip` is 4,090,699 bytes, SHA-256
+`a2c9eead0e9bef6489b8071f74c40ef50e2684a6b93723d047ac9bf410f63132`.
+Archived gameplay geometry exactly matches the tested 37-degree/height-40
+fixture. Native loading without base data passes: 1000×1000, eleven sight
+obstacles, 960 grid blocks and two appearance regions/controls. Native GPU
+independent-state, transition and reset color/depth checks pass. These are
+direct state-control checks, not actor-triggered activation certification.
+
 ## Independent York furniture removal (2026-10-13)
 
 `stage-york-removable-furniture.mjs` restores the four-part tavern furniture as
