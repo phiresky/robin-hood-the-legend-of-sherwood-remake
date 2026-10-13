@@ -8,7 +8,7 @@ Connections and runtime indices are rebuilt after placement, rotation and copyin
 
 Internal floor-hole seams now generate export-prepared connections between
 separate receiving floors, with two complete-sprite native crossings verified.
-The York doorstep candidate remains unpublished. Preserving prepared movement
+The two York doorstep definitions are now published. Preserving prepared movement
 precision and selecting supported approaches now lets the isolated 90-degree
 stone-tower doorstep pass both native directions. The narrow timber doorstep at
 that rotation has no full standing-box position on its physical floor. Both
@@ -19,7 +19,9 @@ All 32 placements complete entry and return after preserving single-floor
 precision, reconciling clipping-grid seams and sharing checked passage endpoints
 on narrow landings. Candidate selection now requires endpoints on their assigned
 receiving floor before choosing a crossing, fixing the 180-degree timber case.
-Rendered ZIP verification and publication of these two assets remain pending.
+Their browser ZIP reopens with identical gameplay, color and depth, loads natively
+without base data, and passes all four archived terrain-to-room round trips.
+York's descriptor pins are updated; model and texture bytes are unchanged.
 Socket counts alone
 are not traversal proof; see the
 [prepared floor clearance](map-compilation-evidence.md#prepared-ordinary-floor-clearance-2026-10-14).

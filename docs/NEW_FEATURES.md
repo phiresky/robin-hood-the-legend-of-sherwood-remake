@@ -93,7 +93,8 @@
   Candidate endpoints must lie on their assigned receiving floors before a
   crossing is selected. Native player-click entry and return from surrounding
   terrain now pass all 32 copied, rotated and raised candidate placements.
-  Rendered ZIP verification and asset publication remain pending. This
+  Both asset definitions are published after identical browser ZIP reopening,
+  native loading without base data and four archived terrain-to-room trips. This
   preparation runs during export, with no runtime solver.
 
 - **Physical doorstep authoring experiments.** A staging helper can turn explicitly
@@ -101,8 +102,8 @@
   It retains the volume's fitted plane through rotation, checks descriptor pins
   and refuses unreviewed material partitions. Two candidate doorsteps connect to
   newly authored terrain in copied, rotated and elevated compiler checks. All
-  32 tested complete-sprite building entry/exit round trips pass; rendered review
-  and broader terrain integration remain incomplete, so the assets stay unpublished.
+  32 tested complete-sprite building entry/exit round trips pass. The two reviewed
+  York assets are published; broader terrain integration remains incomplete.
 
 - **Export-prepared floor and climb navigation.** The editor constructs static
   motion contours, route graphs and passage approaches from placed asset geometry.

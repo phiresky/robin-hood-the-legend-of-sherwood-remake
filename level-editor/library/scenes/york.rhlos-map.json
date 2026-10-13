@@ -1662,7 +1662,7 @@
       "model": "3d-assets/york/york-west-town-lane-narrow-timber-house/model.glb",
       "model_sha256": "4e2b05d2db4b09771fd1c0b8dd0a133597f91f45f12be1e87f888754b17592f7",
       "descriptor": "3d-assets/york/york-west-town-lane-narrow-timber-house/asset.json",
-      "descriptor_sha256": "6137b33dadcc9c561b4d190d326b6ff0358c4f51b94adefa74b92f40e133d073",
+      "descriptor_sha256": "44bb736bed262f663f55d10e8fda137bafa13d21d70471433e9407c27cd01efe",
       "id": "york-west-town-lane-narrow-timber-house"
     },
     {
@@ -1676,7 +1676,7 @@
       "model": "3d-assets/york/york-west-town-lane-stone-tower/model.glb",
       "model_sha256": "761d6264d92234e10f0ed91fa89c1c53123c235b759a1953830c85bb83dc7d32",
       "descriptor": "3d-assets/york/york-west-town-lane-stone-tower/asset.json",
-      "descriptor_sha256": "e5743779ef2dc54e67af487df7e6d8ffcd93a29d87d51c5dd67054ff6e64a79c",
+      "descriptor_sha256": "173313f792b583e428698757684f77659831d65e2d9d2b197bff707cc5dbe4aa",
       "id": "york-west-town-lane-stone-tower"
     },
     {

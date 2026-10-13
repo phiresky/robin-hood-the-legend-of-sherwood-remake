@@ -6,6 +6,23 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Prepared ordinary floor clearance (2026-10-14)
 
+`doorstep-installed-20261014-verified` publishes only the narrow timber house and
+stone tower gameplay definitions, with guarded backups and York's scene pins.
+The library index reflects both updates. All 15 installed files match their
+publication receipt; only the two descriptors, index and scene pins change
+content. Models, textures, lossy derivatives and preview derivatives retain their
+exact bytes. Draft gameplay/model limitations remain visible.
+
+Browser fixture `draft-scene-render-JJaXIK` exports a 20,090,948-byte map-only ZIP,
+SHA-256 `21a7fdb9bf7fb913c27590db5ff397ec1203870fcbd11568c21f9e3014ca11fe`.
+Reopening and rebaking preserve gameplay, color and depth exactly. The native
+mod-loader test loads the 3000-by-3000 map, editor document, color/depth/minimap,
+37 sight obstacles and 12 door projections without base game data. The archived
+descriptor passes all four complete-character terrain-to-room return trips in
+`doorstep-archived-beoggl06`. Visual review confirms the four placed buildings;
+draft texture/model quality and detailed rendered actor contact remain outside
+this publication's proof. Full saved-York statistics below predate this update.
+
 `receiver-floor-placements-xH5SC9` completes all 32 native player-click
 terrain-to-room-and-return trips, all 32 doorway-start round trips, and all 64
 negative socket checks. The last 180-degree timber failure came from selecting
