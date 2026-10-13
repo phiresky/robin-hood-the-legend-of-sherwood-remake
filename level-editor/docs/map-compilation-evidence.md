@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Doorstep candidate native rejection (2026-10-14)
+
+The experimental bounded approach search completes the socket-count verifier in
+`receiver-floor-placements-gPkLSM` (32 placements and 64 negative checks). This
+does not certify generated passages: the 0- and 37-degree exports still have two
+missing split-passage warnings each. The candidate remains unpublished.
+
+`doorstep-native-passages-FfZcuk` isolates one 90-degree placement of each
+west-town-lane doorstep asset over authored terrain. Three ordinary passages
+produce six planned bidirectional tests. The native verifier stops on the first
+stone-tower traversal: the actor leaves receiver 7 before reaching the integer
+midpoint. Its position is `(764.3822, 499.8362)`, with midpoint `(764, 500)`.
+The rounding error is therefore encountered during movement, not only at the
+handoff itself.
+
+A stricter experimental receiving-segment check produces
+`doorstep-receiver-support-qBy5Zt`. The first forward traversal passes, but the
+reverse destination `(767, 502)` on layer 1 is rejected before movement. The
+same strict check also removes established rotated posture and loop connections
+in the regression suite. That check was backed out; neither artifact is
+publication evidence. The export compiler still needs a receiving/clearance
+solution that preserves usable rotated connections and passes native movement
+in both directions. No runtime geometry solver or engine source change was
+introduced by these experiments.
+
 ## Chamfered projection-clearance correction (2026-10-14)
 
 Tracing the remaining 90-degree doorstep case finds five proposed floor
