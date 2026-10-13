@@ -51,6 +51,17 @@ clearances and doorway structure must replace inherited exclusions before the
 raised terrain can safely relinquish them. No library or runtime change is made
 by this experiment.
 
+Two explicit doorstep floors are restaged in `receiver-floors-lR4lkF` using
+current asset pins. The isolated placement audit now rejects its first case
+(height 0, rotation 0): copy 1 of the stone tower retains overlapping receiving
+heights in one navigation sector near projected [732.28, 2136.08]. All four
+entrances also receive permanent-collision warnings. Earlier placement results
+from the historical runtime therefore do not validate this candidate now.
+`receiver-floor-placements-m8abWk` retains the exact failed scene, descriptor
+and warnings. The verifier now saves those artifacts before asserting, while
+keeping the batch incomplete when validation fails. Resolving this case requires
+review of floor partition seams and each entrance's local structural collision.
+
 ## Exact doorway collision diagnostics (2026-10-14)
 
 `check-saved-map-exports.mjs --trace-passages` optionally records the placed

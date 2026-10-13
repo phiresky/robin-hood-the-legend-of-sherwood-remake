@@ -82,6 +82,11 @@ for (const height of [0, 40])
     const compile = (document) =>
       compileMap(document, [0, 0, ...size], assets, { bestEffort: true });
     const compiled = compile(document);
+    // Preserve the exact failing placement even when a connection assertion stops the batch.
+    const file = `receiver-floors-${height}-${rotation}.level.json`;
+    await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
+    await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
+    await fs.writeFile(`${output}/${file}.warnings.json`, JSON.stringify(compiled.warnings));
     const unbound = (result) =>
       result.warnings.filter(
         (warning) =>
@@ -101,9 +106,6 @@ for (const height of [0, 40])
         3,
         `${group.id}: expected exactly one terrain connection`,
       );
-    const file = `receiver-floors-${height}-${rotation}.level.json`;
-    await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
-    await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
     const buildingApproaches = document.groups.map((group) => {
       const id = ids.find((id) => group.id.endsWith(`/${id}`));
       const gameplay = assets.get(id).gameplay;
