@@ -36,7 +36,8 @@ def install(library, before, replacements):
         raise
 
 
-def publish(library, stage, gameplay_stage, fixture, output, apply=False, archive_name=None):
+def publish(library, stage, gameplay_stage, fixture, output, apply=False, archive_name=None,
+            allow_unreferenced=False):
     library, stage, gameplay_stage, fixture, output = map(
         lambda value: Path(value).resolve(), (library, stage, gameplay_stage, fixture, output))
     assert not output.is_relative_to(library)
@@ -122,7 +123,7 @@ def publish(library, stage, gameplay_stage, fixture, output, apply=False, archiv
                 name = str(path.relative_to(library))
                 replacements[name] = updated
                 scenes.append(name)
-        assert scenes, 'No saved scene references the repaired assets'
+        assert scenes or allow_unreferenced, 'No saved scene references the repaired assets'
         replacements['3d-assets/index.json'] = json.dumps(live, separators=(',', ':')).encode() + b'\n'
         before = {}
         for name in replacements:
@@ -152,6 +153,9 @@ if __name__ == '__main__':
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--archive', help='Select a verified ZIP when the fixture retains several archives')
+    parser.add_argument('--allow-unreferenced', action='store_true',
+                        help='Publish library drafts not yet referenced by saved scenes; all asset/archive checks still apply')
     args = parser.parse_args()
     print(json.dumps(publish(args.library, args.stage, args.gameplay_stage,
-                             args.fixture, args.output, args.apply, args.archive), indent=2))
+                             args.fixture, args.output, args.apply, args.archive,
+                             args.allow_unreferenced), indent=2))

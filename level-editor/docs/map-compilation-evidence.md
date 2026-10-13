@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Hall/tower archive and draft publication (2026-10-13)
+
+`prepare-draft-scene-render.mjs` stages existing editor placements with hash-checked
+gameplay edits and unchanged bundled models. Fixture `draft-scene-render-iKM8If`
+exports the two-copy 37°/40-height hall/tower layout to `hall-tower.zip`:
+35,359,543 bytes, SHA-256
+`c211c64add8eb1fe4fcd8f575534b6586ac9105495dca29b13b7fe987e21209d`.
+Reopening and rebaking matches gameplay, color, depth and all reveal images.
+The two visual bounds share one image region with two independently addressable
+controls and all four state combinations. The initial test assumption of two
+separate image regions was rejected; region sharing is explicitly verified here.
+
+Native archive loading without base data passes: 83 sight obstacles, no masks,
+10 door projections, 16,779 grid blocks and both controls. The archived geometry
+matches the staged native-tested descriptor except warning text. All four
+full-sprite room entry/exit round trips pass again from the archived descriptor.
+The downlevel GPU test passes independent control states, transitions and reset
+for color/depth. The exported exterior image was inspected; detailed animated
+character contact and actor-triggered controls remain unverified.
+
+The hall gameplay draft and tower aperture update are installed, with backups in
+`hall-tower-installed-20261013`. Models and their current browser/preview derivatives
+are unchanged. No saved scenes reference these assets, so publication uses the
+explicit `--allow-unreferenced` option; asset hashes, derivative receipts, archived
+references and rollback safeguards remain required. Installed hashes match the
+publication report. Transaction regression tests pass. Inventory
+`gameplay-coverage-H7aTdU` finds four missing definitions among 1,286 assets:
+two insertable assets and two backgrounds, none placed. Three other hall entrances
+still need surrounding support; this publication retains draft warnings.
+
 ## Standalone hall restoration candidate (2026-10-13)
 
 The retained-cut failures below are now resolved in candidate

@@ -6,19 +6,21 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-**Current definition inventory (2026-10-13):** `gameplay-coverage-CWDleY` checks
+**Current definition inventory (2026-10-13):** `gameplay-coverage-H7aTdU` checks
 1,286 indexed assets and finds zero missing definitions among placed assets in
-the saved scenes. Five unused assets lack definitions, including two background
+the saved scenes. Four unused assets lack definitions, including two background
 assets that cannot be inserted as objects. This checks library
 definition presence and index hashes, not scene pins or gameplay completeness.
-All three remaining insertable assets have known state dependencies in their
+Both remaining insertable assets have known state dependencies in their
 candidate owners. These include movement, mask, door, control and appearance
 references, not just sight-state membership. Restoring them requires preserving
 those relationships or authoring explicit independent behavior.
-The standalone Nottingham hall now has an unpublished local-definition candidate.
+The standalone Nottingham hall now has a published local-definition draft.
 Separate hall/tower placements pass 32 room entry/exit round trips and 32 stair
 routes after authoring doorway apertures on each owning asset. Other entrance
-support and rendered/archive validation remain open; see
+support and actor-triggered reveal/contact validation remain open. Its rendered
+ZIP reopens identically, loads without base data, passes GPU state/reset checks,
+and retains all four archived room round trips; see
 [the hall checks](map-compilation-evidence.md#standalone-hall-restoration-candidate-2026-10-13).
 A published combined Derby keep draft now reassembles all 71 parts' local
 gameplay from its four components. It preserves floors, stairs, rooms, masks,
