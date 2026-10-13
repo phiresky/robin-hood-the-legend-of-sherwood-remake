@@ -6,16 +6,16 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-**Current definition inventory (2026-10-13):** `gameplay-coverage-uFfTR6` checks
-1,279 indexed assets and finds zero missing definitions among placed assets in
-the saved scenes. Six unused assets lack definitions, including two background
+**Current definition inventory (2026-10-13):** `gameplay-coverage-CWDleY` checks
+1,286 indexed assets and finds zero missing definitions among placed assets in
+the saved scenes. Five unused assets lack definitions, including two background
 assets that cannot be inserted as objects. This checks library
 definition presence and index hashes, not scene pins or gameplay completeness.
-All four remaining insertable assets have known state dependencies in their
+All three remaining insertable assets have known state dependencies in their
 candidate owners. These include movement, mask, door, control and appearance
 references, not just sight-state membership. Restoring them requires preserving
 those relationships or authoring explicit independent behavior.
-An unpublished combined Derby keep candidate now reassembles all 71 parts' local
+A published combined Derby keep draft now reassembles all 71 parts' local
 gameplay from its four components. It preserves floors, stairs, rooms, masks,
 lights and sounds. All forty native stair routes now pass after static handoff
 preparation was narrowed to avoid neighboring entrances' internal routes. Elevated
@@ -30,8 +30,9 @@ still cover three low ordinary passages. Actor-triggered reveal behavior remains
 unverified. A compiler fix
 now prevents receiving segments from binding to floor holes when controls are
 allowed inside collision; it adds no runtime work.
-The combined candidate remains outside the published
-definition count; see [the keep candidate](map-compilation-evidence.md#combined-derby-keep-authoring-candidate-2026-10-13).
+The combined draft includes current compressed browser and preview models, and
+Wychford's saved reference has been updated. Remaining limitations are retained as
+asset warnings; see [the keep candidate](map-compilation-evidence.md#combined-derby-keep-authoring-candidate-2026-10-13).
 The standalone Nottingham watchtower now has a published gameplay draft: two
 copies across four rotations and two elevations retain their collision and upper
 floors, and all 48 sampled native routes pass. Access must come from surrounding

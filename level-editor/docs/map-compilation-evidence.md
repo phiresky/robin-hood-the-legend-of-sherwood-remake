@@ -4,6 +4,47 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Standalone hall restoration candidate (2026-10-13)
+
+`stage-nottingham-hall-gameplay.mjs` restores the standalone Nottingham hall from
+its assembly's asset-local metadata. It verifies all 30 part boundaries against
+one translated frame, retains five surfaces, two rooms, stairs and the hall-owned
+door-state swap, and rebinds the appearance identity to the standalone model's
+`appearance-1`. Tower-owned parts, floor and lights remain separate. The source
+and model hashes are pinned; changed inputs require review. No level data is read.
+
+Candidate `nottingham-hall-gameplay-775Eia` compiles two copies across four
+rotations and two elevations. All eight exports retain two stair lifts and two
+independent reveal controls. All 32 full-sprite native stair routes pass. This is
+not complete entrance parity: flat terrain leaves four of five room entrances
+per copy unsupported, including the upper doorway needing the tower roof. The
+remaining entrance intersects a permanent obstacle and warns. Surrounding
+support, full room traversal, control activation and rendered ZIP round trips
+remain required. The candidate is not yet installed in the library.
+
+## Combined keep draft publication (2026-10-13)
+
+The tested `derby-keep-model-X2L51v` assembly is installed in the main library,
+with Wychford's saved descriptor/model hashes updated. Draft warnings remain.
+`prepare-keep-publication.py` verifies component pins, the 71-part authoring
+receipt, archived browser-roundtrip hashes, descriptor changes limited to
+gameplay/bounds and current derivatives. The guarded transaction is recorded in
+`keep-publication-20261013/promotion.json`, with backups of all replaced files.
+
+The supported `--no-quantize` derivative mode preserves transformed float
+geometry while compressing textures: the browser model is 2,602,832 bytes and
+the preview 553,340 bytes. All 88 reveal-state nodes retain their metadata in the
+browser model. The preview removes only the 29 reveal-only nodes by design.
+The 4096-pixel atlas cap gives median weakest-axis density 0.712; lossless source
+models remain available for map baking. Both derivative receipts are current.
+
+The rebuilt native archive test passes `keep-supported-90.zip` without base
+data: 212 sight obstacles, four masks, 19 door projections, 27,132 grid blocks
+and one appearance region containing both controls. Fresh inventory
+`gameplay-coverage-CWDleY` checks 1,286 assets: five lack definitions, including
+three insertable assets and two noninsertable backgrounds; none are placed.
+These checks do not establish full parity or actor-triggered reveal behavior.
+
 ## Rotated building entrance preparation (2026-10-13)
 
 The three remaining entrance failures in `keep-supported-entrances-bIOJXr` had
