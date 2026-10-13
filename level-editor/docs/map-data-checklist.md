@@ -100,8 +100,13 @@ The Nottingham dormer house now retains its mask, roofs and interior alongside
 independent front-prop removal. An authored threshold clearance fixes entrance
 authorization: sixteen moved/copied native entry/exit round trips pass, along with
 state and boundary checks. Its ZIP passes editor round trip, native loading, GPU
-state/reset checks and fresh entrance traversal. Roof walking passes at 0°;
-small receiver regions at 37° need further checks. See
+state/reset checks and fresh entrance traversal. Explicit roof clearances now
+prevent enclosing support volumes from fragmenting the usable roof. All 256
+character roof walks pass across four rotations, two elevations and every control
+combination; the updated ZIP also passes round trip, native/GPU checks and 32
+fresh archived roof walks. Connections between roof planes, cross-asset jumps and
+animated rendered contact remain open. See
+[the roof clearance checks](map-compilation-evidence.md#dormer-roof-support-clearances-2026-10-13) and
 [the house checks](map-compilation-evidence.md#independent-dormer-house-with-usable-entrance-2026-10-13).
 
 **Current Wychford export (2026-10-12):** `saved-map-exports-ab3hoH` completes

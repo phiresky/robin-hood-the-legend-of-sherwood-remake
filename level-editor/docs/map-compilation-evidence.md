@@ -4,6 +4,40 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Dormer roof support clearances (2026-10-13)
+
+The rotated dormer roof fragmentation came from enclosing house volumes cutting
+through the authored roof faces. Adjacent support caps differ from those receiving
+planes by up to about 2.33 local height units. The independent asset now declares
+both roof faces as movement clearances against its own support geometry. No
+receiver is discarded to make the walking tests pass. Separately placed collision
+retains its ownership and remains effective; no compiler or runtime code changed.
+
+`stage-dormer-roof-clearances.mjs` pins the prior descriptor, preserves the existing
+entrance clearance, and verifies unchanged ground movement and solid sight geometry
+in eight two-copy exports. Stage `dormer-roof-clearances-rcjTcM` now has four upper
+receivers per export, including at 37°, instead of detached narrow fragments.
+All 256 complete Robin roof walks pass across four rotations, two elevations,
+both directions and all four independent control combinations. Sixteen entrance
+round trips and sixteen apply/reset cycles with 48 boundary checks also pass.
+The compiler's clearance-ownership regression test passes. Publication backup
+`dormer-roof-clearances-installed-20261013` changes descriptor/index data only;
+there are no saved-scene edits. Scoped formatting and lint pass.
+
+Fresh archive `standalone-render-library-l2mzyo/dormer-roof.zip`
+(2,517,749 bytes; SHA-256
+`7ddef907c1893c35986ef8261be795f6653be1e4d52562bce4ad56e8e563a5c7`)
+passes editor gameplay and color/depth round trip, empty-base native loading
+(17 sight obstacles, two masks, two door projections, 1,600 grid blocks and two
+controls/appearance regions), and GPU independent state/transition/reset checks.
+Its geometry exactly matches the tested 37°, height-40 export, and 32 fresh
+complete character roof walks against that archived descriptor pass.
+
+These walks remain within individual roof receivers. They do not certify movement
+between the roof planes, connected cross-asset jumps, actor-triggered removal or
+animated rendered contact. Those checks remain open. The earlier 37° probe
+preparation failure below is superseded by this asset authoring fix.
+
 ## Independent dormer house with usable entrance (2026-10-13)
 
 `nottingham-north-dormer-house` now combines its permanent remainder's roof
