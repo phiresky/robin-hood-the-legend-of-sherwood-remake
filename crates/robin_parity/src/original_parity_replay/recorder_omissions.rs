@@ -360,6 +360,19 @@ pub(super) fn original_reset_blocked_box_this_frame(
             | robin_engine::order::OrderType::RunningWithSword)
     ) && original_motion_executor_order_id(actor, entity_id)
         == Some(last_processed_order_id);
+    // A resumed sword move can initialize a zero-distance sprite and then be
+    // replaced by another sword move before capture. The processed predecessor
+    // and newer, unprocessed movement ID retain that initialization even though
+    // no movement-step event was emitted. Action-only initialization retains
+    // the frame-count sentinel instead of advancing it to zero.
+    let replaced_sword_motion = sprite_frame_count == 0
+        && matches!(
+            robin_engine::order::OrderType::try_from(actor.animation),
+            Ok(robin_engine::order::OrderType::WalkingWithSword
+                | robin_engine::order::OrderType::RunningWithSword)
+        )
+        && original_motion_executor_order_id(actor, entity_id)
+            .is_some_and(|id| id > last_processed_order_id);
     let postponed_movement = sequence.postponed.as_ref().is_some_and(|postponed| {
         postponed
             .to_json()
@@ -374,7 +387,7 @@ pub(super) fn original_reset_blocked_box_this_frame(
         // executor; the unadvanced action-only sentinel cannot prove a reset.
         && sprite_frame_count != u16::MAX
         && prior_last_processed_order_id.is_some_and(|id| id != last_processed_order_id)
-        && (live_sword_motion || postponed_movement)
+        && (live_sword_motion || replaced_sword_motion || postponed_movement)
     {
         return true;
     }
