@@ -15,11 +15,12 @@ that rotation has no full standing-box position on its physical floor. Both
 houses pass all 32 building entry/exit round trips from their door approaches
 across copied, rotated and raised placements. A stricter native test starts on
 surrounding terrain and selects the actual entrance with a normal player click:
-28 of 32 placements complete entry and return after preserving single-floor
+All 32 placements complete entry and return after preserving single-floor
 precision, reconciling clipping-grid seams and sharing checked passage endpoints
-on narrow landings. Four timber-house placements at 180 degrees still stall
-during entry. These
-approach connections remain unresolved. Socket counts alone
+on narrow landings. Candidate selection now requires endpoints on their assigned
+receiving floor before choosing a crossing, fixing the 180-degree timber case.
+Rendered ZIP verification and publication of these two assets remain pending.
+Socket counts alone
 are not traversal proof; see the
 [prepared floor clearance](map-compilation-evidence.md#prepared-ordinary-floor-clearance-2026-10-14).
 

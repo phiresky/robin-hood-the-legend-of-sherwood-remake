@@ -6,6 +6,19 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Prepared ordinary floor clearance (2026-10-14)
 
+`receiver-floor-placements-xH5SC9` completes all 32 native player-click
+terrain-to-room-and-return trips, all 32 doorway-start round trips, and all 64
+negative socket checks. The last 180-degree timber failure came from selecting
+crossing endpoints inside prepared movement clearance but outside the assigned
+physical receiver. The compiler discarded those passages later. Ordinary
+endpoint selection now checks receiving-floor membership during the search,
+allowing supported alternatives to be selected without changing physical floors.
+All 267 selected compiler/app/navigation tests pass, including a regression that
+requires every endpoint to remain on its own receiver and rejects disjoint
+receiving coverage. The exploratory folded-floor changes were discarded; this
+fix changes only ordinary export-time candidate selection. The two asset
+definitions remain staged pending rendered ZIP verification and publication.
+
 `receiver-floor-placements-Mvbz2B` adds export-prepared room handoffs on narrow
 landings. When no standing-box approach is available, an existing ordinary
 passage endpoint on the same sector/layer may be shared, provided its receiving

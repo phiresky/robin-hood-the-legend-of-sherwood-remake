@@ -64,8 +64,19 @@ export function navigationPosturePassages(
     ),
   }));
   const fromClear = (a: Point, b: Point) =>
-    views.every((view) => view.from(a, b).length) ? [0] : [];
-  const toClear = (a: Point, b: Point) => (views.every((view) => view.to(a, b).length) ? [0] : []);
+    supported(from, a) && supported(from, b) && views.every((view) => view.from(a, b).length)
+      ? [0]
+      : [];
+  const toClear = (a: Point, b: Point) =>
+    supported(to, a) && supported(to, b) && views.every((view) => view.to(a, b).length) ? [0] : [];
+  function supported(area: NavigationAnchorArea, point: Point) {
+    // Prepared movement clearance may extend beyond the physical receiver.
+    // Reject unsupported centers while searching, not after selecting a passage.
+    return (
+      !area.receivingFloors ||
+      area.receivingFloors.some((floor) => pointInGameplayPolygon(point, floor.polygon, true))
+    );
+  }
   const crossings = [
     (a: Point, b: Point) =>
       views.every((view) => view.crossings.some((clear) => clear(a, b).length)) ? [0] : [],

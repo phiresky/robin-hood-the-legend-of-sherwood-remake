@@ -65,6 +65,36 @@ test("matched seams tolerate clipping-grid noise but not an authored gap", () =>
   }
 });
 
+test("ordinary passage endpoints stay on their assigned receiving floors", () => {
+  const { from, to, connection } = fixture();
+  to.receivingFloors = [
+    {
+      plane: to.plane,
+      polygon: [
+        [100, 45],
+        [200, 45],
+        [200, 55],
+        [100, 55],
+      ],
+    },
+  ];
+  const candidates = navigationPosturePassages(connection, from, to);
+  assert.ok(candidates.length > 0);
+  for (const { inside } of candidates) assert.ok(inside[1] >= 45 && inside[1] <= 55);
+  to.receivingFloors = [
+    {
+      plane: to.plane,
+      polygon: [
+        [300, 0],
+        [400, 0],
+        [400, 100],
+        [300, 100],
+      ],
+    },
+  ];
+  assert.deepEqual(navigationPosturePassages(connection, from, to), []);
+});
+
 test("an oblique short landing connects without requiring symmetric approach offsets", () => {
   const from: NavigationAnchorArea = {
     plane: [0.9454810659191314, 0.8226182833327891, -19.5799325472492],

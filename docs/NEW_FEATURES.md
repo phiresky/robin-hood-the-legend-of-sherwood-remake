@@ -90,9 +90,11 @@
   seams tolerate clipping-grid arithmetic without changing endpoint clearance.
   Narrow room landings can share a clearance-checked ordinary passage endpoint,
   avoiding an unsupported intervening walk without enlarging the floor.
-  Native player-click entry and return from surrounding terrain now pass 28 of
-  32 copied, rotated and raised candidate placements; four timber-house cases
-  remain unresolved. This preparation runs during export, with no runtime solver.
+  Candidate endpoints must lie on their assigned receiving floors before a
+  crossing is selected. Native player-click entry and return from surrounding
+  terrain now pass all 32 copied, rotated and raised candidate placements.
+  Rendered ZIP verification and asset publication remain pending. This
+  preparation runs during export, with no runtime solver.
 
 - **Physical doorstep authoring experiments.** A staging helper can turn explicitly
   selected asset receiver tops into walkable floors with exterior edge sockets.
