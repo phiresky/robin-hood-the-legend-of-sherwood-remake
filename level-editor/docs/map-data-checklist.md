@@ -86,6 +86,12 @@ swapping grounded pieces. Eight placement variants pass sixteen state cycles,
 editor round trip, native loading, GPU state/reset checks and sixteen fresh roof
 walks. Connected jump traversal, actor activation and rendered contact remain open;
 see [the long-canopy checks](map-compilation-evidence.md#long-cream-canopy-with-persistent-walkable-roof-2026-10-13).
+The red/stepped-green canopy connection now passes 160 native player-click jumps
+across independently inserted, socket-aligned copies, rotations and elevations.
+Moving the partners apart removes their jumps with explicit warnings. This
+certifies that particular connection, not every retained socket. The stepped-green
+canopy's default placement ground height still needs review; see
+[the connection checks](map-compilation-evidence.md#connections-between-independently-inserted-canopies-2026-10-13).
 
 **Current Wychford export (2026-10-12):** `saved-map-exports-ab3hoH` completes
 in 825 seconds, including final stair-clearance preparation. This verifies the

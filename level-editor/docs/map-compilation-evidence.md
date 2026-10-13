@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Connections between independently inserted canopies (2026-10-13)
+
+`check-inserted-canopy-jumps.mjs` inserts the published red and stepped-green
+canopies through editor insertion commands, aligns their asset-local pair-12
+sockets, and compiles two separate copies at four rotations and two elevations.
+It reads no saved map placements or level data and preserves all asset geometry.
+Artifact `inserted-canopy-jumps-iRE65D` produces exactly one native connection per
+assembly in all eight exports. All 160 player-click jump cases pass with complete
+Robin sprites, five positions along each edge and both directions. Every case
+traverses; none uses an endpoint override or an occlusion exemption.
+
+Eight additional exports move each stepped-green canopy 100 units away. All
+connections disappear and all four detached pair-12 sockets are reported as
+unmatched, preventing stale destinations. These are compilation assertions;
+the native character checks apply to the connected exports. Formatting and lint
+pass. No runtime or asset metadata changes.
+
+This review also identifies an open placement issue: the stepped-green canopy
+contains only part 044, whose bottom is at local height 150, and has no explicit
+placement ground height. Default editor insertion therefore puts the roof at
+ground height. The socket fixture compensates by changing its placement height;
+it does not certify the default insertion datum. Ground/support authoring for
+this elevated asset needs review before changing its default. Connected rendered
+archives and detailed sprite contact also remain unverified.
+
 ## Long cream canopy with persistent walkable roof (2026-10-13)
 
 `york-market-long-cream-canopy-stall` now preserves its permanent roof surface,
