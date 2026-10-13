@@ -247,6 +247,7 @@ export function compileAssetGameplay(
         omissions.push(
           `Transition ${error.transition}: control omitted; retained its initial state; ${error.message}`,
         );
+        options.onProgress?.(`Retrying export: ${omissions.at(-1)!}`);
         continue;
       }
       if (
@@ -258,6 +259,7 @@ export function compileAssetGameplay(
         omissions.push(
           `Transition ${error.id}: control omitted; retained its initial movement barriers, masks and door permissions; ${error.message}`,
         );
+        options.onProgress?.(`Retrying export: ${omissions.at(-1)!}`);
         continue;
       }
       if (
@@ -270,6 +272,7 @@ export function compileAssetGameplay(
       omissions.push(
         `Lift ${error.placement}: traversal omitted because its assembly cannot connect after placement; retained asset collision and independent gameplay; ${error.message}`,
       );
+      options.onProgress?.(`Retrying export: ${omissions.at(-1)!}`);
     }
   }
 }
