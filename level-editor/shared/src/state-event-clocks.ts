@@ -4,7 +4,11 @@ import {
   nativeTransientPatchFrame,
   type NativeBackgroundPhase,
 } from "./native-state-presentation.ts";
-import type { StateDeliveryContract } from "./state-delivery.ts";
+import {
+  physicalElementStagePose,
+  physicalPatchPose,
+  type StateDeliveryContract,
+} from "./state-delivery.ts";
 
 type Source = StateDeliveryContract["native"]["elements"][number]["source"];
 export type StateClockSample =
@@ -139,12 +143,17 @@ export class StateEventClocks {
         throw new Error("Reviewed physical motion does not support reverse source events");
     }
     const samples = structuredClone(batch.samples);
+    const candidate = new Map(this.clocks);
     for (const s of samples) {
-      const prior = this.clocks.get(`${s.kind}:${s.id}`);
+      const prior = candidate.get(`${s.kind}:${s.id}`);
       if (s.kind === "element" && s.visible === undefined && prior?.kind === "element")
         s.visible = prior.visible;
-      this.clocks.set(`${s.kind}:${s.id}`, s);
+      candidate.set(`${s.kind}:${s.id}`, s);
     }
+    for (const family of this.contract.families)
+      if (family.physical.motion?.kind === "native-element-stage-poses")
+        this.stagedPose(family.id, candidate);
+    this.clocks = candidate;
     this.sequence = batch.sequence;
     this.simulationTick = batch.simulation_tick;
     return structuredClone(samples);
@@ -159,16 +168,40 @@ export class StateEventClocks {
     const family = this.contract.families.find((f) => f.id === familyId);
     if (!family) throw new Error(`Unknown state family: ${familyId}`);
     const motion = family.physical.motion;
+    if (motion?.kind === "native-element-stage-poses")
+      return this.stagedPose(familyId, this.clocks).visible !== false;
     if (motion?.kind !== "native-element-node-poses") return true;
     const owner = this.sample("element", motion.element_id);
     return owner?.kind !== "element" || owner.visible !== false;
+  }
+
+  private stagedPose(familyId: string, clocks: Map<string, StateClockSample>) {
+    const family = this.contract.families.find((f) => f.id === familyId)!;
+    return physicalElementStagePose(
+      this.contract,
+      familyId,
+      family.element_ids.flatMap((element_id) => {
+        const sample = clocks.get(`element:${element_id}`);
+        return sample?.kind === "element"
+          ? [{ element_id, active: sample.active, visible: sample.visible, tick: sample.tick }]
+          : [];
+      }),
+    );
+  }
+
+  physicalPose(familyId: string): ReturnType<typeof physicalPatchPose> {
+    const family = this.contract.families.find((f) => f.id === familyId);
+    if (family?.physical.motion?.kind === "native-element-stage-poses")
+      return this.stagedPose(familyId, this.clocks);
+    return physicalPatchPose(this.contract, familyId, this.physicalTick(familyId));
   }
 
   /** Physical tracks use their own patch clock; final animation tick is a separate clock. */
   physicalTick(familyId: string): number | undefined {
     const f = this.contract.families.find((f) => f.id === familyId);
     if (!f) throw new Error(`Unknown state family: ${familyId}`);
-    if (!f.physical.motion) return undefined;
+    if (!f.physical.motion || f.physical.motion.kind === "native-element-stage-poses")
+      return undefined;
     if (f.physical.motion.kind === "native-element-node-poses") {
       const element = this.sample("element", f.physical.motion.element_id);
       return element?.kind === "element" && element.active ? element.tick : undefined;

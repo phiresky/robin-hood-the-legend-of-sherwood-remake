@@ -8,6 +8,10 @@
   A prepared runtime adapter binds exact native entity indices and action rows to
   contract identities, validating independent frame counters and visibility before
   emitting a complete state sample. Reverse patch playback requires separate support.
+  Multi-owner assembly stages retain one physical rig, select reviewed poses from
+  each owner’s native frame, hide explicit transparent gaps, and reject overlapping
+  visible stages before consuming an event batch. No single elapsed family clock
+  replaces the observed owner clocks.
 
 - **Compiled floor passages.** Export partitions joined floors that overlap at
   different heights and prepares ordinary passages at matching-height seams.

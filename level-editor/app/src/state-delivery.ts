@@ -138,6 +138,16 @@ export class StateDelivery {
             family.id,
             new ReviewedNodePoses(pair.applied, family.physical.motion.node_frames),
           );
+        if (family.physical.motion?.kind === "native-element-stage-poses")
+          this.nodePoses.set(
+            family.id,
+            new ReviewedNodePoses(
+              pair.applied,
+              family.physical.motion.stages.flatMap((stage) =>
+                stage.node_frames.filter((frame) => frame !== null),
+              ),
+            ),
+          );
         roots.set(family.id, pair);
       }
       if (!current()) return false;
@@ -253,11 +263,9 @@ export class StateDelivery {
   }
   private sampleMotion() {
     if (this.mode !== "physical-motion" || !this.selectedFamily) return;
-    const pose = physicalPatchPose(
-      this.contract!,
-      this.selectedFamily,
-      this.familyTick(this.selectedFamily),
-    );
+    const pose =
+      this.sourceClocks?.physicalPose(this.selectedFamily) ??
+      physicalPatchPose(this.contract!, this.selectedFamily, this.familyTick(this.selectedFamily));
     const pair = this.roots.get(this.selectedFamily)!;
     const nodes = this.nodePoses.get(this.selectedFamily);
     if (pose.node_frame === undefined) nodes?.reset();
@@ -274,7 +282,10 @@ export class StateDelivery {
     pair.frames.forEach((frame, index) => {
       frame.visible = index === pose.model_frame;
     });
-    if (this.sourceClocks && !this.sourceClocks.physicalVisible(this.selectedFamily)) {
+    if (
+      pose.visible === false ||
+      (this.sourceClocks && !this.sourceClocks.physicalVisible(this.selectedFamily))
+    ) {
       pair.initial.visible = false;
       pair.applied.visible = false;
       for (const frame of pair.frames) frame.visible = false;
@@ -282,10 +293,9 @@ export class StateDelivery {
   }
   get motionEndpoint(): "initial" | "applied" | undefined {
     if (this.mode !== "physical-motion" || !this.selectedFamily) return undefined;
-    return physicalPatchPose(
-      this.contract!,
-      this.selectedFamily,
-      this.familyTick(this.selectedFamily),
+    return (
+      this.sourceClocks?.physicalPose(this.selectedFamily) ??
+      physicalPatchPose(this.contract!, this.selectedFamily, this.familyTick(this.selectedFamily))
     ).endpoint;
   }
   advance(seconds: number) {

@@ -852,3 +852,155 @@ test("reviewed target node poses follow owner samples instead of elapsed preview
   );
   rejected.dispose();
 });
+
+async function stagedAssemblyFixture() {
+  const f = await fixture();
+  const sourceTarget = f.source.data.targets[0]!;
+  f.source.data.targets = [
+    sourceTarget,
+    structuredClone(sourceTarget),
+    structuredClone(sourceTarget),
+  ];
+  f.contract.native.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  const original = f.contract.native.elements[0]!,
+    frame = original.frames[0]!;
+  // Synthetic rig with the observed three-owner source delay/handoff layout.
+  const delays = [Array(11).fill(2), [29, ...Array(6).fill(2)], [44, ...Array(15).fill(2)]];
+  f.contract.native.elements = delays.map((ds, index) => ({
+    ...structuredClone(original),
+    id: `stage${index}`,
+    source: { ...original.source, index },
+    creation_order: index,
+    frames: ds.map((delay) => ({ ...frame, delay })),
+  }));
+  const family = f.contract.families[0]!;
+  family.element_ids = f.contract.native.elements.map((e) => e.id);
+  family.body_terminal_tick = 87;
+  f.template.children[0]!.name = "whole-assembly";
+  family.physical.motion = {
+    kind: "native-element-stage-poses",
+    source_motion_sha256: "c".repeat(64),
+    stages: delays.map((ds, stage) => ({
+      element_id: `stage${stage}`,
+      node_frames: ds.map((_, index) =>
+        (stage === 0 && index === 10) ||
+        (stage === 1 && (index === 0 || index === 6)) ||
+        (stage === 2 && index === 0)
+          ? null
+          : [
+              {
+                node: "whole-assembly",
+                matrix: new THREE.Matrix4()
+                  .makeTranslation(stage === 2 && index === 15 ? 0 : 100 * stage + index + 1, 0, 0)
+                  .toArray(),
+              },
+            ],
+      ),
+    })),
+  };
+  return f;
+}
+
+test("three source owners hand off one assembly without extrapolating retired clocks", async () => {
+  const f = await stagedAssemblyFixture();
+  const p = new StateDelivery(() => ({ load: async () => f.template, dispose() {} }));
+  await p.set(f.contract, f.source, f.library, f.read);
+  p.selectMode("physical-motion");
+  const send = (sequence: number, ticks: number[], active = true, visible = true) =>
+    p.sampleSourceState({
+      mission: f.contract.native.mission,
+      mission_data_sha256: f.contract.native.mission_data_sha256,
+      level_data_sha256: f.contract.native.level_data_sha256,
+      sequence,
+      simulation_tick: sequence,
+      samples: f.contract.native.elements.map((e, index) => ({
+        kind: "element",
+        id: e.id,
+        source: e.source,
+        active,
+        visible,
+        tick: ticks[index]!,
+      })),
+    });
+  const x = () => p.physical.children[1]!.getObjectByName("whole-assembly")!.matrix.elements[12];
+  send(0, [0, 0, 0], false);
+  assert.equal(p.physical.children[0]!.visible, true);
+  send(1, [0, 0, 0]);
+  assert.equal(x(), 1);
+  assert.equal(p.physical.children.filter((g) => g.visible).length, 1);
+  send(2, [30, 30, 30]);
+  assert.equal(x(), 102);
+  send(3, [30, 45, 45]);
+  assert.equal(x(), 202);
+  send(4, [30, 45, 87]);
+  assert.equal(x(), 0);
+  assert.equal(p.motionEndpoint, "applied");
+  assert.equal(p.familyTick("trap"), undefined, "three observed clocks have no single family tick");
+  assert.equal(p.advance(100), false);
+  send(5, [30, 45, 87], true, false);
+  assert.ok(p.physical.children.every((g) => !g.visible));
+  send(6, [30, 45, 87]);
+  assert.equal(p.physical.children[1]!.visible, true);
+  p.selectMode("physical-endpoint");
+  p.selectEndpoint("trap", "initial");
+  send(7, [30, 45, 87]);
+  assert.equal(
+    p.physical.children[0]!.visible,
+    true,
+    "ordinary endpoint selection remains explicit",
+  );
+  p.dispose();
+});
+
+test("stage gaps hide the assembly; overlap rejects atomically and does not poison sequence", async () => {
+  const f = await stagedAssemblyFixture();
+  const p = new StateDelivery(() => ({ load: async () => f.template, dispose() {} }));
+  await p.set(f.contract, f.source, f.library, f.read);
+  p.selectMode("physical-motion");
+  const batch = (sequence: number, ticks: number[]) => ({
+    mission: f.contract.native.mission,
+    mission_data_sha256: f.contract.native.mission_data_sha256,
+    level_data_sha256: f.contract.native.level_data_sha256,
+    sequence,
+    simulation_tick: sequence,
+    samples: f.contract.native.elements.map((e, index) => ({
+      kind: "element" as const,
+      id: e.id,
+      source: e.source,
+      active: true,
+      visible: true,
+      tick: ticks[index]!,
+    })),
+  });
+  p.sampleSourceState(batch(0, [0, 0, 0]));
+  const before = p.native.loopDrawSnapshot();
+  assert.throws(() => p.sampleSourceState(batch(1, [0, 30, 30])), /Overlapping/);
+  assert.deepEqual(p.native.loopDrawSnapshot(), before);
+  assert.equal(p.physical.children[1]!.getObjectByName("whole-assembly")!.matrix.elements[12], 1);
+  p.sampleSourceState(batch(1, [30, 0, 0]));
+  assert.ok(p.physical.children.every((g) => !g.visible));
+  p.sampleSourceState(batch(2, [30, 30, 0]));
+  assert.equal(p.physical.children[1]!.getObjectByName("whole-assembly")!.matrix.elements[12], 102);
+  p.dispose();
+});
+
+test("staged rigs reject missing owners, drifting node identity and nonterminal poses before loading", async () => {
+  const f = await stagedAssemblyFixture();
+  for (const fault of ["owner", "frame", "node", "terminal"]) {
+    const c = structuredClone(f.contract),
+      motion = c.families[0]!.physical.motion!;
+    if (motion.kind !== "native-element-stage-poses") throw Error("fixture");
+    if (fault === "owner") motion.stages[1]!.element_id = "stage0";
+    if (fault === "frame") motion.stages[1]!.node_frames.pop();
+    if (fault === "node") motion.stages[1]!.node_frames[1]![0]!.node = "different-assembly";
+    if (fault === "terminal") motion.stages[2]!.node_frames.at(-1)![0]!.matrix[12] = 1;
+    const p = new StateDelivery(() => {
+      throw Error("invalid staged rig reached loader");
+    });
+    await assert.rejects(
+      p.set(c, f.source, f.library, f.read),
+      /staged target|stage source|node identities|terminal stage/,
+    );
+    p.dispose();
+  }
+});

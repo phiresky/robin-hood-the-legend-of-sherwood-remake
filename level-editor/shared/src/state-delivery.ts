@@ -63,6 +63,17 @@ export interface PhysicalElementNodePoses {
   node_frames: ReviewedNodePose[][];
 }
 
+/** One retained assembly handed between independently clocked source target stages. */
+export interface PhysicalElementStagePoses {
+  kind: "native-element-stage-poses";
+  source_motion_sha256: string;
+  stages: {
+    element_id: string;
+    /** Null is an explicitly reviewed transparent source frame, not a missing pose. */
+    node_frames: (ReviewedNodePose[] | null)[];
+  }[];
+}
+
 /** Reviewed discrete models retain the last transition model as their applied state. */
 export interface PhysicalPatchModelFrames {
   kind: "native-patch-model-frames";
@@ -91,7 +102,8 @@ export interface StateDeliveryContract {
         | PhysicalPatchTranslation
         | PhysicalPatchNodePoses
         | PhysicalPatchModelFrames
-        | PhysicalElementNodePoses;
+        | PhysicalElementNodePoses
+        | PhysicalElementStagePoses;
     };
     static_replacements?: { initial: StaticStateReplacement[]; applied: StaticStateReplacement[] };
   }[];
@@ -180,7 +192,39 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
     }
     if (!family.physical) fail("missing physical endpoints");
     const motion = family.physical.motion;
-    if (motion?.kind === "native-element-node-poses") {
+    if (motion?.kind === "native-element-stage-poses") {
+      if (
+        !hash(motion.source_motion_sha256) ||
+        !Array.isArray(motion.stages) ||
+        motion.stages.length < 2 ||
+        family.patch_ids?.length ||
+        family.hidden_initial_element_ids?.length ||
+        !Array.isArray(family.physical.applied) ||
+        family.physical.applied.length !== 1 ||
+        motion.stages.length !== family.element_ids.length ||
+        new Set(motion.stages.map((stage) => stage.element_id)).size !== motion.stages.length
+      )
+        fail("invalid reviewed staged target binding");
+      for (const stage of motion.stages) {
+        const element = c.native.elements.find((e) => e.id === stage.element_id);
+        if (
+          !family.element_ids.includes(stage.element_id) ||
+          !element ||
+          element.loop ||
+          !Array.isArray(stage.node_frames) ||
+          stage.node_frames.length !== element.frames.length ||
+          !stage.node_frames.some((frame) => frame !== null)
+        )
+          fail("invalid reviewed stage source frames");
+      }
+      const rows = motion.stages.flatMap((stage) =>
+        stage.node_frames.filter((frame) => frame !== null),
+      );
+      validateReviewedNodePoses(rows);
+      const last = motion.stages.at(-1)!.node_frames.at(-1);
+      if (!last || last.some(({ matrix }) => matrix.some((v, i) => v !== (i % 5 === 0 ? 1 : 0))))
+        fail("terminal stage differs from baked applied model");
+    } else if (motion?.kind === "native-element-node-poses") {
       const element = c.native.elements.find((e) => e.id === motion.element_id);
       if (
         !hash(motion.source_motion_sha256) ||
@@ -345,6 +389,7 @@ export function physicalPatchPose(
   translation: [number, number, number];
   node_frame?: number;
   model_frame?: number;
+  visible?: boolean;
 } {
   const family = contract.families.find((f) => f.id === id);
   const motion = family?.physical.motion;
@@ -353,6 +398,16 @@ export function physicalPatchPose(
     throw new Error("Invalid physical motion tick");
   if (tick === undefined)
     return { endpoint: "initial" as const, translation: [0, 0, 0] as [number, number, number] };
+  if (motion.kind === "native-element-stage-poses")
+    return physicalElementStagePose(
+      contract,
+      id,
+      motion.stages.map((stage) => ({
+        element_id: stage.element_id,
+        active: true,
+        tick,
+      })),
+    );
   if (tick >= family.body_terminal_tick)
     return { endpoint: "applied" as const, translation: [0, 0, 0] as [number, number, number] };
   const frames =
@@ -367,6 +422,68 @@ export function physicalPatchPose(
   const translation = motion.translation_frames[frame];
   if (!translation) throw new Error("Missing reviewed physical pose");
   return { endpoint: "initial" as const, translation };
+}
+
+export interface PhysicalStageClock {
+  element_id: string;
+  active: boolean;
+  visible?: boolean;
+  tick: number;
+}
+
+/** Select one complete assembly from independent clocks; never extrapolate a retired stage. */
+export function physicalElementStagePose(
+  contract: StateDeliveryContract,
+  familyId: string,
+  samples: readonly PhysicalStageClock[],
+): ReturnType<typeof physicalPatchPose> {
+  const family = contract.families.find((f) => f.id === familyId);
+  const motion = family?.physical.motion;
+  if (motion?.kind !== "native-element-stage-poses")
+    throw new Error("Missing staged target motion");
+  if (
+    new Set(samples.map((s) => s.element_id)).size !== samples.length ||
+    samples.some(
+      (s) =>
+        !motion.stages.some((stage) => stage.element_id === s.element_id) ||
+        typeof s.active !== "boolean" ||
+        (s.visible !== undefined && typeof s.visible !== "boolean") ||
+        !Number.isSafeInteger(s.tick) ||
+        s.tick < 0,
+    )
+  )
+    throw new Error("Invalid staged owner clocks");
+  let active = false,
+    selected: number | undefined,
+    offset = 0;
+  for (const stage of motion.stages) {
+    const sample = samples.find((s) => s.element_id === stage.element_id);
+    const frames = contract.native.elements.find((e) => e.id === stage.element_id)!.frames;
+    if (sample?.active) {
+      active = true;
+      const index = nativePresentationFrame({ frames, loop: false }, sample.tick);
+      if (sample.visible !== false && stage.node_frames[index] !== null) {
+        if (selected !== undefined) throw new Error("Overlapping visible assembly stages");
+        selected =
+          offset + stage.node_frames.slice(0, index).filter((frame) => frame !== null).length;
+      }
+    }
+    offset += stage.node_frames.filter((frame) => frame !== null).length;
+  }
+  if (!active)
+    return {
+      endpoint: "initial",
+      translation: [0, 0, 0],
+      visible: motion.stages.some(
+        (stage) => samples.find((s) => s.element_id === stage.element_id)?.visible !== false,
+      ),
+    };
+  return {
+    endpoint: "applied",
+    translation: [0, 0, 0],
+    node_frame: selected,
+    visible: selected !== undefined,
+  };
 }
 
 /** Reject edited or unrelated placements before any visible node is suppressed. */
