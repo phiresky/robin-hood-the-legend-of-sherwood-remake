@@ -4,6 +4,47 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Independent northwest timber house and entrance states (2026-10-13)
+
+`nottingham-northwest-timber-house` now combines its permanent local collision and
+interior with independent removal of its ground prop and elevated appearance part.
+The authoring tool verifies both source frames and collision vertices, retains
+permanent sight order, and creates a local threshold clearance. Shared assembly
+contours and remote triggers are not imported into the standalone behavior.
+
+The removable ground prop obstructs the entrance initially. The first diagnostic
+`nottingham-northwest-timber-house-gameplay-Jc6qQ7` correctly denied all sixteen
+attempts that assumed an initially open door. The asset now explicitly warns
+about that state dependency. No collision was removed to force those attempts
+through. The native test harness can apply named exported controls and assert
+expected door authorization before testing complete entry/exit routes.
+
+Final stage `nottingham-northwest-timber-house-gameplay-9axTVp` passes sixteen
+apply/reset cycles and 48 boundary checks with permanent sight retention. Its
+`entrance-states` audit checks both copies across four control combinations, four
+rotations and two elevations: 32 complete Robin entry/exit round trips and 32
+correct authorization denials. Removing one copy's prop does not open the other.
+The default unmodified entrance audit still passes on the prior dormer archive;
+the existing interior-state/copy regression also passes. Rust changes are confined
+to the ignored diagnostic test harness. The game binary build, Rust formatting,
+and scoped JavaScript formatting/lint pass. Runtime behavior is unchanged.
+
+Publication backup `northwest-timber-installed-20261013` updates descriptor/index
+data without scene edits. Archive
+`standalone-render-library-cNa4cE/northwest-timber.zip` (2,710,087 bytes; SHA-256
+`c2326e45dde82c80af9f5a290b3d1f8cf83ca40ad5a2674fbba2829d92341665`)
+passes editor gameplay and color/depth round trip, empty-base native loading
+(13 sight obstacles, zero masks, two door projections, 960 grid blocks and two
+controls/appearance regions), and GPU independent state/transition/reset checks.
+The archived geometry exactly matches the tested 37°, height-40 export; fresh
+archived checks pass four entry/exit trips and four denials across all states.
+
+This asset has no authored roof-walking or mask definitions. These checks do not
+invent or certify them, actor-triggered prop removal, or animated rendered contact.
+Coverage `gameplay-coverage-uFfTR6` finds six missing definitions among 1,279 assets:
+four insertable and two noninsertable backgrounds, with none missing among placed
+assets. This remains a presence inventory, not a full-parity measurement.
+
 ## Rendered connected roof archives (2026-10-13)
 
 `prepare-authored-render-library.mjs` stages previously authored diagnostic scenes

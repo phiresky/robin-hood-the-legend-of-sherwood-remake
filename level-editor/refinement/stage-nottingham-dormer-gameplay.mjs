@@ -11,7 +11,23 @@ import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 import { crossesGroundFootprint } from "./select-panel-route.mjs";
 
-const id = "nottingham-north-dormer-house";
+const id = process.argv[2] ?? "nottingham-north-dormer-house";
+const reviewed = {
+  "nottingham-north-dormer-house": {
+    descriptorSha256: "89e1928d387b181ec509f289115524617da53dd572d1a014e61fbe471448aa28",
+    remainderSha256: "78d5d5df21bc839e91d8fb4ab8eaf0f7878cd618a5c192a3ab68ee9794893431",
+    changing: ["building-554", "building-553"],
+    entranceInitiallyBlocked: false,
+  },
+  "nottingham-northwest-timber-house": {
+    descriptorSha256: "a2a3843455d62b18660af16bc1ee039c3f716bbb3c7be20716e52baf91e95c47",
+    remainderSha256: "493fe0e3b5589c9b21adc0f29b3d05171e5583155dd2ac92bd97b8ed2bf02c8b",
+    changing: ["building-551", "building-552"],
+    entranceInitiallyBlocked: true,
+  },
+};
+assert.ok(Object.hasOwn(reviewed, id), "Only reviewed house configurations are supported");
+const configuration = reviewed[id];
 const base = `3d-assets/nottingham/${id}`;
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const readPinned = async (path, expected) => {
@@ -19,13 +35,10 @@ const readPinned = async (path, expected) => {
   assert.equal(hash(bytes), expected);
   return JSON.parse(bytes);
 };
-const descriptorSha256 = "89e1928d387b181ec509f289115524617da53dd572d1a014e61fbe471448aa28";
+const { descriptorSha256 } = configuration;
 const descriptor = await readPinned(`nottingham/${id}`, descriptorSha256);
 assert.equal(descriptor.gameplay, undefined);
-const permanent = await readPinned(
-  `${id}-remainder`,
-  "78d5d5df21bc839e91d8fb4ab8eaf0f7878cd618a5c192a3ab68ee9794893431",
-);
+const permanent = await readPinned(`${id}-remainder`, configuration.remainderSha256);
 const owner = await readPinned(
   "nottingham-north-state-assembly",
   "7bbc19f9cb3204cec7147daadd2d5200c5b1120ba3b9115d5a7a349de67d74a7",
@@ -35,7 +48,7 @@ const staticNodes = new Set(permanent.parts.map((part) => part.node));
 const changing = descriptor.parts.filter((part) => !staticNodes.has(part.node));
 assert.deepEqual(
   changing.map((part) => part.node),
-  ["building-554", "building-553"],
+  configuration.changing,
 );
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 const origin = sceneToGame(camera, descriptor.source_origin_scene);
@@ -81,7 +94,7 @@ const grounded = changing.filter((part) =>
   part.obstacle_local_game.points.every((point) => Math.abs(point.z_bottom - ground) < 0.001),
 );
 assert.equal(grounded.length, 1);
-assert.equal(grounded[0].node, "building-554");
+assert.equal(grounded[0].node, configuration.changing[0]);
 assert.ok(changing[1].obstacle_local_game.points.every((point) => point.z_bottom > ground + 40));
 const shape = grounded[0].obstacle_local_game;
 const center = ["x", "y"].map(
@@ -141,8 +154,12 @@ descriptor.gameplay.movementTransitions = [
   },
 ];
 descriptor.gameplay.draft.issues.push(
-  "Independent front-prop removal preserves the house's local roof, mask and interior definitions. Ground blocking follows the removable part's own footprint; shared assembly contours and remote triggers are not inherited.",
+  "Independent front-prop removal preserves the house's permanent gameplay and interior definitions. Ground blocking follows the removable part's own footprint; shared assembly contours and remote triggers are not inherited.",
 );
+if (configuration.entranceInitiallyBlocked)
+  descriptor.gameplay.draft.issues.push(
+    "The removable front prop obstructs the entrance initially. Removing this house's own props opens its entrance; other placed copies keep their independent state.",
+  );
 validateAssetGameplay(descriptor.gameplay, descriptor);
 const modelSha256 = hash(await fs.readFile(`library/${base}/model.glb`));
 const reference = {
@@ -154,7 +171,7 @@ const reference = {
   model_scene: descriptor.model_scene,
   resources: descriptor.resources,
 };
-const output = await fs.mkdtemp("work/needs-review/map-compile/dormer-house-gameplay-");
+const output = await fs.mkdtemp(`work/needs-review/map-compile/${id}-gameplay-`);
 console.log(output);
 await fs.writeFile(
   `${output}/edits.json`,
@@ -179,7 +196,7 @@ for (const height of [0, 40])
   for (const rotation of [0, 37, 90, 180]) {
     let document = {
       version: 1,
-      map: "Independent dormer houses",
+      map: `Independent ${id} copies`,
       size: [1000, 1000],
       camera,
       objects: [],
@@ -228,6 +245,7 @@ for (const height of [0, 40])
           layer: door.layer_out,
           sector: door.sector_out,
           source_world: [door.point_out[0], door.point_out[1] + z, z],
+          expected_authorized: !configuration.entranceInitiallyBlocked,
         };
       });
     assert.equal(approaches.length, 2);
@@ -267,3 +285,33 @@ for (const height of [0, 40])
     await save(false);
   }
 await save(true);
+if (configuration.entranceInitiallyBlocked) {
+  const stateDirectory = `${output}/entrance-states`;
+  await fs.mkdir(stateDirectory);
+  const stateResults = [];
+  for (const result of results) {
+    const geometry = JSON.parse(await fs.readFile(`${output}/${result.file}`)).asset_geometry;
+    const controls = geometry.movement_transitions;
+    assert.equal(controls.length, result.building_approaches.length);
+    await fs.symlink(`../${result.file}`, `${stateDirectory}/${result.file}`);
+    for (let bits = 0; bits < 2 ** controls.length; bits++)
+      stateResults.push({
+        file: result.file,
+        applied_transitions: controls
+          .filter((_, i) => bits & (1 << i))
+          .map((control) => control.id),
+        building_approaches: result.building_approaches.map((probe, i) => ({
+          ...probe,
+          expected_authorized: (bits & (1 << i)) !== 0,
+        })),
+      });
+  }
+  await fs.writeFile(
+    `${stateDirectory}/diagnostics.json`,
+    JSON.stringify({
+      scope: "independent-entrance-state-routes-not-actor-trigger-or-render-proof",
+      complete: true,
+      results: stateResults,
+    }),
+  );
+}

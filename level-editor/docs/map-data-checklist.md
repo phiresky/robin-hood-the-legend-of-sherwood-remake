@@ -6,12 +6,12 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-**Current definition inventory (2026-10-13):** `gameplay-coverage-emPF5q` checks
+**Current definition inventory (2026-10-13):** `gameplay-coverage-uFfTR6` checks
 1,279 indexed assets and finds zero missing definitions among placed assets in
-the saved scenes. Seven unused assets lack definitions, including two background
+the saved scenes. Six unused assets lack definitions, including two background
 assets that cannot be inserted as objects. This checks library
 definition presence and index hashes, not scene pins or gameplay completeness.
-All five remaining insertable assets have known state dependencies in their
+All four remaining insertable assets have known state dependencies in their
 candidate owners. These include movement, mask, door, control and appearance
 references, not just sight-state membership. Restoring them requires preserving
 those relationships or authoring explicit independent behavior.
@@ -117,6 +117,13 @@ contact remain open. See
 [the inserted roof connections](map-compilation-evidence.md#independently-inserted-dormer-roof-connections-2026-10-13),
 [the roof clearance checks](map-compilation-evidence.md#dormer-roof-support-clearances-2026-10-13) and
 [the house checks](map-compilation-evidence.md#independent-dormer-house-with-usable-entrance-2026-10-13).
+The northwest timber house now also has independent prop removal and its local
+interior. Its front prop initially blocks entry; removing it opens only that copy's
+door. Across four rotations, two elevations and every control combination, 32
+complete entry/exit trips and 32 expected denials pass. Its ZIP passes editor round
+trip, empty-base native loading, GPU state checks and fresh archived entrance-state
+tests. Roof/mask authoring, actor-triggered removal and rendered contact are not
+certified. See [the timber-house checks](map-compilation-evidence.md#independent-northwest-timber-house-and-entrance-states-2026-10-13).
 
 **Current Wychford export (2026-10-12):** `saved-map-exports-ab3hoH` completes
 in 825 seconds, including final stair-clearance preparation. This verifies the

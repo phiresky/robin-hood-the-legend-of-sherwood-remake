@@ -303,13 +303,32 @@ fn audit_building_approaches(sprite: Option<&crate::sprite::Sprite>, round_trip:
         let bytes = std::fs::read(directory.join(file)).unwrap();
         let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let dimensions = &descriptor["walkable_polygon"][2];
-        let (engine, assets) = compiled_walkway_with_dimensions(
+        let (mut engine, assets) = compiled_walkway_with_dimensions(
             &bytes,
             (
                 dimensions[0].as_f64().unwrap() as f32 + 1.,
                 dimensions[1].as_f64().unwrap() as f32 + 1.,
             ),
         );
+        let sim = crate::sim_rng::test_context();
+        let mut applied = std::collections::HashSet::new();
+        if let Some(ids) = result.get("applied_transitions") {
+            for id in ids.as_array().expect("applied_transitions must be an array") {
+                let id = id.as_str().expect("transition ID must be a string");
+                assert!(applied.insert(id), "duplicate applied control {id}");
+                let transitions = descriptor["asset_geometry"]["movement_transitions"]
+                    .as_array()
+                    .expect("export has no movement transitions");
+                assert_eq!(engine.script_domains.interactables.patches.len(), transitions.len());
+                let index = transitions
+                    .iter()
+                    .position(|transition| transition["id"].as_str() == Some(id))
+                    .unwrap_or_else(|| panic!("{file}: missing applied control {id}"));
+                let patch = crate::patch::PatchIndex::new(u32::try_from(index).unwrap()).unwrap();
+                engine.apply_patch(TickCtx::new(&sim, &assets), patch);
+                assert!(engine.script_domains.interactables.patches[index].applied);
+            }
+        }
         let probes = result["building_approaches"]
             .as_array()
             .expect("authored building approach probes");
@@ -365,10 +384,16 @@ fn audit_building_approaches(sprite: Option<&crate::sprite::Sprite>, round_trip:
                         sprite.expect("complete building sprite"),
                     )
                     .and_then(|authorized| {
-                        if authorized {
+                        let expected = probe
+                            .get("expected_authorized")
+                            .map(|value| value.as_bool().expect("expected_authorized must be bool"))
+                            .unwrap_or(true);
+                        if authorized == expected {
                             Ok(())
                         } else {
-                            Err("building route was not authorized".into())
+                            Err(format!(
+                                "building route authorization {authorized}, expected {expected}"
+                            ))
                         }
                     })
                 } else {
@@ -391,6 +416,7 @@ fn audit_building_approaches(sprite: Option<&crate::sprite::Sprite>, round_trip:
                     .unwrap()
                     .push(serde_json::json!({
                         "file": file, "door": index, "probe": probe, "layer": door.layer_out,
+                        "applied_transitions": result.get("applied_transitions"),
                         "source": [source.x, source.y], "goal": [goal.x, goal.y],
                         "passed": outcome.is_ok(), "error": outcome.err()
                     }));
