@@ -28,6 +28,29 @@ terrain boundaries, independently placed building collision, receiving floors
 and existing stair/door routes; the earlier unpublished physical-deck candidate
 does not establish these requirements against the current compiler.
 
+### Current physical-deck candidate rejected for publication
+
+Fresh stage `raised-terrain-surface-IodqKG` selects 274 structural parts across
+117 changed assets. Export `saved-map-exports-uDT9Mk` completes in 309 seconds
+and constructs natively: 192 areas, 1,269 sight obstacles, 244 doors, 69 jump
+pairs, 271,215 grid blocks and 377 elevation boundaries. However, it emits only
+88 room entrances (baseline 95), with 60 permanently blocked (baseline 50).
+There are seven newly omitted room entrances, five omitted receiver bindings,
+three omitted jump connections and three omitted light receiver bindings.
+The baseline is `saved-map-exports-DYkkcw`, before the two river-lane publications.
+
+Native audit `york-terrain-candidate-routes-esmzu7yk` checks all 87 ordinary
+building entrances: 26 actual entry/exit round trips pass, 60 expected permanent
+denials match, and the west-bridge approach gatehouse fails a receiver check
+at projected [1242, 1198] (current receiver 1033, queried 206). One trapdoor
+remains explicitly outside this verifier's coverage. Denials are not successful
+gameplay routes, and omitted entrances are not included in the 87 checks.
+
+The broad conversion is not publishable. Refined asset-local supporting floors,
+clearances and doorway structure must replace inherited exclusions before the
+raised terrain can safely relinquish them. No library or runtime change is made
+by this experiment.
+
 ## Exact doorway collision diagnostics (2026-10-14)
 
 `check-saved-map-exports.mjs --trace-passages` optionally records the placed
