@@ -137,12 +137,13 @@ test("fractional alpha fails without silently changing color-space blending", ()
   f.restored();
 });
 
-test("physical substitution rejects stale source identity and unsampled native phases before rendering", async () => {
+for (const kind of ["map-animation", "mission-target"] as const)
+test(`${kind} physical substitution rejects stale identity and unsampled phases`, async () => {
   const { NativePhysicalEffectPreview } = await import("./native-physical-effect-preview.ts");
   const hash = "a".repeat(64);
   const element = {
     id: "b05",
-    source: { kind: "map-animation", index: 12, sha256: hash },
+    source: { kind, index: 12, sha256: hash },
     active: true,
     frames: [
       { path: "a.png", sha256: hash, width: 1, height: 1, offset: [0, 0], delay: 1 },
@@ -161,7 +162,7 @@ test("physical substitution rejects stale source identity and unsampled native p
     elements: [element],
   } as unknown as import("../../shared/src/native-state-presentation.ts").NativeStatePresentationContract;
   const binding = {
-    source_kind: "map-animation",
+    source_kind: kind === "map-animation" ? kind : undefined,
     target_index: 12,
     target_sha256: hash,
   } as import("../../shared/src/mission-state.ts").MissionStateContract["targets"][number];
@@ -198,6 +199,21 @@ test("physical substitution rejects stale source identity and unsampled native p
     source: { ...snapshot.draws[0]!.element.source, sha256: "b".repeat(64) },
   };
   assert.throws(() => preview.sample({} as THREE.WebGLRenderer, snapshot), /snapshot identity/);
+  assert.throws(
+    () => new NativePhysicalEffectPreview(native, [{ object, tick: () => 0,
+      binding: { ...binding, source_kind: kind === "map-animation" ? "mission-target" : "map-animation" } }]),
+    /source identity/,
+  );
+  snapshot.draws[0]!.element = element as typeof snapshot.draws[number]["element"];
+  object.visible = false;
+  const unbound = { ...snapshot.draws[0]!, element: { ...snapshot.draws[0]!.element, id: "unbound" } };
+  snapshot.draws.push(unbound);
+  const sampled = preview.sample({} as THREE.WebGLRenderer, snapshot);
+  assert.equal(sampled.draws[1], unbound);
+  assert.equal(sampled.draws[0]!.element, element);
+  assert.equal(sampled.draws[0]!.sourceTick, 0);
+  assert.deepEqual(Array.from(sampled.draws[0]!.pixels.data), [0, 0, 0, 0]);
+
 });
 
 test("refined receiver isolates terrain and static solids, excluding effects, actors and helpers", async () => {

@@ -131,9 +131,9 @@ export class NativePhysicalEffectPreview {
   constructor(native: NativeStatePresentationContract, rows: readonly PhysicalEffectBinding[]) {
     this.native = structuredClone(native);
     for (const row of rows) {
-      if (row.binding.source_kind !== "map-animation") continue;
+      const kind = row.binding.source_kind ?? "mission-target";
       const element = native.elements.find(
-        (e) => e.source.kind === "map-animation" && e.source.index === row.binding.target_index,
+        (e) => e.source.kind === kind && e.source.index === row.binding.target_index,
       );
       if (
         !element ||
@@ -143,7 +143,7 @@ export class NativePhysicalEffectPreview {
         throw new Error("Physical effect source identity differs");
       this.bound.set(element.id, row);
     }
-    if (!this.bound.size) throw new Error("No source-bound physical map effects");
+    if (!this.bound.size) throw new Error("No source-bound physical effects");
   }
   get cameraElevation() {
     return this.native.camera_elevation_deg;

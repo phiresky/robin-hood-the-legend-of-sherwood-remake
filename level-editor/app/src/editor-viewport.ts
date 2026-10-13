@@ -1281,7 +1281,7 @@ export class EditorViewport {
         throw new Error(
           `Physical loop resources did not all become ready${this.missionStates.loadErrors.size ? ": " + [...this.missionStates.loadErrors.values()].join("; ") : ""}`,
         );
-      if (frozen.physical!.targets.some((t) => t.source_kind === "map-animation"))
+      if (frozen.physical!.targets.length)
         this.physicalNativeEffects = new NativePhysicalEffectPreview(
           frozen.native,
           [...this.missionStates.players.values()].map(({ player, binding }) => ({
