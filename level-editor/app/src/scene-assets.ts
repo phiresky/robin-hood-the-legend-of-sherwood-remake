@@ -110,6 +110,8 @@ export class SceneAssetLoader {
     const lossyBytes =
       verifiedLossy ??
       (lossy ? await readLossyModel((path) => read(this.root, path), lossy) : null);
+    if (materialIndices.length && lossyBytes)
+      throw new Error("Phase materials require the pinned model");
     let bytes =
       lossyBytes ?? (await checked(await read(this.root, reference.model), reference.model_sha256));
     // Lossy models embed everything, so the published model's shared resources are not fetched.
@@ -223,7 +225,6 @@ export class SceneAssetLoader {
     });
     const result = await loader.parseAsync(bytes, "");
     if (materialIndices.length) {
-      if (lossyBytes) throw new Error("Phase materials require the pinned model");
       const materials = new Map<number, LoadedPhaseMaterial>();
       try {
         for (const index of new Set(materialIndices)) {

@@ -321,3 +321,52 @@ test("phase material dependencies use pinned model indices and share owner dispo
   await assert.rejects(f.loader.load(f.reference, undefined, [1]), /Missing pinned/);
   f.loader.dispose();
 });
+
+test("lossy phase bindings reject before decoding or allocating scene resources", async (t) => {
+  const f = fixture();
+  let parses = 0;
+  t.mock.method(GLTFLoader.prototype, "parseAsync", async () => {
+    parses++;
+    throw new Error("Must not decode");
+  });
+  await assert.rejects(
+    f.loader.load({ ...f.reference, model: "3d-assets/model.glb" }, new ArrayBuffer(8), [0]),
+    /Phase materials require the pinned model/,
+  );
+  assert.equal(parses, 0);
+  assert.equal(f.reads.size, 0);
+  f.loader.dispose();
+});
+
+test("failed phase dependency resolution releases decoded scene and prior unattached materials", async (t) => {
+  const f = fixture();
+  const scene = new THREE.Group();
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(),
+    new THREE.MeshBasicMaterial({ map: new THREE.Texture() }),
+  );
+  scene.add(mesh);
+  const phase = new THREE.MeshBasicMaterial({ map: new THREE.Texture() });
+  const resources = [mesh.geometry, mesh.material, mesh.material.map!, phase, phase.map!];
+  const disposed = resources.map(() => 0);
+  resources.forEach((resource, i) => resource.addEventListener("dispose", () => disposed[i]++));
+  t.mock.method(GLTFLoader.prototype, "parseAsync", async () => ({
+    scene,
+    parser: {
+      json: {
+        materials: [0, 1].map((i) => ({
+          name: `phase${i}`,
+          pbrMetallicRoughness: { baseColorTexture: { index: i } },
+        })),
+      },
+      getDependency: async (_kind: string, index: number) => {
+        if (index === 1) throw new Error("Texture decode failed");
+        return phase;
+      },
+    },
+  }));
+  await assert.rejects(f.loader.load(f.reference, undefined, [0, 1]), /Texture decode failed/);
+  assert.deepEqual(disposed, [1, 1, 1, 1, 1]);
+  f.loader.dispose();
+  assert.deepEqual(disposed, [1, 1, 1, 1, 1]);
+});
