@@ -19,8 +19,11 @@ An unpublished combined Derby keep candidate now reassembles all 71 parts' local
 gameplay from its four components. It preserves floors, stairs, rooms, masks,
 lights and sounds. All forty native stair routes now pass after static handoff
 preparation was narrowed to avoid neighboring entrances' internal routes. Elevated
-outside entrances also need supported assembly fixtures, and the old combined
-model lacks a component's reveal metadata. It remains outside the published
+outside entrances still need supported assembly fixtures. A replacement model
+now preserves all 71 component parts and both independent reveal identities;
+its 37° rendered ZIP reopens with identical gameplay, color and depth. The hall
+reveal still needs its elevated landing before it can be tested in-game.
+The combined candidate remains outside the published
 definition count; see [the keep candidate](map-compilation-evidence.md#combined-derby-keep-authoring-candidate-2026-10-13).
 The standalone Nottingham watchtower now has a published gameplay draft: two
 copies across four rotations and two elevations retain their collision and upper

@@ -4,6 +4,37 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Combined keep model and rendered archive (2026-10-13)
+
+`stage-derby-keep-model.mjs` consumes the pinned combined-gameplay candidate and
+the four published component assets. It checks model/gameplay coordinate frames,
+gives each component's appearance triggers its own namespace, and uses the
+existing static-model normalization to produce the editor's single asset group.
+All 71 part subtrees retain decoded geometry, texture bytes, material metadata and
+world transforms through merging, normalization and GLB reopening (matrix
+roundoff tolerance 1e-9). Both model trigger identities match the gameplay controls.
+No original level data or engine changes are involved in this authoring step.
+
+Candidate `derby-keep-model-X2L51v` contains the 62,579,728-byte replacement GLB
+and an isolated editor fixture. Its 37°/height-40, 2400×2400 rendered ZIP
+`keep-model.zip` is 14,557,891 bytes, SHA-256
+`42dc288322583b2e0ef2bc3e4050bc9ed0a9bc41edb359a226ba8866eb8d7283`.
+The browser reopened the packaged editor document/models and rebaked identical
+gameplay, color, depth and available appearance images. The archived navigation
+matches the prior staged geometry except for warning text, and all ten complete
+sprite stair routes pass. The downlevel GPU multipass test also passes using this
+archive. The rendered exterior was inspected and retains the complete assembly.
+The rebuilt native archive test also loads it without a base datadir: 90 sight
+obstacles, four masks, twenty door projections, 27,132 fast-find grid blocks and
+one appearance region/control, plus color, depth, minimap and editor scene.
+
+This fixture compiles only the west-tower control: the hall reveal and two
+elevated exterior entrances still lack supporting terrain/landings. The second
+model trigger is preserved but is not certified by the single-control rendered
+test. Remaining overlap, mask and receiving-order warnings also remain open.
+The candidate is unpublished; model preservation and archive round-trip success
+do not establish full building gameplay or actor-triggered reveal parity.
+
 ## Combined Derby keep authoring candidate (2026-10-13)
 
 `stage-derby-keep-gameplay.mjs` assembles a candidate exclusively from the four
@@ -41,11 +72,10 @@ deciding whether these are asset omissions or missing assembly context. Export
 warns explicitly and does not invent receiving geometry. The 90° variant also
 reports a collapsed mask character boundary.
 
-The old combined GLB lacks the main-hall component's covered/revealed material
-metadata. That appearance migration must accompany any publication of the
-assembled gameplay; the authoring manifest explicitly records
-`publicationReady: false`. Next checks must address that model migration, supported
-entrance fixtures and the remaining mask/receiver warnings.
+The old combined GLB lacks component reveal metadata. The replacement model and
+rendered archive above now preserve those definitions, while supported entrance
+fixtures and the remaining mask/receiver warnings still need work. The gameplay
+authoring manifest explicitly records `publicationReady: false`.
 
 ## Independent northwest timber house and entrance states (2026-10-13)
 
