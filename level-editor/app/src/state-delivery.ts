@@ -201,9 +201,10 @@ export class StateDelivery {
     this.native.setPlaying(false);
     this.sourceClocks = clocks;
     for (const sample of samples) {
-      if (sample.kind === "element")
+      if (sample.kind === "element") {
         this.native.setElementState(sample.id, sample.active, sample.tick);
-      else if (sample.kind === "patch")
+        if (sample.visible !== undefined) this.native.setElementVisible(sample.id, sample.visible);
+      } else if (sample.kind === "patch")
         this.native.setPatchState(sample.id, sample.phase, sample.tick);
       else this.native.setBackgroundState(sample.id, sample.phase, sample.tick);
     }
@@ -273,6 +274,11 @@ export class StateDelivery {
     pair.frames.forEach((frame, index) => {
       frame.visible = index === pose.model_frame;
     });
+    if (this.sourceClocks && !this.sourceClocks.physicalVisible(this.selectedFamily)) {
+      pair.initial.visible = false;
+      pair.applied.visible = false;
+      for (const frame of pair.frames) frame.visible = false;
+    }
   }
   get motionEndpoint(): "initial" | "applied" | undefined {
     if (this.mode !== "physical-motion" || !this.selectedFamily) return undefined;

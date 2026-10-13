@@ -8,7 +8,14 @@ import type { StateDeliveryContract } from "./state-delivery.ts";
 
 type Source = StateDeliveryContract["native"]["elements"][number]["source"];
 export type StateClockSample =
-  | { kind: "element"; id: string; source: Source; active: boolean; tick: number }
+  | {
+      kind: "element";
+      id: string;
+      source: Source;
+      active: boolean;
+      visible?: boolean;
+      tick: number;
+    }
   | {
       kind: "patch" | "background";
       id: string;
@@ -64,7 +71,11 @@ export function validateStateClockSamples(
     if (!Number.isSafeInteger(s.tick) || s.tick < 0)
       throw new Error("Invalid source animation tick");
     if (s.kind === "element") {
-      if (typeof s.active !== "boolean") throw new Error("Invalid source element activity");
+      if (
+        typeof s.active !== "boolean" ||
+        (s.visible !== undefined && typeof s.visible !== "boolean")
+      )
+        throw new Error("Invalid source element activity or visibility");
     } else {
       if (
         !["initial", "forward", "applied", "reverse"].includes(s.phase) ||
@@ -128,7 +139,12 @@ export class StateEventClocks {
         throw new Error("Reviewed physical motion does not support reverse source events");
     }
     const samples = structuredClone(batch.samples);
-    for (const s of samples) this.clocks.set(`${s.kind}:${s.id}`, s);
+    for (const s of samples) {
+      const prior = this.clocks.get(`${s.kind}:${s.id}`);
+      if (s.kind === "element" && s.visible === undefined && prior?.kind === "element")
+        s.visible = prior.visible;
+      this.clocks.set(`${s.kind}:${s.id}`, s);
+    }
     this.sequence = batch.sequence;
     this.simulationTick = batch.simulation_tick;
     return structuredClone(samples);
@@ -137,6 +153,15 @@ export class StateEventClocks {
   sample(kind: StateClockSample["kind"], id: string): StateClockSample | undefined {
     const sample = this.clocks.get(`${kind}:${id}`);
     return sample ? structuredClone(sample) : undefined;
+  }
+
+  physicalVisible(familyId: string): boolean {
+    const family = this.contract.families.find((f) => f.id === familyId);
+    if (!family) throw new Error(`Unknown state family: ${familyId}`);
+    const motion = family.physical.motion;
+    if (motion?.kind !== "native-element-node-poses") return true;
+    const owner = this.sample("element", motion.element_id);
+    return owner?.kind !== "element" || owner.visible !== false;
   }
 
   /** Physical tracks use their own patch clock; final animation tick is a separate clock. */

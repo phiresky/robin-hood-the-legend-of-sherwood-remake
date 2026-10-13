@@ -128,3 +128,27 @@ test("event batches validate atomically and reject duplicate, stale, or foreign 
   copy.tick = 200;
   assert.equal(clocks.sample("element", sample.id)!.tick, 2);
 });
+
+test("an omitted visibility field retains the owner's last visibility independently of its clock", () => {
+  const f = fixture(),
+    clocks = new StateEventClocks(f.contract);
+  clocks.apply(
+    f.batch(0, 0, [
+      {
+        kind: "element",
+        id: f.body.id,
+        source: f.body.source,
+        active: true,
+        visible: false,
+        tick: 0,
+      },
+    ]),
+  );
+  const applied = clocks.apply(
+    f.batch(1, 1, [
+      { kind: "element", id: f.body.id, source: f.body.source, active: true, tick: 1 },
+    ]),
+  );
+  assert.equal(applied[0]!.kind, "element");
+  assert.equal("visible" in applied[0]! && applied[0]!.visible, false);
+});

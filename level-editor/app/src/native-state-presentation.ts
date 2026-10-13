@@ -665,6 +665,14 @@ export class NativeStatePresentation {
     this.offsets.set(id, tick - this.currentTick);
     this.revision++;
   }
+  setElementVisible(id: string, visible: boolean) {
+    if (this.initialContext || this.externalClock)
+      throw new Error("Source context or external clock owns element visibility");
+    if (!this.contract?.elements.some((e) => e.id === id) || typeof visible !== "boolean")
+      throw new Error("Invalid source element visibility");
+    this.visibleElements.set(id, visible);
+    this.revision++;
+  }
   setBackgroundState(id: string, phase: NativeBackgroundPhase, tick = 0) {
     if (this.initialContext)
       throw new Error("Immutable source initial context cannot change background state");

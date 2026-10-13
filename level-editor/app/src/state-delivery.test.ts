@@ -811,14 +811,14 @@ test("reviewed target node poses follow owner samples instead of elapsed preview
   await p.set(f.contract, f.source, f.library, f.read);
   p.selectMode("physical-motion");
   const element = f.contract.native.elements[0]!;
-  const send = (sequence: number, active: boolean, tick: number) =>
+  const send = (sequence: number, active: boolean, tick: number, visible = true) =>
     p.sampleSourceState({
       mission: f.contract.native.mission,
       mission_data_sha256: f.contract.native.mission_data_sha256,
       level_data_sha256: f.contract.native.level_data_sha256,
       sequence,
       simulation_tick: sequence,
-      samples: [{ kind: "element", id: element.id, source: element.source, active, tick }],
+      samples: [{ kind: "element", id: element.id, source: element.source, active, tick, visible }],
     });
   send(0, false, 0);
   assert.equal(p.physical.children[0]!.visible, true);
@@ -834,6 +834,12 @@ test("reviewed target node poses follow owner samples instead of elapsed preview
   );
   send(3, false, 0);
   assert.equal(p.physical.children[0]!.visible, true);
+  send(4, true, 3, false);
+  assert.ok(p.physical.children.every((group) => !group.visible));
+  assert.equal(p.native.loopDrawSnapshot().draws.length, 0);
+  send(5, true, 3, true);
+  assert.equal(p.physical.children[1]!.visible, true);
+  assert.equal(p.native.loopDrawSnapshot().draws.length, 1);
   p.dispose();
   const invalid = structuredClone(f.contract);
   invalid.families[0]!.physical.motion!.source_motion_sha256 = "wrong";
