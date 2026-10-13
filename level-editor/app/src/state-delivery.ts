@@ -1,3 +1,4 @@
+import { StateEventClocks, type StateClockBatch } from "../../shared/src/state-event-clocks.ts";
 import { ReviewedNodePoses } from "./reviewed-node-poses.ts";
 import * as THREE from "three";
 import {
@@ -22,6 +23,7 @@ export class StateDelivery {
   private contract: StateDeliveryContract | undefined;
   private roots = new Map<string, FamilyRoots>();
   private starts = new Map<string, number>();
+  private sourceClocks: StateEventClocks | undefined;
   private nodePoses = new Map<string, ReviewedNodePoses>();
   private selectedFamily: string | undefined;
   private epoch = 0;
@@ -57,6 +59,7 @@ export class StateDelivery {
     this.nodePoses.clear();
     this.roots.clear();
     this.starts.clear();
+    this.sourceClocks = undefined;
     this.selectedFamily = undefined;
     this.contract = undefined;
     this.currentMode = "native-art";
@@ -184,7 +187,27 @@ export class StateDelivery {
     }
     this.sampleMotion();
   }
+  /** Apply independently observed owner/patch clocks without activating sibling state. */
+  sampleSourceState(batch: StateClockBatch) {
+    if (!this.contract) throw new Error("State delivery is not ready");
+    if (!this.sourceClocks && this.starts.size)
+      throw new Error("Reload preview state before binding source clocks");
+    const clocks = this.sourceClocks ?? new StateEventClocks(this.contract);
+    const samples = clocks.apply(batch);
+    this.native.setPlaying(false);
+    this.sourceClocks = clocks;
+    for (const sample of samples) {
+      if (sample.kind === "element")
+        this.native.setElementState(sample.id, sample.active, sample.tick);
+      else if (sample.kind === "patch")
+        this.native.setPatchState(sample.id, sample.phase, sample.tick);
+      else this.native.setBackgroundState(sample.id, sample.phase, sample.tick);
+    }
+    this.sampleMotion();
+  }
   seekFamily(id: string, tick: number) {
+    if (this.sourceClocks)
+      throw new Error("Source events own state clocks; reload to use preview playback");
     const family = this.family(id);
     if (!Number.isSafeInteger(tick) || tick < 0) throw new Error("Invalid state delivery tick");
     this.starts.set(id, this.native.tick - tick);
@@ -199,6 +222,8 @@ export class StateDelivery {
     this.seekFamily(id, 0);
   }
   reset(id: string) {
+    if (this.sourceClocks)
+      throw new Error("Source events own state clocks; reset through source events");
     const family = this.family(id);
     this.starts.delete(id);
     for (const element of [...family.element_ids, ...(family.hidden_initial_element_ids ?? [])])
@@ -210,10 +235,12 @@ export class StateDelivery {
   }
   familyTick(id: string): number | undefined {
     this.family(id);
+    if (this.sourceClocks) return this.sourceClocks.physicalTick(id);
     const start = this.starts.get(id);
     return start === undefined ? undefined : this.native.tick - start;
   }
   setPlaying(playing: boolean) {
+    if (this.sourceClocks && playing) throw new Error("Source events own state playback");
     if (!this.ready) throw new Error("State delivery is not ready");
     if (playing && this.mode === "physical-endpoint")
       throw new Error("Physical endpoints have no transition playback");
@@ -252,6 +279,7 @@ export class StateDelivery {
     ).endpoint;
   }
   advance(seconds: number) {
+    if (this.sourceClocks) return false;
     const changed = this.native.advance(seconds);
     if (changed) this.sampleMotion();
     return changed;

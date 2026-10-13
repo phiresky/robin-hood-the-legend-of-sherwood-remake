@@ -697,3 +697,51 @@ test("discrete terminal model cannot drift from retained applied appearance or p
     p.dispose();
   }
 });
+
+test("source events independently sample reviewed physical motion, reject stale bindings, and preserve endpoint mode", async () => {
+  const f = await motionFixture();
+  const p = new StateDelivery(() => ({ load: async () => f.template, dispose() {} }));
+  await p.set(f.contract, f.source, f.library, f.read);
+  p.selectMode("physical-motion");
+  const patch = f.contract.native.patch_states![0]!;
+  const batch = (sequence: number, phase: "initial" | "forward" | "applied", tick: number) => ({
+    mission: f.contract.native.mission,
+    mission_data_sha256: f.contract.native.mission_data_sha256,
+    level_data_sha256: f.contract.native.level_data_sha256,
+    sequence,
+    simulation_tick: sequence * 20,
+    samples: [{ kind: "patch" as const, id: patch.id, source: patch.source, phase, tick }],
+  });
+  p.sampleSourceState(batch(0, "forward", 12));
+  assert.equal(p.familyTick("trap"), 12);
+  assert.equal(p.physical.children[0]!.position.y, 6);
+  assert.equal(p.advance(100), false);
+  assert.equal(p.familyTick("trap"), 12);
+  assert.throws(() => p.activate("trap"), /Source events own/);
+  assert.throws(() => p.reset("trap"), /Source events own/);
+  assert.throws(() => p.setPlaying(true), /Source events own/);
+  assert.throws(() => p.sampleSourceState(batch(0, "forward", 30)), /out-of-order/);
+  const bad = batch(1, "forward", 30);
+  bad.samples[0]!.source = { ...patch.source, sha256: "0".repeat(64) };
+  assert.throws(() => p.sampleSourceState(bad), /Unbound/);
+  assert.equal(p.physical.children[0]!.position.y, 6);
+  p.sampleSourceState(batch(1, "applied", 0));
+  assert.equal(p.familyTick("trap"), 89);
+  assert.equal(p.physical.children[1]!.visible, true);
+  p.sampleSourceState(batch(2, "applied", 3));
+  assert.equal(p.physical.children[1]!.visible, true);
+  p.sampleSourceState(batch(3, "initial", 0));
+  assert.equal(p.familyTick("trap"), undefined);
+  assert.equal(p.physical.children[0]!.visible, true);
+  assert.equal(p.physical.children[0]!.position.y, 0);
+  p.selectMode("physical-endpoint");
+  p.selectEndpoint("trap", "applied");
+  assert.equal(p.physical.children[1]!.visible, true);
+  await p.set(f.contract, f.source, f.library, f.read);
+  p.activate("trap");
+  p.setPlaying(true);
+  p.advance(1 / 25);
+  assert.equal(p.familyTick("trap"), 1);
+  assert.throws(() => p.sampleSourceState(batch(4, "forward", 0)), /Reload preview/);
+  p.dispose();
+});

@@ -1,3 +1,4 @@
+import type { StateClockBatch } from "../../shared/src/state-event-clocks.ts";
 import {
   NativePhysicalEffectPreview,
   renderNativeStaticReceiver,
@@ -1133,6 +1134,11 @@ export class EditorViewport {
       this.aperturePreview.selectEndpoint(family, endpoint);
     this.syncRefinedMissionTargets();
     this.clippingBoundsDirty = true;
+  }
+  sampleDeliveredSourceState(batch: StateClockBatch) {
+    this.stateDelivery.sampleSourceState(batch);
+    this.syncDeliveredMotionPose();
+    this.nativeSurface?.update(this.stateDelivery.native.pixels());
   }
   seekDeliveredState(family: string, tick: number) {
     this.stateDelivery.seekFamily(family, tick);
