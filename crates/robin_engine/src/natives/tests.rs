@@ -3293,7 +3293,7 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
     npc_host.entities.push(Some(native_test_soldier()));
     let mut emoticon = NativeStack::default();
     emoticon.push_i32(ScriptHandleCodec::actor_handle_from_index(0));
-    emoticon.push_i32(crate::ai::EmoticonType::QuestionMark as i32);
+    emoticon.push_i32(1); // Script question mark ID; not the runtime enum ordinal.
     emoticon.push_i32(7);
     assert_eq!(
         call_host_native_with_queries(
@@ -3312,6 +3312,49 @@ fn current_action_and_frame_queries_read_canonical_runtime_state() {
             .emoticon_expiration_date,
         130
     );
+}
+
+#[test]
+fn script_emoticon_ids_select_the_authored_icon_and_preserve_invalid_requests() {
+    use crate::ai::EmoticonType;
+    let mut host = NativeTestHost::new();
+    host.entities.push(Some(native_test_soldier()));
+    let mut sequences = crate::sequence::SequenceManager::new();
+    let mut selected = Vec::new();
+    let mut sounds = crate::sound_source::SoundSourceManager::new();
+    let weather = crate::engine::WeatherState::default();
+    let frame = 123;
+    // The script contract is independent of the runtime enum's extra icon.
+    // ID 5 is the sun requested above Marian during the Silver Arrow opening.
+    for (script_id, expected) in [
+        (1, EmoticonType::QuestionMark),
+        (2, EmoticonType::XMark),
+        (3, EmoticonType::Zzz),
+        (4, EmoticonType::Cloud),
+        (5, EmoticonType::Sun),
+        (8, EmoticonType::Sun), // Internal Drunken ordinal is invalid in scripts.
+        (-1, EmoticonType::Sun),
+        (6, EmoticonType::Thunderstorm),
+        (7, EmoticonType::Drunken),
+        (0, EmoticonType::None),
+    ] {
+        let mut stack = NativeStack::default();
+        stack.push_i32(ScriptHandleCodec::actor_handle_from_index(0));
+        stack.push_i32(script_id);
+        stack.push_i32(100);
+        call_host_native_with_queries(
+            &mut host,
+            NativeFn::SetNPCEmoticon,
+            &mut stack,
+            TestQueryViews::new(&mut sequences, &mut selected, &mut sounds, &weather, &frame),
+        );
+        let ai = host.entity_at_legacy_slot(0).ai_controller().unwrap();
+        assert_eq!(ai.current_emoticon_type, expected, "script ID {script_id}");
+        assert_eq!(ai.emoticon_has_expiration_date, script_id != 0);
+        if script_id != 0 {
+            assert_eq!(ai.emoticon_expiration_date, 223);
+        }
+    }
 }
 
 #[test]

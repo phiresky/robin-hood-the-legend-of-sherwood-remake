@@ -526,9 +526,22 @@ impl NativeContext<'_, '_> {
                     script_error!(native, "target {actor} is not an NPC");
                     return 0;
                 }
-                let Ok(et) = EmoticonType::try_from(emoticon_type as u32) else {
-                    script_error!(native, "invalid emoticon id {emoticon_type}");
-                    return 0;
+                // Script IDs omit the internal growing-question-mark icon.
+                // Keep this mapping explicit: casting to the runtime enum shifts
+                // every nonzero ID (including the Silver Arrow sun, script ID 5).
+                let et = match emoticon_type {
+                    0 => EmoticonType::None,
+                    1 => EmoticonType::QuestionMark,
+                    2 => EmoticonType::XMark,
+                    3 => EmoticonType::Zzz,
+                    4 => EmoticonType::Cloud,
+                    5 => EmoticonType::Sun,
+                    6 => EmoticonType::Thunderstorm,
+                    7 => EmoticonType::Drunken,
+                    _ => {
+                        script_error!(native, "invalid emoticon id {emoticon_type}");
+                        return 0;
+                    }
                 };
                 if let Some(ai) = entity.ai_controller_mut() {
                     // NONE clears the expiration flag and
