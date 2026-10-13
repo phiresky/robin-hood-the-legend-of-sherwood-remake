@@ -11,6 +11,21 @@ import { selectPanelRoute } from "./select-panel-route.mjs";
 
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 const reviewed = {
+  "york-market-timber-house-striped-awning": {
+    descriptor: "e163fe2e41d3a92672ca4140ce1f6d1ed45760675ead488aee15339e281dfb2b",
+    model: "f8bd5a67219440b33aa962eab2cf8c98936593bbe4f56adb0396ef238ad712ef",
+    parts: [
+      "building-046",
+      "building-939",
+      "building-952",
+      "building-953",
+      "building-954",
+      "building-974",
+    ],
+    control: "lower-awning",
+    staticOwner: "york-market-timber-house-striped-awning-remainder",
+    staticDescriptor: "56b657002f3e8e66756d019118ff2df52c5c7eb9e1301054d3ffc009238bba82",
+  },
   "york-market-southeast-green-canopy-stall": {
     descriptor: "8563e8add8ad3a35de3fe0d7d66456df46c4575aebd1e4a765b1c442aa73198d",
     model: "a8ca058bb43788666e27dca2865bd35697445a66c066b99e80ae5136829cb8eb",

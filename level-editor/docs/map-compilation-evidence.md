@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Timber-house awning with permanent prop (2026-10-13)
+
+`york-market-timber-house-striped-awning` now has an independent `lower-awning`
+control for its four raised pieces and one lowered piece. Permanent part 046 is
+preserved from its static remainder, with matching local frame and collision
+coordinates. The remainder's explicit movement-blocker list is empty; the new
+whole asset derives permanent blocking from the retained solid part itself.
+The control swaps only the raised/lowered pieces, leaving that prop active and
+blocking. No assembly-only exclusions belong to the changing pieces.
+
+Stage `york-canvas-screen-LCDO0Y` passes eight moved/copied exports, sixteen native
+apply/reset cycles, 144 boundary-route checks including permanent blocking, and
+permanent sight-retention checks. Robin completes all sixteen raised-state walks
+around the permanent prop, taking 45–57 moving ticks and stopping upright.
+Publication backup `timber-awning-installed-20261013` changes descriptor/index
+data only. Models, saved scene placements and component assets are unchanged.
+The rendered archive `standalone-render-library-dzVLZ2/timber-awning.zip`
+(4,329,362 bytes; SHA-256
+`2e651dccd69646d703189d2bdf345ec9311713091a0d8c5d9a0a850905a9def0`)
+reopens/rebakes with identical gameplay and color/depth images. Native loading
+without base data passes with 13 sight obstacles, 960 grid blocks and two controls
+and appearance regions. GPU color/depth checks pass for independent states,
+transition and reset. Archived geometry exactly matches the native-tested 37°,
+height-40 placement. Coverage `gameplay-coverage-9nv5Vt` finds eleven missing
+definitions, nine insertable; no placed asset is missing a definition.
+Formatting and lint pass. Actor-triggered activation and detailed rendered
+contact remain unverified; this remains a warned draft. No runtime code changes.
+
 ## Green canopy with permanent ground collision (2026-10-13)
 
 `york-market-southeast-green-canopy-stall` now combines its permanent grounded
