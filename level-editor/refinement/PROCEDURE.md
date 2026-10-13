@@ -1204,6 +1204,27 @@ hash-bound historical approvals as evidence; record their old-to-new path
 mapping separately instead of silently editing them and pretending the old
 hashes still match. Produce and verify a new operational manifest where needed.
 
+### Consolidated immutable archives
+
+Exact duplicate files in `needs-review/` may share a read-only inode after a
+hash-verified consolidation. Their filenames, bytes, relative dependency roots
+and approval hashes remain unchanged, so readers use their existing paths.
+This is physical storage consolidation, not a compatibility symlink or a
+change to the published library. The consolidation tool excludes groups with
+unreviewed external hardlinks and records original modes and every replacement.
+
+Before modifying a consolidated file, detach an independent writable copy:
+
+```sh
+python3 refinement/consolidate_archived_duplicates.py edit work/needs-review/<job>/<file>
+```
+
+Use that operation in a replay/edit workflow before any in-place writer. Do not
+make a shared archive writable with `chmod`: that would expose every other
+snapshot sharing its inode to the same edits. New work should go to `active/`;
+copying an archive into a fresh workspace also keeps edits independent. The
+verified final master bundles remain separate editable assets.
+
 ### Before deletion
 
 Prepare an exact file list with reasons and the retained replacement or
