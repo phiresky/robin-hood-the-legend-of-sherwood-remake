@@ -12,6 +12,7 @@ import {
 } from "./image-provider.ts";
 import { auxiliaryReferences } from "./auxiliary-references.ts";
 import { atlasPrompt } from "./atlas-prompt.ts";
+import { auditCoverage, type ObjectCoverage } from "./audit-coverage.ts";
 import { validatePadding, padTransport, cropTransport, type Padding } from "./transport-padding.ts";
 
 async function main(): Promise<void> {
@@ -35,6 +36,7 @@ async function main(): Promise<void> {
     views: {
       input: string;
       mask: string;
+      object_coverage?: ObjectCoverage;
       camera_matrix_world: number[][];
       ortho_scale: number;
       crop: { left: number; top: number; width: number; height: number };
@@ -43,6 +45,7 @@ async function main(): Promise<void> {
   if (process.argv.includes("--audit-input")) {
     const view = manifest.views[0];
     if (!view) throw new Error("Missing source view");
+    const coverage = await auditCoverage(directory, view.object_coverage, view.crop.width, view.crop.height);
     const frame = await sharp(path.join(directory, view.input)).ensureAlpha().raw().toBuffer();
     const editMask = await sharp(path.join(directory, view.mask)).ensureAlpha().raw().toBuffer();
     const { data: source, info } = await sharp(manifest.source_image)
@@ -80,8 +83,7 @@ async function main(): Promise<void> {
         if (sx >= 0 && sy >= 0 && sx < info.width && sy < info.height)
           source.copy(crop, i, (sy * info.width + sx) * 4, (sy * info.width + sx) * 4 + 4);
         else crop[i + 3] = 255;
-        const background = frame[i] === 0 && frame[i + 1] === 0 && frame[i + 2] === 0;
-        if (editMask[i + 3] !== 0 && !background) {
+        if (editMask[i + 3] !== 0 && coverage[i / 4]) {
           compared++;
           if (!frame.subarray(i, i + 3).equals(crop.subarray(i, i + 3))) mismatches++;
         }
@@ -90,6 +92,7 @@ async function main(): Promise<void> {
       .png()
       .toFile(path.join(directory, "original-source-framing.png"));
     const report = {
+      objectCoverage: view.object_coverage,
       auditedPixels: audit.length,
       incorrectSourceBytes: incorrect,
       knownComparedToOriginalFraming: compared,

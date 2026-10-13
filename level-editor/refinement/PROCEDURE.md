@@ -478,6 +478,18 @@ the camera matrices, tile/crop layout, asset objects, source blend, reviewed
 packet hash and projection/ownership evidence required by the bake helper.
 Use the existing reviewed packet preparation code as the schema authority;
 merely placing an eight-view PNG beside an invented manifest is insufficient.
+The optional `generate-textures.ts --audit-input` source-framing audit requires
+an explicit per-view `object_coverage` record with `file`, `sha256`, and `channel`
+(`alpha` for a transparent renderer coverage image, or `red` for a grayscale
+coverage mask). Its PNG dimensions must equal the view crop. Coverage comes
+from the same geometry/render sampling as the input; it must not be inferred
+from black, gray, or any other displayed color. The multiview producer emits
+this record for newly prepared packets. Legacy packets without coverage fail
+this audit explicitly; prepare a separately reviewed coverage-bound manifest
+instead of modifying approved packet bytes. Ordinary preparation/generation
+remains unchanged. Known black object pixels are audited just like other
+object colors, while any background color is excluded by coverage.
+
 The driver requests the exact canvas dimensions from the approved manifest;
 verify both input sheets and the local mask match it. Sunburst custom dimensions
 must be multiples of 16, have neither edge above 3840, an aspect ratio between

@@ -120,13 +120,14 @@ def prepare(output_dir, asset_id="derby-south-gatehouse", width=384, height=512,
         left,right = min(p.x for p in frame),max(p.x for p in frame)
         bottom,top = min(p.y for p in frame),max(p.y for p in frame)
         direction = camera.matrix_world.to_3x3() @ Vector((0,0,-1))
-        pixels, mask = [], []
+        pixels, mask, coverage = [], [], []
         counts = {"known":0,"unknown":0,"background":0}
         for y in range(height):
             for x in range(width):
                 origin = camera.matrix_world @ Vector((left+(x+0.5)*(right-left)/width,
                                                        bottom+(y+0.5)*(top-bottom)/height,0))
                 hit, normal, triangle_id, _ = asset_tree.ray_cast(origin,direction)
+                coverage.extend((1,1,1,0 if hit is None else 1))
                 if hit is None:
                     pixels.extend((0,0,0,1)); mask.extend((1,1,1,1)); counts["background"]+=1
                     continue
@@ -165,7 +166,7 @@ def prepare(output_dir, asset_id="derby-south-gatehouse", width=384, height=512,
                     offset = (y*width+x)*4
                     pixels.extend((*solid_views[index][offset:offset+3],1))
                     mask.extend((1,1,1,0)); counts["unknown"]+=1
-        for suffix, values in (("input",pixels),("mask",mask)):
+        for suffix, values in (("input",pixels),("mask",mask),("coverage",coverage)):
             image = bpy.data.images.new(f"Multiview {index} {suffix}",width=width,height=height,alpha=True)
             image.pixels.foreach_set(values); image.file_format="PNG"
             image.filepath_raw=str(output/f"view-{index}-{suffix}.png"); image.save()
@@ -174,6 +175,9 @@ def prepare(output_dir, asset_id="derby-south-gatehouse", width=384, height=512,
                         "camera_matrix_world":[list(row) for row in camera.matrix_world],
                         "ortho_scale":camera.data.ortho_scale,"counts":counts,
                         "input":f"view-{index}-input.png","mask":f"view-{index}-mask.png",
+                        "object_coverage":{"file":f"view-{index}-coverage.png",
+                                           "sha256":hashlib.sha256((output/f"view-{index}-coverage.png").read_bytes()).hexdigest(),
+                                           "channel":"alpha"},
                         "crop":{"left":index%4*width,"top":index//4*height,"width":width,"height":height}})
     manifest = {"version":1,"asset_id":asset_id,"layout":{"columns":4,"rows":2,"width":4*width,"height":2*height},
                 "source_image":str(source_path),"source_sha256":hashlib.sha256(source_path.read_bytes()).hexdigest(),

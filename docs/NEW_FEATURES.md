@@ -2906,3 +2906,5 @@ final animation is unsupported. Initial and applied models remain separate, and 
 the same path, hash, resource, and placement validation as endpoint models.
 This supports private review contracts; publishing models and approving their
 appearance remain separate steps.
+
+- Texture source-framing audits use pinned geometry coverage rather than background color, preserving checks on black object pixels and supporting contrasting review backgrounds.
