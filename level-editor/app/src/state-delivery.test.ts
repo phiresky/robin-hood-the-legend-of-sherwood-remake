@@ -1,3 +1,4 @@
+import { retainPhaseMaterials } from "./state-material-frames.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
@@ -1081,6 +1082,36 @@ test("patch clips retain independent applied clocks, reset, and reject missing c
   };
   const transition = asset("lift", 90),
     final = asset("sway", 42);
+  const maps = Array.from({ length: 14 }, () => new THREE.Texture());
+  const finalMaterials = maps.map((map) => new THREE.MeshBasicMaterial({ map }));
+  const phaseMesh = new THREE.Mesh(new THREE.PlaneGeometry(), new THREE.MeshBasicMaterial());
+  phaseMesh.name = "phase-net";
+  final.add(phaseMesh);
+  retainPhaseMaterials(
+    final,
+    new Map(
+      finalMaterials.map((material, i) => [
+        i,
+        { material, name: `phase${i}`, texture_index: i, tex_coord: 0, alpha_mode: "OPAQUE" },
+      ]),
+    ),
+  );
+  if (!("kind" in family.physical.motion.final))
+    family.physical.motion.final.material_frames = maps.map((_, i) => ({
+      duration_ticks: 3,
+      materials: [
+        {
+          node: "phase-net",
+          slot: 0,
+          material_index: i,
+          material_name: `phase${i}`,
+          texture_index: i,
+          tex_coord: 0,
+          alpha_mode: "OPAQUE",
+        },
+      ],
+    }));
+
   const p = new StateDelivery(() => ({
     load: async (binding) =>
       binding.id === "lift" ? transition : binding.id === "applied" ? final : f.template,
@@ -1107,12 +1138,26 @@ test("patch clips retain independent applied clocks, reset, and reject missing c
   sample("applied", 7);
   assert.equal(applied.visible, true);
   assert.ok(Math.abs(value(applied) - 7) < 1e-5);
+  const materialMap = () =>
+    (
+      applied.getObjectByName("phase-net") as THREE.Mesh<
+        THREE.BufferGeometry,
+        THREE.MeshBasicMaterial
+      >
+    ).material.map;
+  assert.equal(materialMap(), maps[2]);
   sample("applied", 49);
   assert.ok(Math.abs(value(applied) - 7) < 1e-5);
+  assert.equal(materialMap(), maps[2]);
+  sample("applied", 41);
+  assert.equal(materialMap(), maps[13]);
+  sample("applied", 42);
+  assert.equal(materialMap(), maps[0]);
   sample("initial", 0);
   assert.equal(p.physical.children[0]!.visible, true);
   sample("applied", 0);
   assert.equal(value(applied), 0);
+  assert.equal(materialMap(), maps[0]);
   p.dispose();
   final.animations[0]!.name = "wrong";
   const bad = new StateDelivery(() => ({ load: async () => final, dispose() {} }));

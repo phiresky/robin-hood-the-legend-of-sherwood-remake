@@ -82,11 +82,25 @@ export interface PhysicalPatchModelFrames {
   model_frames: PhysicalStateBinding[][];
 }
 
+export interface PhysicalMaterialFrame {
+  duration_ticks: number;
+  materials: {
+    node: string;
+    slot: number;
+    material_index: number;
+    material_name: string;
+    texture_index: number;
+    tex_coord: number;
+    alpha_mode: "OPAQUE" | "MASK" | "BLEND";
+  }[];
+}
+
 /** A patch phase binds one hash-pinned model and a named glTF clip. */
 export interface PhysicalPatchClip {
   binding: PhysicalStateBinding;
   clip: string;
   duration_ticks: number;
+  material_frames?: PhysicalMaterialFrame[];
 }
 export interface PhysicalPatchClips {
   kind: "native-patch-clips";
@@ -218,7 +232,8 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
         !patch.transition.length
       )
         fail("invalid patch clip source binding");
-      const validateClip = (phase: PhysicalPatchClip, duration: number) => {
+      const validateClip = (phase: PhysicalPatchClip, source: { delay: number }[]) => {
+        const duration = source.reduce((n, frame) => n + frame.delay + 1, 0);
         if (
           !phase ||
           typeof phase.clip !== "string" ||
@@ -227,11 +242,44 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
           phase.duration_ticks !== duration
         )
           fail("patch clip timing differs from source phase");
+        if (phase.material_frames !== undefined) {
+          if (
+            !Array.isArray(phase.material_frames) ||
+            phase.material_frames.length !== source.length
+          )
+            fail("material frame count differs from source phase");
+          let targets: string | undefined;
+          for (const [i, frame] of phase.material_frames.entries()) {
+            if (
+              frame.duration_ticks !== source[i]!.delay + 1 ||
+              !Array.isArray(frame.materials) ||
+              !frame.materials.length
+            )
+              fail("material frame timing or bindings differ from source phase");
+            const keys = frame.materials
+              .map((m) => {
+                if (
+                  !m.node ||
+                  !m.material_name ||
+                  ![m.slot, m.material_index, m.texture_index, m.tex_coord].every(
+                    (n) => Number.isSafeInteger(n) && n >= 0,
+                  ) ||
+                  !["OPAQUE", "MASK", "BLEND"].includes(m.alpha_mode)
+                )
+                  fail("invalid material frame binding");
+                return JSON.stringify([m.node, m.slot]);
+              })
+              .sort();
+            if (
+              new Set(keys).size !== keys.length ||
+              (targets !== undefined && targets !== JSON.stringify(keys))
+            )
+              fail("material frame targets differ or duplicate");
+            targets = JSON.stringify(keys);
+          }
+        }
       };
-      validateClip(
-        motion.transition,
-        patch!.transition.reduce((n, f) => n + f.delay + 1, 0),
-      );
+      validateClip(motion.transition, patch!.transition);
       if (!motion.final || typeof motion.final !== "object") fail("missing final clip phase");
       if ("kind" in motion.final) {
         if (
@@ -244,10 +292,7 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
       } else {
         if (!patch!.final.length || !patch!.final_loop)
           fail("patch clips require a looping final phase or explicit absence");
-        validateClip(
-          motion.final,
-          patch!.final.reduce((n, f) => n + f.delay + 1, 0),
-        );
+        validateClip(motion.final, patch!.final);
         if (JSON.stringify(family.physical.applied) !== JSON.stringify([motion.final.binding]))
           fail("final clip differs from applied model binding");
       }

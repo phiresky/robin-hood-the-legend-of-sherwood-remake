@@ -1,3 +1,4 @@
+import { StateMaterialFrames } from "./state-material-frames.ts";
 import { StateEventClocks, type StateClockBatch } from "../../shared/src/state-event-clocks.ts";
 import { StateAppearancePlayer } from "./state-appearance-player.ts";
 import { ReviewedNodePoses } from "./reviewed-node-poses.ts";
@@ -27,6 +28,7 @@ export class StateDelivery {
   private sourceClocks: StateEventClocks | undefined;
   private nodePoses = new Map<string, ReviewedNodePoses>();
   private clips = new Map<string, Partial<Record<"transition" | "final", StateAppearancePlayer>>>();
+  private materialFrames = new Map<StateAppearancePlayer, StateMaterialFrames>();
   private selectedFamily: string | undefined;
   private epoch = 0;
   private disposed = false;
@@ -59,6 +61,8 @@ export class StateDelivery {
     this.physical.visible = false;
     for (const poses of this.nodePoses.values()) poses.reset();
     this.nodePoses.clear();
+    for (const frames of this.materialFrames.values()) frames.dispose();
+    this.materialFrames.clear();
     for (const phases of this.clips.values())
       for (const player of Object.values(phases)) player.dispose();
     this.clips.clear();
@@ -116,9 +120,6 @@ export class StateDelivery {
         for (const [index, endpoint] of endpoints.entries()) {
           const state = index === 0 ? "initial" : index === 1 ? "applied" : `frame-${index - 2}`;
           for (const binding of physicalEndpointSources(endpoint)) {
-            const asset = await loader.load(binding);
-            owned.add(asset);
-            if (!current()) return false;
             const motion = family.physical.motion;
             const phase =
               motion?.kind === "native-patch-clips"
@@ -128,6 +129,17 @@ export class StateDelivery {
                     ? "final"
                     : undefined
                 : undefined;
+            const clipBinding =
+              phase && motion?.kind === "native-patch-clips" ? motion[phase] : undefined;
+            const frames =
+              clipBinding && !("kind" in clipBinding) ? clipBinding.material_frames : undefined;
+            const asset = await loader.load(
+              binding,
+              undefined,
+              frames?.flatMap((frame) => frame.materials.map((m) => m.material_index)),
+            );
+            owned.add(asset);
+            if (!current()) return false;
             const appearance = captureLoadedStateAppearance(asset);
             let clone: THREE.Object3D;
             if (phase && motion?.kind === "native-patch-clips") {
@@ -152,6 +164,11 @@ export class StateDelivery {
                   ? { mode: "loop", cycleTicks: binding.duration_ticks }
                   : { mode: "clamp", terminalTick: binding.duration_ticks },
               );
+              if (frames)
+                this.materialFrames.set(
+                  player,
+                  new StateMaterialFrames(asset, player.content, frames),
+                );
               clone = player.object;
             } else {
               if (appearance)
@@ -233,7 +250,10 @@ export class StateDelivery {
     this.selectedFamily = id;
     for (const poses of this.nodePoses.values()) poses.reset();
     for (const phases of this.clips.values())
-      for (const player of Object.values(phases)) player.sampleExternalTick(0);
+      for (const player of Object.values(phases)) {
+        player.sampleExternalTick(0);
+        this.materialFrames.get(player)?.sample(player.tick);
+      }
     for (const [key, pair] of this.roots) {
       pair.initial.position.set(0, 0, 0);
       pair.applied.position.set(0, 0, 0);
@@ -322,6 +342,7 @@ export class StateDelivery {
       const player = this.clips.get(this.selectedFamily)?.[pose.clip_phase];
       if (!player || pose.clip_tick === undefined) throw new Error("Patch clip player missing");
       player.sampleExternalTick(pose.clip_tick);
+      this.materialFrames.get(player)?.sample(player.tick);
     }
     const nodes = this.nodePoses.get(this.selectedFamily);
     if (pose.node_frame === undefined) nodes?.reset();

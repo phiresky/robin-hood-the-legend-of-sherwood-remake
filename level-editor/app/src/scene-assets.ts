@@ -1,3 +1,5 @@
+import { retainPhaseMaterials, type LoadedPhaseMaterial } from "./state-material-frames.ts";
+import { disposeObjectResources, retainObjectMaterials } from "./resources.ts";
 import * as THREE from "three";
 import { createGltfLoader } from "./gltf-loader.ts";
 import {
@@ -96,7 +98,11 @@ export class SceneAssetLoader {
     return this.lossyModels.get(model);
   }
   /** `verifiedLossy`: lossy bytes already loaded by the caller. */
-  async load(reference: SceneAssetSource, verifiedLossy?: ArrayBuffer): Promise<THREE.Group> {
+  async load(
+    reference: SceneAssetSource,
+    verifiedLossy?: ArrayBuffer,
+    materialIndices: readonly number[] = [],
+  ): Promise<THREE.Group> {
     const applies = lossyApplies(reference.model);
     if (verifiedLossy && !applies)
       throw new Error(`Lossy model cannot replace a glTF JSON model: ${reference.model}`);
@@ -216,6 +222,37 @@ export class SceneAssetLoader {
       };
     });
     const result = await loader.parseAsync(bytes, "");
+    if (materialIndices.length) {
+      if (lossyBytes) throw new Error("Phase materials require the pinned model");
+      const materials = new Map<number, LoadedPhaseMaterial>();
+      try {
+        for (const index of new Set(materialIndices)) {
+          const definition = result.parser.json.materials?.[index];
+          const texture = definition?.pbrMetallicRoughness?.baseColorTexture;
+          if (!definition || !texture) throw new Error("Missing pinned phase material texture");
+          const material = (await result.parser.getDependency("material", index)) as THREE.Material;
+          materials.set(index, {
+            material,
+            name: definition.name,
+            texture_index: texture.index,
+            tex_coord: texture.extensions?.KHR_texture_transform?.texCoord ?? texture.texCoord ?? 0,
+            alpha_mode: definition.alphaMode ?? "OPAQUE",
+          });
+        }
+      } catch (error) {
+        retainObjectMaterials(
+          result.scene,
+          [...materials.values()].map((m) => m.material),
+        );
+        disposeObjectResources([result.scene]);
+        throw error;
+      }
+      retainPhaseMaterials(result.scene, materials);
+      retainObjectMaterials(
+        result.scene,
+        [...materials.values()].map((m) => m.material),
+      );
+    }
     retainSceneAnimations(result.scene, result.animations, result.scenes);
     result.scene.traverse((node) => {
       const index = result.parser?.associations.get(node)?.nodes;

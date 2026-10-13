@@ -436,7 +436,37 @@ test("patch clip contracts pin every phase and preserve separate clocks", async 
     transition: { binding: { ...binding, id: "lift" }, clip: "lift", duration_ticks: 6 },
     final: { binding, clip: "sway", duration_ticks: 42 },
   };
+  f.physical.motion.transition.material_frames = [0, 1].map((i) => ({
+    duration_ticks: 3,
+    materials: [
+      {
+        node: "net",
+        slot: 0,
+        material_index: i,
+        material_name: `frame${i}`,
+        texture_index: i,
+        tex_coord: 1,
+        alpha_mode: "OPAQUE",
+      },
+    ],
+  }));
   validateStateDelivery(c);
+  for (const change of [
+    (frames: NonNullable<import("./state-delivery.ts").PhysicalPatchClip["material_frames"]>) =>
+      frames.pop(),
+    (frames: NonNullable<import("./state-delivery.ts").PhysicalPatchClip["material_frames"]>) =>
+      frames[0]!.duration_ticks++,
+    (frames: NonNullable<import("./state-delivery.ts").PhysicalPatchClip["material_frames"]>) =>
+      frames[0]!.materials.push(frames[0]!.materials[0]!),
+    (frames: NonNullable<import("./state-delivery.ts").PhysicalPatchClip["material_frames"]>) =>
+      (frames[0]!.materials[0]!.node = "foreign"),
+  ]) {
+    const bad = structuredClone(c);
+    const motion = bad.families[0]!.physical.motion;
+    assert.ok(motion?.kind === "native-patch-clips");
+    change(motion.transition.material_frames!);
+    assert.throws(() => validateStateDelivery(bad), /material frame/);
+  }
   assert.equal(physicalPatchClipPose(c, f.id, "forward", 4).clip_tick, 4);
   assert.equal(physicalPatchClipPose(c, f.id, "forward", 5).clip_tick, 0);
   assert.equal(physicalPatchClipPose(c, f.id, "applied", 49).clip_tick, 7);

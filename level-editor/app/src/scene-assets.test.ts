@@ -284,3 +284,40 @@ test("actual binary GLB decoding retains source node identity before names are r
   player.dispose();
   f.loader.dispose();
 });
+
+test("phase material dependencies use pinned model indices and share owner disposal", async (t) => {
+  const f = fixture();
+  const material = new THREE.MeshBasicMaterial({ map: new THREE.Texture() });
+  let materialDisposed = 0,
+    textureDisposed = 0;
+  material.addEventListener("dispose", () => materialDisposed++);
+  material.map!.addEventListener("dispose", () => textureDisposed++);
+  const requested: number[] = [];
+  t.mock.method(GLTFLoader.prototype, "parseAsync", async () => ({
+    scene: new THREE.Group(),
+    parser: {
+      associations: new Map(),
+      json: {
+        materials: [
+          { name: "phase", pbrMetallicRoughness: { baseColorTexture: { index: 3, texCoord: 0 } } },
+        ],
+      },
+      getDependency: async (kind: string, index: number) => {
+        assert.equal(kind, "material");
+        requested.push(index);
+        return material;
+      },
+    },
+  }));
+  const scene = await f.loader.load(f.reference, undefined, [0, 0]);
+  assert.deepEqual(requested, [0]);
+  // Even if a phase variant is also attached to a mesh, it has one resource owner.
+  scene.add(new THREE.Mesh(new THREE.PlaneGeometry(), material));
+  const { disposeObjectResources } = await import("./resources.ts");
+  disposeObjectResources([scene]);
+  f.loader.dispose();
+  assert.equal(materialDisposed, 1);
+  assert.equal(textureDisposed, 1);
+  await assert.rejects(f.loader.load(f.reference, undefined, [1]), /Missing pinned/);
+  f.loader.dispose();
+});

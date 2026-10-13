@@ -1,5 +1,10 @@
 import * as THREE from "three";
 
+const additional = new WeakMap<THREE.Object3D, readonly THREE.Material[]>();
+export function retainObjectMaterials(root: THREE.Object3D, materials: readonly THREE.Material[]) {
+  additional.set(root, materials);
+}
+
 /** Call only on asset owners, never on editable clones sharing their resources. */
 export function disposeObjectResources(roots: Iterable<THREE.Object3D>) {
   const geometries = new Set<THREE.BufferGeometry>();
@@ -8,6 +13,7 @@ export function disposeObjectResources(roots: Iterable<THREE.Object3D>) {
   const bitmaps = new Set<ImageBitmap>();
   for (const root of roots)
     root.traverse((node) => {
+      for (const material of additional.get(node) ?? []) materials.add(material);
       const mesh = node as THREE.Mesh;
       if (mesh.geometry) geometries.add(mesh.geometry);
       if (mesh.material)
