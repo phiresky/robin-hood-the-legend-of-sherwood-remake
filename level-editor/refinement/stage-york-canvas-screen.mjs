@@ -11,6 +11,44 @@ import { crossesGroundFootprint, selectPanelRoute } from "./select-panel-route.m
 
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 const reviewed = {
+  "york-market-long-cream-canopy-stall": {
+    descriptor: "8f5d2aaa47554e4d9f5422785b691c405622de7d58854d03cca15fa9ebeea61a",
+    model: "2ba59ace0605d7267526b623e25eacc05fef8e11323f3fd0a187d9e2dff85ce1",
+    parts: [
+      "building-029",
+      "building-030",
+      "building-940",
+      "building-941",
+      "building-942",
+      "building-943",
+      "building-944",
+      "building-945",
+      "building-946",
+      "building-947",
+      "building-969",
+    ],
+    control: "lower-canopy",
+    staticOwner: "york-market-long-cream-canopy-stall-remainder",
+    staticDescriptor: "1424ba59633f35b0fbcdacbc4584d835320bb942b3da04823e18abe20db00ca0",
+    initialGroundNodes: [
+      "building-940",
+      "building-941",
+      "building-942",
+      "building-943",
+      "building-944",
+      "building-945",
+      "building-946",
+      "building-947",
+    ],
+    assemblyExclusions: [
+      "building-940-ground-blocker-50-0-0",
+      "building-941-ground-blocker-51-0-0",
+      "building-969-ground-blocker-58-0-0",
+      "building-969-ground-blocker-58-1-0",
+    ],
+    upperSurfaces: 1,
+    groundPassage: false,
+  },
   "york-market-red-canopy-stall": {
     descriptor: "fd887d46b049eba6fa284fc26e5ebe0b1a8de0c1cfe270e7e499cada5c289c1e",
     model: "356476586d1d52e48683bb00f7f7410f962865a7b29f84381340ea8b54a19a78",

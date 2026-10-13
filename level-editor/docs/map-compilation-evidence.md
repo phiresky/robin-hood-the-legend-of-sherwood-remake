@@ -4,6 +4,38 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Long cream canopy with persistent walkable roof (2026-10-13)
+
+`york-market-long-cream-canopy-stall` now preserves its permanent roof surface,
+two jump sockets, sight order and solid parts while independently controlling
+eight initial grounded pieces and one lowered piece. Each state derives movement
+blocking from its own pieces. Four shared assembly exclusions attached to changing
+parts are omitted from the independent draft; the complete assembly is unchanged.
+The retained roof and prop keep their collision through both states and reset.
+
+Stage `york-canvas-screen-fvUDG3` passes eight moved/copied exports, sixteen native
+apply/reset cycles, 528 boundary-route checks and permanent sight retention.
+`cream-canopy-roofs-_l3j7hdj` passes 128 complete Robin roof walks: both directions,
+two copies, four rotations, two elevations and all four control combinations.
+Walks take 8–15 moving ticks and finish upright on their expected receivers.
+The fixture has no neighboring jump destinations, so disconnected sockets remain
+warned and unavailable. Connected jump traversal, actor-triggered activation and
+rendered character contact are not certified. Publication backup
+`cream-canopy-installed-20261013` changes only descriptor/index data. Formatting
+and lint pass. No runtime code changes.
+
+Rendered archive `standalone-render-library-x9jWUT/cream-canopy.zip`
+(5,150,012 bytes; SHA-256
+`805509155e4ec2e98f5207a8995c832bb53f6e5048a2ba0da7c360543f5e8dab`)
+reopens/rebakes with identical gameplay and color/depth images. Native loading
+without base data passes with 25 sight obstacles, 1,600 grid blocks and two controls
+and appearance regions. Independent GPU color/depth states, transition and reset
+pass. Archived geometry exactly matches the native-tested 37°, height-40 placement;
+sixteen fresh character roof walks against the archive pass in all four control
+combinations.
+Coverage `gameplay-coverage-Z9YFPM` finds eight missing definitions, six insertable,
+and none among placed assets. Definition presence is not gameplay completeness.
+
 ## Red canopy with persistent walkable roof (2026-10-13)
 
 `york-market-red-canopy-stall` now has an independent `lower-canopy` control,
