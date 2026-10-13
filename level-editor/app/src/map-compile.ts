@@ -122,7 +122,7 @@ export function compileMap(
   // Namespace map and mission names so installation cannot replace a base-game map.
   const name = `editor-${slug}`;
   let scenerySources: CompiledScenerySource[] = [];
-  let structuralPassages = new Set<CompiledAssetGeometry["doors"][number]>();
+  let preparedBuildingPassages = new Set<CompiledAssetGeometry["doors"][number]>();
   const assetGeometry =
     assets || document.terrain?.cells.length || document.splines?.length
       ? compileAssetGameplay(document, assets ?? new Map(), bounds, {
@@ -130,8 +130,8 @@ export function compileMap(
           onSceneryCompiled: (sources) => {
             scenerySources = sources;
           },
-          onStructuralPassagesCompiled: (doors) => {
-            structuralPassages = new Set(doors);
+          onBuildingPassagesPrepared: (doors) => {
+            preparedBuildingPassages = new Set(doors);
           },
         })
       : undefined;
@@ -153,7 +153,7 @@ export function compileMap(
           `Door ${index}: the animated passage intersects a permanent movement obstacle; this passage is unavailable.`,
         );
     });
-    const buildingStates = compileBuildingPassageStates(assetGeometry, structuralPassages);
+    const buildingStates = compileBuildingPassageStates(assetGeometry, preparedBuildingPassages);
     assetGeometry.buildings?.forEach(({ Building }, index) => {
       Building.doors.forEach((door, doorIndex) => {
         const requirements = [

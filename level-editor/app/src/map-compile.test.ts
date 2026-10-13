@@ -176,6 +176,46 @@ test("interior passage states affect only their own outdoor entrance", async () 
   }
 });
 
+test("virtual-room animations cross floor boundaries but retain foreign barriers", () => {
+  const { document, assets, hut } = interiorAssetCompilerFixture();
+  const gameplay = hut.gameplay!;
+  gameplay.doors = [];
+  gameplay.surfaces[0]!.holes = [
+    [
+      [15, 86],
+      [25, 86],
+      [25, 98],
+      [15, 98],
+    ],
+  ];
+  const allowed = compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry!;
+  assert.equal(allowed.buildings![0]!.Building.doors[0]!.passage_states, undefined);
+  assert.ok(
+    allowed.motion_data.layers.flat().some((area) => area.obstacles.length),
+    "Floor exclusion remains in walking geometry",
+  );
+  assets.get("marker")!.gameplay!.movementBlockers = [
+    {
+      id: "foreign-closure",
+      node: "scenery-marker",
+      height: 0,
+      polygon: [
+        [15, 87],
+        [25, 87],
+        [25, 90],
+        [15, 90],
+      ],
+    },
+  ];
+  const blocked = compileMap(document, [0, 0, 2000, 2000], assets).descriptor.asset_geometry!;
+  assert.ok(
+    blocked.buildings![0]!.Building.doors[0]!.passage_states!.some((s) => !s.allowed_states.length),
+  );
+  assert.equal(blocked.buildings![0]!.Building.doors[1]!.passage_states, undefined);
+  gameplay.interiors![0]!.doors[0]!.outside = [20, 92, 0];
+  assert.throws(() => compileMap(document, [0, 0, 2000, 2000], assets), /walkable surface/);
+});
+
 test("declared doorway structure preserves walking collision and independent passage barriers", () => {
   const { document, assets, hut } = interiorPassageBarrierCompilerFixture();
   const gameplay = hut.gameplay!;

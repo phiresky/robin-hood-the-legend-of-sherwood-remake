@@ -4,6 +4,52 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Virtual floor boundaries and York entrance audit (2026-10-14)
+
+Virtual-room entrance animation may leave the outdoor floor without declaring a
+structural-volume exception. Export keeps its outside anchor on a real floor,
+retains walking exclusions, and checks foreign/undeclared permanent obstacles
+before preparing changing-obstacle conditions. It reuses the already resolved
+receiver and its authored plane instead of doing a second, differently rounded
+lookup. Ordinary passages keep their existing floor checks. No runtime format
+or engine behavior changes.
+
+The regression preserves floor collision, allows the unlocked room animation,
+rejects a foreign closure, and rejects an outside anchor inside the exclusion.
+`virtual-floor-boundary-BkkbEj` verifies this with a complete native character;
+the fixture's separately locked entrance remains denied. All 251 selected
+compiler/export/passage tests, app typecheck, scoped lint and formatting pass.
+
+This does **not** resolve York's wider entrance failures. New map-only export
+`saved-map-exports-ztv2mK` passes native construction (162 areas, 1,236 sight
+obstacles, 254 doors, 72 jump pairs, 269,206 grid blocks). It is identical to
+`saved-map-exports-Pl6x6X`, the preceding run of this correction. Fifty of 95 room
+entrances have permanent vetoes, versus 49 in the older baseline: checking the
+authored receiver plane also detects the red-roof market frontage entrance.
+The exact remaining collision ownership still needs tracing; floor boundaries
+alone are not the explanation.
+
+`york-building-routes-oz_3vsiz` tests 94 building-type entrances: 41 actual room
+round trips pass, fifty expected denials remain, and three available entrances
+fail with receiver mismatches. These are the riverside stone storehouse, west
+market frontage gabled house and west market frontage dormer house. Baseline
+`york-building-baseline-jkwrow_n` reproduces the same three errors with the older
+export. The east city gate tower's type-2 trapdoor is explicitly excluded because
+the existing verifier supports only type-1 building doors. Neither audit is a
+full-room-parity pass.
+
+`audit-local-door-structure.mjs` and `stage-local-door-structure.mjs` prepare
+hash-pinned local candidates without modifying the library. Audit
+`local-door-structure-UzPfmS` finds fourteen candidate entrances across eleven
+assets (`local-door-structure-stage-Yay3Tf`). These are **unpublished** and use
+unrounded asset-local horizontal-floor tests, so rotated/quantized placements
+can reveal additional obstructions. The north river lane stone house passes all
+sixteen copied/rotated/raised native room trips (`asset-building-doors-XTZ6wb`).
+The west low house passes twelve of sixteen; the four 180-degree cases retain a
+veto (`asset-building-doors-Mi7gEQ`). Its rounded corridor reaches the additional
+local `building-729` blocker. That structure and the remaining candidates need
+review and browser/native verification before publication.
+
 ## Remaining Leicester entrance corrections (2026-10-13)
 
 `stage-leicester-entrance-structure.mjs` supplies explicit local references for

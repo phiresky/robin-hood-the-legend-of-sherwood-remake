@@ -211,7 +211,7 @@ export function compileAssetGameplay(
     bestEffort?: boolean;
     onProgress?: (stage: string) => void;
     onSceneryCompiled?: (sources: CompiledScenerySource[]) => void;
-    onStructuralPassagesCompiled?: (doors: CompiledAssetGeometry["doors"]) => void;
+    onBuildingPassagesPrepared?: (doors: CompiledAssetGeometry["doors"]) => void;
   } = {},
 ): CompiledAssetGeometry {
   const omitted = new Set<string>();
@@ -225,7 +225,7 @@ export function compileAssetGameplay(
   for (;;) {
     try {
       const scenerySources: CompiledScenerySource[] = [];
-      const structuralPassages: CompiledAssetGeometry["doors"] = [];
+      const buildingPassages: CompiledAssetGeometry["doors"] = [];
       const result = compileAssetGameplayAttempt(
         document,
         descriptors,
@@ -235,11 +235,11 @@ export function compileAssetGameplay(
         fixedTransitions,
         scenerySources,
         getTerrain,
-        structuralPassages,
+        buildingPassages,
       );
       if (omissions.length) result.warnings = [...omissions, ...(result.warnings ?? [])];
       options.onSceneryCompiled?.(scenerySources);
-      options.onStructuralPassagesCompiled?.(structuralPassages);
+      options.onBuildingPassagesPrepared?.(buildingPassages);
       return result;
     } catch (error) {
       if (
@@ -312,7 +312,7 @@ function compileAssetGameplayAttempt(
   fixedTransitions: ReadonlySet<string>,
   scenerySources: CompiledScenerySource[],
   getTerrain: (document: Level3D) => ReturnType<typeof terrainGameplay>,
-  structuralPassages: CompiledAssetGeometry["doors"],
+  buildingPassages: CompiledAssetGeometry["doors"],
 ): CompiledAssetGeometry {
   const warnings: string[] = [];
   options.onProgress?.("Preparing asset placements");
@@ -3152,7 +3152,7 @@ function compileAssetGameplayAttempt(
   >();
   const passageCheck = (plane: HeightPlane, door: (typeof doors)[number]) => {
     const structure = door.definition.passageStructure;
-    const key = structure ? door.name : "";
+    const key = structure ? door.name : door.interior ? "interior" : "";
     let checks = passageChecks.get(plane);
     if (!checks) {
       checks = new Map();
@@ -3161,15 +3161,14 @@ function compileAssetGameplayAttempt(
     let check = checks.get(key);
     if (!check) {
       const obstacles = (permanentPassageCuts.get(plane) ?? []).flatMap((cut) => {
-        // Virtual-room animation crosses its declared structure; the outside
-        // anchor still needs a floor. Foreign and undeclared barriers remain.
+        // Virtual-room animation leaves the outdoor floor and may cross its
+        // declared structure. Foreign and undeclared barriers remain checked.
         if (
-          structure &&
-          (cut.kind === "floor" ||
-            (cut.owner === door.owner &&
-              (cut.kind === "volume" ? structure.volumes : structure.blockers).includes(
-                cut.source,
-              )))
+          (door.interior && cut.kind === "floor") ||
+          (structure &&
+            cut.owner === door.owner &&
+            cut.kind !== "floor" &&
+            (cut.kind === "volume" ? structure.volumes : structure.blockers).includes(cut.source))
         )
           return [];
         const { vertices, holes, dimensions } = flatten(cut.polygon);
@@ -3191,6 +3190,7 @@ function compileAssetGameplayAttempt(
     }
     return check;
   };
+  const checkedBuildingPassages = new Set<string>();
   const compiledDoors = doors.map((door) => {
     // Ordinary passages can meet traversal surfaces; lift doors retain their explicit owner.
     const outside = resolveDoorOutside(door, door.lift ? undefined : null),
@@ -3218,19 +3218,22 @@ function compileAssetGameplayAttempt(
         [inside, door.inside, door.insideAnchor],
       ] as const;
       for (const [area, endpoint, anchor] of door.interior ? legs.slice(0, 1) : legs) {
-        const receiving = areas.find(
-          (candidate) =>
-            candidate.sector === area.sector &&
-            containsNavigationAnchor(candidate, anchor, {
-              allowBlocked: door.allowChangingObstacleAnchors === true,
-            }),
-        );
+        // Reuse the exact binding for virtual entrances: repeating the lookup
+        // with an unrounded anchor can miss the already selected grid receiver.
+        const receiving = door.interior
+          ? outside
+          : areas.find(
+              (candidate) =>
+                candidate.sector === area.sector &&
+                containsNavigationAnchor(candidate, anchor, {
+                  allowBlocked: door.allowChangingObstacleAnchors === true,
+                }),
+            );
+        if (door.interior && receiving) checkedBuildingPassages.add(door.name);
         if (
           receiving &&
           !passageCheck(
-            door.definition.passageStructure
-              ? (receiving.authoredPlane ?? receiving.plane)
-              : receiving.plane,
+            door.interior ? (receiving.authoredPlane ?? receiving.plane) : receiving.plane,
             door,
           )(door.middle, project(endpoint)).length
         ) {
@@ -3277,7 +3280,8 @@ function compileAssetGameplayAttempt(
     };
   });
   compiledDoors.forEach((compiled, index) => {
-    if (compiled && doors[index]!.definition.passageStructure) structuralPassages.push(compiled);
+    if (compiled && checkedBuildingPassages.has(doors[index]!.name))
+      buildingPassages.push(compiled);
   });
   const selectDoors = (predicate: (door: (typeof doors)[number]) => boolean) =>
     compiledDoors.flatMap((compiled, i) => (compiled && predicate(doors[i]!) ? [compiled] : []));

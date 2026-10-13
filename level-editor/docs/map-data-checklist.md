@@ -9,8 +9,11 @@ Connections and runtime indices are rebuilt after placement, rotation and copyin
 All ten current saved-map descriptors compile and pass native construction, with
 290 prepared stair routes and 71 control apply/reset checks passing. The current
 saved-York map-only export passes native construction and all 130
-prepared stair routes, but 49 of its 95 building entrances remain blocked in the
-final descriptor. Leicester now passes native construction and all 24 building
+prepared stair routes, but the latest export has 50 of its 95 room entrances
+blocked. A broader native audit finds three receiver mismatches in otherwise
+available entrances, also reproduced in the preceding export. One trapdoor is
+outside that audit's coverage. See the [York entrance audit](map-compilation-evidence.md#virtual-floor-boundaries-and-york-entrance-audit-2026-10-14).
+Leicester now passes native construction and all 24 building
 entry/exit round trips after published asset-local doorway corrections. Its
 sixteen stair routes and twelve control apply/reset checks passed previously;
 the doorway corrections leave their geometry unchanged. Wychford passes native loading
