@@ -44,6 +44,13 @@ use robin_engine::test_support::fresh_engine;
 fn fresh_save_session(
     player_name: &str,
 ) -> (Engine, engine_api::LevelAssets, ProfileManager, Host) {
+    fresh_save_session_for_mission(player_name, 17)
+}
+
+fn fresh_save_session_for_mission(
+    player_name: &str,
+    active_mission: u32,
+) -> (Engine, engine_api::LevelAssets, ProfileManager, Host) {
     let mut profiles = ProfileManager::default();
     let mut campaign = Campaign::default();
     for mission_id in [1, 3, 17] {
@@ -60,7 +67,15 @@ fn fresh_save_session(
             ..Mission::default()
         });
     }
+    campaign.current_mission_idx = Some(
+        profiles
+            .missions
+            .iter()
+            .position(|p| p.id == active_mission)
+            .unwrap(),
+    );
     let mut assets = engine_api::LevelAssets::new();
+    assets.profile_manager = std::sync::Arc::new(profiles.clone());
     let engine = Engine::new_for_test(800.0, 600.0, campaign, &mut assets).expect("engine");
 
     let save_root = format!("/tmp/save-metadata-{player_name}");

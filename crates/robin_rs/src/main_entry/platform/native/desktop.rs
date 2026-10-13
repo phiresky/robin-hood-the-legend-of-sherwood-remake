@@ -18,9 +18,10 @@ pub fn setup_data_dir(
     files: &SbFileSystem,
 ) -> Result<(), InitError> {
     let data_dir = configured_data_dir(data_dir_override, std::env::var("ROBINHOOD_DATA_DIR").ok());
-    if let Some(data_dir) = data_dir {
+    let selected = if let Some(data_dir) = data_dir {
         tracing::info!("using primary datadir {}", data_dir);
-        install_primary_data_dir(files, data_dir)?;
+        install_primary_data_dir(files, data_dir.clone())?;
+        PathBuf::from(data_dir)
     } else {
         // No override and no env var: reuse the remembered datadir, or
         // auto-detect (working directory, executable directory, well-known
@@ -35,7 +36,8 @@ pub fn setup_data_dir(
         let chosen = startup_data_dir(crate::datadir_locator::resolve_datadir(exe_dir.as_deref()))?;
         tracing::info!("using primary datadir {}", chosen.display());
         install_primary_data_dir(files, chosen.to_string_lossy().into_owned())?;
-    }
+        chosen
+    };
 
     // Find the Data directory case-insensitively (some installs use "data", "DATA", etc.)
     if !files
@@ -45,9 +47,7 @@ pub fn setup_data_dir(
             status,
         })?
     {
-        let cwd = std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "?".into());
+        let cwd = selected.display().to_string();
         return Err(InitError::DataDirectoryMissing {
             cwd,
             gog_store_url: crate::datadir_locator::GOG_STORE_URL,
@@ -86,5 +86,24 @@ fn datadir_cancellation_does_not_fall_back_to_working_directory() {
     assert_eq!(
         startup_data_dir(DataDirResolution::Selected(selected.clone())).unwrap(),
         selected
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn invalid_explicit_datadir_reports_the_selected_path_and_recovery() {
+    let root = tempfile::tempdir().unwrap();
+    let files = SbFileSystem::new(std::sync::Arc::new(robin_util::asset_fs::AssetVfs::new()));
+    let missing = root.path().join("moved-demo");
+    let error = setup_data_dir(Some(&missing), Some(root.path()), &files).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains(&missing.display().to_string()));
+    assert!(message.contains("ROBINHOOD_DATA_DIR"));
+    assert!(matches!(error, InitError::DataDirectoryInstall { .. }));
+    let empty = root.path().join("empty-install");
+    std::fs::create_dir(&empty).unwrap();
+    let error = setup_data_dir(Some(&empty), Some(root.path()), &files).unwrap_err();
+    assert!(
+        matches!(&error, InitError::DataDirectoryMissing { cwd, .. } if cwd == &empty.display().to_string())
     );
 }

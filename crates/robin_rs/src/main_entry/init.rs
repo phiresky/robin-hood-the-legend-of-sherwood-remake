@@ -39,7 +39,9 @@ pub enum InitError {
     #[error("Game data selection cancelled")]
     DataDirectoryCancelled,
 
-    #[error("Unable to install datadir {path}: file error {status}")]
+    #[error(
+        "Unable to open game data at {path}: {status}.\nCheck that the folder exists and contains Data/robinhood.bks or Data/datadir.bin.\nIf this path is outdated, correct the configured path or ROBINHOOD_DATA_DIR, or remove the override to choose another installation."
+    )]
     DataDirectoryInstall {
         path: String,
         status: robin_engine::sbfile::SbFileError,

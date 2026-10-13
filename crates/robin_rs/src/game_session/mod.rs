@@ -448,6 +448,8 @@ async fn preflight_initial_load(
         match prepare_cold_save_mission(application_context, profiles, save).await {
             Ok(prepared) => prepared,
             Err(error) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                crate::bug_report::remember_failed_save(&error.to_string(), save);
                 return Err(format!("save preflight failed: {error}"));
             }
         };
@@ -796,6 +798,8 @@ async fn run_session_body(
                 {
                     Ok(prepared) => prepared,
                     Err(error) => {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        crate::bug_report::remember_failed_save(&error.to_string(), req.save());
                         return SessionOutcome {
                             campaign,
                             result: Err(format!("cross-mission save became invalid: {error}")),

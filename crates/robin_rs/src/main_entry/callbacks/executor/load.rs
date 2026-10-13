@@ -146,7 +146,11 @@ pub(super) fn apply(
     // Dereference the process-local prepared-save wrapper: the replay carries
     // the public save envelope, never the checkpoint's local authority.
     let snapshot = serde_json::to_vec(&*save).context("encode loaded save replay snapshot")?;
-    save.apply_to_with_game(engine, host, game, assets)?;
+    if let Err(error) = save.apply_to_with_game(engine, host, game, assets) {
+        #[cfg(not(target_arch = "wasm32"))]
+        crate::bug_report::remember_failed_save_bytes(&format!("{error:#}"), snapshot);
+        return Err(error.into());
+    }
     Ok(AppliedLoad { snapshot, identity })
 }
 

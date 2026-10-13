@@ -358,10 +358,14 @@ fn required_save_provenance(
     profiles: Option<&ProfileManager>,
 ) -> Result<SaveProvenance> {
     let profiles = profiles.context("save requires the active mission profile table")?;
-    let mission = engine
-        .campaign()
-        .get_mission(mission_id, profiles)
-        .with_context(|| format!("save mission ID {mission_id} is absent from the campaign"))?;
+    let campaign = engine.campaign();
+    let current = campaign
+        .current_mission_idx
+        .context("save requires a current mission")?;
+    let mission = campaign
+        .missions
+        .get(current)
+        .with_context(|| format!("save current mission index {current} is out of range"))?;
     let profile_idx = mission
         .profile_idx
         .context("save mission has no profile index")? as usize;
@@ -371,6 +375,11 @@ fn required_save_provenance(
             profiles.missions.len()
         )
     })?;
+    anyhow::ensure!(
+        mission_profile.id == mission_id,
+        "save request mission ID {mission_id} differs from active mission ID {}; refusing to label another mission's snapshot",
+        mission_profile.id,
+    );
     let mission_name = if mission_profile.mission_name.trim().is_empty() {
         if mission_profile.mission_filename.trim().is_empty() {
             anyhow::bail!("save mission ID {mission_id} has neither a display name nor a filename");
