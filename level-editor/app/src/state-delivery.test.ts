@@ -745,3 +745,49 @@ test("source events independently sample reviewed physical motion, reject stale 
   assert.throws(() => p.sampleSourceState(batch(4, "forward", 0)), /Reload preview/);
   p.dispose();
 });
+
+test("a foreign native clock owner rejects before consuming delivery sequence or samples", async () => {
+  const f = await fixture();
+  const p = new StateDelivery(() => ({ load: async () => f.template, dispose() {} }));
+  await p.set(f.contract, f.source, f.library, f.read);
+  const element = f.contract.native.elements[0]!;
+  const batch = (sequence: number, tick: number) => ({
+    mission: f.contract.native.mission,
+    mission_data_sha256: f.contract.native.mission_data_sha256,
+    level_data_sha256: f.contract.native.level_data_sha256,
+    sequence,
+    simulation_tick: tick,
+    samples: [
+      { kind: "element" as const, id: element.id, source: element.source, active: true, tick },
+    ],
+  });
+  p.sampleSourceState(batch(0, 0));
+  p.native.sampleExternalClocks(
+    [
+      {
+        id: element.id,
+        source: element.source,
+        tick: 17,
+        active: false,
+        playing: false,
+      },
+    ],
+    element.id,
+  );
+  assert.throws(() => p.sampleSourceState(batch(1, 3)), /already owns/);
+  assert.equal(p.native.tick, 17);
+  // Retire only the foreign native owner: the delivery ledger must still accept sequence1.
+  await p.native.set(f.contract.native, f.source, f.read);
+  p.sampleSourceState(batch(1, 3));
+  assert.equal(p.native.tick, 0);
+  p.selectMode("physical-endpoint");
+  p.selectEndpoint("trap", "initial");
+  p.sampleSourceState(batch(2, 20));
+  assert.equal(
+    p.physical.children[0]!.visible,
+    true,
+    "endpoint-only models remain explicitly selected",
+  );
+  assert.equal(p.physical.children[1]!.visible, false);
+  p.dispose();
+});

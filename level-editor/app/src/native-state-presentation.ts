@@ -1,3 +1,7 @@
+import {
+  validateStateClockSamples,
+  type StateClockBatch,
+} from "../../shared/src/state-event-clocks.ts";
 import type { SourceContractClockBinding } from "./source-contract-clock-binding.ts";
 import { decode } from "fast-png";
 import {
@@ -636,6 +640,14 @@ export class NativeStatePresentation {
         )!.image
       : this.contract.background;
     return this.images.get(resource.path)!;
+  }
+  /** Preflight ownership and the loaded source before a delivery ledger consumes its sequence. */
+  assertCanSampleStateClocks(batch: StateClockBatch) {
+    if (!this.contract) throw new Error("Native artwork preview is not loaded");
+    if (this.initialContext)
+      throw new Error("Immutable source initial context cannot consume state events");
+    if (this.externalClock) throw new Error("External source clock already owns playback");
+    validateStateClockSamples(this.contract, batch);
   }
   setPlaying(value: boolean) {
     if (this.externalClock) throw new Error("External source clock owns playback");

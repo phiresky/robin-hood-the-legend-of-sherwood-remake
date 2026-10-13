@@ -192,6 +192,7 @@ export class StateDelivery {
     if (!this.contract) throw new Error("State delivery is not ready");
     if (!this.sourceClocks && this.starts.size)
       throw new Error("Reload preview state before binding source clocks");
+    this.native.assertCanSampleStateClocks(batch);
     const clocks = this.sourceClocks ?? new StateEventClocks(this.contract);
     const samples = clocks.apply(batch);
     this.native.setPlaying(false);

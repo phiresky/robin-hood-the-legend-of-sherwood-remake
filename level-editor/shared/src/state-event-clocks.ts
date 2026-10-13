@@ -27,6 +27,64 @@ export interface StateClockBatch {
   samples: StateClockSample[];
 }
 
+/** Validate every sample before either the presentation or event ledger mutates. */
+export function validateStateClockSamples(
+  n: StateDeliveryContract["native"],
+  batch: StateClockBatch,
+) {
+  if (
+    batch.mission !== n.mission ||
+    batch.mission_data_sha256 !== n.mission_data_sha256 ||
+    batch.level_data_sha256 !== n.level_data_sha256
+  )
+    throw new Error("State event source does not match the loaded mission");
+  if (!Array.isArray(batch.samples)) throw new Error("Invalid source samples");
+  const keys = new Set<string>();
+  for (const s of batch.samples) {
+    const key = `${s.kind}:${s.id}`;
+    if (keys.has(key)) throw new Error("Duplicate state clock in event batch");
+    keys.add(key);
+    const rows =
+      s.kind === "element"
+        ? n.elements
+        : s.kind === "patch"
+          ? n.patch_states
+          : s.kind === "background"
+            ? n.background_states
+            : undefined;
+    const row = rows?.find((r) => r.id === s.id);
+    if (
+      !row ||
+      !s.source ||
+      row.source.kind !== s.source.kind ||
+      row.source.index !== s.source.index ||
+      row.source.sha256 !== s.source.sha256
+    )
+      throw new Error(`Unbound state event source: ${key}`);
+    if (!Number.isSafeInteger(s.tick) || s.tick < 0)
+      throw new Error("Invalid source animation tick");
+    if (s.kind === "element") {
+      if (typeof s.active !== "boolean") throw new Error("Invalid source element activity");
+    } else {
+      if (
+        !["initial", "forward", "applied", "reverse"].includes(s.phase) ||
+        (s.phase === "reverse" && "definitive" in row && row.definitive)
+      )
+        throw new Error("Invalid source patch phase");
+      if (s.kind === "patch") {
+        const patch = n.patch_states!.find((p) => p.id === s.id)!;
+        nativePatchBackgroundFrame(patch, s.phase, s.tick);
+        nativeTransientPatchFrame(patch, s.phase, s.tick);
+      } else
+        nativeBackgroundFrames(
+          n.background_states!.find((p) => p.id === s.id)!,
+          s.phase,
+          s.tick,
+        );
+    }
+  }
+}
+
 /** An omitted owner keeps its last sample. Only an explicit event can advance or reset it. */
 export class StateEventClocks {
   private readonly contract: StateDeliveryContract;
@@ -55,55 +113,14 @@ export class StateEventClocks {
       !Array.isArray(batch.samples)
     )
       throw new Error("Invalid or out-of-order state event batch");
-    const keys = new Set<string>();
+    validateStateClockSamples(n, batch);
     for (const s of batch.samples) {
-      const key = `${s.kind}:${s.id}`;
-      if (keys.has(key)) throw new Error("Duplicate state clock in event batch");
-      keys.add(key);
-      const rows =
-        s.kind === "element"
-          ? n.elements
-          : s.kind === "patch"
-            ? n.patch_states
-            : s.kind === "background"
-              ? n.background_states
-              : undefined;
-      const row = rows?.find((r) => r.id === s.id);
       if (
-        !row ||
-        !s.source ||
-        row.source.kind !== s.source.kind ||
-        row.source.index !== s.source.index ||
-        row.source.sha256 !== s.source.sha256
+        s.kind !== "element" &&
+        s.phase === "reverse" &&
+        this.contract.families.some((f) => f.physical.motion?.patch_id === s.id)
       )
-        throw new Error(`Unbound state event source: ${key}`);
-      if (!Number.isSafeInteger(s.tick) || s.tick < 0)
-        throw new Error("Invalid source animation tick");
-      if (s.kind === "element") {
-        if (typeof s.active !== "boolean") throw new Error("Invalid source element activity");
-      } else {
-        if (
-          !["initial", "forward", "applied", "reverse"].includes(s.phase) ||
-          (s.phase === "reverse" && "definitive" in row && row.definitive)
-        )
-          throw new Error("Invalid source patch phase");
-        if (s.kind === "patch") {
-          const patch = n.patch_states!.find((p) => p.id === s.id)!;
-          nativePatchBackgroundFrame(patch, s.phase, s.tick);
-          nativeTransientPatchFrame(patch, s.phase, s.tick);
-        } else
-          nativeBackgroundFrames(
-            n.background_states!.find((p) => p.id === s.id)!,
-            s.phase,
-            s.tick,
-          );
-        // Reverse physical tracks require their own reviewed interpretation.
-        if (
-          s.phase === "reverse" &&
-          this.contract.families.some((f) => f.physical.motion?.patch_id === s.id)
-        )
-          throw new Error("Reviewed physical motion does not support reverse source events");
-      }
+        throw new Error("Reviewed physical motion does not support reverse source events");
     }
     const samples = structuredClone(batch.samples);
     for (const s of samples) this.clocks.set(`${s.kind}:${s.id}`, s);
