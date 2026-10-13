@@ -4,6 +4,40 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## North canopy with permanent and stateful parts (2026-10-13)
+
+The reviewed-panel authoring path now supports `york-market-north-cream-canopy-stall`.
+It preserves permanent part `building-045` from its matching static remainder,
+and restores raised parts 963/964 plus lowered part 976 from their state owner.
+Both source descriptors and the target model are pinned. Local-frame collision
+coordinates are checked after origin conversion. The static remainder must have
+no additional floors, doors, lifts, interiors or unsupported metadata; such assets
+require explicit migration rather than silently dropping features.
+
+The permanent part remains in sight and movement-solid geometry with its authored
+query order. It is not bound to the `lower-canopy` appearance control. Only the two
+raised parts and lowered part exchange states. Stage `york-canvas-screen-Gp8C8i`
+passes eight moved/copied exports, sixteen native state cycles, 48 boundary-route
+checks and sixteen complete-sprite walks (27–49 moving ticks, ending upright).
+The test-only state harness now also asserts each declared permanent sight index
+stays active before application, after application and after reset. Both permanent
+parts remain active throughout these checks.
+
+Publication backup `north-canopy-installed-20261013` contains the warned definition;
+models, saved placements and existing component assets are unchanged. The game
+binary builds, Rust formatting and scoped script lint/format checks pass. Production
+runtime code is unchanged. Actor-triggered activation and detailed rendered
+contact remain unverified.
+
+Published fixture `standalone-render-library-PRHEDo` passes editor export/reopen
+and identical gameplay/color/depth rebake. `north-canopy.zip` is 3,256,797 bytes,
+SHA-256 `463620e60686faebb60736503218f43d39dd191d90847dce844a54e496a5d335`.
+Its gameplay geometry exactly matches the tested 37-degree/height-40 fixture.
+Native loading without base data passes (1000×1000, nine sight obstacles,
+960 grid blocks, two controls/appearance regions), as do native GPU independent
+state, transition and reset color/depth probes. These checks preserve the
+permanent/stateful separation without introducing runtime solver behavior.
+
 ## Independent southeast and west canopy states (2026-10-13)
 
 The reviewed-panel authoring script now covers `york-market-southeast-canopy-stall`

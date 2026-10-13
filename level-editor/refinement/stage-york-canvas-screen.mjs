@@ -10,6 +10,14 @@ import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 const reviewed = {
+  "york-market-north-cream-canopy-stall": {
+    descriptor: "96d6682f24ba8e1ae4425e3ba708fd1342226f7fab0b8a3be6e610d754f470ca",
+    model: "79a9dcbd2e7518b93043e91199126c2690b6f5b3109c035cecb56da124120856",
+    parts: ["building-045", "building-963", "building-964", "building-976"],
+    control: "lower-canopy",
+    staticOwner: "york-market-north-cream-canopy-stall-remainder",
+    staticDescriptor: "55aed97ba1e225d5c8d1852fb41250fa4640c0af6bf54944af751389f9285211",
+  },
   "york-market-freestanding-canvas-screen": {
     descriptor: "f18fbd5bd78a247ec6ed54aa5ce49eefdbe29a8afe1723bbbdf6cea7754e4b6e",
     model: "767cba16aea4ffb31deea408d46f3379f07b727deece329ff72eb603a61d3663",
@@ -52,6 +60,37 @@ assert.equal(descriptor.gameplay, undefined);
 const ownerBytes = await fs.readFile("library/3d-assets/york-market-state-assembly/asset.json");
 assert.equal(hash(ownerBytes), "ad2c6e9b5b6d61858dcd551169aeff2a9781da415cfc0c11db323ea688656555");
 const owner = JSON.parse(ownerBytes);
+let staticOwner;
+if (review.staticOwner) {
+  const staticBytes = await fs.readFile(`library/3d-assets/${review.staticOwner}/asset.json`);
+  assert.equal(hash(staticBytes), review.staticDescriptor);
+  staticOwner = JSON.parse(staticBytes);
+  const gameplay = staticOwner.gameplay;
+  assert.ok(
+    Object.keys(gameplay).every((key) =>
+      [
+        "version",
+        "collision",
+        "surfaces",
+        "sightOrder",
+        "doors",
+        "lifts",
+        "interiors",
+        "draft",
+      ].includes(key),
+    ),
+    "Static owner has additional gameplay requiring explicit migration",
+  );
+  assert.equal(gameplay.collision, "parts");
+  for (const key of ["surfaces", "doors", "lifts", "interiors"])
+    assert.equal(
+      gameplay[key]?.length ?? 0,
+      0,
+      "Static owner has features requiring explicit migration",
+    );
+}
+const staticNodes = new Set(staticOwner?.parts.map((part) => part.node) ?? []);
+assert.ok([...staticNodes].every((node) => review.parts.includes(node)));
 const transition = owner.gameplay.movementTransitions.find(
   (control) => control.id === "movement-change-9",
 );
@@ -61,9 +100,10 @@ assert.deepEqual(
   review.parts,
 );
 const origin = sceneToGame(camera, descriptor.source_origin_scene);
-const ownerOrigin = sceneToGame(camera, owner.source_origin_scene);
 for (const part of descriptor.parts) {
-  const source = owner.parts.find((candidate) => candidate.node === part.node);
+  const sourceOwner = staticNodes.has(part.node) ? staticOwner : owner;
+  const ownerOrigin = sceneToGame(camera, sourceOwner.source_origin_scene);
+  const source = sourceOwner.parts.find((candidate) => candidate.node === part.node);
   assert.ok(source);
   const shape = part.obstacle_local_game,
     sourceShape = source.obstacle_local_game;
@@ -84,7 +124,7 @@ for (const part of descriptor.parts) {
       );
     }
 }
-const raised = descriptor.parts.slice(0, -1),
+const raised = descriptor.parts.slice(0, -1).filter((part) => !staticNodes.has(part.node)),
   lowered = descriptor.parts.at(-1);
 const assemblyExclusions = owner.gameplay.movementBlockers.filter((blocker) =>
   review.parts.includes(blocker.node),
@@ -124,6 +164,19 @@ descriptor.gameplay = {
   surfaces: [],
   doors: [],
   movementBlockers: [],
+  ...(staticNodes.size
+    ? {
+        movementSolids: [...staticNodes],
+        sightOrder: Object.fromEntries(
+          descriptor.parts.map((part) => {
+            const sourceOwner = staticNodes.has(part.node) ? staticOwner : owner;
+            const order = sourceOwner.gameplay.sightOrder[part.node];
+            assert.ok(Number.isFinite(order));
+            return [part.node, order];
+          }),
+        ),
+      }
+    : {}),
   movementTransitions: [
     {
       id: review.control,
@@ -181,7 +234,9 @@ await fs.writeFile(
       modelSha256,
       gameplay: descriptor.gameplay,
       partAppearances: Object.fromEntries(
-        descriptor.parts.map((part) => [part.node, part.appearance]),
+        descriptor.parts
+          .filter((part) => part.appearance)
+          .map((part) => [part.node, part.appearance]),
       ),
     },
   ]),
@@ -220,6 +275,16 @@ for (const height of [0, 40])
     const compiled = compileMap(document, [0, 0, 1000, 1000], new Map([[id, descriptor]]));
     const geometry = compiled.descriptor.asset_geometry;
     assert.equal(geometry.movement_transitions.length, 2);
+    const controlledSight = new Set(
+      geometry.movement_transitions.flatMap((control) => [
+        ...control.initial_sight,
+        ...control.applied_sight,
+      ]),
+    );
+    const permanentSight = geometry.sight_obstacles.flatMap((shape, index) =>
+      shape.solid && !controlledSight.has(index) ? [index] : [],
+    );
+    assert.equal(permanentSight.length, 2 * staticNodes.size);
     const probes = geometry.movement_transitions.map((control) => {
       assert.equal(control.initial_sight.length, raised.length);
       assert.equal(control.applied_sight.length, 1);
@@ -253,6 +318,7 @@ for (const height of [0, 40])
       file,
       transition_probes: probes,
       route_probes: routeProbes,
+      permanent_sight: permanentSight,
       warnings: compiled.warnings,
     });
     await report(false);

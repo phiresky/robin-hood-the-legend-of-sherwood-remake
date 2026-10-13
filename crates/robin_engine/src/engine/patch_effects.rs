@@ -1738,6 +1738,13 @@ mod tests {
             };
             for (index, transition) in transitions.iter().enumerate() {
                 let check_routes = |engine: &EngineInner, applied: bool| {
+                    for index in result["permanent_sight"].as_array().into_iter().flatten() {
+                        let index = usize::try_from(index.as_u64().unwrap()).unwrap();
+                        assert!(
+                            engine.world.static_sight_obstacle_active[index],
+                            "{file}: permanent sight obstacle {index} changed, applied={applied}"
+                        );
+                    }
                     for probe in result["transition_probes"].as_array().into_iter().flatten() {
                         if probe["id"].as_str() != Some(transition.id.as_str()) {
                             continue;
