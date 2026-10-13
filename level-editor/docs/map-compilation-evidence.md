@@ -25,8 +25,19 @@ structural blockers: rounded animation endpoints intersect 729 after a
 all sixteen copied/rotated/raised native entry/exit trips. The stone-house
 definition already passed sixteen trips in `asset-building-doors-XTZ6wb`.
 The independent two-house scene `york-river-lane-scene-L6d9W9` passes both
-native entry/exit trips. These candidates remain unpublished pending browser
-ZIP/reopen checks; the saved York entrance counts below have not changed.
+native entry/exit trips.
+
+Browser fixture `draft-scene-render-lmvDGM` exports a 4,851,126-byte ZIP with
+SHA-256 `0b711438d34e7ac0ac2414690686d44234924caba7b126986090bed050cd6260`.
+Reopened gameplay, color and depth match exactly. The archive loads natively
+without base data; both archived entrance round trips pass in
+`river-lane-archived-ddix3bil`. Render inspection still shows draft model/texture
+limitations, and detailed actor contact is unverified.
+
+`river-lane-entrances-installed-20261014-verified` publishes both definitions
+and updates York's scene pins, retaining draft warnings. Model, texture, lossy
+and preview bytes are unchanged. The saved York entrance counts below predate
+this publication and have not yet been remeasured.
 
 All 251 selected compiler/passage tests pass, including a traced/untraced
 descriptor equality regression. This adds no runtime engine work.

@@ -801,14 +801,14 @@
       "model": "3d-assets/york/york-north-river-lane-stone-house/model.glb",
       "model_sha256": "c94862761a7684fa5a736d181618589a53b25c87ad8101169ff09ef07e1f939b",
       "descriptor": "3d-assets/york/york-north-river-lane-stone-house/asset.json",
-      "descriptor_sha256": "a81f11965f1d86aea41a0bfeae54261098c215a93c0b1a1b0469b97b713d3306",
+      "descriptor_sha256": "9c7fd79441348c1bee7c922140da415f92c8b7107b031fd8cba9ad68157a7d8b",
       "id": "york-north-river-lane-stone-house"
     },
     {
       "model": "3d-assets/york/york-north-river-lane-west-low-house/model.glb",
       "model_sha256": "11908856936bf9173e235b9cd57a7a05e52aa5ea1184c502af4c99b08121110e",
       "descriptor": "3d-assets/york/york-north-river-lane-west-low-house/asset.json",
-      "descriptor_sha256": "c14b80a506edcca8d7a9aca8fc43c5c6eff7269067e184180be448f7ce896bee",
+      "descriptor_sha256": "e9ceec97fdbf0986694162faa88278e4dfea765131ebfe8fe67a4dc40b556f29",
       "id": "york-north-river-lane-west-low-house"
     },
     {
