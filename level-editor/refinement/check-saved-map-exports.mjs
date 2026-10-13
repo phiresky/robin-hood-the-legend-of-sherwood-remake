@@ -8,10 +8,13 @@ import { savedMapWallCalibration } from "../app/tests/saved-map-wall-calibration
 // Compile the actual saved scenes, including authored terrain and spline walls.
 // Descriptors exercise native geometry; this does not replace a browser ZIP bake.
 const arguments_ = process.argv.slice(2);
+const mapOnly = arguments_.includes("--map-only");
 const selectedMaps = arguments_
   .filter((argument) => argument.startsWith("--map="))
   .map((argument) => argument.slice(6));
-const stages = arguments_.filter((argument) => !argument.startsWith("--map="));
+const stages = arguments_.filter(
+  (argument) => !argument.startsWith("--map=") && argument !== "--map-only",
+);
 assert.ok(stages.length <= 1, "Provide at most one gameplay stage");
 const [stage] = stages;
 const files = (await fs.readdir("library/scenes"))
@@ -29,6 +32,7 @@ const report = (complete) =>
     `${output}/diagnostics.json`,
     JSON.stringify({
       scope: "static-geometry-only-not-gameplay-parity",
+      mapOnly,
       ...(selectedMaps.length ? { selectedMaps } : {}),
       ...(stage ? { gameplayStage: stage } : {}),
       complete,
@@ -57,6 +61,10 @@ for (const file of files) {
   };
   try {
     const document = await readStoredMap(`library/scenes/${file}`, "library");
+    if (mapOnly) {
+      delete document.mission;
+      delete document.population;
+    }
     const assets = await pinnedDescriptors(
       "library",
       document.assetSources ?? [],
@@ -84,6 +92,10 @@ for (const file of files) {
       },
     });
     finishGameplayPhase();
+    if (mapOnly) {
+      assert.deepEqual(compiled.descriptor.spawn_points, []);
+      assert.equal(compiled.descriptor.soldiers, undefined);
+    }
     finished();
     phase = "write";
     await fs.writeFile(`${output}/${map}.level.json`, JSON.stringify(compiled.descriptor));

@@ -4,6 +4,17 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Saved-scene map-only audit command
+
+From `level-editor`, run `node refinement/check-saved-map-exports.mjs --map-only`.
+Optional `--map=<saved-scene-name>` arguments restrict the batch. This removes
+mission entries and preview population only from the loaded diagnostic document;
+saved files, terrain, spline walls and map state assignments remain intact.
+Each successful descriptor must contain empty `spawn_points` and no `soldiers`.
+The report records `mapOnly`, phase timings, warnings and per-map failures.
+Compilation alone does not establish native loading, rendered ZIP fidelity or
+character traversal; use its descriptors in those separate checks.
+
 ## Green timber house publication (2026-10-13)
 
 `stage-york-green-house.mjs` reassembles the matching permanent asset definition
