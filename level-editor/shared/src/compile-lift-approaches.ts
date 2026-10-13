@@ -46,8 +46,19 @@ function crosses(polygon: Point[], source: Point, goal: Point): boolean {
 
 /** Prepare native passage endpoints once, before writing the map descriptor. */
 export function compileLiftApproaches(geometry: CompiledAssetGeometry): void {
-  const directStairs = prepareDirectStairApproaches(geometry, false);
+  compileApproaches(geometry, false);
+}
+
+/** Virtual rooms only need actor clearance at their outdoor approach. */
+export function compileBuildingApproaches(geometry: CompiledAssetGeometry): void {
+  compileApproaches(geometry, true);
+}
+
+function compileApproaches(geometry: CompiledAssetGeometry, buildingsOnly: boolean): void {
   type Lift = NonNullable<CompiledAssetGeometry["lifts"]>[number];
+  const directStairs = buildingsOnly
+    ? new Set<Lift["doors"][number]>()
+    : prepareDirectStairApproaches(geometry, false);
   const unresolved: {
     lift: Lift;
     door: Lift["doors"][number];
@@ -75,21 +86,46 @@ export function compileLiftApproaches(geometry: CompiledAssetGeometry): void {
     }
     return offsets;
   };
-  for (const [liftIndex, lift] of (geometry.lifts ?? []).entries()) {
+  const jobs: { label: string; lift?: Lift; doors: Lift["doors"]; sides: ("in" | "out")[] }[] =
+    buildingsOnly
+      ? (geometry.buildings ?? []).map(({ Building }, index) => ({
+          label: `Building ${index}`,
+          doors: Building.doors,
+          sides: ["out"],
+        }))
+      : (geometry.lifts ?? []).map((lift, index) => ({
+          label: `Lift ${index}`,
+          lift,
+          doors: lift.doors,
+          sides: ["in", "out"],
+        }));
+  for (const { label, lift, doors, sides } of jobs) {
     // World-space construction metadata is not part of native passage execution.
-    delete lift.physical_navigation;
-    if (lift.lift_type < 0 || lift.lift_type > 3) continue;
-    for (const [doorIndex, door] of lift.doors.entries()) {
-      for (const side of ["in", "out"] as const) {
+    if (lift) delete lift.physical_navigation;
+    if (lift && (lift.lift_type < 0 || lift.lift_type > 3)) continue;
+    for (const [doorIndex, door] of doors.entries()) {
+      for (const side of sides) {
         const area = areas.get(`${door[`sector_${side}`]}/${door[`layer_${side}`]}`);
-        if (!area) throw new Error(`Lift ${liftIndex} door ${doorIndex}: missing ${side} area`);
+        if (!area) throw new Error(`${label} door ${doorIndex}: missing ${side} area`);
         const boundary = area.is_lift
           ? (area.precise_polygon ?? area.polygon.points)
           : area.polygon.points;
         const blockers = area.obstacles.filter((obstacle) => obstacle.state_id === 0);
         const half: Point = side === "in" && directStairs.has(door) ? [5, 2] : [6, 3];
+        const receivers = buildingsOnly
+          ? geometry.sight_obstacles
+              .filter(
+                (obstacle) =>
+                  Array.isArray(obstacle.projection_area) &&
+                  obstacle.projection_area[0] === door.sector_out &&
+                  obstacle.projection_area[1] === door.layer_out,
+              )
+              .map((obstacle) => obstacle.points.map((p): Point => [p.x, p.y - p.z_top]))
+          : [];
         const fits = (point: Point) =>
           pointInGameplayPolygon(point, boundary) &&
+          (!receivers.length ||
+            receivers.some((polygon) => pointInGameplayPolygon(point, polygon, true))) &&
           !touches(boundary, point, half) &&
           blockers.every(
             (obstacle) =>
@@ -101,7 +137,7 @@ export function compileLiftApproaches(geometry: CompiledAssetGeometry): void {
         const delta: Point = [point[0] - middle[0], point[1] - middle[1]];
         const length = Math.hypot(...delta);
         const radius =
-          side === "in" && lift.lift_type === 3
+          side === "in" && lift?.lift_type === 3
             ? door.door_type === 6
               ? 65
               : door.door_type === 4
@@ -176,9 +212,10 @@ export function compileLiftApproaches(geometry: CompiledAssetGeometry): void {
         }
         if (adjusted) door[`point_${side}`] = adjusted;
         else {
-          const warning = `Lift ${liftIndex} door ${doorIndex}: no actor-sized ${side} approach near the authored passage; traversal may be unavailable.`;
+          const warning = `${label} door ${doorIndex}: no actor-sized ${side} approach near the authored passage; traversal may be unavailable.`;
           (geometry.warnings ??= []).push(warning);
-          if (side === "in" && lift.lift_type === 1) unresolved.push({ lift, door, fits, warning });
+          if (side === "in" && lift?.lift_type === 1)
+            unresolved.push({ lift, door, fits, warning });
         }
       }
     }

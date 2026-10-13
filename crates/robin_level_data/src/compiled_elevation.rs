@@ -645,6 +645,23 @@ fn derive_with_spatial_index(
             )?;
         }
     }
+    // Building exits install the outside endpoint's receiving plane before
+    // walking away from their midpoint. Do not cross a ground-facing boundary
+    // a second time along that same approach; retain unrelated floor seams.
+    for building in &geometry.buildings {
+        let crate::level_data::RawBuildingEntry::Building { doors } = building else {
+            continue;
+        };
+        for door in doors {
+            clip_passage_ground_edges(
+                &mut lines,
+                door.layer_out,
+                receiver_at((door.sector_out, door.layer_out), door.point_out),
+                [f64::from(door.point_mid.0), f64::from(door.point_mid.1)],
+                [f64::from(door.point_out.0), f64::from(door.point_out.1)],
+            )?;
+        }
+    }
     let mut passages = Vec::new();
     for lift in &geometry.lifts {
         if lift.physical_navigation.is_some() {
@@ -1068,9 +1085,45 @@ mod tests {
         let lines = derive(&geometry).unwrap();
         assert!(!lines.iter().any(|line| crosses(line, 310.)));
         assert!(lines.iter().any(|line| crosses(line, 300.)));
+        let mut building_door = geometry.doors[0].clone();
         geometry.doors.clear();
         let unconnected = derive(&geometry).unwrap();
         assert!(unconnected.iter().any(|line| crosses(line, 310.)));
+        building_door.door_type = 1;
+        building_door.world_endpoints = None;
+        building_door.point_out = building_door.point_in;
+        building_door.sector_out = building_door.sector_in;
+        building_door.layer_out = building_door.layer_in;
+        geometry.buildings = vec![crate::level_data::RawBuildingEntry::Building {
+            doors: vec![building_door],
+        }];
+        let building = derive(&geometry).unwrap();
+        assert!(
+            !building
+                .iter()
+                .any(|line| line.layer == 1 && crosses(line, 310.))
+        );
+        assert_eq!(
+            serde_json::to_value(
+                building
+                    .iter()
+                    .filter(|line| line.layer == 0)
+                    .collect::<Vec<_>>()
+            )
+            .unwrap(),
+            serde_json::to_value(
+                unconnected
+                    .iter()
+                    .filter(|line| line.layer == 0)
+                    .collect::<Vec<_>>()
+            )
+            .unwrap(),
+        );
+        assert!(
+            building
+                .iter()
+                .any(|line| line.layer == 1 && crosses(line, 300.))
+        );
     }
 
     #[test]

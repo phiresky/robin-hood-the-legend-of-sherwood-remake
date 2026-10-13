@@ -23,9 +23,11 @@ outside entrances now bind in authored terrain fixtures. A replacement model
 now preserves all 71 component parts and both independent reveal identities;
 its 37° rendered ZIP reopens with identical gameplay, color and depth. With
 surrounding terrain, both reveal controls and all four combined visual states
-survive ZIP reopening. The four-rotation entrance audit passes 45/48 routes;
-three 90°/180° routes still fail, and the wider slopes cover three low ordinary
-passages. Actor-triggered reveal behavior remains unverified. A compiler fix
+survive ZIP reopening. The four-rotation entrance audit now passes all 48 routes:
+export prepares an actor-sized outdoor approach, and static load preparation
+prevents duplicate ground-plane transfers along building exits. The wider slopes
+still cover three low ordinary passages. Actor-triggered reveal behavior remains
+unverified. A compiler fix
 now prevents receiving segments from binding to floor holes when controls are
 allowed inside collision; it adds no runtime work.
 The combined candidate remains outside the published

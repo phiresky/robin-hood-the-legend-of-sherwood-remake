@@ -8,7 +8,10 @@ import {
 import type { ProjectionAssetDescriptor } from "@rle/shared";
 import { packageAppearanceRegions, type BakedAppearanceRegion } from "./map-appearance.ts";
 import { compileMission } from "./compile-mission.ts";
-import { compileLiftApproaches } from "../../shared/src/compile-lift-approaches.ts";
+import {
+  compileLiftApproaches,
+  compileBuildingApproaches,
+} from "../../shared/src/compile-lift-approaches.ts";
 import { prepareJoinedStairClearance } from "../../shared/src/prepare-joined-stair-clearance.ts";
 import { quantizePassageReceivers } from "../../shared/src/quantize-passage-receivers.ts";
 import { prepareOrdinaryStairPassages } from "../../shared/src/prepare-ordinary-stair-passages.ts";
@@ -135,6 +138,7 @@ export function compileMap(
     quantizePassageReceivers(assetGeometry);
     prepareOrdinaryStairPassages(assetGeometry);
     prepareStairPassages(assetGeometry);
+    compileBuildingApproaches(assetGeometry);
     const ordinaryStates = compileOrdinaryPassageStates(assetGeometry);
     assetGeometry.doors.forEach((door, index) => {
       const requirements = [...(door.passage_states ?? []), ...ordinaryStates[index]!];

@@ -1,5 +1,16 @@
 # Runtime changes introduced or extended for map compilation
 
+**2026-10-13 — compiled building exit boundaries:** static elevation-line
+preparation now clips ground-facing edges along building outside approaches,
+matching the existing exit callback that installs the outside endpoint's floor.
+Otherwise an exit can cross the same floor boundary again and lose its receiver.
+This fixes two rotated keep entrance failures. The remaining cramped entrance is
+prepared at export using the existing actor-clearance search. No door callback,
+per-tick movement, geometry search or format field changes were added. Existing
+binary levels do not run this compiled-geometry preparation. The keep now passes
+48/48 building round trips and retains 40/40 stair routes; copied-house controls
+retain 64/64 entrance/state checks.
+
 **2026-10-13 — neighboring stair entrances:** static elevation-line preparation
 now limits each stair doorway's receiving-plane boundary so that other authored
 approaches and direct internal routes do not cross it. This fixes four premature

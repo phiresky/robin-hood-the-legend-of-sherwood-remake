@@ -4,6 +4,43 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Rotated building entrance preparation (2026-10-13)
+
+The three remaining entrance failures in `keep-supported-entrances-bIOJXr` had
+two causes. Native tracing showed the exit callback installing the correct floor,
+then a ground-facing elevation boundary along the approach switching it back to
+ground. Static compiled-level preparation now clips those boundaries only along
+building outside approaches, using their existing receiving endpoints. Unrelated
+floor boundaries remain. No movement tick or door callback changed.
+
+The last 90° entrance placed the actor too close to a narrow floor boundary.
+`compileBuildingApproaches` reuses the existing export-time passage preparation,
+searching only the outdoor side of virtual rooms and retaining receiving support.
+It preserves inside/midpoint positions, door permissions and motion geometry;
+permanent barriers are not crossed. Unavailable approaches retain an explicit
+warning. In this assembly only door 7 at 90° changes, from `(1031,1426)` to
+`(1025,1428)`. The authored editor endpoints remain unchanged.
+
+Fresh fixture `keep-supported-entrances-ef0fiQ` passes all 48 native building
+entry/exit round trips at 0°, 37°, 90° and 180°. The unchanged flat keep fixture
+retains 40/40 stair routes, and the northwest timber house retains all 64 copied
+entrance/state cases (32 complete round trips and 32 correct denials). The
+level-data suite passes 91 tests, compiled-navigation regressions pass 37,
+map-export tests pass 75, and approach preparation tests pass three. Scoped lint,
+formatting, editor typecheck and the main game build pass.
+
+The new 90° archive `keep-supported-90.zip` in that fixture is 22,408,654 bytes,
+SHA-256 `c01ac257a8821965694ca396865274c6f8830ae539e14bd5bac003ddfd275537`.
+Its packaged editor scene/models reopen and rebake identical gameplay, color,
+depth and combined appearance states. The archived geometry matches the staged
+90° geometry except warnings, and all twelve native entry/exit round trips pass
+again from that archived descriptor, including the previously stalled entrance.
+
+These checks resolve the three entrance failures below, not the remaining mask,
+click-order or assembly-context warnings. The supported terrain still covers
+three low ordinary passages, and actor activation of the reveal controls remains
+unverified. Full keep/map parity is not claimed.
+
 ## Supported keep entrances and receiving holes (2026-10-13)
 
 `check-keep-supported-entrances.mjs` creates ordinary editor terrain around the

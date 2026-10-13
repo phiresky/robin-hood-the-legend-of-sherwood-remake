@@ -3,7 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import type { CompiledAssetGeometry } from "./asset-gameplay.ts";
 import type { Point } from "./level.ts";
-import { compileLiftApproaches } from "./compile-lift-approaches.ts";
+import { compileLiftApproaches, compileBuildingApproaches } from "./compile-lift-approaches.ts";
 
 function fixture(point: Point, state?: number) {
   const document: { asset_geometry: CompiledAssetGeometry } = JSON.parse(
@@ -93,5 +93,37 @@ test("switchable barriers preserve a shared approach for their open state", () =
     assert.deepEqual(door.point_in, [7, 50]);
     assert.equal(geometry.motion_data.layers[0]![0]!.obstacles[0]!.state_id, state);
     assert.deepEqual(geometry.warnings, []);
+  }
+});
+
+test("building approaches fit outside actors without moving virtual rooms or crossing barriers", () => {
+  for (const blocked of [false, true]) {
+    const { geometry, door } = fixture([99, 99], blocked ? 0 : undefined);
+    geometry.motion_data.layers[0]![0]!.is_lift = false;
+    geometry.lifts = [];
+    door.door_type = 1;
+    door.point_out = [2, 50];
+    door.point_mid = [0, 50];
+    door.sector_in = 999;
+    door.layer_in = 3;
+    geometry.buildings = [{ Building: { doors: [door] } }];
+    const receiver = structuredClone(geometry.sight_obstacles[0]!);
+    receiver.projection_area = [0, 0];
+    receiver.points = [
+      [0, 0],
+      [100, 0],
+      [100, 100],
+      [0, 100],
+    ].map(([x, y]) => ({ x: x!, y: y!, z_top: 0, z_bottom: 0 }));
+    geometry.sight_obstacles = [receiver];
+    const original = structuredClone(door);
+    const motion = structuredClone(geometry.motion_data);
+    compileBuildingApproaches(geometry);
+    assert.deepEqual(door.point_out, blocked ? [2, 50] : [7, 50]);
+    assert.deepEqual({ ...door, point_out: original.point_out }, original);
+    assert.deepEqual(geometry.motion_data, motion);
+    if (blocked)
+      assert.match(geometry.warnings!.join("\n"), /Building 0 door 0: no actor-sized out approach/);
+    else assert.deepEqual(geometry.warnings, []);
   }
 });
