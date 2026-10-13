@@ -14,6 +14,22 @@ spec.loader.exec_module(publisher)
 
 
 class RepairPublicationTest(unittest.TestCase):
+    def test_only_reviewed_part_appearance_may_change(self):
+        previous = {'model': 'model.glb', 'parts': [{'node': 'fixed'}, {'node': 'removed'}]}
+        edit = {'gameplay': {'version': 1},
+                'partAppearances': {'removed': {'hide': ['remove']}}}
+        replacement = {'model': 'model.glb', 'gameplay': {'version': 1},
+                       'parts': [{'node': 'fixed'}, {'node': 'removed',
+                                  'appearance': {'hide': ['remove']}}]}
+        publisher.verify_descriptor_edit(previous, replacement, edit)
+        self.assertNotIn('appearance', previous['parts'][1])
+        replacement['parts'][0]['appearance'] = {'hide': ['remove']}
+        with self.assertRaisesRegex(AssertionError, 'outside the reviewed'):
+            publisher.verify_descriptor_edit(previous, replacement, edit)
+        with self.assertRaisesRegex(AssertionError, 'one existing part'):
+            publisher.verify_descriptor_edit(previous, replacement,
+                {'gameplay': {}, 'partAppearances': {'missing': {}}})
+
     def test_rejects_concurrent_change_before_writing_any_asset(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -10,6 +10,12 @@ const [scenePath, editsPath, name] = process.argv.slice(2);
 assert.ok(scenePath && editsPath && name, "Supply scene.json edits.json fixture-name");
 assert.match(name, /^[a-z0-9-]+$/);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const relative = (value) => {
+  assert.ok(typeof value === "string" && value.startsWith("3d-assets/"));
+  assert.ok(!/[\\\0:#?%]/.test(value));
+  assert.ok(value.split("/").every((part) => part && part !== "." && part !== ".."));
+  return value;
+};
 const document = JSON.parse(await fs.readFile(scenePath));
 const edits = JSON.parse(await fs.readFile(editsPath));
 assert.equal(new Set(edits.map((edit) => edit.asset)).size, edits.length);
@@ -17,6 +23,8 @@ const output = await fs.mkdtemp("work/needs-review/map-compile/draft-scene-rende
 const descriptors = new Map(),
   entries = [];
 for (const reference of document.assetSources) {
+  relative(reference.descriptor);
+  relative(reference.model);
   const bytes = await fs.readFile(path.join("library", reference.descriptor));
   const model = await fs.readFile(path.join("library", reference.model));
   assert.equal(hash(bytes), reference.descriptor_sha256);
@@ -24,12 +32,24 @@ for (const reference of document.assetSources) {
   const descriptor = JSON.parse(bytes);
   assert.equal(descriptor.id, reference.id);
   assert.ok(reference.model.endsWith(".glb"), "Fixture requires bundled GLB models");
-  assert.ok(!descriptor.resources?.length, "External model resources need explicit staging");
   const edit = edits.find((row) => row.asset === reference.id);
   if (edit) {
     assert.equal(hash(bytes), edit.descriptorSha256);
     assert.equal(hash(model), edit.modelSha256);
     descriptor.gameplay = edit.gameplay;
+    for (const [node, appearance] of Object.entries(edit.partAppearances ?? {})) {
+      const parts = descriptor.parts.filter((part) => part.node === node);
+      assert.equal(parts.length, 1, "Appearance edit needs one existing part");
+      parts[0].appearance = appearance;
+    }
+  }
+  for (const resource of descriptor.resources ?? []) {
+    const file = relative(resource.path);
+    const data = await fs.readFile(path.join("library", file));
+    assert.equal(hash(data), resource.sha256, "Model resource changed");
+    const target = path.join(output, file);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, data);
   }
   validateAssetGameplay(descriptor.gameplay, descriptor);
   const updated = JSON.stringify(descriptor);

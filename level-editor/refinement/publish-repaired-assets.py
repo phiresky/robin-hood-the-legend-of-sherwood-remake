@@ -1,5 +1,6 @@
 """Install browser-verified asset repairs, derivatives and saved-scene pins together."""
 import argparse
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -15,6 +16,17 @@ from lossy_assets import LibraryLock, atomic_write, verify_derivatives
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def verify_descriptor_edit(previous, replacement, edit):
+    """Allow only the gameplay and explicitly listed part appearance changes."""
+    expected = copy.deepcopy(previous)
+    expected['gameplay'] = edit['gameplay']
+    for node, appearance in edit.get('partAppearances', {}).items():
+        parts = [part for part in expected['parts'] if part['node'] == node]
+        assert len(parts) == 1, 'Appearance edit requires one existing part: ' + node
+        parts[0]['appearance'] = appearance
+    assert replacement == expected, 'Descriptor changed outside the reviewed gameplay/appearances'
 
 
 def install(library, before, replacements):
@@ -82,9 +94,7 @@ def publish(library, stage, gameplay_stage, fixture, output, apply=False, archiv
             assert digest(old) == edit['descriptorSha256'] == current['descriptor_sha256']
             assert digest((root / model_path).read_bytes()) == edit['modelSha256']
             old_descriptor, new_descriptor = json.loads(old), json.loads(new)
-            assert {k: v for k, v in old_descriptor.items() if k != 'gameplay'} == {
-                k: v for k, v in new_descriptor.items() if k != 'gameplay'}
-            assert new_descriptor['gameplay'] == edit['gameplay']
+            verify_descriptor_edit(old_descriptor, new_descriptor, edit)
             assert new_descriptor['gameplay'].get('draft', {}).get('issues'), 'Retain draft limitations'
             ref = references[asset]
             assert ref['descriptor_sha256'] == digest(new) and ref['model_sha256'] == digest(model)

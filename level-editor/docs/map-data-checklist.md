@@ -6,19 +6,19 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-**Current definition inventory (2026-10-13):** `gameplay-coverage-H7aTdU` checks
+**Current definition inventory (2026-10-13):** `gameplay-coverage-xF3TXG` checks
 1,286 indexed assets and finds zero missing definitions among placed assets in
-the saved scenes. Four unused assets lack definitions, including two background
+the saved scenes. Three unused assets lack definitions, including two background
 assets that cannot be inserted as objects. This checks library
 definition presence and index hashes, not scene pins or gameplay completeness.
-Both remaining insertable assets have known state dependencies in their
+The remaining insertable asset has known state dependencies in its
 candidate owners. These include movement, mask, door, control and appearance
 references, not just sight-state membership. Restoring them requires preserving
 those relationships or authoring explicit independent behavior.
-The north display-piece candidate now passes independent removal/reset checks,
-permanent-neighbor collision checks and 32 full-character walks. Its rendered
-states and archive round trip remain unverified, so it is still outside the
-published definition count; see
+The north display-piece draft is published after independent removal/reset checks,
+permanent-neighbor collision checks and 32 full-character walks. Its ZIP reopens
+identically, loads without base data and passes GPU state/reset checks including
+thin depth changes. Actor activation and detailed contact remain open; see
 [the display checks](map-compilation-evidence.md#independent-north-display-piece-draft-2026-10-13).
 The standalone Nottingham hall now has a published local-definition draft.
 Separate hall/tower placements pass 32 room entry/exit round trips and 32 stair

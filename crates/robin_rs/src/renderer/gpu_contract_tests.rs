@@ -741,12 +741,15 @@ fn verify_asset_archive_appearance(gpu: GpuContext, archive: &std::path::Path) {
             (0..region.patches.len()).map(move |bit| {
                 let applied = &region.states[1 << bit];
                 let pixel = (0..initial.color.len())
-                    .find(|&pixel| {
+                    .filter(|&pixel| {
                         applied.color[pixel] != initial.color[pixel]
-                            && applied.depth[pixel].abs_diff(initial.depth[pixel]) > 256
+                            && applied.depth[pixel] != initial.depth[pixel]
                     })
+                    .max_by_key(|&pixel| applied.depth[pixel].abs_diff(initial.depth[pixel]))
                     .expect("each appearance control must change color and depth");
-                (region_index, pixel)
+                let between =
+                    (f32::from(initial.depth[pixel]) + f32::from(applied.depth[pixel])) / 2.;
+                (region_index, pixel, between)
             })
         })
         .collect();
@@ -759,7 +762,7 @@ fn verify_asset_archive_appearance(gpu: GpuContext, archive: &std::path::Path) {
                 patch.in_transition = transitioning;
             }
             renderer.sync_map_appearance(&patches);
-            for &(region_index, pixel) in &probes {
+            for &(region_index, pixel, between) in &probes {
                 let region = &background.appearance_regions[region_index];
                 let state_index =
                     region
@@ -789,7 +792,15 @@ fn verify_asset_archive_appearance(gpu: GpuContext, archive: &std::path::Path) {
                     "archive color bits={bits} transitioning={transitioning}"
                 );
                 let surface = f32::from(state.depth[pixel]) / 65535. * f32::from(background.height);
-                for (actor_y, hidden) in [(surface - 8., true), (surface + 8., false)] {
+                // The depth mask allows two map units of contact tolerance.
+                // Offset the probe so that its effective comparison lies
+                // between the states, including thin geometry changes.
+                let between_y = between / 65535. * f32::from(background.height) - 2.;
+                for (actor_y, hidden) in [
+                    (surface - 8., true),
+                    (surface + 8., false),
+                    (between_y, between_y + 2. < surface),
+                ] {
                     renderer.begin_gpu_frame_clear();
                     renderer.render_gpu_rect(0, 0, 1, 1, [0, 0, 0, 255]);
                     let checkpoint = renderer.draw_queue_checkpoint();

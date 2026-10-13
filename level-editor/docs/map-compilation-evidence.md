@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## North display-piece archive and publication (2026-10-13)
+
+Fixture `draft-scene-render-o5nIv0/display-pieces.zip` is 2,637,643 bytes,
+SHA-256 `c211fd922019a9914190319399dd16a7afc3d4a122275da531341f682e30bfdc`.
+Both independent appearances survive editor reopening/rebaking with identical
+gameplay, color and depth. Native loading without base data passes: five sight
+obstacles, 960 grid blocks and two appearance regions for two controls. Archived
+geometry equals the tested placement apart from warnings, and all four archived
+full-sprite walks through the cleared pieces pass. External texture resources
+and explicit part appearance edits are now included in draft fixture preparation.
+
+The thin pieces change only 175 encoded depth units, below the GPU test's old
+256-unit minimum. The test now chooses the largest nonzero color/depth change
+and additionally probes sprite visibility between the two depths, accounting
+for the renderer's existing two-unit contact tolerance. Display and hall archives
+both pass independent states, transitions and reset. This changes test coverage,
+not runtime rendering. The main game build and formatting checks pass.
+
+The draft is published with backups in `display-installed-20261013`; installed
+hashes match the report. Publication permits only explicitly reviewed part
+appearance edits alongside gameplay, with regression tests rejecting unrelated
+part changes or missing nodes. Current model derivatives remain unchanged.
+Inventory `gameplay-coverage-xF3TXG` finds three missing definitions among 1,286
+assets: one insertable asset and two backgrounds, none placed. Actor-triggered
+activation and detailed contact remain unverified; full parity is not claimed.
+
 ## Independent north display-piece draft (2026-10-13)
 
 `stage-york-display-tables.mjs` stages the two-piece York north display asset.
