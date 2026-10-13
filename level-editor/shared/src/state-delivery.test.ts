@@ -302,3 +302,97 @@ test("source-only patches require one focus, preserve timing, and never fabricat
   other.activation = "initial-only";
   validateNativePatchPreview(contract);
 });
+
+test("discrete patch frames preserve complete multi-model endpoints and independent patch clocks", async () => {
+  const { StateEventClocks } = await import("./state-event-clocks.ts");
+  const c = deliveryFixture(),
+    f = c.families[0]!,
+    frame = c.native.background;
+  c.native.elements = [];
+  c.native.patch_states = [
+    {
+      id: "fence",
+      source: { kind: "mission-patch", index: 7, sha256: "b".repeat(64) },
+      profile: { path: "profile.json", sha256: "c".repeat(64), name: "fence", center: [0, 0] },
+      integrate_in_background: true,
+      activation: "phases",
+      restore_bounds: [0, 0, 1, 1],
+      elevation: 0,
+      layer: "background",
+      display_position: [0, 0],
+      sort_position: [0, 0],
+      display_order: 0,
+      creation_order: 0,
+      polyline: [],
+      definitive: true,
+      initial: [frame],
+      transition: [frame],
+      final: [],
+      initial_loop: true,
+      final_loop: true,
+    },
+  ];
+  f.element_ids = [];
+  f.patch_ids = ["fence"];
+  f.body_terminal_tick = 2;
+  const applied = physicalEndpointSources(f.physical.applied);
+  applied.push({
+    ...structuredClone(applied[0]!),
+    id: "ground",
+    role: "ground",
+    model: "ground.glb",
+  });
+  f.physical.motion = {
+    kind: "native-patch-model-frames",
+    patch_id: "fence",
+    source_motion_sha256: "d".repeat(64),
+    model_frames: [structuredClone(applied)],
+  };
+  validateStateDelivery(c);
+  const clocks = new StateEventClocks(c);
+  for (const [sequence, phase] of (
+    ["initial", "forward", "applied", "initial"] as const
+  ).entries()) {
+    clocks.apply({
+      mission: c.native.mission,
+      mission_data_sha256: c.native.mission_data_sha256,
+      level_data_sha256: c.native.level_data_sha256,
+      sequence,
+      simulation_tick: sequence * 100,
+      samples: [
+        { kind: "patch", id: "fence", source: c.native.patch_states[0]!.source, phase, tick: 0 },
+      ],
+    });
+    const pose = clocks.physicalPose(f.id);
+    if (phase === "forward") assert.equal(pose.model_frame, 0);
+    else assert.equal(pose.endpoint, phase === "applied" ? "applied" : "initial");
+  }
+  const missingGround = structuredClone(c);
+  if (missingGround.families[0]!.physical.motion!.kind !== "native-patch-model-frames")
+    throw Error("fixture");
+  missingGround.families[0]!.physical.motion!.model_frames[0]!.pop();
+  assert.throws(() => validateStateDelivery(missingGround), /terminal model frame differs/);
+  const duplicate = structuredClone(c);
+  if (duplicate.families[0]!.physical.motion!.kind !== "native-patch-model-frames")
+    throw Error("fixture");
+  duplicate.families[0]!.physical.motion!.model_frames[0]!.push(structuredClone(applied[0]!));
+  assert.throws(() => validateStateDelivery(duplicate), /physical source/);
+  for (const motion of [
+    {
+      kind: "native-patch-translation" as const,
+      patch_id: "fence",
+      source_motion_sha256: "d".repeat(64),
+      translation_frames: [[0, 0, 0] as [number, number, number]],
+    },
+    {
+      kind: "native-patch-node-poses" as const,
+      patch_id: "fence",
+      source_motion_sha256: "d".repeat(64),
+      node_frames: [[]],
+    },
+  ]) {
+    const invalid = structuredClone(c);
+    invalid.families[0]!.physical.motion = motion;
+    assert.throws(() => validateStateDelivery(invalid), /invalid reviewed patch motion binding/);
+  }
+});

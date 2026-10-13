@@ -259,7 +259,7 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
         !patch?.definitive ||
         !patch.transition.length ||
         !Array.isArray(family.physical.applied) ||
-        family.physical.applied.length !== 1
+        (motion.kind !== "native-patch-model-frames" && family.physical.applied.length !== 1)
       )
         fail("invalid reviewed patch motion binding");
       if (motion.kind === "native-patch-translation") {
