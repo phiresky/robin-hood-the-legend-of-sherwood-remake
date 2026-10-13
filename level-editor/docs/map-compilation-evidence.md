@@ -4,6 +4,47 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Independent dormer house with usable entrance (2026-10-13)
+
+`nottingham-north-dormer-house` now combines its permanent remainder's roof
+surfaces, jump sockets, mask and interior with an independent `remove-front-props`
+control. The removable ground piece blocks its own footprint; the elevated piece
+changes sight/appearance state. Permanent geometry and the local mask remain.
+Shared contours and remote triggers are not inherited from the larger assembly.
+
+The first native check exposed a real authoring omission: the permanent wall
+footprint blocked the outdoor leg to the existing entrance threshold, rejecting
+all sixteen entry/exit routes. The whole asset now includes a local movement
+clearance from the outdoor point to that threshold, padded for the character
+footprint. This is authored asset data, not a runtime exception. The remainder
+and complete assembly are unchanged.
+
+Stage `dormer-house-gameplay-Jb4G3x` passes eight moved/copied exports, sixteen
+native apply/reset cycles, 48 boundary-route checks and permanent sight retention.
+All sixteen complete Robin entry/exit round trips pass. The small removable prop
+is adjacent to permanent geometry; these boundary checks do not certify a new
+full-character passage through its former footprint. Publication backup
+`dormer-house-installed-20261013` changes descriptor/index data only, with no saved
+scene edits. Formatting and lint pass. Actor-triggered control activation, connected
+roof jumps and detailed rendered contact remain open. No runtime code changes.
+
+Rendered archive `standalone-render-library-QBHN2s/dormer-house.zip`
+(2,521,352 bytes; SHA-256
+`25fe796f5e0f3ab9c2593f4598a687137402efd5671f3f7e5969b61f8be3f849`)
+passes identical editor gameplay and color/depth reopening/rebaking. Native loading
+without base data passes with 19 sight obstacles, two masks, two door projections,
+1,600 grid blocks and two controls and appearance regions. GPU independent states,
+transition and reset pass. Its geometry exactly matches the native-tested 37°,
+height-40 placement; both entrances pass fresh complete character round trips
+against the archived descriptor.
+
+`dormer-house-roofs-vm2g3ym7/0-0` passes 32 character roof walks across all four
+control combinations. The 37° probe preparation stops because at least one
+receiver has no conservative walking span. That export includes small receivers
+of about 237 square map units alongside its larger roof regions; no rotated roof
+traversal claim follows from the 0° result. Coverage `gameplay-coverage-emPF5q`
+finds seven missing definitions, five insertable, and none among placed assets.
+
 ## Stepped-canopy insertion ground datum (2026-10-13)
 
 `york-market-stepped-green-canopy-stall` now declares a local placement ground

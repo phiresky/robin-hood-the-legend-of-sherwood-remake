@@ -6,12 +6,12 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-**Current definition inventory (2026-10-13):** `gameplay-coverage-3GoqYG` checks
+**Current definition inventory (2026-10-13):** `gameplay-coverage-emPF5q` checks
 1,279 indexed assets and finds zero missing definitions among placed assets in
-the saved scenes. Eight unused assets lack definitions, including two background
+the saved scenes. Seven unused assets lack definitions, including two background
 assets that cannot be inserted as objects. This checks library
 definition presence and index hashes, not scene pins or gameplay completeness.
-All six remaining insertable assets have known state dependencies in their
+All five remaining insertable assets have known state dependencies in their
 candidate owners. These include movement, mask, door, control and appearance
 references, not just sight-state membership. Restoring them requires preserving
 those relationships or authoring explicit independent behavior.
@@ -96,6 +96,13 @@ pass all 160 native jumps, and a fresh standalone ZIP passes editor round trip,
 native loading and four character roof walks. See
 [the placement fix](map-compilation-evidence.md#stepped-canopy-insertion-ground-datum-2026-10-13) and
 [the connection checks](map-compilation-evidence.md#connections-between-independently-inserted-canopies-2026-10-13).
+The Nottingham dormer house now retains its mask, roofs and interior alongside
+independent front-prop removal. An authored threshold clearance fixes entrance
+authorization: sixteen moved/copied native entry/exit round trips pass, along with
+state and boundary checks. Its ZIP passes editor round trip, native loading, GPU
+state/reset checks and fresh entrance traversal. Roof walking passes at 0°;
+small receiver regions at 37° need further checks. See
+[the house checks](map-compilation-evidence.md#independent-dormer-house-with-usable-entrance-2026-10-13).
 
 **Current Wychford export (2026-10-12):** `saved-map-exports-ab3hoH` completes
 in 825 seconds, including final stair-clearance preparation. This verifies the
