@@ -4,6 +4,38 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Pottery canopy with initial and permanent ground props (2026-10-13)
+
+`york-market-striped-canopy-pottery-stall` now preserves three permanent props
+and gives its two initial pieces and lowered canopy an independent `lower-canopy`
+control. Initial part 966 reaches the ground, so its own footprint blocks before
+activation; that footprint is replaced by the lowered canopy's footprint on
+activation. The other initial piece is overhead. Permanent local contours and
+solid parts remain active throughout. Shared assembly exclusions are not copied
+into this independent asset, and the complete market assembly is unchanged.
+
+Stage `york-canvas-screen-ckkScH` passes eight moved/copied exports, sixteen native
+apply/reset cycles, 384 boundary-route checks and permanent sight retention.
+Robin completes sixteen raised-state walks in 39–57 moving ticks and stops
+upright. Diagnostics try horizontal, vertical and diagonal passages with the
+same clearance constraints. Separate boundary probes verify that the initial
+ground piece blocks before activation and that each post-activation result agrees
+with the remaining geometry. Three diagnostic regression tests, formatting and
+lint pass. Publication backup `pottery-canopy-installed-20261013` changes only
+descriptor/index data; models, saved scene placements and component assets are
+unchanged. Actor-triggered activation and detailed rendered contact remain open.
+No runtime code changes.
+
+Rendered archive `standalone-render-library-KFT551/pottery-canopy.zip`
+(4,279,898 bytes; SHA-256
+`3b76698e6c6abc9fdff85abaf193f2ae4b23d2de25a9597d543f1c941e186ebf`)
+passes identical editor reopening/rebaking of gameplay and color/depth images.
+Native loading without base data passes with 13 sight obstacles, 960 grid blocks
+and two controls and appearance regions. Independent GPU color/depth states,
+transition and reset pass. Archived geometry exactly matches the native-tested
+37°, height-40 placement. Coverage `gameplay-coverage-dj4hFK` finds ten missing
+definitions, eight insertable; no placed asset is missing a definition.
+
 ## Timber-house awning with permanent prop (2026-10-13)
 
 `york-market-timber-house-striped-awning` now has an independent `lower-awning`

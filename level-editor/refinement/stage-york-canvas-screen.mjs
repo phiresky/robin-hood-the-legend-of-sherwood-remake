@@ -7,10 +7,30 @@ import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 import { insertProjectionAsset } from "../app/src/asset-commands.ts";
 import { compileMap } from "../app/src/map-compile.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
-import { selectPanelRoute } from "./select-panel-route.mjs";
+import { crossesGroundFootprint, selectPanelRoute } from "./select-panel-route.mjs";
 
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 const reviewed = {
+  "york-market-striped-canopy-pottery-stall": {
+    descriptor: "e03895f7e7d88fb6437842a1e26e558056908b31c900bf05c44872cdaf824b50",
+    model: "89091d86ed6aac025a7c1617ab8825f0d6b1607c273f1fba09408fde061d3bf2",
+    parts: [
+      "building-495",
+      "building-496",
+      "building-497",
+      "building-966",
+      "building-967",
+      "building-978",
+    ],
+    control: "lower-canopy",
+    staticOwner: "york-market-striped-canopy-pottery-stall-remainder",
+    staticDescriptor: "f04c154350457294a515a0f0810c5edf2f790fdec91bbf0cc88055f1616d9b50",
+    initialGroundNodes: ["building-966"],
+    assemblyExclusions: [
+      "building-966-ground-blocker-65-0-0",
+      "building-978-ground-blocker-66-0-0",
+    ],
+  },
   "york-market-timber-house-striped-awning": {
     descriptor: "e163fe2e41d3a92672ca4140ce1f6d1ed45760675ead488aee15339e281dfb2b",
     model: "f8bd5a67219440b33aa962eab2cf8c98936593bbe4f56adb0396ef238ad712ef",
@@ -160,6 +180,8 @@ for (const part of descriptor.parts) {
 }
 const raised = descriptor.parts.slice(0, -1).filter((part) => !staticNodes.has(part.node)),
   lowered = descriptor.parts.at(-1);
+const initialGroundNodes = new Set(review.initialGroundNodes ?? []);
+assert.ok([...initialGroundNodes].every((node) => raised.some((part) => part.node === node)));
 const assemblyExclusions = owner.gameplay.movementBlockers.filter((blocker) =>
   review.parts.includes(blocker.node),
 );
@@ -168,8 +190,10 @@ assert.deepEqual(
   review.assemblyExclusions ?? [],
 );
 assert.ok(
-  assemblyExclusions.every((blocker) => blocker.node === lowered.node),
-  "A permanent exclusion on a raised piece needs separate authoring",
+  assemblyExclusions.every(
+    (blocker) => blocker.node === lowered.node || initialGroundNodes.has(blocker.node),
+  ),
+  "A permanent exclusion on an unreviewed initial piece needs separate authoring",
 );
 for (const part of raised)
   assert.ok(
@@ -180,7 +204,13 @@ assert.ok(
 );
 const ground = Math.min(...lowered.obstacle_local_game.points.map((point) => point.z_bottom));
 for (const part of raised)
-  assert.ok(part.obstacle_local_game.points.every((point) => point.z_bottom - ground > 40));
+  assert.ok(
+    part.obstacle_local_game.points.every((point) =>
+      initialGroundNodes.has(part.node)
+        ? Math.abs(point.z_bottom - ground) < 1e-6
+        : point.z_bottom - ground > 40,
+    ),
+  );
 assert.ok(
   lowered.obstacle_local_game.points.every((point) => Math.abs(point.z_bottom - ground) < 1e-6),
 );
@@ -226,7 +256,15 @@ descriptor.gameplay = {
       definitive: transition.definitive,
       applyPolygon: [],
       noApplyPolygon: [],
-      initial: [],
+      initial: raised
+        .filter((part) => initialGroundNodes.has(part.node))
+        .map((part) => ({
+          id: `${part.node}-initial-footprint`,
+          node: part.node,
+          polygon: part.obstacle_local_game.points.map((point) => [point.x, point.y]),
+          height: ground,
+          preserveMovementPrecision: true,
+        })),
       applied: [
         {
           id: "lowered-footprint",
@@ -245,9 +283,14 @@ descriptor.gameplay = {
       "Independent raised/lowered panel draft; full gameplay parity is not certified.",
       "Raised panels preserve permanent asset collision. Explicit activation swaps to the lowered blocking geometry; no surrounding market exclusion or remote trigger is inherited.",
       "Rendered state appearance, actor interaction and mesh contact require review.",
+      ...(initialGroundNodes.size
+        ? [
+            "Initial ground-level pieces block their own footprints until activation replaces them with the lowered geometry.",
+          ]
+        : []),
       ...(assemblyExclusions.length
         ? [
-            "Assembly-only exclusions attached to lowered pieces are not inherited. Permanent parts of this standalone asset retain their own collision in both states.",
+            "Assembly-only exclusions attached to changing pieces are not inherited. Each state derives blocking from its own ground-level pieces; permanent parts retain their collision in both states.",
           ]
         : []),
     ],
@@ -330,7 +373,9 @@ for (const height of [0, 40])
       const shape = geometry.sight_obstacles[control.applied_sight[0]];
       const passage = selectPanelRoute(
         shape,
-        permanentSight.map((index) => geometry.sight_obstacles[index]),
+        [...permanentSight, ...control.initial_sight].map(
+          (index) => geometry.sight_obstacles[index],
+        ),
         height,
       );
       return {
@@ -355,20 +400,33 @@ for (const height of [0, 40])
       max_length: Math.hypot(probe.end[0] - probe.start[0], probe.end[1] - probe.start[1]) + 1,
     }));
     for (const control of geometry.movement_transitions)
-      for (const index of permanentSight) {
+      for (const index of [...permanentSight, ...control.initial_sight]) {
         const shape = geometry.sight_obstacles[index];
         if (!shape.points.every((point) => Math.abs(point.z_bottom - height) < 0.001)) continue;
         const xs = shape.points.map((point) => point.x);
         const y =
           shape.points.reduce((sum, point) => sum + point.y - point.z_bottom, 0) /
           shape.points.length;
+        const start = [Math.min(...xs) - 15, y],
+          end = [Math.max(...xs) + 15, y];
+        const appliedObstacles = [
+          ...permanentSight,
+          ...control.applied_sight,
+          ...geometry.movement_transitions
+            .filter((other) => other !== control)
+            .flatMap((other) => other.initial_sight),
+        ];
         probes.push({
           id: control.id,
           layer: 0,
-          start: [Math.min(...xs) - 15, y],
-          end: [Math.max(...xs) + 15, y],
+          start,
+          end,
           initial: false,
-          applied: false,
+          applied: permanentSight.includes(index)
+            ? false
+            : !appliedObstacles.some((obstacle) =>
+                crossesGroundFootprint(start, end, geometry.sight_obstacles[obstacle], height),
+              ),
         });
       }
     results.push({

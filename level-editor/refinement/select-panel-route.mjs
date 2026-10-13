@@ -1,5 +1,16 @@
-// Choose test passages through a changing footprint, clear of permanent props.
+// Choose test passages through a changing footprint, clear of initial-state props.
 import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
+
+// Diagnostic boundary intersection, independent of the compiled navigation grid.
+export function crossesGroundFootprint(start, end, shape, height) {
+  if (!shape.points.some((point) => point.z_bottom < height + 40)) return false;
+  const polygon = shape.points.map((point) => [point.x, point.y - point.z_bottom]);
+  const side = (a, b, p) => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+  return polygon.some((a, i) => {
+    const b = polygon[(i + 1) % polygon.length];
+    return side(start, end, a) * side(start, end, b) < 0 && side(a, b, start) * side(a, b, end) < 0;
+  });
+}
 
 function edgeDistance(p, a, b) {
   const dx = b[0] - a[0],
@@ -15,6 +26,21 @@ export function selectPanelRoute(shape, permanent, height) {
   const obstacles = permanent
     .filter((part) => part.points.some((point) => point.z_bottom < height + 40))
     .map((part) => part.points.map((point) => [point.x, point.y - point.z_bottom]));
+  for (const angle of [0, Math.PI / 2, Math.PI / 4, (3 * Math.PI) / 4]) {
+    const c = Math.cos(angle),
+      s = Math.sin(angle);
+    const project = ([x, y]) => [x * c + y * s, -x * s + y * c];
+    const restore = ([x, y]) => [x * c - y * s, x * s + y * c];
+    const route = selectHorizontalRoute(
+      polygon.map(project),
+      obstacles.map((ring) => ring.map(project)),
+    );
+    if (route) return { start: restore(route.start), end: restore(route.end) };
+  }
+  throw new Error("No conservative passage around initial geometry; author dedicated probes");
+}
+
+function selectHorizontalRoute(polygon, obstacles) {
   const inside = (point, ring) => pointInGameplayPolygon(point, ring, true);
   const edgeGap = (point, ring) =>
     Math.min(...ring.map((a, i) => edgeDistance(point, a, ring[(i + 1) % ring.length])));
@@ -43,5 +69,5 @@ export function selectPanelRoute(shape, permanent, height) {
       continue;
     return { start, end };
   }
-  throw new Error("No conservative passage around permanent geometry; author dedicated probes");
+  return undefined;
 }
