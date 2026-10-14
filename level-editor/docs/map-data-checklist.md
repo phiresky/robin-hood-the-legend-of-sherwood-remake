@@ -32,8 +32,9 @@ ownership mismatches; 99 denied routes have permanently unavailable exported
 corridors, and one is blocked only by an authored lock. This compiler snapshot
 predates the latest doorstep corrections and publication. See the
 [ten-map audit](map-compilation-evidence.md#ten-map-native-construction-and-entrance-audit-2026-10-14).
-An approach-only diagnostic fixes all four Wychford receiver mismatches without
-runtime changes; fresh full-map verification is pending. The fresh published
+Fresh Wychford export passes native construction and all 24 emitted entrance
+round trips, confirming all four receiver mismatch fixes without runtime changes.
+The unsupported church-tower traversal remains omitted with a warning. The fresh published
 York follow-up passes 46/95 doorway trips, with 46 denied routes and three receiver
 mismatches. Explicit asset-local doorway structure references fix the two newly
 blocked entrances in the assembled scene; all 32 isolated native placement trips,
@@ -45,10 +46,13 @@ loads without base data, and passes all four archived terrain-start entrance tri
 
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
 Their current entrance results are Derby 18/25, Lincoln 31/35, Nottingham 33/69,
-and Sherwood 2/5. Three Lincoln village doorway corrections improve its result
+and Sherwood 5/5. Three Lincoln village doorway corrections improve its result
 from 28/35 while retaining movement geometry. Those assets pass 48 moved-placement
 room trips, browser export/reopen, native ZIP loading and six archived terrain-start
 entrance trips. Remaining failures still require asset and connection work.
+Sherwood's three doorway corrections retain walking geometry and pass 48 moved
+placement trips, browser reopening and six archived terrain-start trips. Its five
+entrance checks now pass; this does not certify all other map features.
 
 The preceding saved-map checks recorded
 290 prepared stair routes and 71 control apply/reset checks passing. The current

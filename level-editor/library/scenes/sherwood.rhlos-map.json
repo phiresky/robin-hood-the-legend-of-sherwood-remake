@@ -125,7 +125,7 @@
       "model": "3d-assets/sherwood/sherwood-central-oak-treehouse/model.glb",
       "model_sha256": "c7da468b1d8056c748a7e340fbc2369c0fbd9278df24f4d1b218a99a7d2364f3",
       "descriptor": "3d-assets/sherwood/sherwood-central-oak-treehouse/asset.json",
-      "descriptor_sha256": "1bec5e093f0f88c551c6bc6f93e3dc89bfea9cbe7f5488d2e4e99653cb490bb4",
+      "descriptor_sha256": "639e34780f549f5790297ba63c861f9fe8ec745a33116b086eb35d8c53e85563",
       "resources": []
     },
     {
@@ -285,7 +285,7 @@
       "model": "3d-assets/sherwood/sherwood-north-camp-hut/model.glb",
       "model_sha256": "b50bc898ad1871cd41019bb6e1914f399312f0e4b97d6e3f2405b895c1392278",
       "descriptor": "3d-assets/sherwood/sherwood-north-camp-hut/asset.json",
-      "descriptor_sha256": "e8d6b8403cc87f72b5ec50afa6f80d67ceabe820cd111a0958ff1bbb8426f0c3",
+      "descriptor_sha256": "263e4d08d06ad990ae5e996f315db3cadc98a8febc1c8765a07c3db7b2f1d987",
       "resources": []
     },
     {
@@ -581,7 +581,7 @@
       "model": "3d-assets/sherwood/sherwood-west-camp-hut/model.glb",
       "model_sha256": "d8defca99979521aefd1739a68f78bc8f0c61af0de8e38eaefc8e00241c10659",
       "descriptor": "3d-assets/sherwood/sherwood-west-camp-hut/asset.json",
-      "descriptor_sha256": "3b5b2974f602708338002d34c07fe652075df8d393151a0c082316d7755a6473",
+      "descriptor_sha256": "e95d9fc86cd95613ad56c88bb38ed34fbb67b622afcf0c89983b3f178ed8be25",
       "resources": []
     },
     {

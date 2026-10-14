@@ -13,9 +13,18 @@ const scenes = await Promise.all(
   ),
 );
 const document = structuredClone(scenes[0]);
-const terrainHeight = document.terrain.vertices[0].position[2];
+const terrainHeights = scenes.map((scene) => {
+  const height = scene.terrain.vertices[0].position[2];
+  assert.ok(scene.terrain.vertices.every((vertex) => vertex.position[2] === height));
+  return height;
+});
 document.size = [1600, 1200 * scenes.length];
-document.terrain = createTerrainGrid([0, 0, ...document.size], 400, terrainHeight);
+document.terrain = createTerrainGrid([0, 0, ...document.size], 400, 0);
+// Keep each gallery row's support height; empty space between rows absorbs the slope.
+for (const vertex of document.terrain.vertices) {
+  const row = Math.min(scenes.length - 1, Math.floor(vertex.position[1] / 1200));
+  vertex.position[2] = terrainHeights[row];
+}
 document.groups = [];
 document.objects = [];
 document.assetSources = [];
@@ -24,7 +33,6 @@ let expectedDoors = 0;
 for (const [index, scene] of scenes.entries()) {
   assert.deepEqual(scene.camera, document.camera);
   assert.deepEqual(scene.size, [1600, 1200]);
-  assert.ok(scene.terrain.vertices.every((vertex) => vertex.position[2] === terrainHeight));
   const report = JSON.parse(await fs.readFile(`${directories[index]}/diagnostics.json`));
   assert.equal(report.complete, true, "Finish placement checks before combining fixtures");
   expectedDoors += report.results.find((row) => row.file === "37-0.level.json").building_approaches
@@ -79,6 +87,12 @@ await fs.writeFile(
         file,
         warnings: compiled.warnings,
         building_approaches: doors.map((door) => {
+          const heights = terrainHeights.filter((height, row) => {
+            const worldY = door.point_out[1] + height;
+            return worldY >= row * 1200 && worldY < (row + 1) * 1200;
+          });
+          assert.equal(heights.length, 1, "Entrance must identify one gallery row");
+          const terrainHeight = heights[0];
           const delta = door.point_out.map((value, axis) => value - door.point_mid[axis]);
           const length = Math.hypot(...delta);
           assert.ok(length > 0, "Entrance needs a distinct outdoor approach");

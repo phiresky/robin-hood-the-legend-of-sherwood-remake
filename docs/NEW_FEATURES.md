@@ -100,8 +100,8 @@
 - **Room approaches across terrain seams.** When a door midpoint is supported by
   a receiving surface, export keeps its outside approach on that surface. This
   avoids crossing to another terrain receiver after the exit has already selected
-  its endpoint's plane. A native diagnostic fixes four Wychford exit mismatches;
-  fresh full-map verification remains pending. No per-tick behavior changes.
+  its endpoint's plane. A fresh Wychford export passes all 24 emitted entrance
+  round trips, fixing four exit mismatches. No per-tick behavior changes.
 
 - **Physical doorstep authoring experiments.** A staging helper can turn explicitly
   selected asset receiver tops into walkable floors with exterior edge sockets.

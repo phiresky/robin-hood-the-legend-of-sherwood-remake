@@ -6,6 +6,36 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Ten-map native construction and entrance audit (2026-10-14)
 
+Fresh Wychford export `saved-map-exports-1MBpkb` completes in 1,295 seconds,
+including one best-effort retry that omits the unsupported church-tower lift.
+Native construction passes with 88 areas, 15,578 sight obstacles, 31 doors,
+64,638 grid blocks and 36,978 elevation boundaries. Entrance audit
+`saved-map-entrances-UXmlim` passes all 24 emitted room round trips. This verifies
+the receiver-continuity approach correction through a fresh full-map compile,
+superseding the earlier approach-only diagnostic. The omitted traversal and
+other export warnings remain visible; successful emitted entrances do not
+certify omitted routes or every other gameplay feature.
+
+Sherwood follow-up `saved-map-exports-a46IX6` constructs natively and passes all
+five entrance round trips (`saved-map-entrances-M7tXko`). The central oak
+treehouse, north camp hut and west camp hut declare only their local doorway
+structure in `local-door-structure-stage-OEZezs`. Compared with the fresh baseline,
+only building passage conditions and warnings change. All 48 copied/rotated/raised
+placement trips pass in `asset-building-doors-zLKEOD`, `asset-building-doors-HtYeUI`
+and `asset-building-doors-ncatph`. The treehouse's supporting terrain is placed
+at its doorway height, 2.0000263 units above its inserted base.
+`check-building-gallery.mjs` now retains each input row's support height with
+authored terrain between rows; `building-gallery-nYAeHc` passes all six terrain-start
+entrance-click round trips. Browser fixture `draft-scene-render-t6KIdb` reopens
+matching gameplay, color and depth; its 14,490,563-byte ZIP has SHA-256
+`0ddfd7df0d583b81868d38dd9f10172edf05e33ee85975f9409f1d86bc6376d2`.
+The render shows all six independently placed huts. Native loading without base
+data and all six archived terrain-start trips pass in
+`sherwood-entrances-archived-x7z5nkt6`. This establishes entrance coverage,
+not full certification of every Sherwood feature. No runtime code changes.
+`sherwood-entrances-installed-20261014` publishes all three descriptors, catalog
+entries and Sherwood pins, preserving model/texture bytes and draft warnings.
+
 Fresh four-map export `saved-map-exports-curpyW` constructs all maps natively.
 Entrance audit `saved-map-entrances-E4r5rm` passes 81/134 trips: Derby 18/25
 (six denied, one receiver mismatch), Lincoln 28/35 (seven denied), Nottingham
