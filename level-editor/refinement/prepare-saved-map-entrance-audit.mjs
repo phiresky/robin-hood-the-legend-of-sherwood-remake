@@ -16,13 +16,16 @@ for (const entry of manifest.results) {
   const descriptor = JSON.parse(bytes);
   const doors = (descriptor.asset_geometry.buildings ?? [])
     .flatMap(({ Building }) => Building.doors)
-    .filter((door) => door.door_type === 1);
+    .filter((door) => door.door_type === 1 || door.door_type === 2)
+    // Keep existing ordinary entrance probe IDs stable when adding trapdoors.
+    .sort((a, b) => a.door_type - b.door_type);
   if (!doors.length) {
     withoutEntrances.push(entry.map);
     continue;
   }
   const building_approaches = doors.map((door, index) => ({
     id: `${entry.map}/building-door-${index}`,
+    door_type: door.door_type,
     point_out: door.point_out,
     sector: door.sector_out,
     layer: door.layer_out,

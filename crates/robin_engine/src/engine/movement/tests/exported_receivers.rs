@@ -340,7 +340,12 @@ fn audit_building_approaches(sprite: Option<&crate::sprite::Sprite>, round_trip:
                 .interactables
                 .doors
                 .iter()
-                .filter(|door| door.door_type == crate::gate::DoorType::Building)
+                .filter(|door| {
+                    matches!(
+                        door.door_type,
+                        crate::gate::DoorType::Building | crate::gate::DoorType::BuildingTrap
+                    )
+                })
                 .count()
         );
         for probe in probes {
@@ -351,7 +356,10 @@ fn audit_building_approaches(sprite: Option<&crate::sprite::Sprite>, round_trip:
                 .iter()
                 .enumerate()
                 .filter(|(_, door)| {
-                    door.door_type == crate::gate::DoorType::Building
+                    matches!(
+                        door.door_type,
+                        crate::gate::DoorType::Building | crate::gate::DoorType::BuildingTrap
+                    )
                         && u64::from(door.layer_out) == probe["layer"].as_u64().unwrap()
                         && u64::from(u16::from(door.sector_out))
                             == probe["sector"].as_u64().unwrap()

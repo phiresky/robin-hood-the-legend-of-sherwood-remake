@@ -34,22 +34,21 @@ predates the latest doorstep corrections and publication. See the
 [ten-map audit](map-compilation-evidence.md#ten-map-native-construction-and-entrance-audit-2026-10-14).
 An approach-only diagnostic fixes all four Wychford receiver mismatches without
 runtime changes; fresh full-map verification is pending. The fresh published
-York follow-up passes 43/94 doorway trips, with 48 denied routes and three receiver
+York follow-up passes 44/95 doorway trips, with 48 denied routes and three receiver
 mismatches. Explicit asset-local doorway structure references fix the two newly
 blocked entrances in the assembled scene; all 32 isolated native placement trips,
 64 negative terrain checks, and browser export/reopen checks pass.
+The audit now includes the remaining trapdoor, which completes a native round trip.
 
 The preceding saved-map checks recorded
 290 prepared stair routes and 71 control apply/reset checks passing. The current
-saved-York map-only export passes native construction and all 130
-prepared stair routes, but the latest export has 50 of its 95 room entrances
-blocked. A broader native audit finds three receiver mismatches in otherwise
-available entrances, also reproduced in the preceding export. One trapdoor is
-outside that audit's coverage. See the [York entrance audit](map-compilation-evidence.md#virtual-floor-boundaries-and-york-entrance-audit-2026-10-14).
+saved-York stair audit passed native construction and all 130 prepared stair
+routes. Its older doorway failure counts are superseded by the current audit
+above. See the [earlier York entrance audit](map-compilation-evidence.md#virtual-floor-boundaries-and-york-entrance-audit-2026-10-14).
 An optional export trace now identifies exact doorway collision owners without
 changing the descriptor. Two river-lane house corrections are now published after
 32 placement/native trips, identical browser ZIP reopening and two archived
-entrance trips. Full York counts above predate this publication; see the
+entrance trips. The current York counts above include this publication; see the
 [collision diagnostics](map-compilation-evidence.md#exact-doorway-collision-diagnostics-2026-10-14).
 Leicester now passes native construction and all 24 building
 entry/exit round trips after published asset-local doorway corrections. Its

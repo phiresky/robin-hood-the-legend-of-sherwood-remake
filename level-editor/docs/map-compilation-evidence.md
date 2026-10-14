@@ -6,6 +6,19 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Ten-map native construction and entrance audit (2026-10-14)
 
+The entrance verifier now covers both ordinary rooms and building trapdoors.
+`saved-map-entrances-Owm15B` checks all 95 entrances in `saved-map-exports-EGLJdb`:
+44 pass, including the previously unaudited trapdoor; 48 remain denied and three
+fail receiving ownership checks. The older ordinary-only probes retain their IDs.
+This changes diagnostics only, not runtime movement or exported gameplay.
+
+Two further courtyard lodge candidates are staged in
+`local-door-structure-stage-EEpAf2`, selecting only their own structural volumes
+from `local-door-structure-4MPHYx`. With authored terrain at their door height,
+`asset-building-doors-FdMIR4` and `asset-building-doors-CnQgIH` pass all 32 native
+entry/exit trips across copied, rotated and elevated placements. These candidates
+remain unpublished pending assembled-scene and browser/archive verification.
+
 The latest York follow-up resolves the two newly blocked doorstep entrances.
 `saved-map-exports-OSIZIZ` identifies their own building volumes (`building-582`
 and `building-579`) as the blockers. `stage-york-doorstep-structure.mjs` adds
