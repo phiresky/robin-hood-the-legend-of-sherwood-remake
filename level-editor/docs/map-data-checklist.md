@@ -34,9 +34,10 @@ predates the latest doorstep corrections and publication. See the
 [ten-map audit](map-compilation-evidence.md#ten-map-native-construction-and-entrance-audit-2026-10-14).
 An approach-only diagnostic fixes all four Wychford receiver mismatches without
 runtime changes; fresh full-map verification is pending. The fresh published
-York export passes 41/94 doorway trips, with 50 denied routes and three receiver
-mismatches. Two newly blocked entrances need assembled-scene collision review
-despite their successful isolated placement matrix.
+York follow-up passes 43/94 doorway trips, with 48 denied routes and three receiver
+mismatches. Explicit asset-local doorway structure references fix the two newly
+blocked entrances in the assembled scene; all 32 isolated native placement trips,
+64 negative terrain checks, and browser export/reopen checks pass.
 
 The preceding saved-map checks recorded
 290 prepared stair routes and 71 control apply/reset checks passing. The current

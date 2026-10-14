@@ -6,6 +6,28 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Ten-map native construction and entrance audit (2026-10-14)
 
+The latest York follow-up resolves the two newly blocked doorstep entrances.
+`saved-map-exports-OSIZIZ` identifies their own building volumes (`building-582`
+and `building-579`) as the blockers. `stage-york-doorstep-structure.mjs` adds
+only explicit local doorway structure references. With these edits,
+`saved-map-exports-EGLJdb` constructs successfully in the native engine and
+`saved-map-entrances-bd4ZN9` passes 43/94 doorway round trips: exactly those two
+failures are fixed, leaving 48 denied routes and three receiver mismatches.
+Compared with the preceding export, only building passage conditions and
+warnings change; movement and receiving geometry remain identical.
+`receiver-floor-placements-DT3ZLI` passes 32 native terrain-to-room round trips
+and 64 missing/raised-ground rejection checks. Three focused structure tests
+also pass, including independent foreign barriers and transformed copies.
+Browser fixture `draft-scene-render-SnFeCO` exports and reopens matching gameplay,
+color and depth. Its ZIP SHA-256 is
+`7c396b3bfb55615bb4bb826c0154bef8da3db71240b2f506722865d49184e5ff`;
+native loading without base data and four archived terrain-to-room trips pass.
+`doorstep-structure-installed-20261014` publishes the two descriptors, catalog
+entries and York pins together, retaining draft warnings and unchanged model,
+texture and preview bytes.
+No runtime implementation changed. These counts supersede the earlier York
+follow-up below; the remaining failures still prevent a full parity claim.
+
 The follow-up `room-receiver-approaches-8RUXWx` isolates an export-time approach
 correction on these descriptors: when a room midpoint already lies on a receiver,
 its outside approach stays on that same receiver instead of crossing a terrain
