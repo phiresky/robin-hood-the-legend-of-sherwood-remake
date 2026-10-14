@@ -45,7 +45,7 @@ The east and west courtyard lodges now pass in the assembled scene as well as
 loads without base data, and passes all four archived terrain-start entrance trips.
 
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
-Their current entrance results are Derby 18/25, Lincoln 31/35, Nottingham 33/69,
+Their current entrance results are Derby 18/25, Lincoln 31/35, Nottingham 41/69,
 and Sherwood 5/5. Three Lincoln village doorway corrections improve its result
 from 28/35 while retaining movement geometry. Those assets pass 48 moved-placement
 room trips, browser export/reopen, native ZIP loading and six archived terrain-start
@@ -53,6 +53,10 @@ entrance trips. Remaining failures still require asset and connection work.
 Sherwood's three doorway corrections retain walking geometry and pass 48 moved
 placement trips, browser reopening and six archived terrain-start trips. Its five
 entrance checks now pass; this does not certify all other map features.
+Eight Nottingham village entrances now pass after local doorway declarations,
+verified by 128 moved-placement trips, browser reopening and sixteen archived
+terrain-start trips. One of Nottingham's remaining denials is an authored prison
+lock with no permanent corridor block; transition behavior still needs verification.
 
 The preceding saved-map checks recorded
 290 prepared stair routes and 71 control apply/reset checks passing. The current

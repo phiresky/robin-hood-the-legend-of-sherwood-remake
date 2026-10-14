@@ -692,7 +692,7 @@
       "model": "3d-assets/nottingham/nottingham-village-east-cottage/model.glb",
       "model_sha256": "c635df4478ad9ff727700262b3f6737d6f3491b57d6cf6205be8317b0df6ebbd",
       "descriptor": "3d-assets/nottingham/nottingham-village-east-cottage/asset.json",
-      "descriptor_sha256": "35111b1eb6d988d1ffa1ab8197381c99c6b1f64cba88d7c855ad847394553c69",
+      "descriptor_sha256": "968e8a9f4b2b4c79e716b35c196c618bdd3c184e655d2e2579bb6f48514c7d6f",
       "id": "nottingham-village-east-cottage"
     },
     {
@@ -706,14 +706,14 @@
       "model": "3d-assets/nottingham/nottingham-village-low-barn/model.glb",
       "model_sha256": "ee8252e005fd9ea21e05224e886438280a932a284b81db53b4254ec924c12530",
       "descriptor": "3d-assets/nottingham/nottingham-village-low-barn/asset.json",
-      "descriptor_sha256": "bd52166c49266eff3f0788755ae2a4a83f138ab07169450c0a0869f214d83a49",
+      "descriptor_sha256": "fd1a8844216e6bc2a4ac66cf9e0aee2ebdeaf2f57518ba31454ee0d6ceb0f289",
       "id": "nottingham-village-low-barn"
     },
     {
       "model": "3d-assets/nottingham/nottingham-village-middle-cottage/model.glb",
       "model_sha256": "dda0aed1f5a587ca7e95003c02fd92c8977117b6fea1f50451cfcc81db70f575",
       "descriptor": "3d-assets/nottingham/nottingham-village-middle-cottage/asset.json",
-      "descriptor_sha256": "c14243fb6424be32d5b900c07247ad6850c99f4fc383fe51f8c341cee2ef9b84",
+      "descriptor_sha256": "2c86745aa7b1657740895fa74154adc6032f7bcef9fff8fe3d7c6f5db0b87a3c",
       "id": "nottingham-village-middle-cottage"
     },
     {
@@ -748,7 +748,7 @@
       "model": "3d-assets/nottingham/nottingham-village-southeast-cottage/model.glb",
       "model_sha256": "bc137d87e7f0d8097349c515f6eb2d3e2af64a28305cfc80ab34c06950043afb",
       "descriptor": "3d-assets/nottingham/nottingham-village-southeast-cottage/asset.json",
-      "descriptor_sha256": "4c7236b5ae656a409f87acc968870fa45178271eefc3f9b6221fa1b5f655068f",
+      "descriptor_sha256": "78d11f58367bc7e386ffe82fdd267227082e041b7624a0015f2d6f8457aa6ff7",
       "id": "nottingham-village-southeast-cottage"
     },
     {
@@ -783,7 +783,7 @@
       "model": "3d-assets/nottingham/nottingham-village-southwest-cottage/model.glb",
       "model_sha256": "ba795501d28f7f07fb06809c2e6fc5283f215c91bd91dbab87f15df60a53b6ee",
       "descriptor": "3d-assets/nottingham/nottingham-village-southwest-cottage/asset.json",
-      "descriptor_sha256": "dd255843fc61fe5bcd21a6a940eb930b23e4a8be7586f7d5cb199e9d3316c121",
+      "descriptor_sha256": "31a5bdbe2b2e2c36ab9ebd89d472c72c017b91a6570ccf977c8f40b4e13ff966",
       "id": "nottingham-village-southwest-cottage"
     },
     {
@@ -804,7 +804,7 @@
       "model": "3d-assets/nottingham/nottingham-village-mill/model.glb",
       "model_sha256": "ac7069b88a77c29c8ae6f24621e1d9b8434318022650865522897f78c96adfbc",
       "descriptor": "3d-assets/nottingham/nottingham-village-mill/asset.json",
-      "descriptor_sha256": "04478128a2457ceda49b4bc13b529da9071ed2e517c1088782c67b4af7ff2bea",
+      "descriptor_sha256": "0d980746afe190422782fc072b7f936f699e2256f08aa0eb24f1c826b0dbfca2",
       "id": "nottingham-village-mill"
     },
     {
@@ -832,7 +832,7 @@
       "model": "3d-assets/nottingham/nottingham-village-west-cottage/model.glb",
       "model_sha256": "2b04724abda74b165d949e4a6a45b55d691870260a4ff84d54dacb899b86ff8b",
       "descriptor": "3d-assets/nottingham/nottingham-village-west-cottage/asset.json",
-      "descriptor_sha256": "d14b0009d2d4890988eb42e1366cd04e3f1b338e030c99783c3c9d76785a99fd",
+      "descriptor_sha256": "9ee50d297d4adc2dab35d9f3185a7339eb9402a852cc33e0a58809f7a528b48c",
       "id": "nottingham-village-west-cottage"
     },
     {

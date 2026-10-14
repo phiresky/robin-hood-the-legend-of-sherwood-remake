@@ -6,6 +6,27 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Ten-map native construction and entrance audit (2026-10-14)
 
+Nottingham village stage `local-door-structure-stage-uykk0W` adds explicit local
+doorway blockers for eight entrances across seven assets. All 128 native room
+trips pass across copied, rotated and raised placements (`asset-building-doors-`
+suffixes `mjOrJ8`, `4Ttg9J`, `y6IDcd`, `kcpoVC`, `TQx2y0`, `xSO25N`, `c0K9mi`).
+Fresh full export `saved-map-exports-tmVzNj` constructs natively and changes only
+building passage conditions and warnings. `saved-map-entrances-KUToD6` improves
+from 33/69 to 41/69 passing entrances, fixing exactly the eight targeted routes.
+Of the remaining 28 denied routes, the southwest prison entrance at [582,2241]
+has an authored PC lock and no permanently blocked corridor; it must not be
+treated as an unconditional geometry defect. Its transition behavior still
+requires verification. Other unresolved routes remain subject to geometry review.
+`building-gallery-TjIXYF` passes all sixteen terrain-start entrance-click trips.
+Browser fixture `draft-scene-render-R3Jx6l` reopens identical gameplay, color and
+depth; its 52,952,754-byte ZIP has SHA-256
+`4c798c812f8a376f8d02ad17a092aa1cca31edfbe896a9fb39b738594b6a2ac4`.
+The render shows fourteen separately placed buildings. Native loading without
+base data and all sixteen archived terrain-start trips pass in
+`nottingham-village-archived-s2z0yh5l`. `nottingham-village-installed-20261014`
+publishes the seven definitions, catalog entries and Nottingham scene pins.
+Model/texture bytes and draft warnings remain unchanged. No runtime implementation changes.
+
 Fresh Wychford export `saved-map-exports-1MBpkb` completes in 1,295 seconds,
 including one best-effort retry that omits the unsupported church-tower lift.
 Native construction passes with 88 areas, 15,578 sight obstacles, 31 doors,
