@@ -6,6 +6,27 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Ten-map native construction and entrance audit (2026-10-14)
 
+The follow-up `room-receiver-approaches-8RUXWx` isolates an export-time approach
+correction on these descriptors: when a room midpoint already lies on a receiver,
+its outside approach stays on that same receiver instead of crossing a terrain
+seam after the exit has installed the endpoint's plane. It may move closer to
+the midpoint while remaining on the outdoor side and retaining collision checks.
+This diagnostic passes all 24 Wychford entrances and improves the aggregate to
+173/277, fixing all four Wychford ownership mismatches with no changed result
+elsewhere. It retains previously compiled passage conditions, so it is not a
+fresh full-map export or new certification of blocked passages. The remaining
+receiver mismatches are one in Derby and three in York. No engine code changed.
+All 253 selected compiler/app tests pass, including the terrain-seam regression;
+the published doorstep placement matrix still passes all 32 native terrain/room
+round trips and all 64 negative socket checks in `receiver-floor-placements-LkgUnO`.
+
+Fresh published York export `saved-map-exports-S95O22`, audited in
+`saved-map-entrances-7yAe9e`, passes 41/94 doorway-start round trips, with 50 denied
+routes and three receiver mismatches. Two entrances previously passed but are
+now blocked in the assembled map; isolated placement success does not establish
+their integration with the surrounding scene. A fresh collision-traced export
+is investigating those contacts. These counts supersede the older York row below.
+
 `saved-map-exports-JXjZlf` finishes all ten map-only exports, and
 `recovered_static_exports_construct_native_geometry` loads every descriptor
 successfully. This long-running compiler snapshot started at `24005941b`, before

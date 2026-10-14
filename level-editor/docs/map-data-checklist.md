@@ -32,6 +32,11 @@ ownership mismatches; 99 denied routes have permanently unavailable exported
 corridors, and one is blocked only by an authored lock. This compiler snapshot
 predates the latest doorstep corrections and publication. See the
 [ten-map audit](map-compilation-evidence.md#ten-map-native-construction-and-entrance-audit-2026-10-14).
+An approach-only diagnostic fixes all four Wychford receiver mismatches without
+runtime changes; fresh full-map verification is pending. The fresh published
+York export passes 41/94 doorway trips, with 50 denied routes and three receiver
+mismatches. Two newly blocked entrances need assembled-scene collision review
+despite their successful isolated placement matrix.
 
 The preceding saved-map checks recorded
 290 prepared stair routes and 71 control apply/reset checks passing. The current

@@ -97,6 +97,12 @@
   native loading without base data and four archived terrain-to-room trips. This
   preparation runs during export, with no runtime solver.
 
+- **Room approaches across terrain seams.** When a door midpoint is supported by
+  a receiving surface, export keeps its outside approach on that surface. This
+  avoids crossing to another terrain receiver after the exit has already selected
+  its endpoint's plane. A native diagnostic fixes four Wychford exit mismatches;
+  fresh full-map verification remains pending. No per-tick behavior changes.
+
 - **Physical doorstep authoring experiments.** A staging helper can turn explicitly
   selected asset receiver tops into walkable floors with exterior edge sockets.
   It retains the volume's fitted plane through rotation, checks descriptor pins

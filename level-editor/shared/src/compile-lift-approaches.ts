@@ -121,8 +121,19 @@ function compileApproaches(geometry: CompiledAssetGeometry, buildingsOnly: boole
               )
               .map((obstacle) => obstacle.points.map((p): Point => [p.x, p.y - p.z_top]))
           : [];
+        const handoffReceivers = receivers.filter((polygon) =>
+          pointInGameplayPolygon(door.point_mid, polygon, true),
+        );
+        const sameHandoffReceiver = (point: Point) =>
+          !handoffReceivers.length ||
+          handoffReceivers.some(
+            (polygon) =>
+              pointInGameplayPolygon(point, polygon, true) &&
+              !crosses(polygon, door.point_mid, point),
+          );
         const fits = (point: Point) =>
           pointInGameplayPolygon(point, boundary) &&
+          sameHandoffReceiver(point) &&
           (!receivers.length ||
             receivers.some((polygon) => pointInGameplayPolygon(point, polygon, true))) &&
           !touches(boundary, point, half) &&
@@ -183,8 +194,15 @@ function compileApproaches(geometry: CompiledAssetGeometry, buildingsOnly: boole
             }
             if (!adjusted)
               for (const [, x, y] of nearby()) {
-                if (x * delta[0] + y * delta[1] < 0) continue;
                 const candidate: Point = [point[0] + x, point[1] + y];
+                if (
+                  sameHandoffReceiver(source)
+                    ? x * delta[0] + y * delta[1] < 0
+                    : (candidate[0] - middle[0]) * delta[0] +
+                        (candidate[1] - middle[1]) * delta[1] <=
+                      0
+                )
+                  continue;
                 if (fits(candidate) && reachable(candidate)) {
                   adjusted = candidate;
                   break;
@@ -235,6 +253,7 @@ function compileApproaches(geometry: CompiledAssetGeometry, buildingsOnly: boole
               .filter(
                 (candidate) =>
                   Math.hypot(candidate[0] - point[0], candidate[1] - point[1]) <= 64 &&
+                  sameHandoffReceiver(candidate) &&
                   (!receivers.length ||
                     receivers.some((polygon) =>
                       pointInGameplayPolygon(candidate, polygon, true),

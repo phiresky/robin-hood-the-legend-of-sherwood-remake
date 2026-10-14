@@ -200,3 +200,32 @@ test("narrow room landings reuse only reachable passage handoffs on their own fl
     );
   }
 });
+
+test("room exits keep the approach on the receiver under their midpoint", () => {
+  for (const midpointY of [40, -10]) {
+    const { geometry, door } = fixture([50, 50]);
+    geometry.motion_data.layers[0]![0]!.is_lift = false;
+    geometry.lifts = [];
+    door.door_type = 1;
+    door.point_out = [50, 70];
+    door.point_mid = [50, midpointY];
+    door.sector_in = 999;
+    door.layer_in = 3;
+    geometry.buildings = [{ Building: { doors: [door] } }];
+    const receiver = geometry.sight_obstacles[0]!;
+    geometry.sight_obstacles = [0, 50].map((y) => ({
+      ...structuredClone(receiver),
+      projection_area: [0, 0],
+      points: [
+        [0, y],
+        [100, y],
+        [100, y + 50],
+        [0, y + 50],
+      ].map(([x, y]) => ({ x: x!, y: y!, z_top: 0, z_bottom: 0 })),
+    }));
+    const motion = structuredClone(geometry.motion_data);
+    compileBuildingApproaches(geometry);
+    assert.deepEqual(door.point_out, midpointY === 40 ? [50, 49] : [50, 70]);
+    assert.deepEqual(geometry.motion_data, motion);
+  }
+});
