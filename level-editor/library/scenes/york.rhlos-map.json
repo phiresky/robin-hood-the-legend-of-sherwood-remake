@@ -59,7 +59,7 @@
       "model": "3d-assets/york/york-castle-courtyard-east-lodge/model.glb",
       "model_sha256": "aee4713628b1f446f3170bc50d640b69e63c24b44027d88e31c01bf0656ac09d",
       "descriptor": "3d-assets/york/york-castle-courtyard-east-lodge/asset.json",
-      "descriptor_sha256": "2f904eebaca6fb180da970109889e92083ca17f20c8b05e5a11713a857826d89",
+      "descriptor_sha256": "9898e2608f98dd69eb36bcce0cf29f99e6ed82613552dff2483140e65409001b",
       "id": "york-castle-courtyard-east-lodge"
     },
     {
@@ -94,7 +94,7 @@
       "model": "3d-assets/york/york-castle-courtyard-west-lodge/model.glb",
       "model_sha256": "8d688baff1ba09b475fa452154d99780a18bc2e589dfeb432e86ecfe1f5e6a47",
       "descriptor": "3d-assets/york/york-castle-courtyard-west-lodge/asset.json",
-      "descriptor_sha256": "8bebb2e069f3ab51546bf18d38eac32bac156bab4b36ff6af6f3e3eb3c0ba048",
+      "descriptor_sha256": "649eb15a6f763416e6a2d711da8c7d6575a21ffd627f8ccbbdd2be3b2fd198d7",
       "id": "york-castle-courtyard-west-lodge"
     },
     {

@@ -6,6 +6,25 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Ten-map native construction and entrance audit (2026-10-14)
 
+The courtyard lodge follow-up `saved-map-exports-wvkJ8X` constructs natively;
+`saved-map-entrances-bApvYI` passes 46/95 entrances, fixing exactly the east and
+west lodge doors. There remain 46 denied routes and three receiver mismatches.
+Only their passage conditions and warnings differ from `saved-map-exports-EGLJdb`;
+movement, receivers, jumps and other compiled geometry remain identical.
+The copied 37-degree fixture `courtyard-lodge-fixture-ZLsjSg` also passes all four
+native terrain-start entrance-click round trips. Browser fixture
+`draft-scene-render-0kKU8a` reopens with matching gameplay, color and depth;
+its 8,667,679-byte ZIP has SHA-256
+`8727729c49461f1f3cfc55a5bbdcd6652b156f9c8adcd91cfe85f058edef7a89`.
+Native archive loading without base data and all four archived doorway-start
+and terrain-start round trips pass (`courtyard-lodges-archived-s2v_z0dw`).
+The color render shows all four separately placed lodges; existing model draft
+limitations remain. An earlier browser run overlapped a fixture catalog change
+and failed pixel comparison; only the subsequent unchanged-fixture run is evidence.
+`courtyard-lodges-installed-20261014` publishes both descriptors, catalog entries
+and York scene pins. Models, textures and their derivatives remain byte-identical;
+draft warnings remain visible. This adds no engine runtime behavior.
+
 The entrance verifier now covers both ordinary rooms and building trapdoors.
 `saved-map-entrances-Owm15B` checks all 95 entrances in `saved-map-exports-EGLJdb`:
 44 pass, including the previously unaudited trapdoor; 48 remain denied and three
@@ -16,8 +35,8 @@ Two further courtyard lodge candidates are staged in
 `local-door-structure-stage-EEpAf2`, selecting only their own structural volumes
 from `local-door-structure-4MPHYx`. With authored terrain at their door height,
 `asset-building-doors-FdMIR4` and `asset-building-doors-CnQgIH` pass all 32 native
-entry/exit trips across copied, rotated and elevated placements. These candidates
-remain unpublished pending assembled-scene and browser/archive verification.
+entry/exit trips across copied, rotated and elevated placements. The follow-up
+above completes their assembled-scene and browser/archive verification.
 
 The latest York follow-up resolves the two newly blocked doorstep entrances.
 `saved-map-exports-OSIZIZ` identifies their own building volumes (`building-582`
