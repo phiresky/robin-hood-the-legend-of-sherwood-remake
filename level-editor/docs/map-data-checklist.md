@@ -43,6 +43,13 @@ The east and west courtyard lodges now pass in the assembled scene as well as
 32 copied/rotated/elevated entrance trips. Their browser ZIP reopens identically,
 loads without base data, and passes all four archived terrain-start entrance trips.
 
+Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
+Their current entrance results are Derby 18/25, Lincoln 31/35, Nottingham 33/69,
+and Sherwood 2/5. Three Lincoln village doorway corrections improve its result
+from 28/35 while retaining movement geometry. Those assets pass 48 moved-placement
+room trips, browser export/reopen, native ZIP loading and six archived terrain-start
+entrance trips. Remaining failures still require asset and connection work.
+
 The preceding saved-map checks recorded
 290 prepared stair routes and 71 control apply/reset checks passing. The current
 saved-York stair audit passed native construction and all 130 prepared stair

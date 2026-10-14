@@ -6,6 +6,31 @@ Older counts and limitations below may be superseded by later entries.
 
 ## Ten-map native construction and entrance audit (2026-10-14)
 
+Fresh four-map export `saved-map-exports-curpyW` constructs all maps natively.
+Entrance audit `saved-map-entrances-E4r5rm` passes 81/134 trips: Derby 18/25
+(six denied, one receiver mismatch), Lincoln 28/35 (seven denied), Nottingham
+33/69 (36 denied), and Sherwood 2/5 (three denied). Collision traces and
+`local-door-structure-dp0xHg` identify local structural candidates without
+authorizing foreign barriers or changing shared terrain exclusions.
+
+The Lincoln village ladder cottage, longhouse and west cottage each declare
+their own doorway blocker in `local-door-structure-stage-HMRoCb`. Their placement
+audits (`asset-building-doors-w3mNO2`, `asset-building-doors-qjnScu`,
+`asset-building-doors-zSibDG`) pass all 48 native copied/rotated/raised room trips.
+`saved-map-exports-JImZyR` changes only building passage conditions and warnings;
+`saved-map-entrances-DA9Qur` passes 31/35 Lincoln entrances, with four still denied.
+The generalized `check-building-gallery.mjs` combines independently verified
+placement fixtures at their shared terrain height, retaining pins and requiring
+all entrances. `building-gallery-0eL6I1` passes six terrain-start entrance-click
+round trips. Browser fixture `draft-scene-render-8P4fxQ` reopens identical gameplay,
+color and depth; its 16,410,468-byte ZIP has SHA-256
+`fe41cbc9c2c80dd6ba24b1dd5ef6de2ff3248e601a71b5d4f774c48660e073c1`.
+The render shows six separate cottages on authored ground. Native ZIP loading
+without base data and all six archived terrain-start trips pass in
+`lincoln-village-archived-n37x6cej`. `lincoln-village-installed-20261014` publishes
+the three definitions, catalog entries and Lincoln pins together; model/texture
+derivatives and draft warnings remain unchanged. No runtime behavior changes.
+
 The courtyard lodge follow-up `saved-map-exports-wvkJ8X` constructs natively;
 `saved-map-entrances-bApvYI` passes 46/95 entrances, fixing exactly the east and
 west lodge doors. There remain 46 denied routes and three receiver mismatches.

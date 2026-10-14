@@ -1183,21 +1183,21 @@
       "model": "3d-assets/lincoln/lincoln-village-ladder-cottage/model.glb",
       "model_sha256": "2cb30226bf8b9175ff7d6b2d567780969d09d7d4161bd406515a616be42269f6",
       "descriptor": "3d-assets/lincoln/lincoln-village-ladder-cottage/asset.json",
-      "descriptor_sha256": "199a24bfff0f80eed95f52647f9fc22a6b94849250651b2f7c02f42b22dc9fa2",
+      "descriptor_sha256": "bf983d6f52a31491388a996367a11097fbbee099a456b65344cc3c33cf7a4d05",
       "id": "lincoln-village-ladder-cottage"
     },
     {
       "model": "3d-assets/lincoln/lincoln-village-longhouse/model.glb",
       "model_sha256": "f5ae6f1ebaed764c819e91181153a8940c1968f665fe09a82ebedd752549c6f6",
       "descriptor": "3d-assets/lincoln/lincoln-village-longhouse/asset.json",
-      "descriptor_sha256": "d701e38ad4ba3bc0f126021fdfbde482b1f587d1d8a907a0137dfe027c7b95e5",
+      "descriptor_sha256": "66d17054797c8f595c814abda01dc2b3cd80059cf8d07e5b74748597ba7ec322",
       "id": "lincoln-village-longhouse"
     },
     {
       "model": "3d-assets/lincoln/lincoln-village-west-cottage/model.glb",
       "model_sha256": "cf18192f28fbc68cf7da01a02e2074c5b0c2d1f465af2bd8426e0b06a9344fd4",
       "descriptor": "3d-assets/lincoln/lincoln-village-west-cottage/asset.json",
-      "descriptor_sha256": "33d8f7d4e5a7c778fd1451e0cd0ee2e73b98bbec8736df4a4879ea31a04ffd4b",
+      "descriptor_sha256": "23114a0f631d91242e1e2e147766bf8b41bb4b334dee85674953ae5dbcc5d874",
       "id": "lincoln-village-west-cottage"
     },
     {
