@@ -436,6 +436,20 @@ test("patch clip contracts pin every phase and preserve separate clocks", async 
     transition: { binding: { ...binding, id: "lift" }, clip: "lift", duration_ticks: 6 },
     final: { binding, clip: "sway", duration_ticks: 42 },
   };
+  c.native.patch_states[0]!.initial = [{ ...frame }];
+  assert.throws(() => validateStateDelivery(c), /transparent initial frame proof/);
+  f.physical.motion.transparent_initial_frames = structuredClone(c.native.patch_states[0]!.initial);
+  for (const key of ["path", "sha256", "width", "height", "offset", "delay"] as const) {
+    const bad = structuredClone(c);
+    const motion = bad.families[0]!.physical.motion;
+    assert.ok(motion?.kind === "native-patch-clips");
+    const proof = motion.transparent_initial_frames![0]!;
+    if (key === "path") proof.path = "foreign.png";
+    else if (key === "sha256") proof.sha256 = "f".repeat(64);
+    else if (key === "offset") proof.offset = [1, 0];
+    else proof[key]++;
+    assert.throws(() => validateStateDelivery(bad), /transparent initial frame proof/);
+  }
   f.physical.motion.transition.material_frames = [0, 1].map((i) => ({
     duration_ticks: 3,
     materials: [

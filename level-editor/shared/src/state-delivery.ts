@@ -11,6 +11,7 @@ import {
   nativePresentationFrame,
   type NativeStatePresentationContract,
   type NativeInitialContextMode,
+  type NativePresentationFrame,
 } from "./native-state-presentation.ts";
 
 export type PhysicalStateBinding = SceneAssetSource & {
@@ -103,6 +104,8 @@ export interface PhysicalPatchClip {
   material_frames?: PhysicalMaterialFrame[];
 }
 export interface PhysicalPatchClips {
+  /** Exact initial source frames; decoded alpha must be zero before physical loading. */
+  transparent_initial_frames?: NativePresentationFrame[];
   kind: "native-patch-clips";
   patch_id: string;
   source_motion_sha256: string;
@@ -228,10 +231,35 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
         !patch?.definitive ||
         !family.patch_ids?.includes(motion.patch_id) ||
         family.element_ids.length ||
-        patch.initial.length ||
         !patch.transition.length
       )
         fail("invalid patch clip source binding");
+      const initialProof = motion.transparent_initial_frames;
+      const frameIdentity = (frame: NativePresentationFrame) =>
+        JSON.stringify([
+          frame.path,
+          frame.sha256,
+          frame.width,
+          frame.height,
+          frame.offset,
+          frame.delay,
+          frame.shadow_key?.rgb,
+          frame.shadow_key?.strength_percent,
+          frame.shadow_key?.pixel_format,
+        ]);
+      if (patch!.initial.length) {
+        if (
+          !Array.isArray(initialProof) ||
+          initialProof.length !== patch!.initial.length ||
+          initialProof.some(
+            (frame, index) =>
+              !frame || frameIdentity(frame) !== frameIdentity(patch!.initial[index]!),
+          )
+        )
+          fail("transparent initial frame proof differs from bound patch");
+      } else if (initialProof !== undefined) {
+        fail("transparent initial frame proof requires bound initial frames");
+      }
       const validateClip = (phase: PhysicalPatchClip, source: { delay: number }[]) => {
         const duration = source.reduce((n, frame) => n + frame.delay + 1, 0);
         if (

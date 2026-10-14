@@ -641,6 +641,18 @@ export class NativeStatePresentation {
       : this.contract.background;
     return this.images.get(resource.path)!;
   }
+  /** Verify the actual hash-checked decoded frames before omitting invisible initial geometry. */
+  assertTransparentPatchInitial(id: string) {
+    const patch = this.contract?.patch_states?.find((p) => p.id === id);
+    if (!patch?.initial.length) throw new Error("Missing bound initial patch frames");
+    for (const frame of patch.initial) {
+      const pixels = this.images.get(frame.path);
+      if (!pixels) throw new Error("Missing decoded initial patch frame");
+      for (let offset = 3; offset < pixels.data.length; offset += 4)
+        if (pixels.data[offset] !== 0)
+          throw new Error(`Initial patch frame is not transparent: ${frame.path}`);
+    }
+  }
   /** Preflight ownership and the loaded source before a delivery ledger consumes its sequence. */
   assertCanSampleStateClocks(batch: StateClockBatch) {
     if (!this.contract) throw new Error("Native artwork preview is not loaded");

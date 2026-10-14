@@ -88,6 +88,16 @@ export class StateDelivery {
     validateStateDelivery(frozen);
     const current = () => !this.disposed && this.epoch === epoch;
     if (!(await this.native.set(frozen.native, source, read)) || !current()) return false;
+    try {
+      for (const family of frozen.families) {
+        const motion = family.physical.motion;
+        if (motion?.kind === "native-patch-clips" && motion.transparent_initial_frames)
+          this.native.assertTransparentPatchInitial(motion.patch_id);
+      }
+    } catch (error) {
+      this.clear();
+      throw error;
+    }
     let loader: Pick<SceneAssetLoader, "load" | "dispose">;
     try {
       loader = this.loader(library);

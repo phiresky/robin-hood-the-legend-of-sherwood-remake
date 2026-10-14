@@ -1067,6 +1067,45 @@ test("patch clips retain independent applied clocks, reset, and reject missing c
     },
     final: { binding: finalBinding, clip: "sway", duration_ticks: 42 },
   };
+  // The invisible initial patch remains a real independently clocked native phase.
+  f.source.data.mission_patches![0]!.start_animation_valid = true;
+  patch.source.sha256 = await missionStateDataHash(f.source.data.mission_patches![0]!);
+  f.contract.native.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  let initialBytes: Uint8Array;
+  const originalRead = f.read;
+  f.read = async (resource) =>
+    resource.path === "initial.png" ? initialBytes : originalRead(resource);
+  for (const alpha of [255, 1, 0]) {
+    initialBytes = encode({
+      width: 1,
+      height: 1,
+      channels: 4,
+      data: new Uint8Array([170, 80, 20, alpha]),
+    });
+    const sha256 = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(initialBytes))),
+      (n) => n.toString(16).padStart(2, "0"),
+    ).join("");
+    patch.initial = [
+      { path: "initial.png", sha256, width: 1, height: 1, offset: [0, 0], delay: 1 },
+    ];
+    family.physical.motion.transparent_initial_frames = structuredClone(patch.initial);
+    if (alpha) {
+      let loaderCalls = 0;
+      const rejected = new StateDelivery(() => {
+        loaderCalls++;
+        throw Error("must not load geometry");
+      });
+      await assert.rejects(
+        rejected.set(f.contract, f.source, f.library, f.read),
+        /not transparent/,
+      );
+      assert.equal(loaderCalls, 0);
+      assert.equal(rejected.ready, false);
+      assert.equal(rejected.native.ready, false);
+      rejected.dispose();
+    }
+  }
   const asset = (clip: string, duration: number) => {
     const root = f.template.clone(true);
     root.animations = [
