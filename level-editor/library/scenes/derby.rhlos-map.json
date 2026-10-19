@@ -279,7 +279,7 @@
       "model": "3d-assets/derby/derby-keep-central-gallery/model.glb",
       "model_sha256": "8e35b1be1767ae67c8ca925135a59c8f47c34eb7ee1de9d1439ec80618e4b08d",
       "descriptor": "3d-assets/derby/derby-keep-central-gallery/asset.json",
-      "descriptor_sha256": "61fa9c26d22934239ed4d1b8a76340ad4b35dc8e2d7f3b2e3d4c98cb9bb8b559",
+      "descriptor_sha256": "fb40db97200f75a551b7b72d28e7e4e4117663172472d58916df2472b5add738",
       "id": "derby-keep-central-gallery"
     },
     {
@@ -293,7 +293,7 @@
       "model": "3d-assets/derby/derby-east-watchtower/model.glb",
       "model_sha256": "eee53338bcb1ea01b38da55e63747d46619fd6923ad8c683196d076bf024d64c",
       "descriptor": "3d-assets/derby/derby-east-watchtower/asset.json",
-      "descriptor_sha256": "83b085af1e041116b4919592b38431fa62051b9fe08632b56363ef8e422e19e0",
+      "descriptor_sha256": "df6bd661f814b0a69e05d771b3c27f8a449c32bbeb6d0e823d4a2a53de1b9c8d",
       "id": "derby-east-watchtower"
     },
     {

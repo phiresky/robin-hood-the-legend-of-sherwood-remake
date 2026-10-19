@@ -63,14 +63,16 @@ also pass 32 doorway trips and linked/unlinked checks. Their browser ZIP reopens
 identically, loads without base data, and passes the exact-archive doorway and
 room-crossing tests. The asset definitions and Derby's room link were installed
 together; models and textures are unchanged.
-The next staged Derby batch passes all 25 doorway trips by declaring the
+The published Derby entrance batch passes all 25 doorway trips by declaring the
 watchtower and central gallery's own passage structure. Explicit exterior
 landing sockets also connect these assets to matching authored terrain: all 32
 copied/rotated/raised terrain-to-room click tests pass, alongside 48 doorway-start
 trips. The browser ZIP reopens identically, loads without base data and passes six
-exact-archive click round trips. Publication is pending the affected Wychford
-regression check; these results do not establish full map parity.
-Their current entrance results are Derby 22/25, Lincoln 31/35, Nottingham 43/69,
+exact-archive click round trips. The affected Wychford asset-regression export
+constructs natively and retains all 24 entrance trips. Definitions and both
+saved-scene pins are installed; models and textures are unchanged. These results
+do not establish full map parity.
+Their current entrance results are Derby 25/25, Lincoln 31/35, Nottingham 43/69,
 and Sherwood 5/5. Three Lincoln village doorway corrections improve its result
 from 28/35 while retaining movement geometry. Those assets pass 48 moved-placement
 room trips, browser export/reopen, native ZIP loading and six archived terrain-start

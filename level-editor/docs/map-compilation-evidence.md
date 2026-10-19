@@ -58,8 +58,32 @@ doorway trips (`asset-building-doors-PFF1Kd`, `asset-building-doors-y5ugQO`) and
 with identical gameplay/color/depth, is 12,285,222 bytes and has SHA-256
 `fe7ee0fd887e87cba9a2eefd23b5e8ebe50b6e36bfb92c168c69f5b78a0b769a`.
 Its six exact-archive native click trips pass in `derby-contacts-archive-d0mqglft`.
-Use this refreshed archive for the pending Derby publication; the earlier archive
-below predates collision-layer isolation.
+This refreshed archive is the Derby publication evidence; the earlier archive
+below predates collision-layer isolation. Installation report
+`derby-entrance-contacts-installed-20261019` verifies all fifteen installed file
+hashes and updates Derby and Wychford pins while retaining model/texture bytes.
+Fresh installed-library export `saved-map-exports-oEK6D8` exactly matches the
+25/25-verified Derby descriptor, including prepared gameplay and warnings.
+
+The affected Wychford asset-regression export `saved-map-exports-tZaqmV` completes
+in 1,660 seconds, including the existing unsupported church-tower lift retry.
+It constructs 88 areas, 15,461 sight obstacles, 31 doors, 64,638 grid blocks and
+36,834 elevation boundaries. `saved-map-entrances-eRo4KL` passes all 24 emitted
+entrance round trips. That long-running export started before collision-layer
+isolation was added; a fresh installed-library sweep is running separately to
+check the latest exporter, rather than attributing that older snapshot to it.
+
+The composed Lincoln fixture `keep-neighbor-placements-ncU7ya` places the keep,
+its supporting annex and the cone turret as three separate assets. Two copies
+at four rotations and two heights retain all ten building entrances per scene.
+All eighty normal click-entry/return trips and 128 directed within-room actor
+crossings pass. The fixture uses each asset's own rotation pivot and compensates
+the translation to preserve one rigid ground-plane assembly; 96 independent
+reference-point checks verify that layout. The earlier `...-umbyCQ` attempt used
+unscaled map-Y rotation and is a rejected test layout, not an exporter failure.
+Fresh Lincoln scene audit `saved-map-entrances-WJPZoZ` remains 33/35, with the
+same two blocked entrances. Browser/archive verification is still pending for
+these Lincoln asset candidates.
 
 ## Derby entrance structures and terrain contacts (2026-10-19)
 
