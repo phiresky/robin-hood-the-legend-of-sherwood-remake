@@ -34,6 +34,14 @@ Fresh export of the published Derby assets, `saved-map-exports-mxiRkn`, passes
 without the staged ownership changes. The remaining six failures are blocked
 passages; the prior receiver mismatch is resolved.
 
+York regression export `saved-map-exports-4LIuVV` completes in about 436 seconds
+and constructs natively with 164 areas, 1,221 sight obstacles, 254 doors, 72 jump
+pairs, 273,224 grid blocks and 311 elevation boundaries. Entrance audit
+`saved-map-entrances-SbP74H` retains exactly the preceding 46/95 outcomes: 46
+blocked routes and three receiver mismatches remain. No previously passing
+entrance regresses; the Derby receiver correction does not resolve York's
+remaining mismatches.
+
 ## Derby tower doorway ownership candidate (2026-10-19)
 
 Three main-hall-owned doorway corridors cross north-tower structure. Candidate
@@ -64,9 +72,21 @@ high roof entrance inside the export frame. The earlier fixed-frame fixture
 explicitly incomplete. The placement checker now retains failed descriptors
 and warnings before asserting, and accepts an explicit placement Y.
 
-This candidate remains unpublished. Receiver continuity, independent asset
-movement with the editor room link, and browser ZIP checks are still required.
-There are no runtime implementation changes.
+Follow-up `tower-room-connections-2Uddhm` verifies independently moved tower
+copies in sixteen linked/unlinked scenes. The second copy moves 80 units and
+rotates another 23 degrees relative to each of the eight initial placement
+cases. Native `exported_room_connections_support_complete_actor_crossings`
+passes 80 complete-sprite directed crossings and sixteen disconnected-sector
+checks. The two `interior-3` doors in each copy stay connected without map links;
+the `interior-6` doors across copies share a room only with an editor connection.
+Disconnected checks verify room-sector isolation, not the absence of ordinary
+outdoor walking between the buildings. Full-map and fixture compilations contain
+no mission content.
+
+This candidate remains unpublished. The later receiver correction above fixes
+its handoff mismatch; mixed hall/tower placement and browser ZIP checks remain.
+The new Rust code is an ignored diagnostic test, with no runtime implementation
+changes.
 
 ## Nottingham street doorway publication and lock audit (2026-10-19)
 

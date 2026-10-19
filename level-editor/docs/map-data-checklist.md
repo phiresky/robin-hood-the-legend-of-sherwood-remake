@@ -50,8 +50,9 @@ the main-hall definition and links the split room in the editor. It preserves
 assembled doorway positions and room memberships, passes 48 isolated placement
 trips, and improves full-scene entrance results to 22/25 with the exporter now
 rejoining valid receiving pieces after native-precision splitting. Both Derby
-receiver mismatches are fixed; independent movement and browser ZIP
-verification remain pending. Exporting the published Derby assets improves its
+receiver mismatches are fixed. Independently moved tower copies pass 80 native
+room crossings and sixteen disconnected-room checks; mixed hall/tower placement
+and browser ZIP verification remain pending. Exporting the published Derby assets improves its
 result from 18/25 to 19/25 through the receiver correction alone.
 Their current entrance results are Derby 19/25, Lincoln 31/35, Nottingham 43/69,
 and Sherwood 5/5. Three Lincoln village doorway corrections improve its result

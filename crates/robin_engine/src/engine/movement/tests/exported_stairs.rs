@@ -615,6 +615,94 @@ pub(super) fn walk_exported_building_round_trip(
 }
 
 #[test]
+#[ignore = "requires building_pairs diagnostics and ROBIN_CLIMB_RHS"]
+fn exported_room_connections_support_complete_actor_crossings() {
+    let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(directory.join("diagnostics.json")).unwrap())
+            .unwrap();
+    assert_eq!(manifest["complete"], true);
+    let sprite = complete_climb_sprite();
+    let mut results = vec![];
+    let mut failures = 0;
+    for row in manifest["results"].as_array().unwrap() {
+        let file = row["file"].as_str().unwrap();
+        let bytes = std::fs::read(directory.join(file)).unwrap();
+        let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let dimensions = &descriptor["walkable_polygon"][2];
+        let (engine, assets) = compiled_walkway_with_dimensions(
+            &bytes,
+            (
+                dimensions[0].as_f64().unwrap() as f32 + 1.,
+                dimensions[1].as_f64().unwrap() as f32 + 1.,
+            ),
+        );
+        for pair in row["building_pairs"].as_array().unwrap() {
+            let locate = |key: &str| {
+                let point = &pair[key];
+                let matches = engine
+                    .script_domains
+                    .interactables
+                    .doors
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, door)| {
+                        door.door_type == crate::gate::DoorType::Building
+                            && f64::from(door.point_out.x) == point[0].as_f64().unwrap()
+                            && f64::from(door.point_out.y) == point[1].as_f64().unwrap()
+                    })
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>();
+                assert_eq!(matches.len(), 1, "ambiguous entrance in {file}: {point}");
+                matches[0]
+            };
+            let entrance = locate("from");
+            let exit = locate("to");
+            let doors = &engine.script_domains.interactables.doors;
+            let joined = doors[entrance].sector_in_index == doors[exit].sector_in_index;
+            let expected = pair["connected"].as_bool().unwrap();
+            let outcome = if joined != expected {
+                Err(format!("room connection {joined}, expected {expected}"))
+            } else if joined {
+                walk_exported_lift_with_tick(
+                    engine.clone(),
+                    assets.clone(),
+                    entrance,
+                    exit,
+                    Some(&sprite),
+                    |_, _, _| {},
+                )
+                .and_then(|allowed| {
+                    if allowed {
+                        Ok(())
+                    } else {
+                        Err("connected room traversal denied".into())
+                    }
+                })
+            } else {
+                Ok(())
+            };
+            failures += usize::from(outcome.is_err());
+            results.push(serde_json::json!({"file":file,"pair":pair,"error":outcome.err()}));
+        }
+    }
+    std::fs::write(
+        directory.join("actor-room-connections-report.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "scope":"connected-room-actor-crossings-and-disconnected-sector-isolation",
+            "audit_finished":true,"complete":!results.is_empty() && failures == 0,"results":results,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(!results.is_empty());
+    assert_eq!(
+        failures, 0,
+        "room connection failures; inspect actor-room-connections-report.json"
+    );
+}
+
+#[test]
 fn compiled_stair_barriers_stop_actor_traversal_and_reset() {
     let fixtures: Vec<serde_json::Value> = serde_json::from_slice(include_bytes!(concat!(
         env!("CARGO_MANIFEST_DIR"),
