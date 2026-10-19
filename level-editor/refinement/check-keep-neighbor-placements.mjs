@@ -24,7 +24,14 @@ if (fixture) {
   assert.ok(
     fixture.missingEntrances === undefined || typeof fixture.missingEntrances === "boolean",
   );
-  assert.ok(Array.isArray(fixture.entrances) && fixture.entrances.length);
+  assert.ok(Array.isArray(fixture.entrances));
+  assert.ok(fixture.entrances.length || fixture.lifts?.length);
+  if (fixture.lifts) {
+    assert.ok(Array.isArray(fixture.lifts));
+    for (const lift of fixture.lifts)
+      assert.ok(fixture.assets.includes(lift.asset) && typeof lift.id === "string");
+  }
+  assert.ok(fixture.missingLifts === undefined || typeof fixture.missingLifts === "boolean");
   for (const entrance of fixture.entrances) {
     assert.ok(fixture.assets.includes(entrance.asset) && typeof entrance.door === "string");
     assert.ok(entrance.sourceLocal?.length === 2 && entrance.sourceLocal.every(Number.isFinite));
@@ -43,7 +50,7 @@ for (const edit of JSON.parse(await fs.readFile(`${stage}/edits.json`))) {
   const ref = references.find((ref) => ref.id === edit.asset);
   if (fixture && !ref) continue;
   assert.equal(ref?.descriptor_sha256, edit.descriptorSha256);
-  assert.equal(ref?.model_sha256, edit.modelSha256);
+  if (edit.modelSha256 !== undefined) assert.equal(ref?.model_sha256, edit.modelSha256);
   assets.get(edit.asset).gameplay = edit.gameplay;
 }
 const placements = ids.map((id) => {
@@ -129,7 +136,7 @@ for (const height of [0, 40])
         groups.push({ group, asset, placement, clusterX: x });
       }
     const compiled = compileMap(document, [0, 0, ...document.size], assets, { bestEffort: true });
-    const doors = compiled.descriptor.asset_geometry.buildings.flatMap(
+    const doors = (compiled.descriptor.asset_geometry.buildings ?? []).flatMap(
       ({ Building }) => Building.doors,
     );
     const file = `${rotation}-${height}.level.json`;
@@ -142,6 +149,7 @@ for (const height of [0, 40])
       warnings: compiled.warnings,
       building_approaches: [],
       building_pairs: [],
+      ...(fixture?.lifts ? { checked_lifts: 0 } : {}),
       ...(fixture?.missingEntrances ? { rejected_entrances: 0 } : {}),
     };
     results.push(row);
@@ -167,6 +175,27 @@ for (const height of [0, 40])
           applyAffineMatrix(matrix, gameToScene(document.camera, ...p)),
         );
       };
+      for (const selected of fixture?.lifts?.filter((lift) => lift.asset === asset.id) ?? []) {
+        const definition = asset.gameplay.lifts.find((lift) => lift.id === selected.id);
+        assert.ok(definition, `Missing authored lift ${asset.id}/${selected.id}`);
+        const expected = definition.doors.map((door) => {
+          const [x, y, z] = transform(door.node, door.middle);
+          return [Math.round(x), Math.round(y - z)];
+        });
+        const matches = (compiled.descriptor.asset_geometry.lifts ?? []).filter(
+          (lift) =>
+            lift.lift_type === definition.type &&
+            expected.every((point) =>
+              lift.doors.some((door) => door.point_mid.every((value, i) => value === point[i])),
+            ),
+        );
+        assert.equal(
+          matches.length,
+          fixture.missingLifts ? 0 : 1,
+          `Selected lift ${asset.id}/${selected.id} must ${fixture.missingLifts ? "remain unavailable" : "bind"} in ${file}`,
+        );
+        row.checked_lifts++;
+      }
       for (const room of asset.gameplay.interiors ?? []) {
         const selected = room.doors.filter(
           (door) =>
@@ -235,6 +264,7 @@ for (const height of [0, 40])
         fixture.missingEntrances ? row.rejected_entrances : row.building_approaches.length,
         fixture.entrances.length * 2,
       );
+    if (fixture?.lifts) assert.equal(row.checked_lifts, fixture.lifts.length * 2);
     await save(false);
   }
 await save(true);

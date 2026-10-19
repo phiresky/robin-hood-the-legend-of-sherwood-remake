@@ -25,6 +25,16 @@ await writeReport(false);
 for (const result of report.results) {
   let document = await readStoredMap(`library/scenes/${result.map}.rhlos-map.json`, "library");
   let descriptors = await pinnedDescriptors("library", document.assetSources, document.sceneAssets);
+  if (report.gameplayStage) {
+    const edits = JSON.parse(await fs.readFile(`${report.gameplayStage}/edits.json`, "utf8"));
+    for (const edit of edits) {
+      const descriptor = descriptors.get(edit.asset);
+      if (!descriptor) continue;
+      const reference = document.assetSources.find((source) => source.id === edit.asset);
+      assert.equal(reference?.descriptor_sha256, edit.descriptorSha256);
+      descriptor.gameplay = edit.gameplay;
+    }
+  }
   ({ document, descriptors } = normalizeGameplayStateViews(document, descriptors));
   const compiled = JSON.parse(await fs.readFile(`${directory}/${result.file}`, "utf8"));
   const placements = new Map();

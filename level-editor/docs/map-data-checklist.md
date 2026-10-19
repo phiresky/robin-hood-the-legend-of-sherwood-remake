@@ -21,8 +21,11 @@ A staged wall-floor correction now passes sixteen long click approaches across
 separately placed slate-tower and curtain-wall assets, including rotated and raised
 copies. The compiler aligns matched socket vertices before polygon union; this
 adds no runtime work. The staged Lincoln export passes 34/35 entrance trips and
-all sixteen stair-click routes. It remains unpublished while the west tower
-plateau conflict and a missing wall-climb landing are unresolved. See the
+all sixteen stair-click routes. A subsequent east-slope floor candidate restores
+the wall-climb landing: all eight full-scene climb routes and 32 routes through
+copied, rotated and raised neighboring assemblies pass. Removing the slope
+rejects all sixteen climb bindings. The candidates remain unpublished pending
+the west-tower plateau repair and broader placement/browser review. See the
 [shared-floor seam evidence](map-compilation-evidence.md#shared-floor-seam-survives-rotated-placement-2026-10-19).
 
 Internal floor-hole seams now generate export-prepared connections between

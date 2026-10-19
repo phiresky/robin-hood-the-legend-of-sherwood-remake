@@ -115,9 +115,9 @@ for (const [id, descriptor] of assets) {
 }
 for (const [id, { gameplay }] of changed) {
   gameplay.draft ??= { issues: [] };
-  gameplay.draft.issues.push(
-    "Unpublished physical terrain candidate: solid-derived clearances require mesh, moved-placement and native route review.",
-  );
+  const issue =
+    "Unpublished physical terrain candidate: solid-derived clearances require mesh, moved-placement and native route review.";
+  if (!gameplay.draft.issues.includes(issue)) gameplay.draft.issues.push(issue);
   validateAssetGameplay(gameplay, assets.get(id));
 }
 const output = await fs.mkdtemp("work/needs-review/map-compile/raised-terrain-surface-");

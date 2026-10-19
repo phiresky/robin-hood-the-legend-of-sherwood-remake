@@ -4,6 +4,44 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## East-slope asset supplies the missing wall-climb landing (2026-10-19)
+
+World-point mesh review identifies the actual lower receiver for the middle
+curtain wall's climb: the separate `lincoln-castle-hill-east-slope` asset.
+At [2788, 1249.001, 220.001], its visible mesh is at 219.942599
+(`placed-point-support-LOrydF`); the north-bailey plateau has no mesh there
+(`placed-point-support-d8k4O7`). The east slope previously had no walking surface.
+
+`raised-terrain-surface-3Xm2n6` replaces that asset's seven old terrain exclusions
+with a physical top surface and independently owned neighboring collision.
+`drawbridge-mesh-footprints-IHJUfD` clips the surface to near-horizontal mesh.
+Review `east-slope-mesh-review-azi152ws` samples 12,403 points: 7,216 direct hits,
+maximum horizontal boundary gap 0.000497 and height residual 0.308412 units.
+This retains the authored 220.001 floor; the sampled mesh is slightly uneven.
+
+The first full-scene candidate restores all eight native climb routes but exposes
+two south-gate tower entrances whose newly active own structure blocks their
+corridors (32/35 entrances). `local-door-structure-SrpWqi` identifies only their
+own `building-080` volume. Staging those two door references produces
+`local-door-structure-stage-lJlayq`; fresh export `saved-map-exports-4bhnd6`
+passes all eight climb routes and sixteen stair-click routes, with two forbidden
+stair routes retained. `saved-map-entrances-BT5IZl` returns to 34/35; only the
+west round-tower plateau conflict remains in this entrance audit.
+
+Independent assemblies use the actual wall, east slope and north plateau, new
+zero-height editor terrain, two copies, four rotations and two elevations.
+`selected-neighbor-placements-Wio7Nx` passes all 32 native climb directions.
+Removing the east slope (`selected-neighbor-placements-f4QrZq`) correctly omits
+all sixteen selected climb bindings. This is asset-local support reconstructed
+after placement; no runtime code or source-level fallback changes are involved.
+The assembly helper now accepts selected climbs as well as building entrances,
+and the ownership audit reads pinned staged gameplay when reviewing an export.
+The new point-support tool reads pinned placed meshes and records their hashes.
+
+These candidates remain unpublished: whole-asset movement, the remaining
+west-tower repair, and browser/rendered ZIP review are still outstanding.
+Installed Lincoln remains at 33/35 entrance trips.
+
 ## Shared floor seam survives rotated placement (2026-10-19)
 
 `split-wall-contact-hPd2dw` authors matching asset-local sockets between the
