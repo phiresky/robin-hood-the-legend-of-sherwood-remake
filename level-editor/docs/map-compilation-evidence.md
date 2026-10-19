@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Connected support caps no longer become passage walls (2026-10-19)
+
+The compiler now limits support-volume exclusions for an animated entrance to
+the uncovered portion of that volume. Eligibility requires an explicitly
+authored floor on that volume's top, matching placed owner/node and navigation
+region, and actual contribution to the entrance's compiled receiving sector.
+Only that floor's footprint is removed from the corridor exclusion; holes and
+uncovered volume remain. Unrelated walls, differently named regions, disconnected
+floors sharing a region name, and floors above the solid cap remain blocked in
+the focused regression. No runtime code or library metadata changed.
+
+The cap subtraction uses the same world-grid-before-projection order as solid
+slicing. The earlier order left a one-clipping-grid-unit strip which incorrectly
+blocked the 180-degree entrance (`selected-neighbor-placements-LoLeIY`).
+The compiler, corridor and graph suite passes 180 tests; typecheck and lint pass.
+
+Fresh full-scene export `saved-map-exports-zn7ipi` constructs natively with the
+same 121 areas, 617 sight obstacles, 87 doors, ten jump pairs, 85,652 grid blocks
+and 206 elevation boundaries. `saved-map-entrances-kKbKdA` passes all 35 entrance
+round trips, and all eight climb routes and sixteen stair-click routes pass.
+The two forbidden stair routes remain forbidden.
+
+Using the independently staged 24-unit deck approach, copied assemblies in
+`selected-neighbor-placements-TRXCo8` now have no corridor blockers and pass
+24/32 native click round trips, up from 20/32. Both 180-degree copies at both
+elevations complete their trips. The eight remaining failures are return clicks
+selecting a different receiving sector at 37/90 degrees. The terrace gate,
+receiver picking and browser review still prevent publishing the western asset
+candidates. The full-scene result alone is not full parity.
+
 ## Rotated western entrance: approach experiments rejected (2026-10-19)
 
 The original lower approach is outside the tower's authored footprint, and its

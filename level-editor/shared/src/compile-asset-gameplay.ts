@@ -421,6 +421,7 @@ function compileAssetGameplayAttempt(
   const surfaces: {
     owner: string;
     source: string;
+    node: string;
     polygon: Point[];
     holes: Point[][];
     plane: HeightPlane;
@@ -1062,6 +1063,7 @@ function compileAssetGameplayAttempt(
       const placed = {
         owner: placement.id,
         source: surface.id,
+        node: surface.node,
         forceCrouched: surface.forceCrouched === true,
         acceptsNavigationJoins:
           surface.acceptsNavigationJoins || placement.id === "authored-terrain",
@@ -3223,9 +3225,14 @@ function compileAssetGameplayAttempt(
     contributors: { cut: PassageCut; allowed: CorridorCheck }[];
   };
   const passageChecks = new Map<HeightPlane, Map<string, PassageCheck>>();
-  const passageCheck = (plane: HeightPlane, door: (typeof doors)[number]) => {
+  const passageCheck = (
+    plane: HeightPlane,
+    door: (typeof doors)[number],
+    navigationRegion: string | undefined,
+    receivingSector: number,
+  ) => {
     const structure = door.definition.passageStructure;
-    const key = structure ? door.name : door.interior ? "interior" : "";
+    const key = `${structure ? door.name : door.interior ? "interior" : ""}/${navigationRegion ?? ""}/${receivingSector}`;
     let checks = passageChecks.get(plane);
     if (!checks) {
       checks = new Map();
@@ -3245,19 +3252,71 @@ function compileAssetGameplayAttempt(
             (cut.kind === "volume" ? structure.volumes : structure.blockers).includes(cut.source))
         )
           return [];
-        const { vertices, holes, dimensions } = flatten(cut.polygon);
-        const indices = earcut(vertices, holes, dimensions);
-        const triangles = Array.from({ length: indices.length / 3 }, (_, i) => ({
-          state_id: 0,
-          polygon: {
-            points: indices
-              .slice(i * 3, i * 3 + 3)
-              .map((index): Point => [
-                vertices[index * dimensions]!,
-                vertices[index * dimensions + 1]!,
+        let coverage = [cut.polygon];
+        if (navigationRegion && cut.kind === "volume") {
+          const solid = solidGeometry.find(
+            (solid) => solid.owner === cut.owner && solid.source === cut.source,
+          );
+          const supports = solid
+            ? surfaces.filter(
+                (surface) =>
+                  surface.owner === cut.owner &&
+                  surface.node === cut.source &&
+                  surface.navigationRegion === navigationRegion &&
+                  areas.some(
+                    (area) =>
+                      area.sector === receivingSector &&
+                      (area.authoredPlane ?? area.plane) === canonicalPlanes.get(surface.plane) &&
+                      polygonClipping.intersection(
+                        [area.receivingPolygon ?? area.polygon],
+                        [surface.polygon],
+                      ).length > 0,
+                  ) &&
+                  surface.worldPolygon.every(
+                    (point) =>
+                      Math.abs(
+                        planeHeight(surface.worldPlane, point) - planeHeight(solid.top, point),
+                      ) < 1e-4,
+                  ),
+              )
+            : [];
+          const current = planeSurfaces.get(plane)?.[0];
+          if (supports.length && current) {
+            // Connected floors explicitly authorize movement over their own
+            // support volumes. Clip only that authored cap coverage; holes,
+            // undeclared roofs and unrelated walls remain collision.
+            const projectCap = ([x, y]: Point): Point => {
+              // Solid slices are clipped on the world grid before projection.
+              // Use that same order to avoid leaving a one-grid-unit wall.
+              x = Math.round(x * 1048576) / 1048576;
+              y = Math.round(y * 1048576) / 1048576;
+              return [x, y - planeHeight(current.worldPlane, [x, y])];
+            };
+            coverage = fixedPolygonBoolean(
+              "difference",
+              coverage,
+              supports.map((surface) => [
+                surface.worldPolygon.map(projectCap),
+                ...surface.worldHoles.map((hole) => hole.map(projectCap)),
               ]),
-          },
-        }));
+            );
+          }
+        }
+        const triangles = coverage.flatMap((polygon) => {
+          const { vertices, holes, dimensions } = flatten(polygon);
+          const indices = earcut(vertices, holes, dimensions);
+          return Array.from({ length: indices.length / 3 }, (_, i) => ({
+            state_id: 0,
+            polygon: {
+              points: indices
+                .slice(i * 3, i * 3 + 3)
+                .map((index): Point => [
+                  vertices[index * dimensions]!,
+                  vertices[index * dimensions + 1]!,
+                ]),
+            },
+          }));
+        });
         if (options.onPassageCollision)
           contributors.push({ cut, allowed: prepareCorridorStates(triangles) });
         return triangles;
@@ -3312,6 +3371,8 @@ function compileAssetGameplayAttempt(
           passageCheck(
             door.interior ? (receiving.authoredPlane ?? receiving.plane) : receiving.plane,
             door,
+            receiving.navigationRegion,
+            receiving.sector,
           );
         if (passage && !passage.allowed(door.middle, project(endpoint)).length) {
           if (options.onPassageCollision) {

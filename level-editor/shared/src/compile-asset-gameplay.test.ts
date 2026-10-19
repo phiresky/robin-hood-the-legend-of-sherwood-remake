@@ -76,6 +76,112 @@ test("doorway structure references are local, explicit, and limited to virtual i
   assert.throws(() => validateAssetGameplay(gameplay, hut), /passage structure/);
 });
 
+test("connected floor caps support an entrance corridor without exempting walls or holes", () => {
+  const compile = (
+    mode: "connected" | "independent" | "disconnected" | "raised" | "hole" | "wall",
+  ) => {
+    const { document, hut, assets } = interiorAssetCompilerFixture();
+    const gameplay = hut.gameplay!;
+    const shape = hut.parts[0]!.obstacle_local_game!;
+    shape.points = [
+      [40, 0, 0],
+      [50, 0, 30],
+      [50, 100, 30],
+      [40, 100, 0],
+    ].map(([x, y, z]) => ({
+      x: x!,
+      y: y!,
+      z_bottom: -10,
+      z_top: z!,
+    }));
+    shape.material_indices = [];
+    gameplay.doors = [];
+    gameplay.surfaces = [
+      {
+        id: "deck",
+        node: "building-999",
+        navigationRegion: "approach",
+        height: 0,
+        polygon: [
+          [0, 0],
+          [40, 0],
+          [40, 100],
+          [0, 100],
+        ],
+      },
+      {
+        id: "ramp",
+        node: "building-999",
+        navigationRegion: mode === "independent" ? "other" : "approach",
+        polygon: [
+          [mode === "disconnected" ? 42 : 40, 0],
+          [50, 0],
+          [50, 100],
+          [mode === "disconnected" ? 42 : 40, 100],
+        ],
+        height:
+          mode === "raised"
+            ? [1, 31, 31, 1]
+            : mode === "disconnected"
+              ? [6, 30, 30, 6]
+              : [0, 30, 30, 0],
+        ...(mode === "hole"
+          ? {
+              holes: [
+                [
+                  [43, 20],
+                  [47, 20],
+                  [47, 80],
+                  [43, 80],
+                ],
+              ] as [number, number][][],
+            }
+          : {}),
+      },
+    ];
+    const door = gameplay.interiors![0]!.doors[0]!;
+    door.outside = [30, 50, 0];
+    door.middle = [55, 50, 30];
+    door.inside = [60, 50, 30];
+    gameplay.interiors![0]!.doors = [door];
+    if (mode === "wall") {
+      const wall = structuredClone(hut.parts[0]!);
+      wall.node = "building-998";
+      wall.obstacle_local_game!.points = [
+        [35, 20],
+        [36, 20],
+        [36, 80],
+        [35, 80],
+      ].map(([x, y]) => ({
+        x: x!,
+        y: y!,
+        z_bottom: -10,
+        z_top: 40,
+      }));
+      hut.parts.push(wall);
+      const part = structuredClone(document.objects[0]!);
+      part.id = "wall";
+      part.node = "asset:hut:building-998";
+      part.obstacle = wall.obstacle_local_game!;
+      document.objects.push(part);
+    }
+    return compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+  };
+  for (const mode of [
+    "connected",
+    "independent",
+    "disconnected",
+    "raised",
+    "hole",
+    "wall",
+  ] as const) {
+    const geometry = compile(mode);
+    const door = geometry.buildings![0]!.Building.doors[0]!;
+    const blocked = door.passage_states?.some((state) => !state.allowed_states.length) ?? false;
+    assert.equal(blocked, mode !== "connected", mode);
+  }
+});
+
 test("copied roof takeoffs follow precise floor contours without fictitious ground drops", () => {
   const source = parseLevel3D(completeRoofJumps.document);
   const asset = parseProjectionAssetDescriptor(completeRoofJumps.asset);

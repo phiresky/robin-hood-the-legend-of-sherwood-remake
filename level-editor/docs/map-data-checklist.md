@@ -27,8 +27,10 @@ copied, rotated and raised neighboring assemblies pass. Removing the slope
 rejects all sixteen climb bindings. The candidates remain unpublished pending
 broader placement/browser review. A subsequent west-plateau and terrace candidate
 passes all 35 full-scene entrance round trips, eight climb routes and sixteen
-stair-click routes. It still loses the lower tower entrance at 180 degrees and
-omits the terrace gate passage; these failures prevent publication. See the
+stair-click routes. Export-time support-cap checks and a staged deck approach
+now pass the 180-degree cases and 24/32 moved entrance round trips. Return-click
+receiver selection at 37/90 degrees and the omitted terrace gate passage still
+prevent publication. See the
 [western terrace evidence](map-compilation-evidence.md#western-terrace-candidate-and-precision-serialization-2026-10-19) and
 [shared-floor seam evidence](map-compilation-evidence.md#shared-floor-seam-survives-rotated-placement-2026-10-19).
 
