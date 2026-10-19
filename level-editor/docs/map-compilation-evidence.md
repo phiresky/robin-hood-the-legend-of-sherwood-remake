@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Northern gate and round tower published (2026-10-20)
+
+The north gate tower and northwest round tower now have published doorway
+structure declarations. The separate gallery and two curtain walls provide
+their elevated approaches. `selected-neighbor-placements-rGN9B0` passes all 112
+player-click entrance/return probes across two copies, four rotations and two
+elevations. Removing the gallery rejects all 32 dependent entrance placements
+in `selected-neighbor-placements-Cj07x0`; no unrelated floor substitutes for it.
+
+The elevated 37-degree browser snapshot `draft-scene-render-rgzpGT` passes
+export/reopen with matching gameplay, color and depth. Its 77,455,507-byte ZIP
+has SHA-256 `4989a246c9e2d97e6f32f5437008c723dce8ac9bc98090f1fd7c722db36b9f26`.
+Native loading without base data and all fourteen archived player-click trips
+pass (`exact-map-archive-wueusx55`). Publication derivative validation passes in
+`reviewed-publication-stage-3p_9e8tq`.
+
+`northern-gate-publication-installed` installs both drafts and Nottingham scene
+pins; all installed hashes match. Model and derivative bytes remain unchanged.
+Fresh installed export `saved-map-exports-AnuuFy` constructs natively, with the
+same 94 areas, 667 sight obstacles, 173 doors, 39 jump pairs, 159,300 grid blocks
+and 153 elevation boundaries. `saved-map-entrances-CsKvjT` passes 58/69 entrance
+round trips, up from 52/69. Eleven failures and four unpublished candidates
+remain; this entrance result is not full-map parity.
+
 ## Western castle doorway trio published (2026-10-20)
 
 The west annex, conical tower and stair tower now have published local doorway

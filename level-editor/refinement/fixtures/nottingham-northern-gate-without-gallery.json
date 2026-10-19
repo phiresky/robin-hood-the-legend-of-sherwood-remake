@@ -1,0 +1,27 @@
+{
+  "map": "nottingham",
+  "assets": [
+    "nottingham-north-gate-tower",
+    "nottingham-northwest-round-tower",
+    "nottingham-north-curtain-wall",
+    "nottingham-northwest-curtain-wall"
+  ],
+  "size": [7000, 5000],
+  "copyXs": [1800.25, 5200.25],
+  "assemblyY": 3000.75,
+  "terrainHeight": 0,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "nottingham-north-gate-tower",
+      "door": "interior-0/door-1",
+      "sourceLocal": [-58.495849609375, 33.63345933011763]
+    },
+    {
+      "asset": "nottingham-northwest-round-tower",
+      "door": "interior-0/door-2",
+      "sourceLocal": [73.70166015625, -0.8710756374004365]
+    }
+  ],
+  "missingEntrances": true
+}
