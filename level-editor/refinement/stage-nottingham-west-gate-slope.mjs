@@ -23,7 +23,17 @@ assert.equal(
 const surface = edit.gameplay.surfaces.find((entry) => entry.id === "building-330-walk-0");
 assert.ok(surface);
 surface.preserveMovementPrecision = true;
-validateAssetGameplay(edit.gameplay, JSON.parse(bytes));
+const descriptor = JSON.parse(bytes);
+const door = edit.gameplay.interiors
+  .find((room) => room.id === "interior-0")
+  ?.doors.find((entry) => entry.id === "interior-0/door-0");
+assert.ok(door?.passageStructure);
+assert.deepEqual(door.passageStructure.volumes, ["building-329", "building-330", "building-331"]);
+assert.ok(descriptor.parts.find((part) => part.node === "building-332")?.obstacle_local_game.solid);
+// The animated entrance crosses the tower's fourth structural side at oblique
+// placements. This declaration leaves its ordinary walking collision intact.
+door.passageStructure.volumes.push("building-332");
+validateAssetGameplay(edit.gameplay, descriptor);
 const output = await fs.mkdtemp("work/needs-review/map-compile/west-gate-slope-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits, null, 2));
 await fs.writeFile(
@@ -33,6 +43,8 @@ await fs.writeFile(
       input: stage,
       asset: edit.asset,
       surface: surface.id,
+      door: door.id,
+      addedStructure: "building-332",
       scope: "unpublished-slope-precision-candidate-requires-placement-verification",
     },
     null,

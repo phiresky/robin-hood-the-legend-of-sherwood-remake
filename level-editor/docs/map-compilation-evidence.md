@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## West gate structural side and foreign-wall isolation (2026-10-20)
+
+Candidate `west-gate-slope-Bny8ah` retains slope precision and declares volume
+332 as the fourth local structural side of `interior-0/door-0`. Its animated
+entrance can cross that side at oblique placements; ordinary walking collision
+remains unchanged. Across all eight exports, comparison with the precision-only
+candidate finds differences solely in building passage permissions and warnings.
+Sight geometry, movement geometry, coordinates and all other exported fields
+are identical.
+
+With the arch as its separate supporting asset, the west tower passes all 48
+native complete sprite entrance round trips (`selected-neighbor-placements-3CegIU`).
+Adding the west courtyard wall yields 44/48
+(`selected-neighbor-placements-XsGxWG`): the four 90-degree failures still name
+the neighbouring wall's volume 327. The compiler does not exempt that foreign
+barrier. Both fixtures retain three entrances per copy across four rotations
+and two elevations. This separates the repaired local structure from the
+remaining assembly-clearance issue; it does not establish full-map parity or
+authorize publishing the remaining staged definitions.
+
 ## West gate slope precision candidate (2026-10-20)
 
 The west tower's authored doorway is exactly coplanar with both its navigation

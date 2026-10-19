@@ -142,6 +142,11 @@ routes. Forty collision denials remain. The isolated west tower/arch/wall
 assembly passes 40/48 trips; its failures involve local structure at 37 degrees
 and a neighbouring wall at 90 degrees. The existing precision flag delays floor
 rounding until final export; it adds no runtime work.
+Declaring the west tower's fourth structural side in its animated entrance now
+gives 48/48 native trips with the supporting arch. With the neighbouring courtyard
+wall present, 44/48 pass; its four 90-degree obstructions remain enforced. Only
+doorway permission data and warnings change, not walking or sight geometry.
+This newer candidate is still unpublished.
 Sherwood's three doorway corrections retain walking geometry and pass 48 moved
 placement trips, browser reopening and six archived terrain-start trips. Its five
 entrance checks now pass; this does not certify all other map features.
