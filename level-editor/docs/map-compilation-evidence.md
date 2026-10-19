@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## East gate doorway definitions published (2026-10-20)
+
+The east tower's two local doorway structure declarations are installed via
+`east-gate-publication-installed`. Installed hashes match the reviewed report;
+models, previews and derivative receipts remain byte-identical. Nottingham's
+scene pin changed together with its descriptor. Ten other Nottingham candidates
+remain unpublished in `remaining-nottingham-doors-xkkk7xwm`.
+
+Fresh moved-assembly audit `selected-neighbor-placements-zXJ5kd` passes all 48
+native complete sprite round trips. Browser snapshot `draft-scene-render-MTAJee`
+uses the 37-degree, height-40 assembly and passes export/reopen with matching
+gameplay, color and depth. Its 17,651,734-byte ZIP has SHA-256
+`cce0c4e509afc65aabcd0ffa77de67803fb7d48ca432e253b9eb6d44108dbd40`.
+The exact ZIP loads without base data and passes six native entrance round trips
+in `saved-map-entrances-QcdstF`. Derivative validation passes in
+`reviewed-publication-stage-sjh6k_37`.
+
+Fresh installed export `saved-map-exports-iUiZSm` constructs 94 areas, 667 sight
+obstacles, 173 doors, 39 jump pairs, 159,300 grid blocks and 153 elevation
+boundaries. `saved-map-entrances-gAFP0M` passes 47/69 entrance trips, versus
+45/69 before this publication. Twenty-two failures remain.
+
+The next northwest-spire standalone check (`standalone-asset-placements-QndNfv`)
+rejects the fixture because neither copied room retains a supported entrance.
+Its neighbouring floor assembly still needs explicit testing; no additional
+definition was published on the strength of that failed test.
+
 ## West gate definition published with verified derivatives (2026-10-20)
 
 `west-gate-publication-installed/report.json` records installation of the reviewed

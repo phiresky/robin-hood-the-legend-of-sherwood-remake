@@ -115,7 +115,7 @@ exact-archive click round trips. The affected Wychford asset-regression export
 constructs natively and retains all 24 entrance trips. Definitions and both
 saved-scene pins are installed; models and textures are unchanged. These results
 do not establish full map parity.
-Their current entrance results are Derby 25/25, Lincoln 33/35, Nottingham 45/69,
+Their current entrance results are Derby 25/25, Lincoln 33/35, Nottingham 47/69,
 and Sherwood 5/5. Three Lincoln village doorway corrections improve its result
 from 28/35 while retaining movement geometry. Those assets pass 48 moved-placement
 room trips, browser export/reopen, native ZIP loading and six archived terrain-start
@@ -150,6 +150,10 @@ The west tower definition is now published as a draft; the other eleven
 Nottingham candidates remain unpublished. A fresh installed-library export
 constructs natively and passes 45/69 entrances. Model and derivative bytes are
 unchanged; Nottingham's descriptor pin was updated together with the library.
+The east tower's doorway definitions are now also published after 48 moved
+trips, browser export/reopen, native ZIP loading and six exact archived trips.
+The latest installed Nottingham export passes 47/69 entrances; ten other staged
+asset definitions remain unpublished. Models and derivatives are unchanged.
 Repositioning the independent wall clears all 48 entrance trips while retaining
 wall collision. The 90-degree new assembly passes browser export/reopen with
 identical gameplay/color/depth, native ZIP loading without base data and all six
