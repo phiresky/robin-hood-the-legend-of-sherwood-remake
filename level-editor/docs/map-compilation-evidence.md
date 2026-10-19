@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Northwest spire published with separate roof support (2026-10-20)
+
+The northwest spire receives its entrance floor from the independently placed
+hall/watchtower's `building-488-walk-0`. With only the spire edit staged,
+`selected-neighbor-placements-2UU0kA` passes sixteen player-click entrance/return
+probes: two copies, four rotations, two elevations. Probes start at the doorway
+on that roof, not on distant ground. The unsupported standalone fixture remains
+invalid; the spire does not invent its own floor.
+
+The elevated 37-degree browser fixture `draft-scene-render-SlKe9C` passes
+export/reopen, including both hall appearance states, with matching gameplay,
+color and depth. Its 29,722,528-byte ZIP has SHA-256
+`310f7ea7f7a409463247c8c60f981543bbefe3e3b2aada7971878d2de38e68c1`.
+Native loading without base data passes; both selected archived entrance/return
+probes pass in `exact-map-archive-a_jgtbo_`. The archive audit helper copies
+selected placement probes only after verifying identical buildings and motion
+data; a deliberately mismatched rotation is rejected.
+
+`northwest-spire-publication-installed` installs the definition and Nottingham
+scene pin. Installed hashes match the reviewed report; model/derivative bytes
+and the supporting hall definition are unchanged. Derivative validation passes
+in `reviewed-publication-stage-y58kncfh`. The fresh installed export
+`saved-map-exports-8fIrBO` constructs natively, and
+`saved-map-entrances-t9NPJN` passes 48/69 entrance trips (up from 47/69).
+Nine of the original twelve Nottingham candidates remain unpublished; neither
+this entrance result nor the selected archive probes certify the full hall or map.
+
 ## East gate doorway definitions published (2026-10-20)
 
 The east tower's two local doorway structure declarations are installed via

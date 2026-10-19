@@ -7,7 +7,7 @@ import tempfile
 import zipfile
 
 
-def prepare(archive):
+def prepare(archive, approaches=None, approach_file=None):
     archive = Path(archive).resolve(strict=True)
     archive_bytes = archive.read_bytes()
     archive_hash = hashlib.sha256(archive_bytes).hexdigest()
@@ -26,6 +26,22 @@ def prepare(archive):
     assert not scene.get('mission')
     assert scene['map'] == level['title']
     assert scene.get('assetSources')
+    result = {'map': scene['map'], 'file': 'archive.level.json'}
+    if approaches is not None:
+        assert approach_file, 'Select the placement file whose approaches are being copied'
+        source = Path(approaches).resolve(strict=True)
+        manifest = json.loads((source / 'diagnostics.json').read_bytes())
+        assert manifest['complete'] is True
+        matches = [row for row in manifest['results'] if row['file'] == approach_file]
+        assert len(matches) == 1
+        probes = matches[0]['building_approaches']
+        assert probes, 'No selected entrance approaches'
+        original = json.loads((source / approach_file).read_bytes())
+        for key in ('buildings', 'motion_data'):
+            assert original['asset_geometry'][key] == level['asset_geometry'][key], \
+                f'Archive {key} differs from the placement audit'
+        result['building_approaches'] = probes
+        result['approach_source'] = str(source / approach_file)
     output = Path(tempfile.mkdtemp(prefix='exact-map-archive-', dir=archive.parent.parent))
     (output / 'archive.level.json').write_bytes(level_bytes)
     (output / 'archive.rhlos-map.json').write_bytes(scene_bytes)
@@ -35,7 +51,7 @@ def prepare(archive):
         'archive': str(archive),
         'archiveSha256': archive_hash,
         'levelSha256': hashlib.sha256(level_bytes).hexdigest(),
-        'results': [{'map': scene['map'], 'file': 'archive.level.json'}],
+        'results': [result],
     }, indent=2))
     return output
 
@@ -43,4 +59,8 @@ def prepare(archive):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('archive')
-    print(prepare(parser.parse_args().archive))
+    parser.add_argument('--approaches', help='Completed placement audit directory')
+    parser.add_argument('--approach-file', help='One level filename from the placement audit')
+    args = parser.parse_args()
+    assert bool(args.approaches) == bool(args.approach_file)
+    print(prepare(args.archive, args.approaches, args.approach_file))

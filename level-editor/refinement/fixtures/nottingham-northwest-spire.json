@@ -1,0 +1,13 @@
+{
+  "map": "nottingham",
+  "assets": ["nottingham-castle-northwest-spire", "nottingham-castle-hall-and-watchtower"],
+  "terrainHeight": 0,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "nottingham-castle-northwest-spire",
+      "door": "interior-0/door-0",
+      "sourceLocal": [2, 30.167678080545826]
+    }
+  ]
+}
