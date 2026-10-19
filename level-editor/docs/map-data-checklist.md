@@ -56,6 +56,11 @@ retains the gate and all 35 entrance trips, but the turret's visible slab/cap
 heights conflict with that floor. Mesh reconciliation and actor-specific gate
 permission tests remain necessary; see the
 [annex receiver diagnosis](map-compilation-evidence.md#annex-gate-discarded-turret-receiver-isolated-2026-10-20).
+A staged cap-only model repair now supports the gate endpoint within 0.0001 game
+units while preserving the exterior, but exposes an untextured inner band and
+supports only 715/785 sampled receiver-footprint points. It remains unpublished
+pending footprint and visual repairs; see the
+[turret model review](map-compilation-evidence.md#turret-cap-repair-candidate-and-visual-review-2026-10-20).
 See the
 [rotated lighting evidence](map-compilation-evidence.md#multi-height-terrace-lighting-survives-asset-rotation-2026-10-20),
 [light-selector repair](map-compilation-evidence.md#terrace-light-selectors-restored-to-physical-floors-2026-10-20),

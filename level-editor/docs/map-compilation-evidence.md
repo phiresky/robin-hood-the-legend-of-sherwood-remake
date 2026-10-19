@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Turret cap repair candidate and visual review (2026-10-20)
+
+`blender/repair_annex_turret_floor.py` stages a pinned-model repair without changing
+the library. A first attempt to rebuild the full tower from collision footprints
+was rejected on render review: it distorted the tower and its UV mapping. The
+current script instead retains 1,066 wall/battlement triangles with their positions,
+corner normals, UVs and material, and moves 46 textured cap triangles from height
+486 to the retained floor height 472.00104 on the floor's own node. The obsolete
+overlapping floor slab is replaced. No runtime code or game-data lookup is used.
+
+Candidate `annex-turret-mesh-review-05/model.glb` has SHA-256
+`d5fec14f74b865b139cbb870b9e34e701ea8687f925ba13ca40f2f8edeae3719`.
+Its retained texture PNG is byte-identical to the existing wall atlas (SHA-256
+`abfe9df21df98e6ebf7592b3be7388a0b7e5d13b263a6d1bea20d1c0495dc15b`).
+Before/after CPU renders preserve the exterior and battlements, but expose an
+untextured inner band previously hidden by the raised cap. This remains a visual
+defect requiring repair before publication.
+
+The point-support inspector now accepts an explicit staged library root.
+`placed-point-support-YlZ3dR` verifies the gate endpoint on the staged floor at
+472.000942, within 0.0001 of its authored height; the blocking cap is absent.
+A two-unit grid sweep in `annex-turret-mesh-review-05/floor-coverage.json` finds
+715/785 samples of the retained receiver footprint supported by that floor.
+Seventy edge samples are unsupported: clip/reconcile the gameplay footprint
+against the actual mesh before claiming floor coverage. Neither this model nor
+the preceding diagnostic gameplay restoration is installed. Moved assemblies,
+actor-specific gate controls and rendered actor contact remain unverified.
+
 ## Annex gate: discarded turret receiver isolated (2026-10-20)
 
 The actual outside endpoint is world `[1727,1485.00104,472.00104]`, over the

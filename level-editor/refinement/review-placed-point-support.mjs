@@ -7,18 +7,23 @@ import { maskRecoveryMesh } from "../pipeline/src/mask-recovery-mesh.ts";
 import { partMatrix } from "../shared/src/level3d.ts";
 import { gltfToScene, sceneToGame, applyAffineMatrix } from "../shared/src/geometry.ts";
 
-const [map, xText, yText, zText, ...assets] = process.argv.slice(2);
+const args = process.argv.slice(2);
+const libraryFlags = args.filter((arg) => arg.startsWith("--library="));
+assert.ok(libraryFlags.length <= 1, "Supply at most one library root");
+const library = libraryFlags[0]?.slice("--library=".length) ?? "library";
+assert.ok(library);
+const [map, xText, yText, zText, ...assets] = args.filter((arg) => !libraryFlags.includes(arg));
 const point = [xText, yText, zText].map(Number);
 assert.ok(
   map && assets.length && point.every(Number.isFinite),
   "Supply map, world X/Y/Z and asset IDs",
 );
-const document = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
+const document = await readStoredMap(`${library}/scenes/${map}.rhlos-map.json`, library);
 const results = [];
 for (const asset of assets) {
   const source = document.assetSources.find((source) => source.id === asset);
   assert.ok(source, `Missing asset ${asset}`);
-  const model = await loadSceneModel("library", source);
+  const model = await loadSceneModel(library, source);
   for (const object of document.objects.filter((object) =>
     object.node.startsWith(`asset:${asset}:`),
   )) {
@@ -63,7 +68,10 @@ for (const asset of assets) {
   }
 }
 const output = await fs.mkdtemp("work/needs-review/map-compile/placed-point-support-");
-await fs.writeFile(`${output}/report.json`, JSON.stringify({ map, point, results }, null, 2));
+await fs.writeFile(
+  `${output}/report.json`,
+  JSON.stringify({ library, map, point, results }, null, 2),
+);
 console.log(output);
 for (const result of results)
   console.log(
