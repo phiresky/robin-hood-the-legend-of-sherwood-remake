@@ -45,6 +45,12 @@ The east and west courtyard lodges now pass in the assembled scene as well as
 loads without base data, and passes all four archived terrain-start entrance trips.
 
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
+An unpublished Derby ownership correction moves three tower entrances out of
+the main-hall definition and links the split room in the editor. It preserves
+assembled doorway positions and room memberships, passes 48 isolated placement
+trips, and improves full-scene entrance results to 20/25. One transferred
+entrance still has a receiver mismatch; independent movement and browser ZIP
+verification remain pending. The published Derby result below remains 18/25.
 Their current entrance results are Derby 18/25, Lincoln 31/35, Nottingham 43/69,
 and Sherwood 5/5. Three Lincoln village doorway corrections improve its result
 from 28/35 while retaining movement geometry. Those assets pass 48 moved-placement

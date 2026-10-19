@@ -4,6 +4,40 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Derby tower doorway ownership candidate (2026-10-19)
+
+Three main-hall-owned doorway corridors cross north-tower structure. Candidate
+`derby-tower-ownership-L8OXLK` transfers both `interior-3` entrances and the upper
+`interior-6` entrance into tower-local coordinates, with explicit local structure
+references. The remaining hall and tower portions of `interior-6` are linked by
+an editor interior connection. Doors belonging to the same tower room remain
+connected through their asset definition.
+
+`stage-derby-tower-entrances.mjs` stages this correction without editing the
+library. It verifies translation-only placements, validates both asset definitions
+and rejects changes outside interior metadata. `check-staged-map.mjs` compiles
+the staged scene and definitions without installing them or adding mission data.
+Full export `staged-map-export-FNXgSM` preserves every doorway endpoint and the
+room memberships. Only building definitions and warnings differ from
+`saved-map-exports-curpyW`; walking geometry is unchanged. Native construction
+passes with 60 areas, 371 sight obstacles, 70 doors, two jump pairs, 64,860 grid
+blocks and 169 elevation boundaries. All three tower collision blocks disappear.
+Native entrance audit `saved-map-entrances-ls5Oz3` improves from 18/25 to 20/25.
+The third transferred entrance at [904,469] exposes a receiver mismatch, current
+329 versus queried 330, and remains unresolved.
+
+Isolated fixture `asset-building-doors-CMeOzp` passes all 48 native doorway
+round trips across two copies, four rotations and two elevations. Its authored
+support terrain offset is 530.00104 units, with placement Y 900.75 to keep the
+high roof entrance inside the export frame. The earlier fixed-frame fixture
+`asset-building-doors-jMSU3Z` omits two roof entrances outside the frame and is
+explicitly incomplete. The placement checker now retains failed descriptors
+and warnings before asserting, and accepts an explicit placement Y.
+
+This candidate remains unpublished. Receiver continuity, independent asset
+movement with the editor room link, and browser ZIP checks are still required.
+There are no runtime implementation changes.
+
 ## Nottingham street doorway publication and lock audit (2026-10-19)
 
 Stage `local-door-structure-stage-zfR4WI` declares one local doorway blocker

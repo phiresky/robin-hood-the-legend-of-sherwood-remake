@@ -6,9 +6,11 @@ import { compileMap } from "../app/src/map-compile.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
-const [directory, stage, terrainOffsetArgument = "0"] = process.argv.slice(2);
+const [directory, stage, terrainOffsetArgument = "0", centerYArgument = "600.75"] = process.argv.slice(2);
 const terrainOffset = Number(terrainOffsetArgument);
+const centerY = Number(centerYArgument);
 assert.ok(Number.isFinite(terrainOffset), "Terrain offset must be finite");
+assert.ok(Number.isFinite(centerY), "Placement Y must be finite");
 assert.ok(
   directory,
   "Supply an asset directory relative to library, optionally a gameplay stage and terrain height offset",
@@ -51,6 +53,7 @@ const save = (complete) =>
       modelSha256,
       stage,
       terrainOffset,
+      centerY,
       complete,
       results,
     }),
@@ -70,7 +73,7 @@ for (const height of [0, 40])
       terrain: createTerrainGrid([0, 0, 1600, 1200], 400, height + terrainOffset),
     };
     for (const x of [450.25, 1150.25]) {
-      const inserted = insertProjectionAsset(document, descriptor, reference, [x, 600.75, height]);
+      const inserted = insertProjectionAsset(document, descriptor, reference, [x, centerY, height]);
       document = inserted.document;
       document.groups.find((group) => group.id === inserted.selection.id).transform.rot_deg =
         rotation;
@@ -83,7 +86,6 @@ for (const height of [0, 40])
     );
     const doors =
       compiled.descriptor.asset_geometry.buildings?.flatMap(({ Building }) => Building.doors) ?? [];
-    assert.equal(doors.length, doorCount * 2, "Every copied entrance must bind to terrain");
     const file = `${rotation}-${height}.level.json`;
     await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
     await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
@@ -91,6 +93,7 @@ for (const height of [0, 40])
       file,
       rotation,
       height,
+      expectedDoors: doorCount * 2,
       building_approaches: doors.map((door) => ({
         point_out: door.point_out,
         layer: door.layer_out,
@@ -100,5 +103,7 @@ for (const height of [0, 40])
       warnings: compiled.warnings,
     });
     await save(false);
+    assert.equal(doors.length, doorCount * 2,
+      `Every copied entrance must bind; inspect ${output}/${file} and diagnostics.json`);
   }
 await save(true);
