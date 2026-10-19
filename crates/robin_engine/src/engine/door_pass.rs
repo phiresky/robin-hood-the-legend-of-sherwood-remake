@@ -989,7 +989,7 @@ impl EngineInner {
                     door.point_in,
                 ),
             ];
-            if raw.door_type != 0
+            if !matches!(raw.door_type, 0 | 3)
                 || raw.world_endpoints.is_none()
                 || endpoints.iter().any(|(_, sector, _, _)| {
                     let sector = &self.world.fast_grid.level.sectors

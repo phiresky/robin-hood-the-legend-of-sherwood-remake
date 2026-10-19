@@ -48,6 +48,18 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
             let states =
                 fixed_state.map_or_else(|| vec!["closed", "open", "reset"], |state| vec![state]);
             for state in states {
+                if state == "open"
+                    && let Some(unlocks) = probe["unlock_before_open"].as_array()
+                {
+                    for door in unlocks {
+                        let index = u32::try_from(door.as_u64().unwrap()).unwrap();
+                        assert!(
+                            engine.script_domains.interactables.doors[index as usize].unlockable
+                        );
+                        engine
+                            .execute_unlock_door_done(crate::gate::DoorIndex::new(index).unwrap());
+                    }
+                }
                 for &patch in &patches {
                     if state == "open" {
                         engine.apply_patch(TickCtx::new(&sim, &assets), patch);
@@ -58,7 +70,10 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                 for door in doors {
                     let index = usize::try_from(door.as_u64().unwrap()).unwrap();
                     let runtime = &engine.script_domains.interactables.doors[index];
-                    assert_eq!(runtime.door_type, crate::gate::DoorType::Default);
+                    assert!(matches!(
+                        runtime.door_type,
+                        crate::gate::DoorType::Default | crate::gate::DoorType::Gate
+                    ));
                     let mut gate_search = Vec::new();
                     if probe["reject_alternatives"] == true {
                         let auth = crate::gate::ActorAuthInfo {

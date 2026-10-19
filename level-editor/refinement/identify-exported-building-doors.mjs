@@ -8,13 +8,14 @@ import { sceneToGame, applyAffineMatrix } from "../shared/src/geometry.ts";
 
 // Identify authoring owners without adding diagnostic names to the runtime format.
 const directory = process.argv[2];
+const ordinary = process.argv[3] === "--ordinary";
 assert.ok(directory, "Supply a completed saved-map export diagnostic directory");
 const report = JSON.parse(await fs.readFile(`${directory}/diagnostics.json`, "utf8"));
 assert.equal(report.complete, true);
 const results = [];
 const writeReport = (complete) =>
   fs.writeFile(
-    `${directory}/building-owners.json`,
+    `${directory}/${ordinary ? "ordinary" : "building"}-owners.json`,
     JSON.stringify(
       { scope: "asset-door-coordinate-matches-not-traversal-proof", complete, results },
       null,
@@ -55,7 +56,9 @@ for (const result of report.results) {
   const candidates = [];
   for (const instance of placements.values()) {
     if (!instance.visible) continue;
-    for (const room of instance.descriptor.gameplay?.interiors ?? [])
+    for (const room of ordinary
+      ? [{ id: "ordinary", doors: instance.descriptor.gameplay?.doors ?? [] }]
+      : (instance.descriptor.gameplay?.interiors ?? []))
       for (const door of room.doors) {
         const part = instance.parts.get(door.node);
         assert.ok(part, `Missing door frame ${instance.id}/${door.node}`);
@@ -84,13 +87,17 @@ for (const result of report.results) {
         });
       }
   }
-  compiled.asset_geometry.buildings?.forEach(({ Building }, building) => {
+  const entries = ordinary
+    ? [{ Building: { doors: compiled.asset_geometry.doors } }]
+    : compiled.asset_geometry.buildings;
+  entries?.forEach(({ Building }, building) => {
     Building.doors.forEach((door, index) => {
       const matches = candidates.filter(
         (candidate) =>
           JSON.stringify(candidate.point_in) === JSON.stringify(door.point_in) &&
           JSON.stringify(candidate.point_mid) === JSON.stringify(door.point_mid),
       );
+      if (ordinary && !matches.length) return;
       assert.equal(matches.length, 1, `${result.map} building ${building} door ${index} ownership`);
       results.push({
         map: result.map,
