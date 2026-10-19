@@ -60,6 +60,53 @@ test("crossing heights warn instead of dropping either receiving floor", () => {
   assert.ok(items.every((item) => item.pieces.length === 1));
 });
 
+test("a coplanar floor inside another region's exclusion keeps independent collision", () => {
+  for (const reverse of [false, true]) {
+    const ground = region(0, [0, 0, 40]);
+    ground.blockers = [
+      [
+        [120, 120],
+        [180, 120],
+        [180, 180],
+        [120, 180],
+      ],
+    ];
+    ground.pieces[0]!.blockers = ground.blockers;
+    const floor = region(0, [0, 0, 40]);
+    floor.polygon = [
+      [130, 130],
+      [170, 130],
+      [170, 170],
+      [130, 170],
+    ];
+    floor.pieces[0]!.polygon = floor.polygon;
+    const original = structuredClone([ground.polygon, ground.blockers, floor.polygon]);
+    const warnings: string[] = [];
+    orderNavigationLayers(reverse ? [floor, ground] : [ground, floor], warnings);
+    assert.ok(floor.layer > ground.layer);
+    assert.equal(ground.pieces[0]!.layer, ground.layer);
+    assert.equal(floor.pieces[0]!.layer, floor.layer);
+    assert.deepEqual([ground.polygon, ground.blockers, floor.polygon], original);
+    assert.deepEqual(warnings, []);
+  }
+});
+
+test("coplanar regions with shared blocked coverage do not require extra layers", () => {
+  const a = region(0, [0, 0, 40]);
+  a.blockers = [
+    [
+      [120, 120],
+      [180, 120],
+      [180, 180],
+      [120, 180],
+    ],
+  ];
+  a.pieces[0]!.blockers = a.blockers;
+  const b = structuredClone(a);
+  orderNavigationLayers([a, b], []);
+  assert.equal(a.layer, b.layer);
+});
+
 test("an empty ground slot and reserved lift layers remain available", () => {
   const ordinary = region(42, [0, 0, 40]);
   const lift = { ...region(900, [0, 0, 0]), lift: "ladder" };

@@ -1,7 +1,10 @@
 import type { NavigationRegion } from "./assemble-navigation-regions.ts";
 import { planeHeight } from "./gameplay-plane.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
-import { separateOverlappingNavigationLayers } from "./separate-overlapping-navigation-layers.ts";
+import {
+  blocksNavigationRegion,
+  separateOverlappingNavigationLayers,
+} from "./separate-overlapping-navigation-layers.ts";
 import { warnSelfOverlappingNavigation } from "./warn-self-overlapping-navigation.ts";
 import {
   separateContradictoryLayerGroups,
@@ -28,6 +31,7 @@ function tryOrderNavigationLayers(regions: NavigationRegion[], warnings: string[
     point: [number, number];
   })[] = [];
   const conflicts: number[][] = [];
+  const checkedCoplanar = new Map(regions.map((region) => [region, new Set<NavigationRegion>()]));
   const pieces = regions
     .filter((region) => !region.lift)
     .flatMap((region) =>
@@ -58,7 +62,16 @@ function tryOrderNavigationLayers(regions: NavigationRegion[], warnings: string[
     for (const other of active) {
       if (current.layer === other.layer || current.minY >= other.maxY || current.maxY <= other.minY)
         continue;
-      if (current.plane.every((n, i) => Math.abs(n - other.plane[i]!) < 1e-7)) continue;
+      if (current.plane.every((n, i) => Math.abs(n - other.plane[i]!) < 1e-7)) {
+        if (checkedCoplanar.get(current.region)!.has(other.region)) continue;
+        checkedCoplanar.get(current.region)!.add(other.region);
+        checkedCoplanar.get(other.region)!.add(current.region);
+        // A coplanar island must be queried before the surrounding exclusion;
+        // the native screen query stops at the first layer containing an obstacle.
+        if (blocksNavigationRegion(current.region, other.region)) add(current.layer, other.layer);
+        if (blocksNavigationRegion(other.region, current.region)) add(other.layer, current.layer);
+        continue;
+      }
       const overlap = fixedPolygonBoolean("intersection", [[current.polygon]], [[other.polygon]]);
       let above = false,
         below = false;

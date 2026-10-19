@@ -4,6 +4,81 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Independent coplanar collision layers (2026-10-19)
+
+Native motion obstacles block their entire layer. An independent walkable island
+inside another region's exclusion therefore needs its own layer even when both
+floors have the same height. The island must also be ordered above the exclusion
+for screen queries, which stop at the first blocking layer. The exporter now
+detects that conflict, allocates separate layers and prepares click precedence.
+It preserves both floor geometry and exclusions. Region-pair checks are cached
+during preparation; no runtime movement code changes.
+
+The existing receiving-island fixture previously checked material ownership only
+through an explicit sector handle, missing its blocked native point/click queries.
+Its regenerated descriptor and strengthened native test now check both queries
+as well as the original material and surrounding-collision assertions. All 273
+targeted editor tests and 72 native asset compilation tests pass (seven external
+fixture tests remain ignored). App typechecking/build and the game build pass.
+
+Lincoln candidate `local-door-structure-stage-7do0Wm` adds own-structure references
+to the keep and annex turret. Full-scene `saved-map-entrances-BBWMyG` passes 33/35
+entrances, leaving the north hall and west round tower blocked. The candidates
+remain unpublished. The new selected-entrance placement helper tests each door
+against independently authored terrain at its placed height. Both turret doors
+pass sixteen actual-click trips each in `building-entrance-on-terrain-JnHK7l`
+and `building-entrance-on-terrain-6a7vlv`. The keep's tested entrance initially
+failed all sixteen starts in `building-entrance-on-terrain-gQslk7`; separating
+layers alone allowed entry but left return clicks blocked. With corrected layer
+precedence, `building-entrance-on-terrain-ppFdRb` passes all sixteen round trips.
+This is entrance evidence, not complete keep traversal certification.
+
+The latest full Derby export `saved-map-exports-N8q2vA` is identical to the
+25/25-tested `saved-map-exports-GIasUY`. Fresh independent placements pass 48
+doorway trips (`asset-building-doors-PFF1Kd`, `asset-building-doors-y5ugQO`) and
+32 terrain click trips (`entrance-ground-contacts-cROz8K`,
+`entrance-ground-contacts-pd8wTK`). The mixed scene's refreshed browser archive
+`draft-scene-render-q3Y7Ch/derby-entrance-contacts-isolated-layers.zip` reopens
+with identical gameplay/color/depth, is 12,285,222 bytes and has SHA-256
+`fe7ee0fd887e87cba9a2eefd23b5e8ebe50b6e36bfb92c168c69f5b78a0b769a`.
+Its six exact-archive native click trips pass in `derby-contacts-archive-d0mqglft`.
+Use this refreshed archive for the pending Derby publication; the earlier archive
+below predates collision-layer isolation.
+
+## Derby entrance structures and terrain contacts (2026-10-19)
+
+The follow-up Derby entrance batch uses stage `derby-entrance-contacts-MVtLH8`.
+It adds local passage-structure declarations to the watchtower's two entrances
+and central gallery's entrance, plus one exterior navigation socket on each
+ground landing. The sockets connect matching authored terrain at export time;
+they do not bypass room doors or create runtime geometry searches.
+
+Doorway-start checks alone initially missed disconnected landing approaches.
+The new `check-entrance-ground-contacts.mjs` derives an exterior start from each
+asset-local socket after placement, then verifies actual player-click entry and
+return using the native full-character test. Both assets pass all sixteen cases
+each: two copies, four rotations and two elevations. These are recorded in
+`entrance-ground-contacts-fVGjpu` and `entrance-ground-contacts-MmWX5C`.
+All 48 doorway-start round trips also pass in `asset-building-doors-CLQ5H4`
+and `asset-building-doors-26NR6j`.
+
+Full Derby export `saved-map-exports-GIasUY` constructs 60 movement areas,
+341 sight obstacles, 70 doors, two jump pairs, 64,860 grid blocks and 136
+elevation boundaries. `saved-map-entrances-kuKQZS` passes all 25 entrance trips.
+The mixed four-building scene `building-gallery-Ensvta` passes six actual-click
+round trips, with explicit supported starts away from the gallery's roof.
+
+Browser fixture `draft-scene-render-q3Y7Ch` exports and reopens identical
+gameplay, color and depth. Its archive `derby-entrance-contacts.zip` is
+12,285,179 bytes with SHA-256
+`8f744b649f0858784beb7492e7c0932b9a73f2d36fa82cc8ef32f57ce152f70d`.
+The extracted rendering shows four separate buildings on their corresponding
+terrain elevations. Exact-archive audit `derby-contacts-archive-ul4s4xzx` passes
+all six player-click round trips. The ZIP loads color, depth, minimap and editor
+scene without a base datadir: 73 sight obstacles, sixteen door projections and
+16,200 grid blocks. This batch verifies these entrances and their ground contacts,
+not all traversal, rendering or state-control parity for Derby.
+
 ## Rounded obstacle precision overlays (2026-10-19)
 
 An independently rotated Derby watchtower exposed a reconstructed precision

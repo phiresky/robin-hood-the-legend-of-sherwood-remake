@@ -539,19 +539,30 @@ fn receiving_island_keeps_its_material_separate_from_the_surrounding_volume() {
         include_bytes!("fixtures/asset-receiving-island.level.json"),
         &mut assets,
     );
-    let receiver = |number, point| {
+    let receiver = |number, layer, point| {
         let index = engine.fast_grid().level.sector_number_map[&SectorNumber::new(number)];
         let sector = SectorHandle::new(number.try_into().unwrap())
             .unwrap()
             .with_arena_index(SectorIndex::new(index as u32).unwrap());
         engine
-            .get_projection_area_index(&assets, sector, 1, point)
+            .get_projection_area_index(&assets, sector, layer, point)
             .unwrap()
     };
     let outer_point = MapPoint::new(310., 330.);
     let island_point = MapPoint::new(350., 330.);
-    let outer = receiver(1, outer_point);
-    let island = receiver(3, island_point);
+    let outer = receiver(1, 1, outer_point);
+    let island = receiver(3, 2, island_point);
+    let hit = engine.fast_grid().get_sector(island_point, island_point, 2);
+    assert!(
+        matches!(hit, robin_engine::fast_find_grid::SectorHit::Found {
+        sector_number, ..
+    } if sector_number == SectorNumber::new(3))
+    );
+    let clicked = engine
+        .fast_grid()
+        .get_sector_screen(island_point, island_point);
+    assert_eq!(clicked.layer, 2);
+    assert_eq!(clicked.sector, Some(SectorNumber::new(3)));
     assert_ne!(outer, island);
     for (index, point, material) in [
         (outer, outer_point, GameMaterial::Stone),

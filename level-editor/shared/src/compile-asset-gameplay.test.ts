@@ -4219,12 +4219,13 @@ test("an enclosed clearance retains a walkable island inside derived collision",
     },
   ];
   const result = compileAssetGameplay(document, assets, bounds);
-  assert.equal(result.motion_data.layers[0]!.length, 3);
-  assert.ok(
-    result.motion_data.layers[0]!.some((a) =>
+  assert.equal(result.motion_data.layers.flat().length, 3);
+  const islandLayer = result.motion_data.layers.findIndex((layer) =>
+    layer.some((a) =>
       a.polygon.points.every(([x, y]) => x >= 342 && x <= 348 && y >= 342 && y <= 348),
     ),
   );
+  assert.ok(islandLayer > 0, "The island must be above its surrounding collision exclusion");
 });
 test("map assets reject mission spawns rather than silently dropping them", () => {
   const { document, assets, hut } = assetCompilerFixture();
@@ -4349,7 +4350,8 @@ test("movement blocker holes preserve walkable islands and invalid contours fail
     },
   ];
   const compiled = compileAssetGameplay(document, assets, bounds);
-  assert.equal(compiled.motion_data.layers[0]!.length, 3);
+  assert.equal(compiled.motion_data.layers.flat().length, 3);
+  assert.equal(compiled.motion_data.layers.filter((layer) => layer.length > 0).length, 2);
   hut.gameplay!.movementBlockers[0]!.height = [0, 0, 1, 0];
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /must be planar/);
 });

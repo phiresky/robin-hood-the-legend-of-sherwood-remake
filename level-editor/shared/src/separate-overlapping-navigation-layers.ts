@@ -2,7 +2,20 @@ import type { NavigationRegion } from "./assemble-navigation-regions.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { planeHeight } from "./gameplay-plane.ts";
 
-/** A joined ramp may share its starting plane with a floor it later passes over. */
+export function blocksNavigationRegion(owner: NavigationRegion, floor: NavigationRegion): boolean {
+  return (
+    owner.blockers.length > 0 &&
+    fixedPolygonBoolean(
+      "intersection",
+      [floor.polygon, ...floor.blockers],
+      owner.blockers.map((blocker) => [blocker]),
+    ).length > 0
+  );
+}
+
+/** A joined ramp may pass over another floor. Independent coplanar floors also
+ * need separate layers when one region's obstacles cover another's walkable area:
+ * native movement obstacles block the entire layer, not only their owner. */
 export function separateOverlappingNavigationLayers(regions: NavigationRegion[]): void {
   const ordinary = regions.filter((region) => !region.lift);
   const conflicts = new Map(ordinary.map((region) => [region, new Set<NavigationRegion>()]));
@@ -23,6 +36,7 @@ export function separateOverlappingNavigationLayers(regions: NavigationRegion[])
     )
     .sort((a, b) => a.minX - b.minX);
   let active: typeof pieces = [];
+  const checkedCoplanar = new Map(ordinary.map((region) => [region, new Set<NavigationRegion>()]));
   for (const current of pieces) {
     active = active.filter((other) => other.maxX > current.minX);
     for (const other of active) {
@@ -34,7 +48,19 @@ export function separateOverlappingNavigationLayers(regions: NavigationRegion[])
         conflicts.get(current.region)!.has(other.region)
       )
         continue;
-      if (current.plane.every((n, i) => Math.abs(n - other.plane[i]!) < 1e-7)) continue;
+      if (current.plane.every((n, i) => Math.abs(n - other.plane[i]!) < 1e-7)) {
+        if (checkedCoplanar.get(current.region)!.has(other.region)) continue;
+        checkedCoplanar.get(current.region)!.add(other.region);
+        checkedCoplanar.get(other.region)!.add(current.region);
+        if (
+          blocksNavigationRegion(current.region, other.region) ||
+          blocksNavigationRegion(other.region, current.region)
+        ) {
+          conflicts.get(current.region)!.add(other.region);
+          conflicts.get(other.region)!.add(current.region);
+        }
+        continue;
+      }
       const overlap = fixedPolygonBoolean("intersection", [[current.polygon]], [[other.polygon]]);
       if (
         !overlap.some((polygon) =>
