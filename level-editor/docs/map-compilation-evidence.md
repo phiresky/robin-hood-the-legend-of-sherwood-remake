@@ -4,6 +4,41 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Rotated western entrance: approach experiments rejected (2026-10-19)
+
+The original lower approach is outside the tower's authored footprint, and its
+physical ramp receiver survives 180-degree rotation. Its prepared movement
+boundary does not contain the approach. Removing the tower's movement solid
+only for diagnosis lets all eight assembly files bind their doors
+(`selected-neighbor-placements-DgWWOT`), but removing collision is not an
+acceptable repair. Isolating the ramp from the terrace's other walking surfaces
+still loses the 180-degree entrance (`selected-neighbor-placements-nMGTe9`).
+
+Moving the local approach four units down the ramp makes all bindings survive
+but only 20/32 native click round trips pass (`selected-neighbor-placements-gZ1Kd8`).
+Moving it twelve units onto the flat deck has the same count
+(`selected-neighbor-placements-cXEdlE`). Neither candidate is published.
+Adding the lower door's own tower structure reference and moving the approach
+24 units onto the deck also passes only 20/32 (`selected-neighbor-placements-Jtn53O`).
+Failures include receiver picking at 37 degrees and denied entry at 90/180.
+
+The assembly helper now optionally records per-door collision contributors.
+Trace `selected-neighbor-placements-K6Thhf` identifies the separate ramp's
+`building-409` volume as the only corridor blocker at 90/180 for the deck
+approach. A six-unit ramp approach with the own-structure reference still passes
+only 20/32 (`selected-neighbor-placements-n66Tvh`), and identifies the flat
+deck's `building-060` support as its corridor blocker instead. Other failures
+report insufficient standing-box clearance at the ramp source.
+
+These results require review of export-prepared clearance and corridor checks
+across connected floor planes. They do not justify removing support collision,
+changing runtime movement, or treating successful binding as traversal proof.
+`stage-west-tower-ramp-approach.mjs` records explicit-distance, pinned-descriptor
+experiments, derives height from the independently owned floor, and marks them
+unverified. No library definitions changed. The previously recorded 35/35
+full-scene measurement is unchanged; moved lower entrances and the gate remain
+publication blockers.
+
 ## Western terrace candidate and precision serialization (2026-10-19)
 
 The west round tower's lower entrance at world [443, 1599.483693, 152.483693]

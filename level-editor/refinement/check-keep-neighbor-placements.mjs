@@ -135,7 +135,13 @@ for (const height of [0, 40])
         group.transform.dy -= offset[1];
         groups.push({ group, asset, placement, clusterX: x });
       }
-    const compiled = compileMap(document, [0, 0, ...document.size], assets, { bestEffort: true });
+    const passageCollisions = [];
+    const compiled = compileMap(document, [0, 0, ...document.size], assets, {
+      bestEffort: true,
+      ...(fixture?.tracePassages
+        ? { onPassageCollision: (collision) => passageCollisions.push(collision) }
+        : {}),
+    });
     const doors = (compiled.descriptor.asset_geometry.buildings ?? []).flatMap(
       ({ Building }) => Building.doors,
     );
@@ -147,6 +153,7 @@ for (const height of [0, 40])
       rotation,
       height,
       warnings: compiled.warnings,
+      ...(fixture?.tracePassages ? { passageCollisions } : {}),
       building_approaches: [],
       building_pairs: [],
       ...(fixture?.lifts ? { checked_lifts: 0 } : {}),
