@@ -45,7 +45,7 @@ The east and west courtyard lodges now pass in the assembled scene as well as
 loads without base data, and passes all four archived terrain-start entrance trips.
 
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
-Their current entrance results are Derby 18/25, Lincoln 31/35, Nottingham 41/69,
+Their current entrance results are Derby 18/25, Lincoln 31/35, Nottingham 43/69,
 and Sherwood 5/5. Three Lincoln village doorway corrections improve its result
 from 28/35 while retaining movement geometry. Those assets pass 48 moved-placement
 room trips, browser export/reopen, native ZIP loading and six archived terrain-start
@@ -60,11 +60,14 @@ lock with no permanent corridor block. The authoring audit confirms that no map
 transition targets that entrance; its unlocked after-transition fields alone do
 not authorize unlocking it. Mission-script behavior is outside this check.
 
-The next Nottingham doorway candidate passes 43/69 full-scene entrance trips
+Two further published Nottingham doorway definitions pass 43/69 full-scene entrance trips
 and native construction, improving exactly the market-front brown house and
-upper red house ground entrances. It remains unpublished: four ground-start
-gallery trips pass, but two elevated-door probes incorrectly start on ground
-terrain and need a suitable approach fixture. Browser ZIP validation is pending.
+upper red house ground entrances. Four ground-start
+gallery trips pass, and two additional platform-start trips pass when their
+probes start on the elevated receivers. Ground access to those platforms is
+not established by this fixture. Browser export/reopen preserves gameplay,
+color and depth; the exact ZIP loads natively without base data and passes
+all six entrance trips. Model and texture bytes remain unchanged.
 
 The preceding saved-map checks recorded
 290 prepared stair routes and 71 control apply/reset checks passing. The current

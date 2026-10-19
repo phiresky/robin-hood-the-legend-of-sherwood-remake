@@ -293,7 +293,7 @@
       "model": "3d-assets/nottingham/nottingham-market-front-brown/model.glb",
       "model_sha256": "fe28b9b8243a5c043d7b55eb8dfb3ba00c39c219e2ea22cea6fee9d6c5df9c7f",
       "descriptor": "3d-assets/nottingham/nottingham-market-front-brown/asset.json",
-      "descriptor_sha256": "76463fad5cdb163ae4e0ac940066dffd66012b0f94a8e71eba15cbdafef22e63",
+      "descriptor_sha256": "8f576ae000ce85395a5c606c15f426a9bc42fc8b2942729e9b39ec6c79d3f400",
       "id": "nottingham-market-front-brown"
     },
     {
@@ -622,7 +622,7 @@
       "model": "3d-assets/nottingham/nottingham-upper-red-house/model.glb",
       "model_sha256": "192b436ba2a3ca03d8ece8df00be240555ee9f95b4b56ebda438b53606730f17",
       "descriptor": "3d-assets/nottingham/nottingham-upper-red-house/asset.json",
-      "descriptor_sha256": "520ba41524a3759ad28010535fcf361c7ea5ea056076f960658d42bab7c7dbb0",
+      "descriptor_sha256": "5dd45fd41cecbc2d26c5dcae1040b372863e6853993bb11f79e191679d10605e",
       "id": "nottingham-upper-red-house"
     },
     {

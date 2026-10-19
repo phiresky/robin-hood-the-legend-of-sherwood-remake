@@ -4,7 +4,7 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
-## Nottingham street doorway candidate and lock audit (2026-10-19)
+## Nottingham street doorway publication and lock audit (2026-10-19)
 
 Stage `local-door-structure-stage-zfR4WI` declares one local doorway blocker
 each for `nottingham-market-front-brown` and `nottingham-upper-red-house`.
@@ -20,9 +20,24 @@ The strict full-scene test still fails on the remaining 26 routes.
 Gallery `building-gallery-a35NmB` passes four ground-start click round trips.
 Its two elevated entrances fail with `terrain source has no receiver`: the
 gallery probe generator assumes ground-level approach sources for every door.
-Those failures must not be counted as successful approach coverage. Suitable
-elevated approach fixtures and browser ZIP validation remain pending; this
-candidate has not been published.
+Those failures must not be counted as successful ground approach coverage.
+Diagnostic `building-gallery-platform-probes-2gcs1pq6` retains the exact exported
+descriptor and instead starts the elevated probes at their receiving platform
+centroids on the corresponding layers. All six click-and-return trips pass
+(four ground starts, two platform starts). This does not establish ground access
+to the elevated platforms.
+
+Browser fixture `draft-scene-render-2k1mss` reopens identical gameplay, color
+and depth. Its 10,037,483-byte ZIP has SHA-256
+`ee0e6e316b469b75b8c74420d88e6b86b382e3a5e49abd7023c64a2515f584f7`.
+The render shows four separately placed buildings. Native ZIP loading without
+base data passes with 37 sight obstacles, two masks, ten door projections and
+11,550 grid blocks. All six exact-archive click-and-return trips pass in
+`nottingham-street-archived-0ziej5fg`, retaining the ground/platform distinction.
+Publication `nottingham-street-installed-20261019` installs both local definitions,
+catalog entries and Nottingham scene pins; all fourteen installed file hashes
+were verified. Models, derivatives and texture bytes remain unchanged, and
+draft limitations remain visible.
 
 Authoring audit `nottingham-prison-lock-audit-cuesyjly` checks the southwest
 prison's `interior-2/door-0` against recovered door 82. Both definitions lock
