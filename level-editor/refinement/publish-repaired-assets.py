@@ -9,6 +9,7 @@ import zipfile
 
 from asset_index import validate_asset_index
 from promote_staged_publication import asset_file_pairs, safe_relative
+from publish_library import gameplay_frame_glb
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'blender'))
 from lossy_assets import LibraryLock, atomic_write, verify_derivatives
@@ -16,6 +17,17 @@ from lossy_assets import LibraryLock, atomic_write, verify_derivatives
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def required_derivatives(entry, model):
+    fields = ('lossy_model', 'preview_model')
+    if all(entry.get(field) for field in fields):
+        return fields
+    assert not any(entry.get(field) for field in fields), 'Incomplete derivative pair: ' + entry['id']
+    # Empty gameplay frames have no geometry or textures to derive. Apply the
+    # same strict GLB/resource validation used when packaging the library.
+    gameplay_frame_glb(model, entry)
+    return ()
 
 
 def verify_descriptor_edit(previous, replacement, edit):
@@ -140,8 +152,11 @@ def publish(library, stage, gameplay_stage, fixture, output, apply=False, archiv
             assert (fixture / ref['model']).read_bytes() == model
             for source, target in asset_file_pairs(staged_root, root, entry):
                 replacements[str(target.relative_to(library))] = source.read_bytes()
-            for field in ('lossy_model', 'preview_model'):
-                assert entry.get(field), f'Missing {field}: {asset}'
+            derivative_fields = required_derivatives(entry, model)
+            if not derivative_fields:
+                assert not current.get('lossy_model') and not current.get('preview_model'), \
+                    'Cannot drop existing derivatives: ' + asset
+            for field in derivative_fields:
                 for suffix in ('', '.receipt.json'):
                     relative = safe_relative(entry[field] + suffix)
                     data = (staged_root / relative).read_bytes()

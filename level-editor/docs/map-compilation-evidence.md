@@ -4,6 +4,54 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Nottingham remaining wall contacts (2026-10-20)
+
+`review-placed-segment-contact.mjs` records pinned model/descriptor identities,
+scene hash, triangle contacts and world coordinates along a selected segment.
+It is an offline inspection tool, not a standing-box clearance test or runtime
+solver. Inspection at 16 units above the authored passage floor confirms visible
+mesh contacts on both legs of the hall ground passage (`placed-segment-contact-Itdy1M`
+and `placed-segment-contact-zEGK8F`) and northeast spire passage
+(`placed-segment-contact-t79aDn` and `placed-segment-contact-7G4Nyl`). The upper
+street turret's outside-to-middle leg intersects the green house's `building-155`
+(`placed-segment-contact-i1KbQ1`). Those first inspection artifacts predate the
+tool's scene-hash field; their descriptor/model pins and exact segments are stored.
+The evidence does not justify weakening these foreign barriers.
+
+The installed hall definition, assembled with the independent courtyard and
+without the overlapping wall, passes all sixteen ground-entrance player-click
+round trips (`selected-neighbor-placements-ak7z8O`). The saved scene is unchanged;
+this demonstrates usable placement of the asset, not repair of that arrangement.
+
+## Full Lincoln archive verified for publication (2026-10-20)
+
+The earlier browser process completed successfully: snapshot
+`lincoln-rendered-library-hUQi2I` contains a 173,685,631-byte ZIP with SHA-256
+`ad3a42e8b46f788813fe5949e6fb5139f911ae80685734750e94f4f931072d36`.
+Export/reopen preserves gameplay, color and depth. Native loading succeeds
+without base data, including three appearance regions and eleven controls.
+The unchanged archived descriptor (`exact-map-archive-594ian0k`) passes sixteen
+complete-sprite stair routes, retains two forbidden stair routes, and passes
+eight climb routes. All 35 archived entrance round trips pass in
+`saved-map-entrances-RkK8lo`. The terrace gate's closed/open/reset checks pass in
+`passage-control-audit-TFUV4Z`.
+
+Publication preflight initially rejected the metadata-only lighting frame because
+the repair publisher unconditionally required lossy/preview models. It now uses
+the library packager's existing strict empty-frame validation: all parts must be
+gameplay-only, with no meshes, textures, buffers, skins, animation or external
+resources. Renderable assets still require both derivatives; partial pairs and
+dropping existing derivatives are rejected. All 26 repair/library publication
+tests pass. `lincoln-terrace-publication-preflight-frames` passes for all 32 assets.
+The unsupported annex gate remains omitted and is not certified by these tests.
+
+`lincoln-terrace-publication-installed` installs the 32 definitions and scene
+pins. All 191 installed hashes match; model bytes are unchanged. Fresh installed
+export `saved-map-exports-QSUJT7` has exactly the same asset geometry as the
+browser archive and constructs natively with 123 areas, 619 sight obstacles,
+87 doors, ten jump pairs, 85,652 grid blocks and 204 elevation boundaries.
+All 35 fresh installed entrance trips pass (`saved-map-entrances-CU0fQK`).
+
 ## Hall doorway structure and independent approaches (2026-10-20)
 
 The hall-only stage passes all 64 player-click entry/return probes for its four
@@ -425,8 +473,8 @@ light-layer coverage, with explicit probe-count assertions. Lint and formatting
 pass.
 
 All 32 candidate asset models are pinned in `pinned-gameplay-stage-HtbKam`.
-Browser snapshot `lincoln-rendered-library-hUQi2I` is undergoing complete scene
-export/reopen verification; no successful ZIP result is recorded yet.
+Browser snapshot `lincoln-rendered-library-hUQi2I` subsequently completed complete
+scene export/reopen verification; see the full Lincoln archive evidence above.
 `reviewed-publication-stage-u0ye467_` prepares the same subset and verifies all
 declared lossy/preview derivatives. Unchanged file bytes are hardlinked into the
 private stage; bundle receipts are separately rebound to the reviewed descriptor
