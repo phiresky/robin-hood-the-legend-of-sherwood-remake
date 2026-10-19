@@ -2943,7 +2943,7 @@ function compileAssetGameplayAttempt(
     // Alternate anchors select topology, but elevated ordinary passages must
     // also have a receiving floor at the actual runtime endpoint.
     if (
-      door.definition.type !== 0 ||
+      (door.definition.type !== 0 && door.definition.type !== 3) ||
       door.lift ||
       door.interior ||
       area.lift ||

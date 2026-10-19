@@ -1944,13 +1944,21 @@ test("ground receiving anchors preserve door coordinates outside the receiving p
 });
 
 test("elevated passages require floors at their actual endpoints despite alternate anchors", () => {
-  for (const rotation of [0, 90]) {
+  for (const [rotation, type] of [
+    [0, 0],
+    [90, 0],
+    [0, 3],
+    [37, 3],
+    [90, 3],
+    [180, 3],
+  ] as const) {
     const { document, assets, hut } = doorAnchorCompilerFixture();
     document.groups[0]!.transform.dz = 30;
     document.groups[0]!.transform.rot_deg = rotation;
     document.groups[0]!.transform.dx = 700;
     document.groups[0]!.transform.dy = 700;
     const door = hut.gameplay!.doors[0]!;
+    door.type = type;
     assert.throws(
       () => compileAssetGameplay(document, assets, bounds),
       /outside: elevated passage endpoint has no receiving floor/,

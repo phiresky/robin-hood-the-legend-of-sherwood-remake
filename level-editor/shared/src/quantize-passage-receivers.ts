@@ -7,7 +7,7 @@ import { pointInGameplayPolygon } from "./navigation-anchor.ts";
 /** Keep rounded ordinary passage endpoints on their authored receiving surface. */
 export function quantizePassageReceivers(geometry: CompiledAssetGeometry): void {
   for (const door of geometry.doors) {
-    if (door.door_type !== 0 || !door.world_endpoints) continue;
+    if ((door.door_type !== 0 && door.door_type !== 3) || !door.world_endpoints) continue;
     for (const side of ["in", "out"] as const) {
       const key = side === "in" ? "inside" : "outside";
       const world = door.world_endpoints[key];

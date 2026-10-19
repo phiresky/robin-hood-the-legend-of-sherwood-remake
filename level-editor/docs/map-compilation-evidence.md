@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Unsupported gates warn during best-effort export (2026-10-20)
+
+Elevated gate endpoints now receive the same export-time support validation as
+ordinary passages. A distant topology anchor cannot disguise an unsupported
+runtime endpoint. Strict compilation rejects it; best-effort compilation omits
+the affected gate with an asset/endpoint warning, preserving other geometry.
+Gate endpoint quantization also uses the existing receiver-preserving rounding
+step. No runtime changes were needed for this follow-up.
+
+The regression covers gate rotations 0/37/90/180, separate inside/outside failures,
+strict rejection, best-effort omission and successful compilation once both
+endpoints have actual support. Compiler and quantization suites pass 174 tests;
+typecheck, lint and formatting pass.
+
+Fresh Lincoln export `saved-map-exports-C9FLlq` omits only the unsupported
+keep-annex gate for this reason and loads with the current gate receiver checks.
+`saved-map-entrances-vvTIwk` passes all 35 entrance trips, and
+`passage-control-audit-lCOw55` passes the western terrace's closed/open/reset
+checks in the complete scene. This restores usable best-effort export; it does
+**not** repair or certify the omitted annex gate. Its physical approach, two
+obsolete terrace lighting anchors and wider placement/browser review remain
+outstanding.
+
+Fresh copied/rotated/raised exports `selected-neighbor-placements-gGqGEz`
+also retain the terrace gate; `passage-control-audit-kDGwyz` passes all 48
+closed/open/reset cases against these newly compiled files.
+
 ## Western gate regions and control audit (2026-10-20)
 
 The lower terrace's two gate-side floors were assigned the same navigation

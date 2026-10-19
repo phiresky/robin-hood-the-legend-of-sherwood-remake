@@ -40,15 +40,17 @@ function fixture() {
   return { geometry, door };
 }
 
-test("ordinary endpoint quantization retains receiving support and world elevation", () => {
-  const { geometry, door } = fixture();
-  quantizePassageReceivers(geometry);
-  assert.deepEqual(door.point_in, [10, 20]);
-  assert.deepEqual(door.world_endpoints!.inside, [10, 120, 100]);
-  const once = structuredClone(geometry);
-  quantizePassageReceivers(geometry);
-  assert.deepEqual(geometry, once);
-});
+for (const type of [0, 3])
+  test(`passage type ${type} quantization retains receiving support and world elevation`, () => {
+    const { geometry, door } = fixture();
+    door.door_type = type;
+    quantizePassageReceivers(geometry);
+    assert.deepEqual(door.point_in, [10, 20]);
+    assert.deepEqual(door.world_endpoints!.inside, [10, 120, 100]);
+    const once = structuredClone(geometry);
+    quantizePassageReceivers(geometry);
+    assert.deepEqual(geometry, once);
+  });
 
 test("unsupported anchors and receivers belonging to other sectors cannot attract a passage", () => {
   for (const mismatch of ["anchor", "sector"] as const) {
