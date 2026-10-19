@@ -40,6 +40,9 @@ const reviews = [];
 for (const row of manifest.results) {
   const bytes = await fs.readFile(path.join(input, row.file));
   const geometry = JSON.parse(bytes).asset_geometry;
+  const buildingClickRegions = (geometry.buildings ?? []).flatMap(({ Building }) =>
+    Building.doors.map((door) => door.door_sector.points),
+  );
   const areas = [];
   let sector = 0;
   geometry.motion_data.layers.forEach((layer, index) => {
@@ -91,7 +94,10 @@ for (const row of manifest.results) {
         target.obstacles.every(
           (o) => !inside(p, o.polygon.points) && clearance(p, o.polygon.points) >= 12,
         ) &&
-        areas.every((a) => a.layer <= target.layer || !inside(p, a.polygon.points)),
+        areas.every((a) => a.layer <= target.layer || !inside(p, a.polygon.points)) &&
+        // A room's clickable entrance can cover visible floor without being a
+        // movement area. Return destinations must avoid those click targets too.
+        buildingClickRegions.every((ring) => !inside(p, ring) && clearance(p, ring) >= 2),
     );
     assert.ok(selected, `No visible return destination for ${row.file}:${probe.sector}`);
     reviews.push({

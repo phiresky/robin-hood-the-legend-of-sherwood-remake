@@ -1,0 +1,38 @@
+{
+  "map": "nottingham",
+  "assets": [
+    "nottingham-castle-west-annex",
+    "nottingham-castle-west-conical-tower",
+    "nottingham-castle-west-stair-tower",
+    "nottingham-castle-courtyard-ground",
+    "nottingham-castle-hall-and-watchtower",
+    "nottingham-castle-west-courtyard-wall"
+  ],
+  "size": [7000, 5000],
+  "copyXs": [1800.25, 5200.25],
+  "assemblyY": 3000.75,
+  "terrainHeight": 0,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "nottingham-castle-west-annex",
+      "door": "interior-0/door-0",
+      "sourceLocal": [59.47540283203125, -1.2213717025574002]
+    },
+    {
+      "asset": "nottingham-castle-west-conical-tower",
+      "door": "interior-0/door-0",
+      "sourceLocal": [86.43630981445312, 10.762381244926678]
+    },
+    {
+      "asset": "nottingham-castle-west-stair-tower",
+      "door": "interior-1/door-0",
+      "sourceLocal": [-3.8092041015625, 81.86024906038392]
+    },
+    {
+      "asset": "nottingham-castle-west-stair-tower",
+      "door": "interior-1/door-1",
+      "sourceLocal": [43.1907958984375, -19.139750939615976]
+    }
+  ]
+}

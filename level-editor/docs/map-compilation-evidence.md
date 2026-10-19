@@ -4,6 +4,37 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Western castle doorway trio published (2026-10-20)
+
+The west annex, conical tower and stair tower now have published local doorway
+structure declarations. Their independent supporting assets are the courtyard
+ground, hall/watchtower roof and west courtyard wall. All 64 selected entrances
+survive two-copy, four-rotation, two-elevation assembly export
+(`selected-neighbor-placements-L8D9jB`). Initial native player-click testing
+passes 60/64; four 180-degree stair-tower return clicks select a higher floor.
+
+Visible-return probe preparation initially chose a building click region rather
+than terrain. The diagnostic now excludes building entrance polygons as well as
+higher movement areas. All 64 routes pass in `visible-building-approaches-ZyltrD`
+with unchanged exported geometry. This is a choice of visible test destinations,
+not a fix for occluded clicks or a claim that the original four points work.
+
+The elevated 37-degree browser scene `draft-scene-render-NitiAF` passes full
+export/reopen including two appearance states. Its 89,559,026-byte ZIP has
+SHA-256 `ee4d266127a62e91498a759b8d693d83f8d4def2992af134eec52b2224eca879`.
+Native ZIP loading without base data passes, as do all eight selected archived
+entrance/return probes in `exact-map-archive-2orj3c2b`. Buildings and navigation
+data match the source placement audit exactly. Derivative validation passes in
+`reviewed-publication-stage-ll4d6tph`.
+
+`western-castle-publication-installed` installs the three definitions and
+Nottingham scene pins; installed hashes match. Only four doorway structure
+declarations change. Floors, collision volumes, lock rules and model/derivative
+bytes are unchanged. Fresh export `saved-map-exports-us0dct` constructs natively;
+`saved-map-entrances-H0szLa` passes 52/69 entrance trips, up from 48/69.
+Seventeen entrance failures and six unpublished Nottingham candidates remain.
+This is not a full-map parity result.
+
 ## Northwest spire published with separate roof support (2026-10-20)
 
 The northwest spire receives its entrance floor from the independently placed

@@ -83,7 +83,7 @@
       "model": "3d-assets/nottingham/nottingham-castle-west-annex/model.glb",
       "model_sha256": "510fb9a1229f0ec789c27e564d3abda75a0ce6b45e06a0a0aec9c73d12a89db8",
       "descriptor": "3d-assets/nottingham/nottingham-castle-west-annex/asset.json",
-      "descriptor_sha256": "fe4c52b29248f170c4bb869625db3fb59454c15c506c01066375b288afdf1a3f",
+      "descriptor_sha256": "ac718d3d38968ba07d3034309f9cec8c97299828760fe8b6b03027e368f735a8",
       "id": "nottingham-castle-west-annex"
     },
     {
@@ -188,7 +188,7 @@
       "model": "3d-assets/nottingham/nottingham-castle-west-conical-tower/model.glb",
       "model_sha256": "10c8cce6eb4c2899e6e67b09b4e4a130689c317c14279d34884fdcf6ef08c38f",
       "descriptor": "3d-assets/nottingham/nottingham-castle-west-conical-tower/asset.json",
-      "descriptor_sha256": "8577b33bb4020241bbb432c8c35bec08296285c8d2d2ec697d8f4878e7f5945f",
+      "descriptor_sha256": "c7adba1a43878daed2d334cf57147643298ee32f89c21d0ddd9c2a28a2ed7fea",
       "id": "nottingham-castle-west-conical-tower"
     },
     {
@@ -202,7 +202,7 @@
       "model": "3d-assets/nottingham/nottingham-castle-west-stair-tower/model.glb",
       "model_sha256": "ab0afa6a98b6d2bf8ce3215b821c7e99492ce827129abd1e942a5ba9660c3e32",
       "descriptor": "3d-assets/nottingham/nottingham-castle-west-stair-tower/asset.json",
-      "descriptor_sha256": "0aee054cae599f4af0602edcaf97ef7f126a17530e5f8431d8c4ae2fda698f6f",
+      "descriptor_sha256": "c19f85202b34be5915374c60f9b0a32cd7362dfe5ca5a4ae56d7925bbaaf358e",
       "id": "nottingham-castle-west-stair-tower"
     },
     {
