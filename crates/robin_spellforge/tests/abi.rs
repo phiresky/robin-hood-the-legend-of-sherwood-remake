@@ -12,14 +12,13 @@ use wasm_bindgen_test::wasm_bindgen_test;
 fn executable_abi_digest_is_stable() {
     // The pinned identity covers the vendored interpreter, this crate's runtime
     // sources and the engine contract sources, byte for byte. It last moved
-    // when 44 sequence natives changed their yield policy from `Never` to
-    // `Always`: a guest-visible scheduling change, so packages built against
-    // the earlier identity are deliberately not admitted.
+    // when hexadecimal literal parsing became independent of the host C runtime.
+    // Packages built against the earlier lexer are deliberately not admitted.
     // Keep the conservative identity boundary: do not normalize source or admit
     // a previous ABI merely because some edits are behavior-preserving.
     assert_eq!(
         spellforge_vm_abi(),
-        "spellforge-v1-sha256:7cda8880939bc25f99b64e97751ff498504d37ab69433cddce773cd8c972819b"
+        "spellforge-v1-sha256:c19e17aa80e13c1813ded4d83b7793a2f12c7f31e315e173e3fae893c62c03b5"
     );
 }
 
@@ -39,7 +38,7 @@ fn previous_source_identity_is_not_admitted_after_package_roundtrip() {
     let current_hash = package.sha256;
 
     package.vm_abi =
-        "spellforge-v1-sha256:eb7b23e8b0f7e62bf5756eadc1fcf93de03aa5293d9140d492b02b42816aa7bc"
+        "spellforge-v1-sha256:7cda8880939bc25f99b64e97751ff498504d37ab69433cddce773cd8c972819b"
             .to_owned();
     package.sha256 = compute_package_sha256(&package);
     assert_ne!(

@@ -531,16 +531,21 @@ impl<'a> Lexer<'a> {
             self.advance();
         }
 
+        // Consume the prefix before scanning digits. Otherwise `x` is only
+        // consumed by the malformed-token scan and hex literals reach strtod,
+        // whose hex support differs between Windows and Unix runtimes.
+        let is_hex = first == b'0' && matches!(self.peek(), Some(b'x' | b'X'));
+        if is_hex {
+            self.advance();
+        }
+
         // PUC-Rio: greedily consume digits and dots in one loop.
         // This means "4.5." consumes both dots, producing "malformed number".
         while self.peek().is_some_and(|c| c.is_ascii_digit() || c == b'.') {
             self.advance();
         }
 
-        // Check for hex prefix (0x/0X) -- hex digits may include a-f.
-        let is_hex = self.pos - start >= 2
-            && self.source[start] == b'0'
-            && (self.source[start + 1] == b'x' || self.source[start + 1] == b'X');
+        // Hex digits may also include a-f.
         if is_hex {
             while self.peek().is_some_and(|c| c.is_ascii_hexdigit()) {
                 self.advance();
@@ -548,7 +553,7 @@ impl<'a> Lexer<'a> {
         }
 
         // Exponent (e/E for decimal, p/P not in Lua 5.1).
-        if self.peek().is_some_and(|c| c == b'e' || c == b'E') {
+        if !is_hex && self.peek().is_some_and(|c| c == b'e' || c == b'E') {
             self.advance();
             if self.peek().is_some_and(|c| c == b'+' || c == b'-') {
                 self.advance();
@@ -948,10 +953,14 @@ mod tests {
 
     #[test]
     fn hex_numbers() {
-        let tokens = lex_tokens("0xFF 0x10 0XAB").unwrap();
+        let tokens = lex_tokens("0xFF 0x10 0XAB 0x203040 0x1e+2").unwrap();
         assert_eq!(tokens[0], Token::Number(255.0));
         assert_eq!(tokens[1], Token::Number(16.0));
         assert_eq!(tokens[2], Token::Number(171.0));
+        assert_eq!(tokens[3], Token::Number(0x203040 as f64));
+        assert_eq!(tokens[4], Token::Number(30.0));
+        assert_eq!(tokens[5], Token::Plus);
+        assert_eq!(tokens[6], Token::Number(2.0));
     }
 
     // -- String tests --
