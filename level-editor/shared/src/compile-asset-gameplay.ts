@@ -23,6 +23,7 @@ import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { subtractMovementCollision } from "./subtract-movement-collision.ts";
 import { unionMovementSurfaces } from "./union-movement-surfaces.ts";
 import { alignNavigationBoundaries } from "./align-navigation-boundaries.ts";
+import { serializePreciseMotionRing } from "./serialize-precise-motion-ring.ts";
 import {
   assembleNavigationRegions,
   DisconnectedLiftRegion,
@@ -2255,7 +2256,7 @@ function compileAssetGameplayAttempt(
           : undefined;
     const preciseBoundary =
       recoveredBoundary && fixedPolygonBoolean("xor", [recoveredBoundary], [[boundary]]).length > 0
-        ? recoveredBoundary
+        ? serializePreciseMotionRing(recoveredBoundary, boundary)
         : undefined;
     options.onProgress?.(
       `Constructing receiving obstacles (${receivingRegion}/${navigationRegions.length})`,
@@ -2284,6 +2285,13 @@ function compileAssetGameplayAttempt(
                 `Movement layer ${layer}: reconstructed precise obstacle crosses itself after grid rounding; retained the valid grid collision contour.`,
               );
               exact = undefined;
+            }
+            if (exact) {
+              exact = serializePreciseMotionRing(exact, points);
+              if (!exact)
+                warnings.push(
+                  `Movement layer ${layer}: precise obstacle cannot reproduce its grid contour; retained grid collision.`,
+                );
             }
             return {
               state_id: 0,

@@ -4,6 +4,50 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Western terrace candidate and precision serialization (2026-10-19)
+
+The west round tower's lower entrance at world [443, 1599.483693, 152.483693]
+is supported by the separate terrace's sloping `building-409` mesh, measured
+at 152.483711 (`placed-point-support-S20YFw`). The west plateau itself has no
+mesh under that point. Its legacy terrain exclusions nevertheless block the
+approach in the earlier compiled scene.
+
+`drawbridge-mesh-footprints-fxhB9J` replaces the west plateau's two exclusions
+with mesh-clipped physical floors and independently owned neighboring solids.
+`west-plateau-mesh-review-skws_bra` reports maximum boundary gaps below 0.000740
+and sampled height residuals below 0.460 units for its two floor pieces.
+Promoting the plateau also requires the separate terrace to own its lower deck
+and ramp, rather than depend on ground receivers. `stage-west-terrace-floors.mjs`
+stages those three floors, static walls, and both gate collision states. Review
+`west-terrace-mesh-review-t53gmv58` finds maximum boundary gaps below 0.000062
+and height residuals below 0.001006 for the deck and below 0.000042 for the ramp.
+
+The tower's upper entrance additionally requires its own `building-387` passage
+structure. `local-door-structure-stage-wQjte7` contains that reviewed candidate.
+The initial export fails native loading: one narrow precise area rounds through
+a collapsed closing corner differently from its grid polygon. Isolation
+`precise-contour-isolation-f9e6qd60` identifies layer 4, area 25. Rotating the
+precision contour's vertex ordering preserves its exact geometry while making
+the rounded representation reproduce the prepared grid contour. The exporter
+now selects such an ordering before serialization; there are no engine changes.
+The focused compiler/precision suite passes 176 tests, and typecheck/lint pass.
+
+Fresh `saved-map-exports-JvHABa` constructs natively with 121 areas, 617 sight
+obstacles, 87 doors, ten jump pairs, 85,652 grid blocks and 206 elevation
+boundaries. `saved-map-entrances-7v0Mtk` passes all 35 entrance round trips.
+All eight climb routes and sixteen stair-click routes pass, with two forbidden
+stair routes retained.
+
+This is **not publication approval or full parity**. The moved assembly
+`selected-neighbor-placements-o386Xo` stops at 180 degrees: the lower tower
+entrance loses its receiving floor. The terrace gate still has both endpoints
+in one movement area, so its ordinary passage is omitted. Its closed/open
+behavior is unproven; the passage-control native test needs dedicated probes
+and cannot consume the ordinary saved-map manifest directly. Two terrace light
+anchors also still use obsolete ground heights. Browser/ZIP review remains
+pending. Installed Lincoln remains 33/35, and the previous staged candidate
+with verified moved climbs remains available separately.
+
 ## East-slope asset supplies the missing wall-climb landing (2026-10-19)
 
 World-point mesh review identifies the actual lower receiver for the middle
