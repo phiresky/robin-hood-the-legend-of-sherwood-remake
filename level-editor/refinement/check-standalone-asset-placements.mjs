@@ -55,7 +55,7 @@ for (const height of [0, 40])
       objects: [],
       sceneAssets: [],
       assetSources: [],
-      terrain: createTerrainGrid([0, 0, 3000, 3000], 3000, 0),
+      terrain: createTerrainGrid([0, 0, 3000, 3000], 3000, height),
     };
     for (const x of [800, 1900]) {
       const inserted = insertProjectionAsset(document, descriptor, reference, [x, 1500, height]);
@@ -71,16 +71,15 @@ for (const height of [0, 40])
     assert.equal(edit.gameplay.collision, "parts", "This audit counts part collision volumes");
     const authoredSolids = descriptor.parts.filter(
       (part) =>
-        part.obstacle_local_game &&
+        part.obstacle_local_game?.solid &&
         part.collision !== "none" &&
-        part.mission_profile === undefined &&
-        (edit.gameplay.movementSolids?.includes(part.node) ??
-          edit.gameplay.movementBlockers === undefined),
+        part.mission_profile === undefined,
     );
+    const authoredVolumes = (edit.gameplay.volumes ?? []).filter((volume) => volume.shape.solid);
     assert.equal(
       solids.length,
-      2 * authoredSolids.length,
-      "Both copies must retain every authored collision part",
+      2 * (authoredSolids.length + authoredVolumes.length),
+      "Both copies must retain every solid sight volume, including those with separate movement contours",
     );
     const upperReceivers = geometry.sight_obstacles.filter(
       (receiver) => receiver.projection_area && receiver.points.every((point) => point.z_top > 500),

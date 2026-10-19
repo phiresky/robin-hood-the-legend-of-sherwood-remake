@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Upper street turret published and standalone fixture corrected (2026-10-20)
+
+The standalone auditor now counts solid sight volumes independently of optional
+movement contours, and raises its terrain with the test placement. Previously
+it incorrectly expected zero sight solids for assets with authored blockers,
+then tested elevated ground entrances over missing terrain. These are fixture
+corrections; compiler and runtime behavior are unchanged.
+
+The staged turret passes all 32 native complete sprite entrance round trips in
+`standalone-asset-placements-ZZ6y6n`. Browser fixture `draft-scene-render-RnpzsD`
+passes export/reopen with matching gameplay/color/depth. The 19,114,706-byte ZIP
+has SHA-256 `960fa9f89c39be6d6e1a1539c65e9b8408fc0b3a202b7a60849d308f515e5901`.
+It loads without base data and passes all four archived entrance trips in
+`saved-map-entrances-7C5PrK`. Derivative validation passes in
+`reviewed-publication-stage-wu82hl32`.
+
+`upper-street-turret-publication-installed` installs the draft and Nottingham
+scene pin; all installed hashes match. Model and derivative bytes are unchanged.
+Fresh export `saved-map-exports-UByvzw` constructs natively;
+`saved-map-entrances-cURjjD` passes 61/69 trips, up from 60/69. The neighbouring
+green house still blocks the other saved-scene entrance; it was not exempted.
+Eight entrance failures and two unpublished candidates remain. Standalone
+success is not a claim that the obstructed saved arrangement or full map works.
+
 ## Upper prison doorway definitions published (2026-10-20)
 
 The upper prison's two reviewed doorway structure declarations are installed.

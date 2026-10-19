@@ -115,7 +115,7 @@ exact-archive click round trips. The affected Wychford asset-regression export
 constructs natively and retains all 24 entrance trips. Definitions and both
 saved-scene pins are installed; models and textures are unchanged. These results
 do not establish full map parity.
-Their current entrance results are Derby 25/25, Lincoln 33/35, Nottingham 60/69,
+Their current entrance results are Derby 25/25, Lincoln 33/35, Nottingham 61/69,
 and Sherwood 5/5. Three Lincoln village doorway corrections improve its result
 from 28/35 while retaining movement geometry. Those assets pass 48 moved-placement
 room trips, browser export/reopen, native ZIP loading and six archived terrain-start
@@ -174,6 +174,10 @@ The upper prison is published after 48 moved player-click trips, sixteen
 missing-wall rejections, browser export/reopen and six exact archived trips.
 Fresh Nottingham passes 60/69 entrances; three staged candidates remain
 unpublished. Prison lock rules and mission content are unchanged.
+The upper street turret is published after 32 standalone moved trips, browser
+export/reopen and four exact archived trips. Fresh Nottingham passes 61/69
+entrances. The neighbouring green house still blocks its other entrance in the
+saved scene. Two staged candidates remain unpublished; full parity is incomplete.
 Repositioning the independent wall clears all 48 entrance trips while retaining
 wall collision. The 90-degree new assembly passes browser export/reopen with
 identical gameplay/color/depth, native ZIP loading without base data and all six
