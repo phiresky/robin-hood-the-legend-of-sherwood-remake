@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Western terrace return clicks: occlusion and closed gate isolated (2026-10-20)
+
+The eight remaining return-click failures in `selected-neighbor-placements-TRXCo8`
+target the lower deck at height 147.001 where the upper plateau at height 220.001
+overlaps it on screen. At 37 degrees, the receivers are sectors 31/47 for the
+first copy; at 90 degrees they are 39/45. The normal click query chooses the
+higher layer. Reordering these layers would incorrectly select through the
+upper floor.
+
+`prepare-visible-building-approaches.mjs` prepares a separate diagnostic manifest
+with nearby visible, flat-floor destinations and preserves the original probes
+and failures in its review. Exported level files are copied unchanged. This is
+only candidate selection: native movement must still verify clearance and routing.
+`visible-building-approaches-dG0tyZ` completes 28/32 native click round trips;
+all four 37-degree cases now pass. The four 90-degree cases stall on entry.
+For the first 90-degree copy, subtracting the initial gate barrier splits sector
+39 into two components: the selected source and entrance lie in different ones.
+The applied gate barrier leaves one component. This confirms a closed-gate
+separation, not a reason to remove floor collision or alter runtime picking.
+
+The terrace gate passage/control still needs repair and an explicit native
+unlock/open/cross test. These diagnostics do not certify the staged approach,
+publish assets, or claim all rotated destinations remain visible. No engine
+changes were made. Diagnostic lint passes.
+
 ## Connected support caps no longer become passage walls (2026-10-19)
 
 The compiler now limits support-volume exclusions for an animated entrance to
