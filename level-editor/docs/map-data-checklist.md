@@ -115,7 +115,7 @@ exact-archive click round trips. The affected Wychford asset-regression export
 constructs natively and retains all 24 entrance trips. Definitions and both
 saved-scene pins are installed; models and textures are unchanged. These results
 do not establish full map parity.
-Their current entrance results are Derby 25/25, Lincoln 33/35, Nottingham 43/69,
+Their current entrance results are Derby 25/25, Lincoln 33/35, Nottingham 45/69,
 and Sherwood 5/5. Three Lincoln village doorway corrections improve its result
 from 28/35 while retaining movement geometry. Those assets pass 48 moved-placement
 room trips, browser export/reopen, native ZIP loading and six archived terrain-start
@@ -146,12 +146,16 @@ Declaring the west tower's fourth structural side in its animated entrance now
 gives 48/48 native trips with the supporting arch. With the neighbouring courtyard
 wall present, 44/48 pass; its four 90-degree obstructions remain enforced. Only
 doorway permission data and warnings change, not walking or sight geometry.
-This newer candidate is still unpublished.
+The west tower definition is now published as a draft; the other eleven
+Nottingham candidates remain unpublished. A fresh installed-library export
+constructs natively and passes 45/69 entrances. Model and derivative bytes are
+unchanged; Nottingham's descriptor pin was updated together with the library.
 Repositioning the independent wall clears all 48 entrance trips while retaining
 wall collision. The 90-degree new assembly passes browser export/reopen with
 identical gameplay/color/depth, native ZIP loading without base data and all six
-archived entrance trips. Derivative validation and guarded library publication
-remain pending; the original overlapping arrangement is not thereby repaired.
+archived entrance trips. The complete publication bundle also passes those
+checks and derivative validation; the original overlapping arrangement is not
+thereby repaired.
 Sherwood's three doorway corrections retain walking geometry and pass 48 moved
 placement trips, browser reopening and six archived terrain-start trips. Its five
 entrance checks now pass; this does not certify all other map features.

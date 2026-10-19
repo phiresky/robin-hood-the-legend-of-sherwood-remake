@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## West gate definition published with verified derivatives (2026-10-20)
+
+`west-gate-publication-installed/report.json` records installation of the reviewed
+west tower gameplay and Nottingham scene pin. Every installed file matches the
+report's after hash. Full, lossy and preview models and derivative receipts are
+byte-identical to their previous versions. Draft limitations remain visible.
+The other eleven Nottingham doorway candidates are not included.
+
+The publication snapshot `draft-scene-render-mX5vlx` includes model derivatives
+and receipts. Browser export/reopen passes with identical gameplay/color/depth.
+The 22,718,620-byte ZIP has SHA-256
+`b08d9cff4c19da3463b63fef6c5e183db00d7356e94dded52f4ccc8560d7d1ef`.
+It loads natively without base data and passes all six exact archived entrance
+round trips (`saved-map-entrances-r7fNZl`). Publication preparation validates
+the derivative bundle in `reviewed-publication-stage-0ma90q69`.
+
+A fresh installed-library Nottingham export `saved-map-exports-0GYJQu`
+constructs 94 areas, 667 sight obstacles, 173 doors, 39 jump pairs, 159,300 grid
+blocks and 153 elevation boundaries. Its entrance audit
+`saved-map-entrances-UOgXky` passes 45/69, up from 43/69. Twenty-four failures
+remain; this is not full map parity. The previously documented neighbouring-wall
+collision at rotated placements is also unchanged.
+
+`prepare-draft-scene-render.mjs --publication` now snapshots validated catalog
+paths and derivative files alongside the reviewed scene. Model bytes are checked
+against the scene pins even when the library catalog omits a model hash. Lint,
+formatting, derivative validation and the real publication workflow pass.
+
 ## Repositioned west-wall assembly and exact ZIP checks (2026-10-20)
 
 Moving the independently placed west courtyard wall 100 local X units away,

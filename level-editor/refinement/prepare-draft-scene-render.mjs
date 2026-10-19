@@ -6,8 +6,10 @@ import { createHash } from "node:crypto";
 import { serializeStoredMap } from "../shared/src/stored-level.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
-const [scenePath, editsPath, name] = process.argv.slice(2);
+const [scenePath, editsPath, name, mode] = process.argv.slice(2);
 assert.ok(scenePath && editsPath && name, "Supply scene.json edits.json fixture-name");
+assert.ok(mode === undefined || mode === "--publication", "Unknown preparation mode");
+const catalog = mode ? JSON.parse(await fs.readFile("library/3d-assets/index.json")) : undefined;
 assert.match(name, /^[a-z0-9-]+$/);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const relative = (value) => {
@@ -60,6 +62,29 @@ for (const reference of document.assetSources) {
   await fs.writeFile(path.join(output, reference.descriptor), updated);
   await fs.link(path.resolve("library", reference.model), path.join(output, reference.model));
   descriptors.set(descriptor.id, descriptor);
+  const publicationFields = {};
+  if (catalog) {
+    const current = catalog.assets.find((entry) => entry.id === descriptor.id);
+    assert.ok(current, `Missing library catalog entry: ${descriptor.id}`);
+    assert.equal(current.descriptor_sha256, hash(bytes));
+    if (current.model_sha256 !== undefined) assert.equal(current.model_sha256, hash(model));
+    assert.equal(`3d-assets/${current.descriptor}`, reference.descriptor);
+    assert.equal(`3d-assets/${current.model}`, reference.model);
+    for (const key of ["lossy_model", "preview_model"]) {
+      assert.ok(current[key], `Missing ${key}: ${descriptor.id}`);
+      publicationFields[key] = current[key];
+      for (const suffix of ["", ".receipt.json"]) {
+        const file = relative(`3d-assets/${current[key]}${suffix}`);
+        const target = path.join(output, file);
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.copyFile(path.join("library", file), target);
+      }
+    }
+    if (descriptor.model_scene !== undefined && descriptor.resources === undefined) {
+      const receipt = path.join(path.dirname(reference.descriptor), "bundle.receipt.json");
+      await fs.copyFile(path.join("library", receipt), path.join(output, receipt));
+    }
+  }
   entries.push({
     id: descriptor.id,
     name: descriptor.name,
@@ -69,6 +94,7 @@ for (const reference of document.assetSources) {
     descriptor_sha256: reference.descriptor_sha256,
     model_sha256: reference.model_sha256,
     model_scene: descriptor.model_scene,
+    ...publicationFields,
     editor: descriptor,
   });
 }
