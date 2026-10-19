@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Shared floor seam survives rotated placement (2026-10-19)
+
+`split-wall-contact-hPd2dw` authors matching asset-local sockets between the
+calibrated slate-tower and south-curtain floors. Their shared edge follows the
+measured mesh cap. The seam geometry review (`split-wall-mesh-review-t9_v6x2o`)
+has 830/830 south-wall and 1,819/1,819 slate-floor supported samples, zero
+horizontal gap and maximum height error 0.000989 units.
+
+The initial export passed twelve of sixteen long approach/entry/return clicks;
+both copies at 180 degrees failed at both elevations
+(`selected-neighbor-placements-DqYB9K`). A socket occupying part of a longer
+straight boundary lacked matching polygon vertices, allowing rounding to split
+the floors. Compilation now inserts identical matched overlap endpoints into
+both boundaries before union. This is export-time geometry preparation only.
+
+All sixteen native click round trips pass in
+`selected-neighbor-placements-fUz343`. Removing the supporting wall still
+rejects all sixteen entrance bindings (`selected-neighbor-placements-S4IBcf`).
+The focused socket and compiler tests pass 178/178, including independent
+boundaries and posture transitions. Fresh full-scene export
+`saved-map-exports-h9q6dV` constructs 83 areas, 581 sight obstacles, 85 doors,
+ten jump pairs, 75,164 grid blocks and 200 elevation boundaries. Its sixteen
+stair click routes pass, with two forbidden routes retained. Entrance audit
+`saved-map-entrances-bxGCP8` remains 34/35; the west round-tower plateau conflict
+and omitted wall climb remain unresolved. These asset stages are unpublished;
+the installed Lincoln entrance measurement remains 33/35.
+
 ## Wall floor calibration and separate-neighbor routes (2026-10-19)
 
 `wall-floor-calibration-smMGL8` calibrates the south-curtain and slate-tower

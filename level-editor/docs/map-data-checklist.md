@@ -17,6 +17,14 @@ preserves gameplay, color, depth and appearance states; the exact ZIP passes ten
 entrance trips and sixteen room crossings. The supporting annex stays separate
 and unchanged. Two neighboring plateau exclusions still block entrances.
 
+A staged wall-floor correction now passes sixteen long click approaches across
+separately placed slate-tower and curtain-wall assets, including rotated and raised
+copies. The compiler aligns matched socket vertices before polygon union; this
+adds no runtime work. The staged Lincoln export passes 34/35 entrance trips and
+all sixteen stair-click routes. It remains unpublished while the west tower
+plateau conflict and a missing wall-climb landing are unresolved. See the
+[shared-floor seam evidence](map-compilation-evidence.md#shared-floor-seam-survives-rotated-placement-2026-10-19).
+
 Internal floor-hole seams now generate export-prepared connections between
 separate receiving floors, with two complete-sprite native crossings verified.
 The two York doorstep definitions are now published. Preserving prepared movement

@@ -22,6 +22,7 @@ import { compileSceneryAnimation } from "./compile-scenery-animation.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { subtractMovementCollision } from "./subtract-movement-collision.ts";
 import { unionMovementSurfaces } from "./union-movement-surfaces.ts";
+import { alignNavigationBoundaries } from "./align-navigation-boundaries.ts";
 import {
   assembleNavigationRegions,
   DisconnectedLiftRegion,
@@ -1351,6 +1352,7 @@ function compileAssetGameplayAttempt(
   }
   const assembledNavigation = assembleNavigationJoins(navigationJoins, options);
   warnings.push(...assembledNavigation.warnings);
+  alignNavigationBoundaries(surfaces, assembledNavigation.connections);
   const postureFlags = new Map<string, Set<boolean>>();
   for (const surface of surfaces) {
     if (!surface.navigationRegion || surface.lift) continue;
