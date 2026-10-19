@@ -123,18 +123,18 @@ test("a notch which pinches shut at native precision keeps both sides without a 
   const before = structuredClone(points),
     warnings: string[] = [];
   const result = nativeReceiverGeometry(points, "receiver", warnings);
-  assert.ok(result.length > 1);
-  assert.ok(result.every((triangle) => triangle.length === 3));
+  assert.equal(result.length, 2, "Each side of the pinched notch stays one continuous receiver");
+  assert.ok(result.every((polygon) => polygon.length === 4));
   assert.ok(result.flat().every((point) => points.includes(point)));
   assert.ok(result.flat().some(({ y }) => y === 0));
   assert.ok(result.flat().some(({ y }) => y === 2));
   let area = 0;
-  for (const triangle of result) {
-    const a = triangle[0]!,
-      b = triangle[1]!,
-      c = triangle[2]!;
+  for (const polygon of result) {
     const f = Math.fround;
-    const twiceArea = (f(b.x) - f(a.x)) * (f(c.y) - f(a.y)) - (f(b.y) - f(a.y)) * (f(c.x) - f(a.x));
+    const twiceArea = polygon.reduce((sum, a, i) => {
+      const b = polygon[(i + 1) % polygon.length]!;
+      return sum + f(a.x) * f(b.y) - f(b.x) * f(a.y);
+    }, 0);
     assert.notEqual(twiceArea, 0);
     area += Math.abs(twiceArea) / 2;
   }

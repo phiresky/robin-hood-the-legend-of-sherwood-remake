@@ -4,6 +4,36 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Continuous receivers after native-precision splitting (2026-10-19)
+
+When a receiving outline pinches at native coordinate precision, triangulation
+previously left internal seams throughout its otherwise continuous regions.
+The exporter now rejoins adjacent pieces only if the combined native outline
+remains simple and nonzero-area. An edge index limits merge candidates to actual
+neighbors. All pieces come from the same receiving definition, preserving the
+height plane and material. Pinched holes and disconnected pieces remain split.
+
+With tower ownership stage `derby-tower-ownership-L8OXLK`, fresh Derby export
+`staged-map-export-90Goka` passes native construction and 22/25 room round trips
+in `saved-map-entrances-cJboZH`, up from 20/25. Both receiving-surface mismatches
+are fixed, leaving only three blocked entrances. Walking geometry is identical;
+sight obstacles decrease from 371 to 341 and elevation boundaries from 169 to
+136. The tower ownership stage remains unpublished pending independent linked
+placement and browser checks.
+
+An earlier approach-endpoint experiment in `staged-map-export-n0dNca` added
+warnings without fixing the mismatch and was discarded. Its measurements do
+not describe the retained implementation.
+
+All 263 targeted receiving/material/asset/compiler tests pass, along with app
+type checking, focused lint/format checks and the production editor build.
+No runtime engine implementation changes are required.
+
+Fresh export of the published Derby assets, `saved-map-exports-mxiRkn`, passes
+19/25 entrance round trips in `saved-map-entrances-r4iDHG`, improving from 18/25
+without the staged ownership changes. The remaining six failures are blocked
+passages; the prior receiver mismatch is resolved.
+
 ## Derby tower doorway ownership candidate (2026-10-19)
 
 Three main-hall-owned doorway corridors cross north-tower structure. Candidate

@@ -54,6 +54,54 @@ function needsSplit(points: Point[]): boolean {
   return false;
 }
 
+/** Remove triangulation seams where the combined native outline stays simple. */
+function joinSimplePieces(pieces: SightObstacle["points"][]): SightObstacle["points"][] {
+  const pointKey = (p: SightObstacle["points"][number]) =>
+    `${Math.fround(p.x)},${Math.fround(p.y)}`;
+  const edgeKey = (a: SightObstacle["points"][number], b: SightObstacle["points"][number]) =>
+    `${pointKey(a)}:${pointKey(b)}`;
+  const edges = new Map<string, SightObstacle["points"]>();
+  const active = new Set<SightObstacle["points"]>();
+  const remove = (polygon: SightObstacle["points"]) => {
+    active.delete(polygon);
+    polygon.forEach((a, i) => edges.delete(edgeKey(a, polygon[(i + 1) % polygon.length]!)));
+  };
+  for (let polygon of pieces) {
+    let joined = true;
+    while (joined) {
+      joined = false;
+      for (let i = 0; i < polygon.length; i++) {
+        const a = polygon[i]!,
+          b = polygon[(i + 1) % polygon.length]!;
+        const neighbor = edges.get(edgeKey(b, a));
+        if (!neighbor) continue;
+        const j = neighbor.findIndex(
+          (p, n) => edgeKey(p, neighbor[(n + 1) % neighbor.length]!) === edgeKey(b, a),
+        );
+        const combined = [
+          ...Array.from(
+            { length: polygon.length - 1 },
+            (_, n) => polygon[(i + 1 + n) % polygon.length]!,
+          ),
+          ...Array.from(
+            { length: neighbor.length - 1 },
+            (_, n) => neighbor[(j + 1 + n) % neighbor.length]!,
+          ),
+        ];
+        const native = combined.map(({ x, y }): Point => [Math.fround(x), Math.fround(y)]);
+        if (needsSplit(native) || !hasArea(native)) continue;
+        remove(neighbor);
+        polygon = combined;
+        joined = true;
+        break;
+      }
+    }
+    active.add(polygon);
+    polygon.forEach((a, i) => edges.set(edgeKey(a, polygon[(i + 1) % polygon.length]!), polygon));
+  }
+  return [...active];
+}
+
 /** Preserve generated receiving geometry through the native binary32 conversion.
  * Authored physical volumes use their own validation and are never repaired here. */
 export function nativeReceiverGeometry(
@@ -105,5 +153,5 @@ export function nativeReceiverGeometry(
     }
     result.push(triangle.map((index) => points[index]!));
   }
-  return result;
+  return joinSimplePieces(result);
 }
