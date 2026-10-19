@@ -39,8 +39,11 @@ gates like ordinary passages: strict mode rejects unsupported endpoints;
 best-effort mode warns and omits that gate. The fresh full-scene export loads,
 passes all 35 entrance trips and passes the terrace's closed/open/reset checks.
 The omitted annex gate still needs its physical approach repaired; this is not
-full parity. Lighting anchors and broader placement/browser review also prevent
+full parity. The two obsolete lighting anchors are now corrected in a subsequent
+stage; emitted lighting is unchanged because other selectors covered the same
+layers. Moved light assemblies and broader placement/browser review still prevent
 publication. See the
+[light-selector repair](map-compilation-evidence.md#terrace-light-selectors-restored-to-physical-floors-2026-10-20),
 [unsupported gate handling](map-compilation-evidence.md#unsupported-gates-warn-during-best-effort-export-2026-10-20),
 [gate-region evidence](map-compilation-evidence.md#western-gate-regions-and-control-audit-2026-10-20),
 [return-click diagnosis](map-compilation-evidence.md#western-terrace-return-clicks-occlusion-and-closed-gate-isolated-2026-10-20),
