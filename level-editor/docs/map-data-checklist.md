@@ -120,6 +120,11 @@ and Sherwood 5/5. Three Lincoln village doorway corrections improve its result
 from 28/35 while retaining movement geometry. Those assets pass 48 moved-placement
 room trips, browser export/reopen, native ZIP loading and six archived terrain-start
 entrance trips. Remaining failures still require asset and connection work.
+
+An unpublished Nottingham candidate now passes 65/69 native entrance round trips
+(22 more than the installed library). Three collision denials and one authored
+prison lock remain. Copied/rotated supporting assemblies and browser ZIP checks
+are still required; this candidate does not change the installed counts above.
 Sherwood's three doorway corrections retain walking geometry and pass 48 moved
 placement trips, browser reopening and six archived terrain-start trips. Its five
 entrance checks now pass; this does not certify all other map features.

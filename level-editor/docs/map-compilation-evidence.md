@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Nottingham structural doorway candidate (2026-10-20)
+
+Fresh installed-library export `saved-map-exports-ZrSGe9` retains 43/69 native
+entrance round trips. Candidate `local-door-structure-stage-AIn8tf` adds local
+doorway structure declarations to twelve assets. Its completed export
+`saved-map-exports-iZXKJc`, audited through `saved-map-entrances-zXY003`, passes
+65/69 complete sprite entrance round trips. This is an unpublished candidate,
+not a full-map parity result.
+
+Three routes still have collision denials: the castle hall/watchtower's
+`interior-1/door-0`, the northeast spire's `interior-0/door-0`, and the upper
+street turret's `interior-0/door-1`. The fourth denial is the previously recorded
+authored southwest prison lock. No permission override was added.
+
+Standalone placement of the east gate tower retains only two of its six copied
+entrances; the placement audit correctly rejects this incomplete fixture.
+Supporting-neighbour assemblies and rotated/elevated route checks remain
+required before publishing the candidate. The auditor now accepts implicit
+part-collision definitions while retaining its collision-count assertion.
+
+`prepare-map-archive-audit.py` verifies a browser archive's recorded SHA-256,
+map-only contents and embedded editor scene before extracting unchanged level
+bytes for native actor checks. Its smoke check uses the earlier verified keep
+archive; it does not certify the pending full Lincoln archive.
+
 ## Multi-height terrace lighting survives asset rotation (2026-10-20)
 
 The initial selector repair passed 32 moved floor probes, but checking all

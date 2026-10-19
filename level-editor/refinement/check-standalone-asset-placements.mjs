@@ -68,8 +68,14 @@ for (const height of [0, 40])
     });
     const geometry = compiled.descriptor.asset_geometry;
     const solids = geometry.sight_obstacles.filter((obstacle) => obstacle.solid);
-    const authoredSolids = descriptor.parts.filter((part) =>
-      edit.gameplay.movementSolids.includes(part.node),
+    assert.equal(edit.gameplay.collision, "parts", "This audit counts part collision volumes");
+    const authoredSolids = descriptor.parts.filter(
+      (part) =>
+        part.obstacle_local_game &&
+        part.collision !== "none" &&
+        part.mission_profile === undefined &&
+        (edit.gameplay.movementSolids?.includes(part.node) ??
+          edit.gameplay.movementBlockers === undefined),
     );
     assert.equal(
       solids.length,
@@ -102,7 +108,11 @@ for (const height of [0, 40])
     const expectedDoors = interiors.reduce((count, room) => count + room.doors.length, 0);
     assert.equal(buildings.length, 2 * interiors.length, "Copies must retain independent rooms");
     const doors = buildings.flatMap((building) => building.doors);
-    assert.equal(doors.length, 2 * expectedDoors, "All authored entrances must survive placement");
+    assert.equal(
+      doors.length,
+      2 * expectedDoors,
+      `All authored entrances must survive placement: ${compiled.warnings.join("; ")}`,
+    );
     const probes = doors.map((door) => {
       const receivers = geometry.sight_obstacles.filter(
         (receiver) =>
