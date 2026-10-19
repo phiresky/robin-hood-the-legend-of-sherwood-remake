@@ -125,6 +125,11 @@ An unpublished Nottingham candidate now passes 65/69 native entrance round trips
 (22 more than the installed library). Three collision denials and one authored
 prison lock remain. Copied/rotated supporting assemblies and browser ZIP checks
 are still required; this candidate does not change the installed counts above.
+The east gate tower with its separate arch and courtyard wall now passes 48
+moved/rotated/elevated native entrance trips and 32 missing-support rejections.
+The other staged assets remain unverified in rearranged assemblies. A larger
+castle-copy fixture exposes a courtyard-ground receiver spanning multiple
+navigation areas; that export failure is still unresolved.
 Sherwood's three doorway corrections retain walking geometry and pass 48 moved
 placement trips, browser reopening and six archived terrain-start trips. Its five
 entrance checks now pass; this does not certify all other map features.

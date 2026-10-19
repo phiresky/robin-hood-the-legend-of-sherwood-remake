@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Nottingham gate assembly placement checks (2026-10-20)
+
+The staged east gate tower works with its independently placed gate arch and
+east courtyard wall. `selected-neighbor-placements-CGOnqo` passes all 48 native
+complete sprite entrance round trips: three entrances, two copies, four
+rotations (0, 37, 90 and 180 degrees), and two elevations (0 and 40).
+The lower entrances receive floors from the arch and wall; the upper entrance
+receives the tower roof. These probes start at the doorway, not distant terrain.
+
+Removing the wall rejects all sixteen corresponding entrance placements in
+`selected-neighbor-placements-JJAD5f`; removing the arch rejects all sixteen in
+`selected-neighbor-placements-9ifhJq`. Neither case binds to an unrelated floor.
+The three reproducible fixtures are under `refinement/fixtures/nottingham-east-gate*`.
+The assembly auditor now accepts an explicit saved-map ID instead of assuming
+Lincoln. No runtime or installed-library data changes are involved.
+
+A larger castle fixture also exposed a separate unresolved export failure:
+the copied courtyard-ground projection volume 19 spans multiple receiving
+areas (`selected-neighbor-placements-ZEbbbl`). The passing three-asset fixture
+does not resolve or certify that larger assembly. The remaining eleven staged
+assets and full browser export still need placement/round-trip review.
+
 ## Nottingham structural doorway candidate (2026-10-20)
 
 Fresh installed-library export `saved-map-exports-ZrSGe9` retains 43/69 native

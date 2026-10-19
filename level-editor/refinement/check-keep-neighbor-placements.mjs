@@ -55,7 +55,9 @@ const ids = fixture?.assets ?? [
   "lincoln-keep-annex",
   "lincoln-keep-annex-cone-turret",
 ];
-const stored = JSON.parse(await fs.readFile("library/scenes/lincoln.rhlos-map.json"));
+const sourceMap = fixture?.map ?? "lincoln";
+assert.match(sourceMap, /^[a-z0-9-]+$/, "Supply a saved library map ID");
+const stored = JSON.parse(await fs.readFile(`library/scenes/${sourceMap}.rhlos-map.json`));
 const references = stored.assetSources.filter((ref) => ids.includes(ref.id));
 assert.equal(references.length, ids.length);
 const assets = await pinnedDescriptors("library", references);

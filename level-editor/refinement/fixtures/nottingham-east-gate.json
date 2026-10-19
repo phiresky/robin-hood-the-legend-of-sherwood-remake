@@ -1,0 +1,36 @@
+{
+  "map": "nottingham",
+  "assets": [
+    "nottingham-castle-gate-east-tower",
+    "nottingham-castle-gate-arch",
+    "nottingham-castle-east-courtyard-wall"
+  ],
+  "terrainHeight": 0,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "nottingham-castle-gate-east-tower",
+      "door": "interior-0/door-0",
+      "sourceLocal": [
+        -75.680908203125,
+        21.867381114036487
+      ]
+    },
+    {
+      "asset": "nottingham-castle-gate-east-tower",
+      "door": "interior-0/door-1",
+      "sourceLocal": [
+        49.319091796875,
+        -34.13261888596353
+      ]
+    },
+    {
+      "asset": "nottingham-castle-gate-east-tower",
+      "door": "interior-0/door-2",
+      "sourceLocal": [
+        -45.680908203125,
+        -12.132618885963533
+      ]
+    }
+  ]
+}
