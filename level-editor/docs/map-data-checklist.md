@@ -56,7 +56,15 @@ entrance checks now pass; this does not certify all other map features.
 Eight Nottingham village entrances now pass after local doorway declarations,
 verified by 128 moved-placement trips, browser reopening and sixteen archived
 terrain-start trips. One of Nottingham's remaining denials is an authored prison
-lock with no permanent corridor block; transition behavior still needs verification.
+lock with no permanent corridor block. The authoring audit confirms that no map
+transition targets that entrance; its unlocked after-transition fields alone do
+not authorize unlocking it. Mission-script behavior is outside this check.
+
+The next Nottingham doorway candidate passes 43/69 full-scene entrance trips
+and native construction, improving exactly the market-front brown house and
+upper red house ground entrances. It remains unpublished: four ground-start
+gallery trips pass, but two elevated-door probes incorrectly start on ground
+terrain and need a suitable approach fixture. Browser ZIP validation is pending.
 
 The preceding saved-map checks recorded
 290 prepared stair routes and 71 control apply/reset checks passing. The current

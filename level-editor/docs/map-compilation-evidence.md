@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Nottingham street doorway candidate and lock audit (2026-10-19)
+
+Stage `local-door-structure-stage-zfR4WI` declares one local doorway blocker
+each for `nottingham-market-front-brown` and `nottingham-upper-red-house`.
+Placement audits `asset-building-doors-hkPKEk` and `asset-building-doors-SvPwnA`
+pass all 48 doorway round trips, including the red house's second entrance.
+Full candidate `saved-map-exports-ElGNfI` constructs natively with 94 areas,
+695 sight obstacles, 173 doors, 39 jump pairs, 157,176 grid blocks and 184
+elevation boundaries. Only building passage conditions and warnings differ
+from `saved-map-exports-tmVzNj`. Audit `saved-map-entrances-PqKK5S` passes
+43/69 entrance trips, improving exactly two routes with no outcome regressions.
+The strict full-scene test still fails on the remaining 26 routes.
+
+Gallery `building-gallery-a35NmB` passes four ground-start click round trips.
+Its two elevated entrances fail with `terrain source has no receiver`: the
+gallery probe generator assumes ground-level approach sources for every door.
+Those failures must not be counted as successful approach coverage. Suitable
+elevated approach fixtures and browser ZIP validation remain pending; this
+candidate has not been published.
+
+Authoring audit `nottingham-prison-lock-audit-cuesyjly` checks the southwest
+prison's `interior-2/door-0` against recovered door 82. Both definitions lock
+PCs, villains and civilians, disallow lockpicking, and have no map transition
+targeting this entrance. Unlocked after-transition fields do not imply an
+actual transition link. Preserve this default lock; the native authorization
+denial is expected under these map-only conditions. Mission scripts and special
+authorization remain outside this audit. No runtime implementation changes.
+
 ## Ten-map native construction and entrance audit (2026-10-14)
 
 Nottingham village stage `local-door-structure-stage-uykk0W` adds explicit local
@@ -15,8 +43,9 @@ building passage conditions and warnings. `saved-map-entrances-KUToD6` improves
 from 33/69 to 41/69 passing entrances, fixing exactly the eight targeted routes.
 Of the remaining 28 denied routes, the southwest prison entrance at [582,2241]
 has an authored PC lock and no permanently blocked corridor; it must not be
-treated as an unconditional geometry defect. Its transition behavior still
-requires verification. Other unresolved routes remain subject to geometry review.
+treated as an unconditional geometry defect. The later authoring audit above
+confirms that no map transition targets it. Other unresolved routes remain
+subject to geometry review.
 `building-gallery-TjIXYF` passes all sixteen terrain-start entrance-click trips.
 Browser fixture `draft-scene-render-R3Jx6l` reopens identical gameplay, color and
 depth; its 52,952,754-byte ZIP has SHA-256
