@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Upper prison doorway definitions published (2026-10-20)
+
+The upper prison's two reviewed doorway structure declarations are installed.
+No lock rules, floors, collision volumes, models or derivative bytes changed.
+The independent courtyard and curtain-wall assembly passes 48 player-click
+entrance/return probes (`selected-neighbor-placements-fUwa0Q`). Removing the
+northwest curtain wall rejects all sixteen lower-entrance placements
+(`selected-neighbor-placements-nNHXxo`).
+
+Browser fixture `draft-scene-render-nr0mBA` passes export/reopen with matching
+gameplay/color/depth, including two appearance states. Its 76,074,106-byte ZIP
+has SHA-256 `74daefb682c2e046504436d8b4a4f24a1822eec7d06fdbde28f7b981731ae0c9`.
+Native loading without base data and six archived entrance/return probes pass
+(`exact-map-archive-0m43t4mz`). Derivative validation passes in
+`reviewed-publication-stage-1au42sxz`.
+
+`upper-prison-publication-installed` installs the draft and Nottingham scene
+pin; all installed hashes match. Fresh export `saved-map-exports-bz4T3k`
+constructs natively with 94 areas, 667 sight obstacles, 173 doors, 39 jump pairs,
+159,300 grid blocks and 153 elevation boundaries. Its entrance audit
+`saved-map-entrances-bfGH16` passes 60/69, up from 58/69. Nine entrance failures
+and three unpublished candidates remain. This does not certify mission prison
+scripts, all control transitions, or full map parity.
+
 ## Northern gate and round tower published (2026-10-20)
 
 The north gate tower and northwest round tower now have published doorway

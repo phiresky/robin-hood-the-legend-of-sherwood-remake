@@ -1,0 +1,17 @@
+{
+  "map": "nottingham",
+  "assets": ["nottingham-upper-prison", "nottingham-castle-east-courtyard-wall"],
+  "size": [7000, 5000],
+  "copyXs": [1800.25, 5200.25],
+  "assemblyY": 3000.75,
+  "terrainHeight": 0,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "nottingham-upper-prison",
+      "door": "interior-2/door-2",
+      "sourceLocal": [40.05426025390625, -337.3096831175883]
+    }
+  ],
+  "missingEntrances": true
+}
