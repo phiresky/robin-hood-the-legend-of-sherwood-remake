@@ -136,6 +136,12 @@ castle checks pass 260/296 emitted entrance routes, with eight additional west
 tower entrances omitted at 90/180 degrees due to unresolved sloped receivers.
 The west tower also has four local structural denials at 37 degrees; the other
 32 route denials are the known hall/spire neighbouring barriers.
+A newer unpublished slope-precision candidate restores all eight omitted
+entrances without changing coordinates: the complete castle now passes 264/304
+routes. Forty collision denials remain. The isolated west tower/arch/wall
+assembly passes 40/48 trips; its failures involve local structure at 37 degrees
+and a neighbouring wall at 90 degrees. The existing precision flag delays floor
+rounding until final export; it adds no runtime work.
 Sherwood's three doorway corrections retain walking geometry and pass 48 moved
 placement trips, browser reopening and six archived terrain-start trips. Its five
 entrance checks now pass; this does not certify all other map features.

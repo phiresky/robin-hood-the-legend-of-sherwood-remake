@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## West gate slope precision candidate (2026-10-20)
+
+The west tower's authored doorway is exactly coplanar with both its navigation
+surface and receiving anchors. The mesh discrepancy recorded below is not a
+reason to shift the doorway independently. Its sloped surface previously rounded
+before floor construction, unlike joined floors. Candidate
+`west-gate-slope-F3s3VC` sets the existing `preserveMovementPrecision` flag on
+`building-330-walk-0`; coordinates, collision geometry and runtime code are unchanged.
+`stage-nottingham-west-gate-slope.mjs` checks descriptor/model pins and validates
+the candidate before writing a separate stage.
+
+The three-asset west gate fixture now emits all 48 entrances across two copies,
+four rotations and two elevations (`selected-neighbor-placements-LQ4rNh`).
+Forty complete sprite round trips pass. Four routes at 37 degrees intersect the
+tower's own volume 332; four at 90 degrees intersect the neighbouring courtyard
+wall's volume 327. These barriers remain enforced.
+
+The larger castle fixture also restores every omitted entrance:
+`selected-neighbor-placements-zIRTbH` completes eight exports with zero west
+tower door omissions. Its all-door audit `saved-map-entrances-ApjiCu` passes
+264/304 routes, versus 260/296 plus eight omitted entrances before this change.
+Forty collision denials remain, including the known hall/spire barriers.
+The candidate is unpublished pending corridor repair and browser/archive checks.
+Lint, formatting and metadata validation pass.
+
 ## Complete castle framing and broader entrance audit (2026-10-20)
 
 The courtyard receiver failure in `selected-neighbor-placements-ZEbbbl` depends
