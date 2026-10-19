@@ -57,6 +57,7 @@ terrain.surfaces.push({
   projectionMaterials: { defaultMaterial: shape.default_material, regions: [] },
 });
 const selectedSolids = [];
+const floorClearances = [];
 for (const [id, descriptor] of assets) {
   if (id === assetId || descriptor.gameplay?.collision !== "parts") continue;
   const current = changed.get(id)?.gameplay ?? descriptor.gameplay;
@@ -90,6 +91,26 @@ for (const [id, descriptor] of assets) {
     if (gameplay.movementSolids?.includes(part.node)) continue;
     gameplay.movementSolids = [...(gameplay.movementSolids ?? []), part.node];
     selectedSolids.push({ asset: id, node: part.node });
+    // Promoting a supporting volume must not fill its explicitly authored
+    // walking surface. Keep the same outline, holes and plane; this clearance
+    // applies only to collision belonging to the same placed asset.
+    for (const surface of gameplay.surfaces.filter((surface) => surface.node === part.node)) {
+      const geometry = ({ node, polygon, height, holes = [] }) =>
+        JSON.stringify({ node, polygon, height, holes });
+      if ((gameplay.movementClearances ?? []).some((c) => geometry(c) === geometry(surface)))
+        continue;
+      const clearance = {
+        id: `${surface.id}-support-clearance`,
+        node: surface.node,
+        polygon: structuredClone(surface.polygon),
+        height: structuredClone(surface.height),
+        holes: structuredClone(surface.holes ?? []),
+      };
+      gameplay.movementClearances ??= [];
+      assert.ok(!gameplay.movementClearances.some((c) => c.id === clearance.id));
+      gameplay.movementClearances.push(clearance);
+      floorClearances.push({ asset: id, surface: surface.id, clearance: clearance.id });
+    }
   }
 }
 for (const [id, { gameplay }] of changed) {
@@ -103,7 +124,7 @@ const output = await fs.mkdtemp("work/needs-review/map-compile/raised-terrain-su
 await fs.writeFile(`${output}/edits.json`, JSON.stringify([...changed.values()]));
 await fs.writeFile(
   `${output}/review.json`,
-  JSON.stringify({ map, assetId, stage, removed, receiver, selectedSolids, top }),
+  JSON.stringify({ map, assetId, stage, removed, receiver, selectedSolids, floorClearances, top }),
 );
 console.log(
   JSON.stringify({

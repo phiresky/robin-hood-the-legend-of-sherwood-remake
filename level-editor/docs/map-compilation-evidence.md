@@ -4,6 +4,56 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Fresh Wychford regression and northern plateau authoring (2026-10-19)
+
+Current-compiler main-library export `saved-map-exports-qDM3Wf` completed in
+823 seconds. Native construction passes with 88 areas, 15,461 sight obstacles,
+31 door projections, 64,638 grid blocks and 36,834 elevation boundaries.
+`saved-map-entrances-p8Du7O` passes all 24 emitted entrance round trips using
+the complete character sprite. The unsupported church-tower lift remains
+omitted with a warning. These are construction and entrance checks, not complete
+Wychford traversal or rendering certification.
+
+Lincoln's north-bailey plateau still uses a projected ground exclusion and
+receiver rather than an independently authored raised walking surface. Candidate
+`raised-terrain-surface-ixzLD9` promotes its top and selects 26 neighboring solid
+parts across eighteen edited assets. Export `saved-map-exports-A3LN3J` constructs
+natively but loses one tower entrance and one stair; only 27/34 emitted entrance
+trips pass. This candidate is rejected for publication.
+
+The mesh-footprint authoring tool now accepts a selected plateau asset, pins its
+model bytes and preserves explicit receiving materials when a floor splits.
+`drawbridge-mesh-footprints-9jEqsP` clips the northern plateau to its near-horizontal
+mesh. Review `north-plateau-mesh-review-dhc95fdl` samples 2,049 points: 1,673 have
+direct near-plane triangle hits; the largest remaining horizontal gap is
+0.000390 game units and the largest supported height error is 0.058526.
+This is sampled floor support, not actor traversal proof.
+
+Door-structure authoring can now inspect staged gameplay, retain the other staged
+asset edits and reject a changed gameplay fingerprint. The negative check is
+`stale-door-stage-check-0m8m3nh4`. Candidate `local-door-structure-stage-L9K1CV`
+declares six entrances' own structures. Export `saved-map-exports-XA9nuC` passes
+33/34 emitted entrance trips in `saved-map-entrances-phhouz`, including the north
+hall. It still loses the tower entrance and stair, so it is not publishable.
+
+The tower omission comes from the newly selected south-curtain support volume:
+its top is about 344 while its explicitly authored walkway is at 340.001.
+The raised-surface staging tool now preserves each selected support's existing
+walking outlines and holes as asset-local clearances; foreign collision remains
+effective. This does not invent new floor coverage. The missing stair landing
+needs separate support review. All changes here are authoring tools and staged
+data; the installed plateau and runtime engine remain unchanged.
+
+Follow-up `local-door-structure-stage-Gr8lTM` adds eight support clearances.
+Export `saved-map-exports-dHdjvM` constructs natively and retains all 35 room
+entrances. Audit `saved-map-entrances-qo5gd4` passes 33/35: the restored east-gate
+tower entrance still meets the neighboring wall volume between its outdoor
+anchor and doorway midpoint; the west round tower retains its plateau conflict.
+The north hall passes. The east-curtain `building-157-lift` remains omitted:
+its lower anchor at world [2788, 1249.001, 220.001] has no supporting raised floor.
+The wall support volume and stair contact both need further asset geometry review.
+Neither this candidate nor its predecessor changes the installed library result.
+
 ## Lincoln keep and turret entrance publication (2026-10-19)
 
 The keep and annex cone-turret definitions retain their geometry and add only

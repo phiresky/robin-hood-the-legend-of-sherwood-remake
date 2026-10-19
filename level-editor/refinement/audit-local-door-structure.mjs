@@ -12,11 +12,16 @@ const { default: earcut, flatten } = createRequire(
   new URL("../shared/package.json", import.meta.url),
 )("earcut");
 
-const directory = process.argv[2];
+const [directory, gameplayStage] = process.argv.slice(2);
 assert.ok(directory, "Supply a saved-map export directory with building-owners.json");
 const owners = JSON.parse(await fs.readFile(`${directory}/building-owners.json`));
 assert.equal(owners.complete, true);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const staged = new Map(
+  (gameplayStage ? JSON.parse(await fs.readFile(`${gameplayStage}/edits.json`)) : []).map(
+    (edit) => [edit.asset, edit],
+  ),
+);
 const scenes = new Map(),
   descriptors = new Map();
 const results = [];
@@ -34,7 +39,14 @@ for (const owner of owners.results.filter((row) => row.blocked)) {
   if (!descriptors.has(reference.descriptor)) {
     const bytes = await fs.readFile(`library/${reference.descriptor}`);
     assert.equal(hash(bytes), reference.descriptor_sha256);
-    descriptors.set(reference.descriptor, JSON.parse(bytes));
+    const descriptor = JSON.parse(bytes);
+    const edit = staged.get(descriptor.id);
+    if (edit) {
+      assert.equal(edit.descriptorSha256, reference.descriptor_sha256);
+      if (edit.modelSha256 !== undefined) assert.equal(edit.modelSha256, reference.model_sha256);
+      descriptor.gameplay = edit.gameplay;
+    }
+    descriptors.set(reference.descriptor, descriptor);
   }
   const descriptor = descriptors.get(reference.descriptor),
     gameplay = descriptor.gameplay;
@@ -120,6 +132,7 @@ for (const owner of owners.results.filter((row) => row.blocked)) {
     descriptorSha256: reference.descriptor_sha256,
     model: reference.model,
     modelSha256: reference.model_sha256,
+    gameplaySha256: hash(JSON.stringify(gameplay)),
     proposed: { volumes, blockers },
   });
 }
@@ -134,6 +147,7 @@ await fs.writeFile(
         "Does not identify barriers owned by other placed assets; candidates require native and browser checks before publication.",
       ],
       source: directory,
+      ...(gameplayStage ? { gameplayStage } : {}),
       results,
     },
     null,

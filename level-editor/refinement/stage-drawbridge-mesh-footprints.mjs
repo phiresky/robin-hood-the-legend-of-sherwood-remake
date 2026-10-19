@@ -10,28 +10,41 @@ import { signedPolygonArea } from "../shared/src/geometry.ts";
 import { fixedPolygonBoolean } from "../shared/src/fixed-polygon-boolean.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
-const [stage, mode] = process.argv.slice(2);
+const [stage, mode, assetOption] = process.argv.slice(2);
 assert.ok(stage, "Supply staged drawbridge and plateau edits");
 assert.ok(mode === undefined || mode === "--plateau", "Unknown footprint review mode");
+assert.ok(
+  assetOption === undefined ||
+    (mode === "--plateau" && /^--asset=[a-z0-9-]+\/[a-z0-9-]+$/.test(assetOption)),
+  "Optional plateau asset must be --asset=<map>/<asset-id>",
+);
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`));
 const id =
-  mode === "--plateau"
+  assetOption?.split("/").at(-1) ??
+  (mode === "--plateau"
     ? "lincoln-castle-hill-inner-bailey-plateau"
-    : "lincoln-south-gate-drawbridge";
+    : "lincoln-south-gate-drawbridge");
 const edit = edits.find((entry) => entry.asset === id);
 assert.ok(edit);
-const root = `3d-assets/lincoln/${id}`;
+const root = `3d-assets/${assetOption?.slice("--asset=".length) ?? `lincoln/${id}`}`;
 const bytes = await fs.readFile(`library/${root}/asset.json`);
 assert.equal(createHash("sha256").update(bytes).digest("hex"), edit.descriptorSha256);
 const descriptor = JSON.parse(bytes);
+assert.equal(descriptor.id, id);
+const modelSha256 = createHash("sha256")
+  .update(await fs.readFile(`library/${root}/${descriptor.model}`))
+  .digest("hex");
+if (edit.modelSha256 !== undefined) assert.equal(modelSha256, edit.modelSha256);
+edit.modelSha256 = modelSha256;
 const model = await loadSceneModel("library", {
   id: edit.asset,
   role: "objects",
-  model: `${root}/model.glb`,
+  model: `${root}/${descriptor.model}`,
   model_sha256: edit.modelSha256,
   descriptor: `${root}/asset.json`,
   descriptor_sha256: edit.descriptorSha256,
   resources: descriptor.resources ?? [],
+  ...(descriptor.model_scene ? { model_scene: descriptor.model_scene } : {}),
 });
 const camera = { kind: "oblique-orthographic", elevation_deg: 35 };
 // Dense carved terrain contains nearly coincident tessellation edges. A local
@@ -92,15 +105,17 @@ for (const surface of edit.gameplay.surfaces) {
     replacement.height = replacement.polygon.map(() => height);
     if (clipped.length > 1) {
       delete replacement.preserveMovementBoundary;
-      const volume = edit.gameplay.volumes.find(
-        (volume) => volume.id === replacement.projectionVolume,
-      );
-      assert.ok(volume && !volume.shape.material_indices?.length);
-      delete replacement.projectionVolume;
-      replacement.projectionMaterials = {
-        defaultMaterial: volume.shape.default_material,
-        regions: [],
-      };
+      if (replacement.projectionVolume !== undefined) {
+        const volume = edit.gameplay.volumes?.find(
+          (volume) => volume.id === replacement.projectionVolume,
+        );
+        assert.ok(volume && !volume.shape.material_indices?.length);
+        delete replacement.projectionVolume;
+        replacement.projectionMaterials = {
+          defaultMaterial: volume.shape.default_material,
+          regions: [],
+        };
+      } else assert.ok(replacement.projectionMaterials, "Split floor needs receiving materials");
     }
     if (replacement.navigationJoins)
       replacement.navigationJoins = replacement.polygon.map(([x, y], index) => [
@@ -116,6 +131,6 @@ const output = await fs.mkdtemp("work/needs-review/map-compile/drawbridge-mesh-f
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(
   `${output}/mesh-footprints.json`,
-  JSON.stringify({ stage, mode, clippingScale, published: false, changes }),
+  JSON.stringify({ stage, mode, asset: id, modelSha256, clippingScale, published: false, changes }),
 );
 console.log(output);

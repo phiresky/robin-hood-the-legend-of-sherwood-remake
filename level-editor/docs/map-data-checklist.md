@@ -45,6 +45,8 @@ predates the latest doorstep corrections and publication. See the
 [ten-map audit](map-compilation-evidence.md#ten-map-native-construction-and-entrance-audit-2026-10-14).
 Fresh Wychford export passes native construction and all 24 emitted entrance
 round trips, confirming all four receiver mismatch fixes without runtime changes.
+The latest main-library export also retains all 24 trips after the coplanar-layer
+and Derby asset updates; see the [current regression evidence](map-compilation-evidence.md#fresh-wychford-regression-and-northern-plateau-authoring-2026-10-19).
 The unsupported church-tower traversal remains omitted with a warning. The fresh published
 York follow-up passes 46/95 doorway trips, with 46 denied routes and three receiver
 mismatches. Explicit asset-local doorway structure references fix the two newly
