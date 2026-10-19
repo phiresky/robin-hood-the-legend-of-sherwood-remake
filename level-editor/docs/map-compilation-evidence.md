@@ -18,8 +18,8 @@ With tower ownership stage `derby-tower-ownership-L8OXLK`, fresh Derby export
 in `saved-map-entrances-cJboZH`, up from 20/25. Both receiving-surface mismatches
 are fixed, leaving only three blocked entrances. Walking geometry is identical;
 sight obstacles decrease from 371 to 341 and elevation boundaries from 169 to
-136. The tower ownership stage remains unpublished pending independent linked
-placement and browser checks.
+136. The tower ownership publication and subsequent linked-placement/browser
+checks are recorded below.
 
 An earlier approach-endpoint experiment in `staged-map-export-n0dNca` added
 warnings without fixing the mismatch and was discarded. Its measurements do
@@ -83,10 +83,41 @@ Disconnected checks verify room-sector isolation, not the absence of ordinary
 outdoor walking between the buildings. Full-map and fixture compilations contain
 no mission content.
 
-This candidate remains unpublished. The later receiver correction above fixes
-its handoff mismatch; mixed hall/tower placement and browser ZIP checks remain.
+The later receiver correction above fixes its handoff mismatch. Main-hall
+placement fixture `asset-building-doors-3ndIgQ` passes all 80 doorway round trips
+with authored support terrain at offset 125.00101. Mixed gallery
+`linked-building-gallery-rF31l8` passes 32 doorway trips, four complete directed
+hall/tower room crossings and four disconnected-sector checks. Its four buildings
+are separate rotated placements on two terrain heights. The gallery generator
+now leaves a 400-unit empty transition strip between its 1200-unit source rows,
+preventing terrain interpolation from changing support heights under buildings.
+
+Browser fixture `draft-scene-render-kSx4bx` exports and reopens identical gameplay,
+color, depth and three appearance renders. Its 19,143,628-byte ZIP has SHA-256
+`9fdeb87fac71fa4ac6c85051b5b313e011cde99e84d5a9ca4af092459529e740`.
+The render shows two halls and two towers on their support terrain. Exact-archive
+audit `derby-tower-archived-lm1mj_e8` passes all sixteen doorway trips and four
+hall/tower crossings. Native loading without base data passes with 97 sight
+obstacles, seventeen door projections, 13,500 grid blocks and two controls.
+The isolated gallery does not resolve the hall's remaining mask/light support
+dependencies; its warnings remain visible and these checks certify doorway
+ownership and room connections, not full feature parity.
+
+The publisher can now install reviewed scene connections in the same transaction
+as the asset definitions and scene pins. It verifies the original scene hash,
+placements and edited room definitions, preserves existing scene bytes, and
+refuses to replace existing connections. Four publication transaction tests pass.
 The new Rust code is an ignored diagnostic test, with no runtime implementation
-changes.
+changes; the game build passes.
+
+Publication `derby-tower-installed-20261019` installs both asset definitions,
+catalog entries, Derby scene pins and its reviewed hall/tower room connection
+atomically. All fourteen installed hashes match the report. Model/texture bytes
+and existing draft warnings remain unchanged. The scene update preserves its
+existing content and appends only the explicit room link alongside the new pins.
+Fresh published export `saved-map-exports-BuaSWi` matches the complete
+native-verified `staged-map-export-90Goka` descriptor exactly, confirming the
+installed definitions and scene link reproduce the measured 22/25 result.
 
 ## Nottingham street doorway publication and lock audit (2026-10-19)
 

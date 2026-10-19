@@ -272,7 +272,7 @@
       "model": "3d-assets/derby/derby-keep-main-hall/model.glb",
       "model_sha256": "721311bf83222e0aad0ce8d53c433fcc644a6a36b035c8f57cbfdcee75eae1f5",
       "descriptor": "3d-assets/derby/derby-keep-main-hall/asset.json",
-      "descriptor_sha256": "ba8683a8dd02f13522efb419bb1db7d4375659c20aa3d65be4920149bd9c7262",
+      "descriptor_sha256": "2adae6d66bdf8cab905411f203aa5691292752ca6e55f5364bb386c43803724f",
       "id": "derby-keep-main-hall"
     },
     {
@@ -286,7 +286,7 @@
       "model": "3d-assets/derby/derby-keep-north-tower/model.glb",
       "model_sha256": "77d3d9917a3aa2119549d99a990eb028a93fe3fae2c792c41865ac0072540631",
       "descriptor": "3d-assets/derby/derby-keep-north-tower/asset.json",
-      "descriptor_sha256": "c5112ce0d48adccfc5215e5fe4b26ece00a08754665dad0fb68ab0f7f8afb8ba",
+      "descriptor_sha256": "86a2c5a7d8a5d3788d77a77647e6fee66f9cbf035581e210e4c671f065fb2626",
       "id": "derby-keep-north-tower"
     },
     {
@@ -1747,6 +1747,21 @@
             "rot_deg": 0
           }
         }
+      }
+    }
+  ],
+  "interiorConnections": [
+    {
+      "id": "interior-link-1",
+      "from": {
+        "placement": "derby-keep-main-hall",
+        "asset": "derby-keep-main-hall",
+        "interior": "interior-6"
+      },
+      "to": {
+        "placement": "derby-keep-north-tower",
+        "asset": "derby-keep-north-tower",
+        "interior": "interior-6"
       }
     }
   ]

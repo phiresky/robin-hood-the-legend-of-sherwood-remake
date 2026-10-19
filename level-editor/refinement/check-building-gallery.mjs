@@ -18,11 +18,13 @@ const terrainHeights = scenes.map((scene) => {
   assert.ok(scene.terrain.vertices.every((vertex) => vertex.position[2] === height));
   return height;
 });
-document.size = [1600, 1200 * scenes.length];
+const rowStride = 1600;
+document.size = [1600, rowStride * scenes.length];
 document.terrain = createTerrainGrid([0, 0, ...document.size], 400, 0);
-// Keep each gallery row's support height; empty space between rows absorbs the slope.
+// Preserve all 1200 units of each input's flat support. A separate 400-unit
+// gap absorbs height changes without sloping the last cells under its buildings.
 for (const vertex of document.terrain.vertices) {
-  const row = Math.min(scenes.length - 1, Math.floor(vertex.position[1] / 1200));
+  const row = Math.min(scenes.length - 1, Math.floor(vertex.position[1] / rowStride));
   vertex.position[2] = terrainHeights[row];
 }
 document.groups = [];
@@ -40,7 +42,7 @@ for (const [index, scene] of scenes.entries()) {
   const prefix = `gallery-${index}/`;
   for (const group of scene.groups) {
     group.id = prefix + group.id;
-    group.transform.dy += index * 1200;
+    group.transform.dy += index * rowStride;
   }
   for (const object of scene.objects) {
     object.id = prefix + object.id;
@@ -89,7 +91,7 @@ await fs.writeFile(
         building_approaches: doors.map((door) => {
           const heights = terrainHeights.filter((height, row) => {
             const worldY = door.point_out[1] + height;
-            return worldY >= row * 1200 && worldY < (row + 1) * 1200;
+            return worldY >= row * rowStride && worldY < row * rowStride + 1200;
           });
           assert.equal(heights.length, 1, "Entrance must identify one gallery row");
           const terrainHeight = heights[0];

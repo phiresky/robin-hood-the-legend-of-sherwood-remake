@@ -45,16 +45,18 @@ The east and west courtyard lodges now pass in the assembled scene as well as
 loads without base data, and passes all four archived terrain-start entrance trips.
 
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
-An unpublished Derby ownership correction moves three tower entrances out of
+The published Derby ownership correction moves three tower entrances out of
 the main-hall definition and links the split room in the editor. It preserves
 assembled doorway positions and room memberships, passes 48 isolated placement
 trips, and improves full-scene entrance results to 22/25 with the exporter now
 rejoining valid receiving pieces after native-precision splitting. Both Derby
 receiver mismatches are fixed. Independently moved tower copies pass 80 native
-room crossings and sixteen disconnected-room checks; mixed hall/tower placement
-and browser ZIP verification remain pending. Exporting the published Derby assets improves its
-result from 18/25 to 19/25 through the receiver correction alone.
-Their current entrance results are Derby 19/25, Lincoln 31/35, Nottingham 43/69,
+room crossings and sixteen disconnected-room checks. Mixed hall/tower placements
+also pass 32 doorway trips and linked/unlinked checks. Their browser ZIP reopens
+identically, loads without base data, and passes the exact-archive doorway and
+room-crossing tests. The asset definitions and Derby's room link were installed
+together; models and textures are unchanged.
+Their current entrance results are Derby 22/25, Lincoln 31/35, Nottingham 43/69,
 and Sherwood 5/5. Three Lincoln village doorway corrections improve its result
 from 28/35 while retaining movement geometry. Those assets pass 48 moved-placement
 room trips, browser export/reopen, native ZIP loading and six archived terrain-start

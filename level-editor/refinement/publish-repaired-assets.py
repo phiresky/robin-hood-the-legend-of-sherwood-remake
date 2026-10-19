@@ -48,8 +48,42 @@ def install(library, before, replacements):
         raise
 
 
+def add_reviewed_connections(original, review, edits):
+    """Add reviewed room links while preserving every existing scene byte."""
+    assert digest(original) == review['sceneSha256'], 'Stale connection scene'
+    scene = json.loads(original)
+    assert 'interiorConnections' not in scene, 'Do not replace existing scene connections'
+    connections = review['interiorConnections']
+    assert isinstance(connections, list) and connections, 'Missing reviewed connections'
+    placements = {placement['id']: placement for placement in scene['placements']}
+    ids, pairs = set(), set()
+    for connection in connections:
+        identity = connection['id']
+        assert isinstance(identity, str) and identity and identity not in ids, 'Duplicate connection ID'
+        ids.add(identity)
+        endpoints = []
+        for side in ('from', 'to'):
+            endpoint = connection[side]
+            asset, placement, interior = (endpoint[key] for key in ('asset', 'placement', 'interior'))
+            assert placement in placements and asset in placements[placement]['assets'], 'Missing connection placement'
+            assert asset in edits, 'Connection asset is not in the reviewed publication'
+            assert any(room['id'] == interior for room in edits[asset]['gameplay']['interiors']), 'Missing connection room'
+            endpoints.append((placement, asset, interior))
+        assert endpoints[0][:2] != endpoints[1][:2], 'Local room links belong to the asset'
+        pair = tuple(sorted(endpoints))
+        assert pair not in pairs, 'Duplicate room connection'
+        pairs.add(pair)
+    scene['interiorConnections'] = connections
+    text = original.decode().rstrip()
+    assert text.endswith('}')
+    appended = (text[:-1].rstrip() + ',\n  "interiorConnections": ' +
+                json.dumps(connections, indent=2).replace('\n', '\n  ') + '\n}\n').encode()
+    assert json.loads(appended) == scene, 'Connection insertion changed unrelated scene data'
+    return appended
+
+
 def publish(library, stage, gameplay_stage, fixture, output, apply=False, archive_name=None,
-            allow_unreferenced=False):
+            allow_unreferenced=False, scene_connections=None):
     library, stage, gameplay_stage, fixture, output = map(
         lambda value: Path(value).resolve(), (library, stage, gameplay_stage, fixture, output))
     assert not output.is_relative_to(library)
@@ -58,6 +92,10 @@ def publish(library, stage, gameplay_stage, fixture, output, apply=False, archiv
     index = json.loads((staged_root / 'index.json').read_bytes())
     entries = index['assets']
     edits = {edit['asset']: edit for edit in json.loads((gameplay_stage / 'edits.json').read_bytes())}
+    connection_review = json.loads(Path(scene_connections).read_bytes()) if scene_connections else None
+    connection_scene = Path(connection_review['scenePath']).resolve() if connection_review else None
+    if connection_scene:
+        assert connection_scene.parent == library / 'scenes' and connection_scene.is_file()
     assert len(entries) == len(edits) and {entry['id'] for entry in entries} == edits.keys()
     assert not verify_derivatives(staged_root)
     validate_asset_index(staged_root, index)
@@ -118,8 +156,9 @@ def publish(library, stage, gameplay_stage, fixture, output, apply=False, archiv
         scenes = []
         for path in sorted((library / 'scenes').glob('*.rhlos-map.json')):
             original = path.read_bytes()
-            scene = json.loads(original)
-            updated = original
+            updated = (add_reviewed_connections(original, connection_review, edits)
+                       if path == connection_scene else original)
+            scene = json.loads(updated)
             for ref in scene.get('assetSources', []) + scene.get('sceneAssets', []):
                 if ref.get('id') not in pins:
                     continue
@@ -165,7 +204,8 @@ if __name__ == '__main__':
     parser.add_argument('--archive', help='Select a verified ZIP when the fixture retains several archives')
     parser.add_argument('--allow-unreferenced', action='store_true',
                         help='Publish library drafts not yet referenced by saved scenes; all asset/archive checks still apply')
+    parser.add_argument('--scene-connections', help='Reviewed scene hash and new interior connections to install atomically')
     args = parser.parse_args()
     print(json.dumps(publish(args.library, args.stage, args.gameplay_stage,
                              args.fixture, args.output, args.apply, args.archive,
-                             args.allow_unreferenced), indent=2))
+                             args.allow_unreferenced, args.scene_connections), indent=2))

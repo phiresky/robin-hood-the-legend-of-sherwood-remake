@@ -1,5 +1,7 @@
 """Publication transactions reject stale files and restore partially written assets."""
 import importlib.util
+import json
+import copy
 from pathlib import Path
 import sys
 import tempfile
@@ -14,6 +16,29 @@ spec.loader.exec_module(publisher)
 
 
 class RepairPublicationTest(unittest.TestCase):
+    def test_room_connections_preserve_scene_bytes_and_reject_stale_or_missing_owners(self):
+        original = b'{"height":1.0000000000000001,"placements":[{"id":"a","assets":["hall"]},{"id":"b","assets":["tower"]}]}\n'
+        connection = {'id': 'link',
+                      'from': {'placement': 'a', 'asset': 'hall', 'interior': 'room'},
+                      'to': {'placement': 'b', 'asset': 'tower', 'interior': 'room'}}
+        review = {'sceneSha256': publisher.digest(original), 'interiorConnections': [connection]}
+        edits = {asset: {'gameplay': {'interiors': [{'id': 'room'}]}} for asset in ('hall', 'tower')}
+        result = publisher.add_reviewed_connections(original, review, edits)
+        self.assertTrue(result.startswith(original.rstrip()[:-1]))
+        self.assertEqual(json.loads(result)['interiorConnections'], [connection])
+        with self.assertRaisesRegex(AssertionError, 'Stale connection scene'):
+            publisher.add_reviewed_connections(original + b' ', review, edits)
+        missing = copy.deepcopy(review)
+        missing['interiorConnections'][0]['to']['interior'] = 'absent'
+        with self.assertRaisesRegex(AssertionError, 'Missing connection room'):
+            publisher.add_reviewed_connections(original, missing, edits)
+        missing['interiorConnections'][0]['to']['placement'] = 'absent'
+        with self.assertRaisesRegex(AssertionError, 'Missing connection placement'):
+            publisher.add_reviewed_connections(original, missing, edits)
+        existing = dict(review, sceneSha256=publisher.digest(result))
+        with self.assertRaisesRegex(AssertionError, 'existing scene connections'):
+            publisher.add_reviewed_connections(result, existing, edits)
+
     def test_only_reviewed_part_appearance_may_change(self):
         previous = {'model': 'model.glb', 'parts': [{'node': 'fixed'}, {'node': 'removed'}]}
         edit = {'gameplay': {'version': 1},
