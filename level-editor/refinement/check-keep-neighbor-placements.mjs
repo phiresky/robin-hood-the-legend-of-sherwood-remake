@@ -14,15 +14,34 @@ import {
 import { gameToScene } from "../shared/src/scene.ts";
 import { sceneToGame, applyAffineMatrix } from "../shared/src/geometry.ts";
 
-const [stage] = process.argv.slice(2);
+const [stage, fixturePath] = process.argv.slice(2);
 assert.ok(stage, "Supply the keep/turret doorway stage");
-const ids = ["lincoln-keep", "lincoln-keep-annex", "lincoln-keep-annex-cone-turret"];
+const fixture = fixturePath ? JSON.parse(await fs.readFile(fixturePath)) : undefined;
+if (fixture) {
+  assert.ok(Array.isArray(fixture.assets) && fixture.assets.length > 1);
+  assert.equal(new Set(fixture.assets).size, fixture.assets.length);
+  assert.ok(Number.isFinite(fixture.terrainHeight));
+  assert.ok(
+    fixture.missingEntrances === undefined || typeof fixture.missingEntrances === "boolean",
+  );
+  assert.ok(Array.isArray(fixture.entrances) && fixture.entrances.length);
+  for (const entrance of fixture.entrances) {
+    assert.ok(fixture.assets.includes(entrance.asset) && typeof entrance.door === "string");
+    assert.ok(entrance.sourceLocal?.length === 2 && entrance.sourceLocal.every(Number.isFinite));
+  }
+}
+const ids = fixture?.assets ?? [
+  "lincoln-keep",
+  "lincoln-keep-annex",
+  "lincoln-keep-annex-cone-turret",
+];
 const stored = JSON.parse(await fs.readFile("library/scenes/lincoln.rhlos-map.json"));
 const references = stored.assetSources.filter((ref) => ids.includes(ref.id));
 assert.equal(references.length, ids.length);
 const assets = await pinnedDescriptors("library", references);
 for (const edit of JSON.parse(await fs.readFile(`${stage}/edits.json`))) {
   const ref = references.find((ref) => ref.id === edit.asset);
+  if (fixture && !ref) continue;
   assert.equal(ref?.descriptor_sha256, edit.descriptorSha256);
   assert.equal(ref?.model_sha256, edit.modelSha256);
   assets.get(edit.asset).gameplay = edit.gameplay;
@@ -36,16 +55,21 @@ const placements = ids.map((id) => {
   return matches[0];
 });
 const origin = placements[0].transform;
-const output = await fs.mkdtemp("work/needs-review/map-compile/keep-neighbor-placements-");
+const output = await fs.mkdtemp(
+  `work/needs-review/map-compile/${fixture ? "selected-neighbor" : "keep-neighbor"}-placements-`,
+);
 console.log(output);
 const results = [];
 const save = (complete) =>
   fs.writeFile(
     `${output}/diagnostics.json`,
     JSON.stringify({
-      scope: "copied-rotated-raised-keep-and-separate-annex-awaiting-native-verification",
+      scope: fixture
+        ? "selected-neighbor-entrances-placement-check-not-full-asset-parity"
+        : "copied-rotated-raised-keep-and-separate-annex-awaiting-native-verification",
       complete,
       stage,
+      ...(fixture ? { fixture } : {}),
       results,
     }),
   );
@@ -54,14 +78,18 @@ for (const height of [0, 40])
   for (const rotation of [0, 37, 90, 180]) {
     let document = {
       version: 1,
-      map: "Keep and neighboring annex",
+      map: fixture ? "Selected neighboring assets" : "Keep and neighboring annex",
       size: [3200, 3200],
       camera: stored.camera,
       objects: [],
       groups: [],
       sceneAssets: [],
       assetSources: [],
-      terrain: createTerrainGrid([0, 0, 3200, 3200], 400, 472.00104 + height),
+      terrain: createTerrainGrid(
+        [0, 0, 3200, 3200],
+        400,
+        (fixture?.terrainHeight ?? 472.00104) + height,
+      ),
     };
     const radians = (rotation * Math.PI) / 180,
       c = Math.cos(radians),
@@ -114,10 +142,16 @@ for (const height of [0, 40])
       warnings: compiled.warnings,
       building_approaches: [],
       building_pairs: [],
+      ...(fixture?.missingEntrances ? { rejected_entrances: 0 } : {}),
     };
     results.push(row);
     await save(false);
-    assert.equal(doors.length, 10, `Every keep and turret entrance must bind in ${output}/${file}`);
+    if (!fixture)
+      assert.equal(
+        doors.length,
+        10,
+        `Every keep and turret entrance must bind in ${output}/${file}`,
+      );
     for (const { group, asset, placement, clusterX } of groups) {
       const transform = (node, p) => {
         const part = document.objects.find(
@@ -134,12 +168,24 @@ for (const height of [0, 40])
         );
       };
       for (const room of asset.gameplay.interiors ?? []) {
-        const matches = room.doors.map((definition) => {
+        const selected = room.doors.filter(
+          (door) =>
+            !fixture ||
+            fixture.entrances.some(
+              (entrance) => entrance.asset === asset.id && entrance.door === door.id,
+            ),
+        );
+        const matches = selected.map((definition) => {
           const [x, y, z] = transform(definition.node, definition.middle);
           const found = doors.filter(
             (door) =>
               door.point_mid[0] === Math.round(x) && door.point_mid[1] === Math.round(y - z),
           );
+          if (fixture?.missingEntrances) {
+            assert.equal(found.length, 0, "Unsupported entrance must not bind to another floor");
+            row.rejected_entrances++;
+            return undefined;
+          }
           assert.equal(found.length, 1);
           const door = found[0];
           const dx = door.point_out[0] - door.point_mid[0],
@@ -158,8 +204,12 @@ for (const height of [0, 40])
             "Separate group pivots must preserve the authored neighboring assembly",
           );
           const altitude = outside[2];
-          const source =
-            asset.id === "lincoln-keep" && definition.id === "interior-2/door-0"
+          const authoredSource = fixture?.entrances.find(
+            (entrance) => entrance.asset === asset.id && entrance.door === definition.id,
+          )?.sourceLocal;
+          const source = authoredSource
+            ? transform(definition.node, [...authoredSource, definition.outside[2]])
+            : asset.id === "lincoln-keep" && definition.id === "interior-2/door-0"
               ? transform(definition.node, [70, 5, definition.outside[2]])
               : [
                   door.point_out[0] + (dx / length) * 32,
@@ -175,11 +225,16 @@ for (const height of [0, 40])
           });
           return door.point_out;
         });
-        for (const from of matches)
-          for (const to of matches)
+        for (const from of matches.filter(Boolean))
+          for (const to of matches.filter(Boolean))
             if (from !== to) row.building_pairs.push({ from, to, connected: true });
       }
     }
+    if (fixture)
+      assert.equal(
+        fixture.missingEntrances ? row.rejected_entrances : row.building_approaches.length,
+        fixture.entrances.length * 2,
+      );
     await save(false);
   }
 await save(true);

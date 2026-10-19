@@ -4,6 +4,44 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Wall floor calibration and separate-neighbor routes (2026-10-19)
+
+`wall-floor-calibration-smMGL8` calibrates the south-curtain and slate-tower
+walkway floors, their clearances and receiving planes to 344.001, matching the
+authored 344 mesh cap within approximately 0.001 units. Their physical receiving
+footprints already followed that cap and remain unchanged. The adjoining
+east-gate tower entrance is calibrated to the same floor height. This uses
+asset-local definitions and pinned model bytes; no runtime changes are involved.
+
+Mesh review `wall-height-mesh-review-iyydzk68` finds 1,790/1,790 supported
+slate-tower samples. The south wall initially has 813/994 direct hits, with a
+0.597-unit maximum horizontal boundary gap. Clipping its walking outline to the
+near-horizontal mesh produces `drawbridge-mesh-footprints-zbkrDb`;
+`wall-clipped-mesh-review-lhw3enm9` then has 828/832 direct hits and a maximum
+remaining gap of 0.000041 units. Both floors' maximum sampled height error is
+0.000989 units. These are sampled geometric checks, not rendered-character proof.
+
+The neighboring-asset helper now accepts selected entrance fixtures and explicit
+asset-local starting points, while retaining the keep assembly defaults. Two
+copies at four rotations and two elevations pass all sixteen normal click-entry
+and return trips before clipping (`selected-neighbor-placements-0Rq28q`) and
+after clipping (`selected-neighbor-placements-Aj8MFO`). Removing the supporting
+wall rejects all sixteen entrance bindings in `selected-neighbor-placements-5rJXU4`.
+
+Fresh clipped full-scene export `saved-map-exports-8QoFQi` constructs natively:
+84 areas, 581 sight obstacles, 85 door projections, ten jump pairs, 75,164 grid
+blocks and 199 elevation boundaries. `saved-map-entrances-Dp1BRi` passes 34/35
+entrance round trips; the west round tower retains its plateau conflict. All
+sixteen stair player-click routes pass, with two forbidden routes retained.
+The previously identified wall climb remains omitted for missing lower support.
+
+A stronger approach from the separate slate-tower floor stalls in all sixteen
+`selected-neighbor-placements-UgSdqM` cases. The starting points resolve to valid
+floor sectors, but the actors cannot reach the doorway's neighboring wall floor.
+This is not a passing connection result. The floor connection, remaining climb,
+independent collision behavior and browser rendering still need review; all
+calibration stages remain unpublished. The installed Lincoln result stays 33/35.
+
 ## Fresh Wychford regression and northern plateau authoring (2026-10-19)
 
 Current-compiler main-library export `saved-map-exports-qDM3Wf` completed in
