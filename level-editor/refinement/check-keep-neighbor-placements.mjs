@@ -19,6 +19,12 @@ import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 const [stage, fixturePath] = process.argv.slice(2);
 assert.ok(stage, "Supply the keep/turret doorway stage");
 const fixture = fixturePath ? JSON.parse(await fs.readFile(fixturePath)) : undefined;
+const size = fixture?.size ?? [3200, 3200];
+const copyXs = fixture?.copyXs ?? [650.25, 2250.25];
+const assemblyY = fixture?.assemblyY ?? 1800.75;
+assert.ok(size.length === 2 && size.every((n) => Number.isFinite(n) && n > 0));
+assert.ok(copyXs.length === 2 && copyXs.every(Number.isFinite));
+assert.ok(Number.isFinite(assemblyY));
 if (fixture) {
   assert.ok(Array.isArray(fixture.assets) && fixture.assets.length > 1);
   assert.equal(new Set(fixture.assets).size, fixture.assets.length);
@@ -117,14 +123,14 @@ for (const height of [0, 40])
     let document = {
       version: 1,
       map: fixture ? "Selected neighboring assets" : "Keep and neighboring annex",
-      size: [3200, 3200],
+      size,
       camera: stored.camera,
       objects: [],
       groups: [],
       sceneAssets: [],
       assetSources: [],
       terrain: createTerrainGrid(
-        [0, 0, 3200, 3200],
+        [0, 0, ...size],
         400,
         (fixture?.terrainHeight ?? 472.00104) + height,
       ),
@@ -134,7 +140,7 @@ for (const height of [0, 40])
       s = Math.sin(radians);
     const sinElevation = Math.sin((document.camera.elevation_deg * Math.PI) / 180);
     const groups = [];
-    for (const x of [650.25, 2250.25])
+    for (const x of copyXs)
       for (const placement of placements) {
         const asset = assets.get(placement.assets[0]);
         const dx = placement.transform.dx - origin.dx,
@@ -143,7 +149,7 @@ for (const height of [0, 40])
           document,
           asset,
           references.find((ref) => ref.id === asset.id),
-          [x + c * dx - (s * dy) / sinElevation, 1800.75 + s * dx * sinElevation + c * dy, height],
+          [x + c * dx - (s * dy) / sinElevation, assemblyY + s * dx * sinElevation + c * dy, height],
         );
         document = inserted.document;
         const group = document.groups.find((group) => group.id === inserted.selection.id);
@@ -314,7 +320,7 @@ for (const height of [0, 40])
           const ry = definition.outside[1] + placement.transform.dy - origin.dy;
           const expected = [
             clusterX + c * rx - (s * ry) / sinElevation,
-            1800.75 + s * rx * sinElevation + c * ry,
+            assemblyY + s * rx * sinElevation + c * ry,
             definition.outside[2] + placement.transform.dz + height,
           ];
           assert.ok(

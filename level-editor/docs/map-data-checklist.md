@@ -129,7 +129,13 @@ The east gate tower with its separate arch and courtyard wall now passes 48
 moved/rotated/elevated native entrance trips and 32 missing-support rejections.
 The other staged assets remain unverified in rearranged assemblies. A larger
 castle-copy fixture exposes a courtyard-ground receiver spanning multiple
-navigation areas; that export failure is still unresolved.
+navigation areas when cropped by the export frame; that cropped export failure
+is still unresolved. With the complete assemblies inside the frame, all eight
+exports succeed and all 48 east-tower player-click entrance trips pass. Broader
+castle checks pass 260/296 emitted entrance routes, with eight additional west
+tower entrances omitted at 90/180 degrees due to unresolved sloped receivers.
+The west tower also has four local structural denials at 37 degrees; the other
+32 route denials are the known hall/spire neighbouring barriers.
 Sherwood's three doorway corrections retain walking geometry and pass 48 moved
 placement trips, browser reopening and six archived terrain-start trips. Its five
 entrance checks now pass; this does not certify all other map features.

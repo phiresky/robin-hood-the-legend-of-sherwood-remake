@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Complete castle framing and broader entrance audit (2026-10-20)
+
+The courtyard receiver failure in `selected-neighbor-placements-ZEbbbl` depends
+on clipping the castle with the fixture's export frame. Keeping both assemblies
+inside a 7000 by 5000 frame produces eight complete exports in
+`selected-neighbor-placements-dm6Ejb`, without out-of-frame anchor warnings.
+The assembly auditor now accepts explicit frame dimensions and copy positions;
+`refinement/fixtures/nottingham-castle-east-gate.json` reproduces this check.
+The cropped receiver failure remains unresolved; the full assembly does not
+require a runtime change or an arbitrary navigation-region merge.
+
+All 48 selected east gate tower player-click entrance/return checks pass in that
+larger assembly. A separate all-exported-door audit, `saved-map-entrances-J0AibO`,
+passes 260/296 complete sprite round trips. Thirty-two denials are the hall and
+northeast spire's neighbouring barriers; four additional denials affect the west
+gate tower at 37 degrees, where its own structural volume 332 intersects the
+animated passage. Eight west gate tower entrance instances are omitted at 90
+and 180 degrees because the sloped outside receiver cannot be resolved. Omitted
+entrances are not included in the 296 tested routes and are not successes.
+
+Mesh probe `placed-point-support-5cbTHD` finds the west tower approach above
+part 330 at height 267.683679, versus its authored approach height 266.754856.
+This needs a local slope/anchor investigation before adding further structural
+exemptions. The candidate remains unpublished.
+
 ## Nottingham gate assembly placement checks (2026-10-20)
 
 The staged east gate tower works with its independently placed gate arch and

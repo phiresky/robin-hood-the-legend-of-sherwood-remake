@@ -1,0 +1,66 @@
+{
+  "map": "nottingham",
+  "assets": [
+    "nottingham-castle-approach-ramp",
+    "nottingham-castle-east-courtyard-wall",
+    "nottingham-castle-east-round-tower",
+    "nottingham-castle-west-courtyard-wall",
+    "nottingham-castle-courtyard-shelter",
+    "nottingham-castle-upper-stair",
+    "nottingham-castle-upper-wall",
+    "nottingham-castle-west-annex",
+    "nottingham-castle-west-stair",
+    "nottingham-castle-east-attached-house",
+    "nottingham-castle-entry-steps",
+    "nottingham-castle-gate-arch",
+    "nottingham-castle-gate-east-tower",
+    "nottingham-castle-gate-west-tower",
+    "nottingham-castle-northeast-spire",
+    "nottingham-castle-northwest-spire",
+    "nottingham-castle-southeast-spire",
+    "nottingham-castle-southwest-spire",
+    "nottingham-castle-courtyard-ground",
+    "nottingham-castle-ramp-house",
+    "nottingham-castle-west-conical-tower",
+    "nottingham-castle-west-rocks",
+    "nottingham-castle-west-stair-tower",
+    "nottingham-castle-hall-and-watchtower"
+  ],
+  "terrainHeight": 0,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "nottingham-castle-gate-east-tower",
+      "door": "interior-0/door-0",
+      "sourceLocal": [
+        -75.680908203125,
+        21.867381114036487
+      ]
+    },
+    {
+      "asset": "nottingham-castle-gate-east-tower",
+      "door": "interior-0/door-1",
+      "sourceLocal": [
+        49.319091796875,
+        -34.13261888596353
+      ]
+    },
+    {
+      "asset": "nottingham-castle-gate-east-tower",
+      "door": "interior-0/door-2",
+      "sourceLocal": [
+        -45.680908203125,
+        -12.132618885963533
+      ]
+    }
+  ],
+  "size": [
+    7000,
+    5000
+  ],
+  "copyXs": [
+    1800.25,
+    5200.25
+  ],
+  "assemblyY": 3000.75
+}
