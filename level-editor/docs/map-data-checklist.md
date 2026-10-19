@@ -50,6 +50,12 @@ definitions are now published; the fresh installed export has identical asset
 geometry and passes all 35 entrance trips. The annex gate and broader review
 remain open. See the
 [full archive and publication evidence](map-compilation-evidence.md#full-lincoln-archive-verified-for-publication-2026-10-20).
+The annex gate's missing receiver is now isolated to the separate round turret,
+whose floor surface was discarded during recovery. An unpublished restoration
+retains the gate and all 35 entrance trips, but the turret's visible slab/cap
+heights conflict with that floor. Mesh reconciliation and actor-specific gate
+permission tests remain necessary; see the
+[annex receiver diagnosis](map-compilation-evidence.md#annex-gate-discarded-turret-receiver-isolated-2026-10-20).
 See the
 [rotated lighting evidence](map-compilation-evidence.md#multi-height-terrace-lighting-survives-asset-rotation-2026-10-20),
 [light-selector repair](map-compilation-evidence.md#terrace-light-selectors-restored-to-physical-floors-2026-10-20),

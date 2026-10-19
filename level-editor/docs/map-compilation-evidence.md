@@ -4,6 +4,38 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Annex gate: discarded turret receiver isolated (2026-10-20)
+
+The actual outside endpoint is world `[1727,1485.00104,472.00104]`, over the
+separate southwestern round turret. That asset retains the `building-228`
+receiver footprint and height, but its gameplay surface was discarded during
+recovery as zero-area. The annex's distant `outsideAnchor` and control
+`waypointAnchor` instead select the small stair landing. Restoring that landing's
+broad motion region would not restore the turret receiver.
+
+`stage-annex-turret-floor.mjs` produces a deliberately unpublished diagnostic:
+restore the turret's existing local receiver footprint as a surface and remove
+the two distant anchors. It reads only pinned library assets. Stage
+`annex-turret-floor-UftsKx` compiles in `saved-map-exports-Z1iGnu`, retaining the
+gate with no unsupported-endpoint warning. Native construction passes with 124
+areas, 620 sight obstacles, 88 doors, ten jump pairs, 87,400 grid blocks and 204
+elevation boundaries. All 35 entrance trips still pass in
+`saved-map-entrances-1BFZXX`.
+
+This is not a publishable physical repair yet. Mesh inspection
+`placed-point-support-lwYJPn` finds the turret floor slab at 476/484 and the
+structural cap at 486, overlapping the intended floor at 472.00104. The cap
+triangle covers the endpoint rather than only the parapet. Reconcile these
+meshes and receiver geometry, then verify independently moved assemblies and
+rendered actor contact before publication.
+
+Native control audit `passage-control-audit-OGCEJF` executes successful PC round
+trips in initial/applied/reset states, and both applied-state player clicks pass.
+The overall audit fails because it assumes initial/reset states must block PCs.
+This gate is authored unlocked for PCs in both states; its transition changes
+villain/civilian rights. That expectation must be made actor-specific before
+claiming control parity. No permission override or runtime change was made.
+
 ## Nottingham remaining wall contacts (2026-10-20)
 
 `review-placed-segment-contact.mjs` records pinned model/descriptor identities,
