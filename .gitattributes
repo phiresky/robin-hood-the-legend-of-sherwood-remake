@@ -1,0 +1,4 @@
+# Preserve exact repository bytes on every platform, including Windows clones
+# with core.autocrlf enabled. Asset manifests and executable ABI fingerprints
+# depend on byte-identical files; line-ending conversion would invalidate them.
+* -text

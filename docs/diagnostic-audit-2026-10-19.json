@@ -1,0 +1,306 @@
+{
+  "reviewed_on": "2026-10-19",
+  "scope": "281-row local database snapshot; 38 decoded reports received since October 13. Also records two undecodable payloads encountered in the database, one received since October 13. Browser reports excluded. This is not a claim that all historical or modified-build failures are resolved.",
+  "reports": [
+    {
+      "id": "0436a3d43bf1f4505bcc4a179bd2174386ddbdde2de4dc6dd37b724dea3c128e",
+      "engine_commit": "fe200b79043a6ed94e83d1dd6cd1085a41f877ea",
+      "occurred_at_unix_ms": 1792227002237,
+      "status": "needs_modified_build_source",
+      "finding": "Custom Lua probe was recorded as BuiltIn while carrying a Spellforge package. Preserve descriptor validation; the modified descriptor producer is unavailable."
+    },
+    {
+      "id": "0491a4db430b24843a77a2c39487bfa7bfac6482ec7c835216555001d5c23f0d",
+      "engine_commit": "0beae5dda44348b22a8ef1aa709e47f8c7eaf6e3",
+      "occurred_at_unix_ms": 1792207002484,
+      "status": "requires_corrected_custom_profiles",
+      "finding": "Duplicate profile-order key or unknown profile identifier in custom content. Preserve validation rather than silently discard or substitute profiles."
+    },
+    {
+      "id": "0885f543c8424d5e3be3d11d288e6897f8d78c1dd8e21b9239dc5466c2f44026",
+      "engine_commit": "c63cc5e4af772acb2cf58ae9d4fbcc42e1adfb82",
+      "occurred_at_unix_ms": 1792253226743,
+      "status": "needs_script_and_modified_build_source",
+      "finding": "Yield during startup may indicate a native called outside an event coroutine. No failing script attached; do not relax coroutine boundaries without a reproduction."
+    },
+    {
+      "id": "0924ba6f0e0165cde99de2b54308c305c4c9b27fe2a3a0957a0bc163f017f8ff",
+      "engine_commit": "c63cc5e4af772acb2cf58ae9d4fbcc42e1adfb82",
+      "occurred_at_unix_ms": 1792253309350,
+      "status": "needs_script_and_modified_build_source",
+      "finding": "Yield during startup may indicate a native called outside an event coroutine. No failing script attached; do not relax coroutine boundaries without a reproduction."
+    },
+    {
+      "id": "0c30c5dab26103d803638702e8753f4fc6119d266564e826775a27cc18d53a53",
+      "engine_commit": "c63cc5e4af772acb2cf58ae9d4fbcc42e1adfb82",
+      "occurred_at_unix_ms": 1792253303073,
+      "status": "needs_script_and_modified_build_source",
+      "finding": "Yield during startup may indicate a native called outside an event coroutine. No failing script attached; do not relax coroutine boundaries without a reproduction."
+    },
+    {
+      "id": "1445333cbde8ce88aa02f9b7b81628bbc7ecbef2d4a532763994dede40597622",
+      "engine_commit": "0beae5dda44348b22a8ef1aa709e47f8c7eaf6e3",
+      "occurred_at_unix_ms": 1792207748992,
+      "status": "requires_corrected_custom_profiles",
+      "finding": "Duplicate profile-order key or unknown profile identifier in custom content. Preserve validation rather than silently discard or substitute profiles."
+    },
+    {
+      "id": "1573e94b169d26bd3b1532e088fd934b41a3885318ee75ea7f4312b986d1dbf9",
+      "engine_commit": "fe200b79043a6ed94e83d1dd6cd1085a41f877ea",
+      "occurred_at_unix_ms": 1792226842776,
+      "status": "requires_missing_content",
+      "finding": "Missing core overlay, custom map/script, or game sprite bank. Reports do not establish a loader defect; affected installation/export contents are unavailable."
+    },
+    {
+      "id": "3412091f8b195011d3c5f2c70000a823559b383f2cd2ddae157b706986b8c68b",
+      "engine_commit": "c63cc5e4af772acb2cf58ae9d4fbcc42e1adfb82",
+      "occurred_at_unix_ms": 1792253239665,
+      "status": "needs_script_and_modified_build_source",
+      "finding": "Yield during startup may indicate a native called outside an event coroutine. No failing script attached; do not relax coroutine boundaries without a reproduction."
+    },
+    {
+      "id": "4317c3d644cdd16c45622191d0e75e0026252ad879ccebd6a10a77e8b68644db",
+      "engine_commit": "84e25afc6c0f6926d039bfdeab8acd71b7194af9",
+      "occurred_at_unix_ms": 1791554179476,
+      "status": "existing_upgrade_fix_not_replayed_this_audit",
+      "finding": "Occurred October 9 despite recent receipt. Commit 989d0a40a regenerates sound boundaries and discards obsolete informational acknowledgements during upgrade only. Exact historical attachments have not been replayed in this audit."
+    },
+    {
+      "id": "4676ffdab3f13ff22655322b5d5b2f5ba2baddb2cfb73116b2b0f87280ae04b7",
+      "engine_commit": "440741327070e11933fa76803399c12d7fb40e23",
+      "occurred_at_unix_ms": 1792112386831,
+      "status": "requires_missing_content",
+      "finding": "Missing core overlay, custom map/script, or game sprite bank. Reports do not establish a loader defect; affected installation/export contents are unavailable."
+    },
+    {
+      "id": "707cc55c68e29a355cf49965bc9e234573a44abf32c643927dbd9093984fcbcd",
+      "engine_commit": "fe200b79043a6ed94e83d1dd6cd1085a41f877ea",
+      "occurred_at_unix_ms": 1792226696768,
+      "status": "requires_missing_content",
+      "finding": "Missing core overlay, custom map/script, or game sprite bank. Reports do not establish a loader defect; affected installation/export contents are unavailable."
+    },
+    {
+      "id": "75d25d4e40d6a21293e40bca67b6ab27442da921ac85c5d42b3274c3079c625d",
+      "engine_commit": "4c3e2ac61fd38f902d1aee4c6eb6320750dd2de5",
+      "occurred_at_unix_ms": 1791553706463,
+      "status": "existing_upgrade_fix_not_replayed_this_audit",
+      "finding": "Occurred October 9 despite recent receipt. Commit 989d0a40a regenerates sound boundaries and discards obsolete informational acknowledgements during upgrade only. Exact historical attachments have not been replayed in this audit."
+    },
+    {
+      "id": "7b383b72b57072345dfc3a2c62c3d4f1377ed1d75510822e9e3fbcc8d41b7096",
+      "engine_commit": "c63cc5e4af772acb2cf58ae9d4fbcc42e1adfb82",
+      "occurred_at_unix_ms": 1792253983237,
+      "status": "needs_script_and_modified_build_source",
+      "finding": "Yield during startup may indicate a native called outside an event coroutine. No failing script attached; do not relax coroutine boundaries without a reproduction."
+    },
+    {
+      "id": "7be3622cb35b4579f2a0990720e657401b3a135724050a51d7a104fc54ee3250",
+      "engine_commit": "0beae5dda44348b22a8ef1aa709e47f8c7eaf6e3",
+      "occurred_at_unix_ms": 1792207709850,
+      "status": "requires_corrected_custom_profiles",
+      "finding": "Duplicate profile-order key or unknown profile identifier in custom content. Preserve validation rather than silently discard or substitute profiles."
+    },
+    {
+      "id": "7e941d9c3383aa3df0b36d2544093f16c96185c0ee527d373db73c2800ef98fc",
+      "engine_commit": "37351dd6d90eb95a80cc84658c1d6c368c1da809",
+      "occurred_at_unix_ms": 1792340118034,
+      "status": "fixed_lexer",
+      "finding": "Hexadecimal prefix was detected before x/X had been consumed, leaving parsing to platform-dependent strtod. Consume the prefix explicitly and use the existing Rust hexadecimal parser; test literals and adjacent arithmetic."
+    },
+    {
+      "id": "86b94db805928fa679e7969280d1d97a7cd1f807e986ed58d2de46523440646d",
+      "engine_commit": "c63cc5e4af772acb2cf58ae9d4fbcc42e1adfb82",
+      "occurred_at_unix_ms": 1792253739761,
+      "status": "needs_script_and_modified_build_source",
+      "finding": "Yield during startup may indicate a native called outside an event coroutine. No failing script attached; do not relax coroutine boundaries without a reproduction."
+    },
+    {
+      "id": "89d0427550ec558468a2cd220b92aadc7467ce63222c41f3a682ccc52e751cb4",
+      "engine_commit": "c63cc5e4af772acb2cf58ae9d4fbcc42e1adfb82",
+      "occurred_at_unix_ms": 1792253380800,
+      "status": "needs_script_and_modified_build_source",
+      "finding": "Yield during startup may indicate a native called outside an event coroutine. No failing script attached; do not relax coroutine boundaries without a reproduction."
+    },
+    {
+      "id": "941a33847449586f61abc4c6c208041b660a41e4e260cebe7df9d06d6f6cf735",
+      "engine_commit": "c63cc5e4af772acb2cf58ae9d4fbcc42e1adfb82",
+      "occurred_at_unix_ms": 1792253800437,
+      "status": "needs_script_and_modified_build_source",
+      "finding": "Yield during startup may indicate a native called outside an event coroutine. No failing script attached; do not relax coroutine boundaries without a reproduction."
+    },
+    {
+      "id": "9b5750f4977ae7fd6cff5c7a9fdbdfa9774480d053465d1590ecf2a6b2c480ee",
+      "engine_commit": "d4affc1a35bb466f041a7f1ce8f69d4e2f2bc8ff",
+      "occurred_at_unix_ms": 1792151457504,
+      "status": "requires_missing_content",
+      "finding": "Missing core overlay, custom map/script, or game sprite bank. Reports do not establish a loader defect; affected installation/export contents are unavailable."
+    },
+    {
+      "id": "9f0287b673a286cfa8f329839385b38b959a6a384e18cf81afcb8db56337b3a5",
+      "engine_commit": "c63cc5e4af772acb2cf58ae9d4fbcc42e1adfb82",
+      "occurred_at_unix_ms": 1792253688498,
+      "status": "needs_script_and_modified_build_source",
+      "finding": "Yield during startup may indicate a native called outside an event coroutine. No failing script attached; do not relax coroutine boundaries without a reproduction."
+    },
+    {
+      "id": "a26c3513eebac4b1cd1720931845a6a47237276f9100c1e466343e3e9486cd44",
+      "engine_commit": "440741327070e11933fa76803399c12d7fb40e23",
+      "occurred_at_unix_ms": 1792150476872,
+      "status": "requires_missing_content",
+      "finding": "Missing core overlay, custom map/script, or game sprite bank. Reports do not establish a loader defect; affected installation/export contents are unavailable."
+    },
+    {
+      "id": "a451c6dff405caf3b92416ba07bc045767a19e483b6151a9af4eed9e082c30ba",
+      "engine_commit": "b945fcad317ec573b8253477e2bd3e3678fe408a",
+      "occurred_at_unix_ms": 1792279555356,
+      "status": "requires_missing_content",
+      "finding": "Missing core overlay, custom map/script, or game sprite bank. Reports do not establish a loader defect; affected installation/export contents are unavailable."
+    },
+    {
+      "id": "a4a526e05ab19536f09f670f8d2072ec7ab5330e6a39c824cf40b693e3787f02",
+      "engine_commit": "d4affc1a35bb466f041a7f1ce8f69d4e2f2bc8ff",
+      "occurred_at_unix_ms": 1792151468181,
+      "status": "requires_missing_content",
+      "finding": "Missing core overlay, custom map/script, or game sprite bank. Reports do not establish a loader defect; affected installation/export contents are unavailable."
+    },
+    {
+      "id": "a4f556df1b9e284366b687f66d2479ff259594fdf9ea966c9e9466be546c05ef",
+      "engine_commit": "c63cc5e4af772acb2cf58ae9d4fbcc42e1adfb82",
+      "occurred_at_unix_ms": 1792253316453,
+      "status": "needs_script_and_modified_build_source",
+      "finding": "Yield during startup may indicate a native called outside an event coroutine. No failing script attached; do not relax coroutine boundaries without a reproduction."
+    },
+    {
+      "id": "a75f50e9983a29f0d5ca679e243babc2635f6d572543f8cb2d7bd30ac0b69065",
+      "engine_commit": "fe200b79043a6ed94e83d1dd6cd1085a41f877ea",
+      "occurred_at_unix_ms": 1792226896320,
+      "status": "requires_missing_content",
+      "finding": "Missing core overlay, custom map/script, or game sprite bank. Reports do not establish a loader defect; affected installation/export contents are unavailable."
+    },
+    {
+      "id": "a77a4ca36c5d40aaa0fb5aa24a2bf1a4a3a1e734b9ee1c7489bf3c82146b048b",
+      "engine_commit": "3a416222c6092f05d0ac152d887c3ac4a5a1e51b",
+      "occurred_at_unix_ms": 1792357080882,
+      "status": "requires_missing_content",
+      "finding": "Missing core overlay, custom map/script, or game sprite bank. Reports do not establish a loader defect; affected installation/export contents are unavailable."
+    },
+    {
+      "id": "a81b62ae24ee461a5b5a0730018ab6a61ba6da6a7923b6603894cb425e7ef755",
+      "engine_commit": "b1051f2065bd4e7e6cdfed42e775bc957b31317f",
+      "occurred_at_unix_ms": 1791555003906,
+      "status": "historical_replay_requires_reproduction",
+      "finding": "Occurred October 9. Terminal LevelFailed lacks its required recorded campaign update. Preserve strict terminal validation; not demonstrated resolved by the sound/modal upgrade fix. Only native-context.json is attached, not the failing replay."
+    },
+    {
+      "id": "a976eeb50f105dfd3eac710e5cc207ee708e2388ae724adb74f38db647fc6a3b",
+      "engine_commit": "4c3e2ac61fd38f902d1aee4c6eb6320750dd2de5",
+      "occurred_at_unix_ms": 1791553596064,
+      "status": "existing_upgrade_fix_not_replayed_this_audit",
+      "finding": "Occurred October 9 despite recent receipt. Commit 989d0a40a regenerates sound boundaries and discards obsolete informational acknowledgements during upgrade only. Exact historical attachments have not been replayed in this audit."
+    },
+    {
+      "id": "afa1d8c7bfbfda482ef44091b30ae9461ecba63bb2ba94b35ac0c72fb9980dd4",
+      "engine_commit": "fe200b79043a6ed94e83d1dd6cd1085a41f877ea",
+      "occurred_at_unix_ms": 1792227757264,
+      "status": "needs_modified_build_source",
+      "finding": "Attached scripts call Spawn/After/Every, absent from this checkout. Order lease assertion suggests spawned state may retain a copied installed-order handle, but this cannot be established without the modified implementation. Preserve ownership assertions."
+    },
+    {
+      "id": "bb9ffbc6a6ac1cdd6fc811767b98ca015e4701aa547057b9e2f709113497d08a",
+      "engine_commit": "fe200b79043a6ed94e83d1dd6cd1085a41f877ea",
+      "occurred_at_unix_ms": 1792227780026,
+      "status": "needs_modified_build_source",
+      "finding": "Attached scripts call Spawn/After/Every, absent from this checkout. Order lease assertion suggests spawned state may retain a copied installed-order handle, but this cannot be established without the modified implementation. Preserve ownership assertions."
+    },
+    {
+      "id": "bf45cb8f755fbb72a91dac1b21b120079ccd8091f69f4e06ff8c1e8ff73d58ea",
+      "engine_commit": "fe200b79043a6ed94e83d1dd6cd1085a41f877ea",
+      "occurred_at_unix_ms": 1792227159319,
+      "status": "needs_modified_build_source",
+      "finding": "Attached scripts call Spawn/After/Every, absent from this checkout. Order lease assertion suggests spawned state may retain a copied installed-order handle, but this cannot be established without the modified implementation. Preserve ownership assertions."
+    },
+    {
+      "id": "cc61de3a64c5a9a10840f7cc613534a26d28f38fe60a6809d336ca7399730d62",
+      "engine_commit": "d4affc1a35bb466f041a7f1ce8f69d4e2f2bc8ff",
+      "occurred_at_unix_ms": 1792151826588,
+      "status": "requires_missing_content",
+      "finding": "Missing core overlay, custom map/script, or game sprite bank. Reports do not establish a loader defect; affected installation/export contents are unavailable."
+    },
+    {
+      "id": "d92e3b1893c6079d9e9ea517c0256e9d472226d13faf7f043b70016f3833aa4a",
+      "engine_commit": "d4affc1a35bb466f041a7f1ce8f69d4e2f2bc8ff",
+      "occurred_at_unix_ms": 1792151805789,
+      "status": "requires_missing_content",
+      "finding": "Missing core overlay, custom map/script, or game sprite bank. Reports do not establish a loader defect; affected installation/export contents are unavailable."
+    },
+    {
+      "id": "dcd482f83a7d133a0a4790e823018d0e6f1dc2322fb53ecd7e800d6a5d282e57",
+      "engine_commit": "c63cc5e4af772acb2cf58ae9d4fbcc42e1adfb82",
+      "occurred_at_unix_ms": 1792253255482,
+      "status": "needs_script_and_modified_build_source",
+      "finding": "Yield during startup may indicate a native called outside an event coroutine. No failing script attached; do not relax coroutine boundaries without a reproduction."
+    },
+    {
+      "id": "dd18f4dfc5674923de1826ae38f232c225ab42ce8345c1589333c6487042afc9",
+      "engine_commit": "c63cc5e4af772acb2cf58ae9d4fbcc42e1adfb82",
+      "occurred_at_unix_ms": 1792250462431,
+      "status": "needs_modified_build_source",
+      "finding": "Custom native bonus lacks a creation-order entry. This checkout has no native-descriptor bonus authoring path. Do not invent creation IDs to hide topology errors."
+    },
+    {
+      "id": "e0f099f04ea009d75a2b5553c12b3dd725525422f758fb4fcc6f39dccfd896b9",
+      "engine_commit": "fe200b79043a6ed94e83d1dd6cd1085a41f877ea",
+      "occurred_at_unix_ms": 1792235752952,
+      "status": "requires_missing_content",
+      "finding": "Missing core overlay, custom map/script, or game sprite bank. Reports do not establish a loader defect; affected installation/export contents are unavailable."
+    },
+    {
+      "id": "e310d8b3473cfea9218119d18a06f7eb1c8c88c95ec3f4ac4b47acb64c398eea",
+      "engine_commit": "f96a2b766d645b5c4dec1d4440ba7de2546d87d4",
+      "occurred_at_unix_ms": 1792108706531,
+      "status": "fixed_checkout_policy",
+      "finding": "The reported 229304-byte audio file equals the tracked 222794 bytes plus its 6510 newlines: consistent with CRLF checkout conversion. Disable Git text conversion repository-wide, including the vendored override. All 36 current overlay files match the manifest. Existing converted worktrees still need their affected files restored."
+    },
+    {
+      "id": "f247f050fd2657b3b5cf8003337b8aab02bf7b7629ae192429e5c9a208192b0b",
+      "engine_commit": "d4affc1a35bb466f041a7f1ce8f69d4e2f2bc8ff",
+      "occurred_at_unix_ms": 1792151448220,
+      "status": "requires_missing_content",
+      "finding": "Missing core overlay, custom map/script, or game sprite bank. Reports do not establish a loader defect; affected installation/export contents are unavailable."
+    }
+  ],
+  "undecodable": [
+    {
+      "id_prefix": "f3bc6aaf2806",
+      "reason": "gzip-tagged payload has invalid header bytes; cannot decode evidence",
+      "received_at_ms": 1791932325184,
+      "encoding": "gzip"
+    },
+    {
+      "id_prefix": "9835e51304c6",
+      "reason": "gzip-tagged payload has invalid header bytes; cannot decode evidence",
+      "received_at_ms": 1790912700703,
+      "encoding": "gzip"
+    }
+  ],
+  "public_forks": {
+    "checked_on": "2026-10-19",
+    "source": "https://api.github.com/repos/phiresky/robin-hood-the-legend-of-sherwood-remake/forks?per_page=100",
+    "names": [
+      "Piteriuz",
+      "jkomyno",
+      "robin-atlasbio",
+      "JomerDev",
+      "Snouf-ID"
+    ],
+    "latest_reported_push": "2026-10-04T12:11:23Z",
+    "finding": "Inspected every advertised branch. GitHub commit lookup could not resolve c63cc5e4af772acb2cf58ae9d4fbcc42e1adfb82, fe200b79043a6ed94e83d1dd6cd1085a41f877ea, or 37351dd6d90eb95a80cc84658c1d6c368c1da809 in the public network. Private/unpublished sources remain possible."
+  },
+  "validation": {
+    "spellforge": "29 passed, 2 ignored across library and integration suites; no Windows runner used.",
+    "overlay": "All 36 manifest entries match size and SHA-256.",
+    "checkout": "All 13655 tracked paths have text conversion disabled, including the vendored override. Representative asset, Lua, Rust, TOML and Markdown checkouts preserve indexed bytes with core.autocrlf=true.",
+    "native_build": "cargo build -p robin_rs --bin robin passed.",
+    "format": "cargo fmt --check and git diff --check passed."
+  }
+}

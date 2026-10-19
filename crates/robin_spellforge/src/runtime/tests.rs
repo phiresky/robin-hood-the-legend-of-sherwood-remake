@@ -36,6 +36,28 @@ fn invoke(
 }
 
 #[test]
+fn hexadecimal_literals_are_platform_independent() {
+    let runtime = SpellforgeRuntime51::new(package(
+        "color=0x203040; function Color() return color end; function Upper() return 0XAB end; function Sum() return 0x1e+2 end; function Difference() return 0x1E-2 end; function Decimal() return 1e+2 end",
+    ))
+    .unwrap();
+    let mut tape = SpellforgeTape::default();
+    tape.initialize(runtime.package().clone()).unwrap();
+    for (event, expected) in [
+        ("Color", 0x203040),
+        ("Upper", 171),
+        ("Sum", 32),
+        ("Difference", 28),
+        ("Decimal", 100),
+    ] {
+        assert_eq!(invoke(&runtime, &mut tape, event, vec![]), expected);
+    }
+    for invalid in ["0x", "0xG", "0x20_invalid"] {
+        assert!(SpellforgeRuntime51::new(package(&format!("color={invalid}"))).is_err());
+    }
+}
+
+#[test]
 fn lifecycle_heap_and_rollback_share_one_contract() {
     let runtime = SpellforgeRuntime51::new(package(
         "value=0; function Initialize(x) value=x end; function Timer(x) value=value+x end; function CheckVictoryCondition() return value end; function Finalize() return value+1 end",
