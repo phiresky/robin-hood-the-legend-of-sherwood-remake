@@ -4,6 +4,40 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Hall doorway structure and independent approaches (2026-10-20)
+
+The hall-only stage passes all 64 player-click entry/return probes for its four
+corrected entrances in `selected-neighbor-placements-oVbDMs`. The fixture keeps
+the courtyard, upper wall walkway and entry steps as independent assets and
+tests two copies, four rotations and two elevations. Removing the wall and steps
+rejects all 32 dependent entrances (`selected-neighbor-placements-REK1h2`).
+The hall's ground entrance is not included in this positive subset: the separate
+upper wall still blocks it in the saved arrangement, as the preceding full
+assembly audit demonstrates. No lock rules or foreign collision exemptions were
+changed to obtain these results.
+
+Browser fixture `draft-scene-render-d7lxDe` passes export/reopen with matching
+gameplay, color and depth, including two appearance states. Its 89,254,219-byte
+ZIP has SHA-256
+`d2b045440413d7e4a2d9212f0e4c0e0de66cd009a65d72c5aad954378ad3782e`.
+Native loading without base data and all eight exact archived click trips pass
+(`exact-map-archive-frqled2l`). Derivative validation passes in
+`reviewed-publication-stage-8kkgm2gd`.
+
+`hall-door-publication-installed` installs the hall definition and Nottingham
+scene pin; all eight installed hashes match. Models and derivatives are unchanged.
+All twelve staged Nottingham doorway candidates are now published, without new
+runtime behavior. This does not certify the obstructed saved entrances or full
+map parity.
+
+Fresh installed export `saved-map-exports-HQIgok` constructs natively with 94
+areas, 667 sight obstacles, 173 doors, 39 jump pairs, 159,300 grid blocks and 153
+elevation boundaries. `saved-map-entrances-mwBZVC` passes 65/69 complete sprite
+round trips, up from 61/69 with no regressions. The four remaining denials are
+the hall ground entrance, northeast spire, upper street turret's other entrance,
+and the authored southwest prison lock. The lock is not evidence of a geometric
+failure and was not removed to increase the traversal count.
+
 ## Hall and northeast spire placement review (2026-10-20)
 
 The five-asset assembly in `nottingham-hall-northeast-spire.json` preserves the

@@ -115,7 +115,7 @@ exact-archive click round trips. The affected Wychford asset-regression export
 constructs natively and retains all 24 entrance trips. Definitions and both
 saved-scene pins are installed; models and textures are unchanged. These results
 do not establish full map parity.
-Their current entrance results are Derby 25/25, Lincoln 33/35, Nottingham 61/69,
+Their current entrance results are Derby 25/25, Lincoln 33/35, Nottingham 65/69,
 and Sherwood 5/5. Three Lincoln village doorway corrections improve its result
 from 28/35 while retaining movement geometry. Those assets pass 48 moved-placement
 room trips, browser export/reopen, native ZIP loading and six archived terrain-start
@@ -186,6 +186,13 @@ scene retains its obstructed placement. Fresh Nottingham remains at 61/69 with
 all individual entrance outcomes unchanged. Only the hall candidate remains
 unpublished; no runtime behavior changed. See the
 [hall and spire review](map-compilation-evidence.md#hall-and-northeast-spire-placement-review-2026-10-20).
+The hall is now published after 64 player-click round trips, 32 missing-approach
+rejections, browser export/reopen and eight exact archived trips. Fresh Nottingham
+passes 65/69 entrance trips with no regressions. All twelve staged doorway
+corrections are published. Three foreign-wall obstructions and one authored
+prison lock remain in the traversal audit; the lock is not a geometry failure.
+Full map parity remains incomplete. See the
+[hall publication evidence](map-compilation-evidence.md#hall-doorway-structure-and-independent-approaches-2026-10-20).
 Repositioning the independent wall clears all 48 entrance trips while retaining
 wall collision. The 90-degree new assembly passes browser export/reopen with
 identical gameplay/color/depth, native ZIP loading without base data and all six

@@ -1146,7 +1146,7 @@
     {
       "id": "nottingham-castle-hall-and-watchtower",
       "descriptor": "3d-assets/nottingham-castle-hall-and-watchtower/asset.json",
-      "descriptor_sha256": "f0f8b7693bc74144aea80d5e04c9b98a986c311d24f6b89c571b2da6438f6642",
+      "descriptor_sha256": "58075868549d104f395da9e65a39dbeca92a2de32373a1a3da5169f3b4bf068f",
       "model": "3d-assets/nottingham-castle-hall-and-watchtower/model.glb",
       "model_sha256": "15b942694982aefd5dc24eed77dc97d2996b532470545dccd49060f357c28a70"
     },

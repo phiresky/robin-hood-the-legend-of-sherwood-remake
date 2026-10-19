@@ -1,0 +1,36 @@
+{
+  "map": "nottingham",
+  "assets": [
+    "nottingham-castle-hall-and-watchtower",
+    "nottingham-castle-courtyard-ground",
+    "nottingham-castle-upper-wall",
+    "nottingham-castle-entry-steps"
+  ],
+  "size": [7000, 5000],
+  "copyXs": [1800.25, 5200.25],
+  "assemblyY": 3000.75,
+  "terrainHeight": 0,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "nottingham-castle-hall-and-watchtower",
+      "door": "interior-1/door-1",
+      "sourceLocal": [47.3052978515625, 86.83708584368708]
+    },
+    {
+      "asset": "nottingham-castle-hall-and-watchtower",
+      "door": "interior-3/door-0",
+      "sourceLocal": [-52.6947021484375, 55.837085843687]
+    },
+    {
+      "asset": "nottingham-castle-hall-and-watchtower",
+      "door": "interior-3/door-1",
+      "sourceLocal": [-79.6947021484375, 178.83709584368702]
+    },
+    {
+      "asset": "nottingham-castle-hall-and-watchtower",
+      "door": "interior-3/door-2",
+      "sourceLocal": [24.3052978515625, -23.16287415631289]
+    }
+  ]
+}
