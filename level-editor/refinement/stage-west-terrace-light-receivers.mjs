@@ -33,6 +33,22 @@ for (const [index, inset] of [
   light.receivers[index] = after;
   changes.push({ index, before, after, inset });
 }
+// Different receiving heights need their own local contour when the asset turns.
+// Preserve the authored screen contour at the initial placement while keeping
+// each selector coplanar with the contour that follows its floor after rotation.
+const byHeight = new Map();
+for (const receiver of light.receivers) {
+  const height = receiver[2];
+  if (!byHeight.has(height)) byHeight.set(height, []);
+  byHeight.get(height).push(receiver);
+}
+const replacement = [...byHeight].map(([height, receivers]) => ({
+  ...light,
+  id: height === 147.001 ? light.id : `${light.id}/height-${height}`,
+  polygon: light.polygon.map(([x, y, z]) => [x, y - z + height, height]),
+  receivers,
+}));
+gameplay.lights = gameplay.lights.flatMap((entry) => (entry === light ? replacement : [entry]));
 gameplay.draft.issues.push(
   "Unpublished physical terrace light selectors: verify receiver coverage in moved assemblies and browser exports.",
 );
@@ -45,5 +61,16 @@ edits.push({
 });
 const output = await fs.mkdtemp("work/needs-review/map-compile/west-terrace-light-receivers-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
-await fs.writeFile(`${output}/review.json`, JSON.stringify({ stage, changes }, null, 2));
+await fs.writeFile(
+  `${output}/review.json`,
+  JSON.stringify(
+    {
+      stage,
+      changes,
+      contours: replacement.map(({ id, receivers, polygon }) => ({ id, receivers, polygon })),
+    },
+    null,
+    2,
+  ),
+);
 console.log(output);

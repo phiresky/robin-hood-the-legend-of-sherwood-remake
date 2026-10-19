@@ -13,6 +13,8 @@ import {
 } from "../shared/src/level3d.ts";
 import { gameToScene } from "../shared/src/scene.ts";
 import { sceneToGame, applyAffineMatrix } from "../shared/src/geometry.ts";
+import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
+import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 
 const [stage, fixturePath] = process.argv.slice(2);
 assert.ok(stage, "Supply the keep/turret doorway stage");
@@ -32,6 +34,17 @@ if (fixture) {
       assert.ok(fixture.assets.includes(lift.asset) && typeof lift.id === "string");
   }
   assert.ok(fixture.missingLifts === undefined || typeof fixture.missingLifts === "boolean");
+  if (fixture.lightReceivers) {
+    assert.ok(Array.isArray(fixture.lightReceivers) && fixture.lightReceivers.length);
+    for (const light of fixture.lightReceivers) {
+      assert.ok(fixture.assets.includes(light.asset) && typeof light.light === "string");
+      assert.ok(
+        Array.isArray(light.indices) &&
+          light.indices.length &&
+          light.indices.every((index) => Number.isInteger(index) && index >= 0),
+      );
+    }
+  }
   for (const entrance of fixture.entrances) {
     assert.ok(fixture.assets.includes(entrance.asset) && typeof entrance.door === "string");
     assert.ok(entrance.sourceLocal?.length === 2 && entrance.sourceLocal.every(Number.isFinite));
@@ -59,6 +72,22 @@ const placements = ids.map((id) => {
   );
   assert.equal(matches.length, 1);
   assert.equal(matches[0].transform.rot_deg, 0);
+  if (matches[0].ungrouped) {
+    const parts = Object.values(matches[0].parts ?? {});
+    assert.equal(parts.length, 1, "Standalone assembly probes require one part");
+    assert.equal(assets.get(id).parts.length, 1);
+    const local = parts[0].transform;
+    assert.equal(local.rot_deg, 0);
+    return {
+      ...matches[0],
+      transform: {
+        ...matches[0].transform,
+        dx: matches[0].transform.dx + local.dx,
+        dy: matches[0].transform.dy + local.dy,
+        dz: matches[0].transform.dz + local.dz,
+      },
+    };
+  }
   return matches[0];
 });
 const origin = placements[0].transform;
@@ -156,6 +185,7 @@ for (const height of [0, 40])
       ...(fixture?.tracePassages ? { passageCollisions } : {}),
       building_approaches: [],
       building_pairs: [],
+      ...(fixture?.lightReceivers ? { light_receivers: [] } : {}),
       ...(fixture?.lifts ? { checked_lifts: 0 } : {}),
       ...(fixture?.missingEntrances ? { rejected_entrances: 0 } : {}),
     };
@@ -182,6 +212,56 @@ for (const height of [0, 40])
           applyAffineMatrix(matrix, gameToScene(document.camera, ...p)),
         );
       };
+      for (const selected of fixture?.lightReceivers?.filter((light) => light.asset === asset.id) ??
+        []) {
+        const light = asset.gameplay.lights.find((light) => light.id === selected.light);
+        assert.ok(light);
+        for (const index of selected.indices) {
+          assert.ok(light.receivers[index]);
+          const world = transform(light.node, light.receivers[index]);
+          const screen = [world[0], world[1] - world[2]];
+          const geometry = compiled.descriptor.asset_geometry;
+          const receivers = geometry.sight_obstacles.filter((obstacle) => {
+            if (!obstacle.projection_area) return false;
+            const points = obstacle.points.map((p) => [p.x, p.y - p.z_top, p.z_top]);
+            return (
+              Math.abs(planeHeight(heightPlane(points), screen) - world[2]) < 1e-3 &&
+              pointInGameplayPolygon(
+                screen,
+                points.map(([x, y]) => [x, y]),
+                true,
+              )
+            );
+          });
+          const identities = new Set(
+            receivers.map((receiver) => JSON.stringify(receiver.projection_area)),
+          );
+          assert.equal(
+            identities.size,
+            1,
+            `Light ${asset.id}/${index} must have one physical receiver in ${file}`,
+          );
+          const [sector, layer] = receivers[0].projection_area;
+          assert.ok(
+            geometry.light_sectors.some(
+              (entry) =>
+                entry.layer === layer &&
+                entry.ambience === light.ambiences &&
+                pointInGameplayPolygon(screen, entry.polygon.points, true),
+            ),
+            `Light ${asset.id}/${index} must cover its receiving layer in ${file}`,
+          );
+          row.light_receivers.push({
+            asset: asset.id,
+            group: group.id,
+            light: light.id,
+            index,
+            world,
+            sector,
+            layer,
+          });
+        }
+      }
       for (const selected of fixture?.lifts?.filter((lift) => lift.asset === asset.id) ?? []) {
         const definition = asset.gameplay.lifts.find((lift) => lift.id === selected.id);
         assert.ok(definition, `Missing authored lift ${asset.id}/${selected.id}`);
@@ -272,6 +352,11 @@ for (const height of [0, 40])
         fixture.entrances.length * 2,
       );
     if (fixture?.lifts) assert.equal(row.checked_lifts, fixture.lifts.length * 2);
+    if (fixture?.lightReceivers)
+      assert.equal(
+        row.light_receivers.length,
+        2 * fixture.lightReceivers.reduce((count, light) => count + light.indices.length, 0),
+      );
     await save(false);
   }
 await save(true);
