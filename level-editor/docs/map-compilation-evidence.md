@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Lincoln keep and turret entrance publication (2026-10-19)
+
+The keep and annex cone-turret definitions retain their geometry and add only
+asset-local passage-structure references to two room entrances. The supporting
+annex remains a separate, unchanged asset. Eight independently copied, rotated
+and raised assemblies pass eighty native click-entry/return trips and 128
+within-room actor crossings in `keep-neighbor-placements-ncU7ya`.
+
+Browser fixture `draft-scene-render-tOZhGW` exports
+`lincoln-keep-neighbors-verified.zip`: 30,404,532 bytes, SHA-256
+`2327b6ab35fe2638bde4be85874f0e325687ec4d6f4cf955460f88413b085395`.
+Reopening preserves gameplay, color, depth and both appearance-state renders.
+The extracted map shows both three-asset assemblies aligned. Exact-archive audit
+`lincoln-keep-archive-jm0sbu29` passes ten click round trips and sixteen directed
+room crossings. The ZIP loads without base data: 105 sight obstacles, 22 door
+projections, 24,300 grid blocks and two appearance regions for two controls.
+
+Publication subset `reviewed-publication-subset-rbosdhnz` includes only the two
+reviewed edits; the browser fixture also contains the unchanged supporting annex.
+The publisher's existing separate stage/fixture paths validate that subset
+against the complete browser archive. No publication-validation changes or
+runtime changes are needed. Both source models and all texture/derivative bytes
+remain unchanged. The full-scene staged result is 33/35 entrances in
+`saved-map-entrances-WJPZoZ`; the north hall and west round tower remain blocked
+by neighboring plateau movement exclusions. These results do not establish full
+Lincoln traversal, state-control or rendering parity.
+
+Installation `lincoln-keep-entrances-installed-20261019` completed; all fourteen
+installed file hashes match its report. Fresh main-library export
+`saved-map-exports-uVvWte` is byte-for-byte identical to the tested staged
+`saved-map-exports-pA6n44/lincoln.level.json`, confirming the 33/35 result applies
+to the published definitions and updated saved-scene pins.
+
 ## Independent coplanar collision layers (2026-10-19)
 
 Native motion obstacles block their entire layer. An independent walkable island

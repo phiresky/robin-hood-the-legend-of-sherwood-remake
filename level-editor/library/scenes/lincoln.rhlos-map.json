@@ -308,7 +308,7 @@
       "model": "3d-assets/lincoln/lincoln-keep/model.glb",
       "model_sha256": "302163f3b85d0356a986b2b7b55841b8a5dec5547df4def2addedd4844784025",
       "descriptor": "3d-assets/lincoln/lincoln-keep/asset.json",
-      "descriptor_sha256": "9b9d76ee2bd82f08a596c34cd090bc7c1df42be27509cf316ca78740311516e3",
+      "descriptor_sha256": "9640e9b0ca9183033a6f1a6e53a87be2101ce0f48f124a411e9e202bbb4391fe",
       "id": "lincoln-keep"
     },
     {
@@ -399,7 +399,7 @@
       "model": "3d-assets/lincoln/lincoln-keep-annex-cone-turret/model.glb",
       "model_sha256": "bee5f3f2835d50d0b86f3d9f36292c7fdf585328f2cd5e3bd8e1b5a46abe2ac6",
       "descriptor": "3d-assets/lincoln/lincoln-keep-annex-cone-turret/asset.json",
-      "descriptor_sha256": "12811dd035afef6f4ae894fa3f15e5e404c016a0a2779a5adbfd76c48b9b99b4",
+      "descriptor_sha256": "8b9f04a79f111f73aec8de37e561934e4fd5236d2b3b85095dd3f10f3ac88d78",
       "id": "lincoln-keep-annex-cone-turret"
     },
     {

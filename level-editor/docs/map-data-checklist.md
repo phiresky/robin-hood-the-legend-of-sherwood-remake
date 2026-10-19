@@ -9,9 +9,13 @@ Connections and runtime indices are rebuilt after placement, rotation and copyin
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.
 This fixes sixteen moved Lincoln keep entrance cases and an existing island-floor
-regression without runtime movement changes. The two Lincoln doorway candidates
-reach 33/35 full-scene entrance trips but remain unpublished pending broader
-asset verification; the installed library result below is still 31/35.
+regression without runtime movement changes. The Lincoln keep and cone-turret
+doorway corrections are published: the installed library reaches 33/35 full-scene
+entrance trips. Independently copied, rotated and raised three-asset assemblies
+pass 80 terrain-click round trips and 128 within-room crossings. Browser reopening
+preserves gameplay, color, depth and appearance states; the exact ZIP passes ten
+entrance trips and sixteen room crossings. The supporting annex stays separate
+and unchanged. Two neighboring plateau exclusions still block entrances.
 
 Internal floor-hole seams now generate export-prepared connections between
 separate receiving floors, with two complete-sprite native crossings verified.
@@ -72,7 +76,7 @@ exact-archive click round trips. The affected Wychford asset-regression export
 constructs natively and retains all 24 entrance trips. Definitions and both
 saved-scene pins are installed; models and textures are unchanged. These results
 do not establish full map parity.
-Their current entrance results are Derby 25/25, Lincoln 31/35, Nottingham 43/69,
+Their current entrance results are Derby 25/25, Lincoln 33/35, Nottingham 43/69,
 and Sherwood 5/5. Three Lincoln village doorway corrections improve its result
 from 28/35 while retaining movement geometry. Those assets pass 48 moved-placement
 room trips, browser export/reopen, native ZIP loading and six archived terrain-start
