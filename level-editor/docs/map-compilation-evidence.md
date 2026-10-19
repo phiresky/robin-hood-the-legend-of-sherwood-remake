@@ -4,6 +4,44 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Hall and northeast spire placement review (2026-10-20)
+
+The five-asset assembly in `nottingham-hall-northeast-spire.json` preserves the
+saved relative placements. With both staged doorway definitions it passes 64/96
+complete sprite round trips (`selected-neighbor-placements-m6lMHC`). Sixteen hall
+ground-entrance probes intersect the separate upper wall's `building-367`;
+sixteen northeast spire probes intersect the hall's `building-504` parapet.
+These foreign barriers remain active; this is not full assembly parity.
+
+Moving only the spire 32 game units along local Y gives it a clear approach on
+the separate hall roof. Mesh inspection confirms the outside anchor is supported
+by `building-501` within 0.001 game units (`placed-point-support-c5EL0Z`). The
+spire-only metadata stage passes all sixteen player-click entry/return probes
+across two copies, four rotations and two elevations
+(`selected-neighbor-placements-SwQbF8`). Its only metadata change declares its own
+`building-523` and `building-522` volumes as doorway structure. The hall metadata,
+collision geometry, floors and lock rules are unchanged. Removing the hall
+rejects all sixteen unsupported entrances (`selected-neighbor-placements-fKQfEY`).
+The inset and missing-hall fixtures exercise new assemblies; they do not repair
+or silently reposition the saved Nottingham scene.
+
+Browser fixture `draft-scene-render-MrjYy1` passes export/reopen with matching
+gameplay, color and depth, including two appearance states. Its 87,584,199-byte
+ZIP has SHA-256
+`2e181e95a6483fdf9c25f7b7d60127305cde4d45a621bd76592774005b2f79f8`.
+Native loading without base data and both exact archived spire click trips pass
+(`exact-map-archive-i9ftrkv9`). Derivative validation passes in
+`reviewed-publication-stage-4yuwykbi`.
+
+`northeast-spire-publication-installed` installs the spire definition and scene
+pin; all eight installed file hashes match. Model and derivative bytes are
+unchanged. The hall candidate remains unpublished.
+Fresh installed export `saved-map-exports-s8pM12` constructs natively with 94
+areas, 667 sight obstacles, 173 doors, 39 jump pairs, 159,300 grid blocks and 153
+elevation boundaries. `saved-map-entrances-lYL2cV` passes 61/69 trips; all 69
+individual pass/fail outcomes match the previous installed export. The same eight
+failures remain, including the spire's obstructed saved placement.
+
 ## Upper street turret published and standalone fixture corrected (2026-10-20)
 
 The standalone auditor now counts solid sight volumes independently of optional

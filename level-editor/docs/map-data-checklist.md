@@ -178,6 +178,14 @@ The upper street turret is published after 32 standalone moved trips, browser
 export/reopen and four exact archived trips. Fresh Nottingham passes 61/69
 entrances. The neighbouring green house still blocks its other entrance in the
 saved scene. Two staged candidates remain unpublished; full parity is incomplete.
+The northeast spire is now published after sixteen moved player-click trips,
+sixteen missing-hall rejections, browser export/reopen, native ZIP loading and
+two exact archived trips. Its supporting hall remains a separate asset. The
+test assembly moves the spire onto a clear part of the hall roof; the saved
+scene retains its obstructed placement. Fresh Nottingham remains at 61/69 with
+all individual entrance outcomes unchanged. Only the hall candidate remains
+unpublished; no runtime behavior changed. See the
+[hall and spire review](map-compilation-evidence.md#hall-and-northeast-spire-placement-review-2026-10-20).
 Repositioning the independent wall clears all 48 entrance trips while retaining
 wall collision. The 90-degree new assembly passes browser export/reopen with
 identical gameplay/color/depth, native ZIP loading without base data and all six

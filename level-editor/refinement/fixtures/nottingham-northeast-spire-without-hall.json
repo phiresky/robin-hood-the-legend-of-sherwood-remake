@@ -1,0 +1,20 @@
+{
+  "map": "nottingham",
+  "assets": ["nottingham-castle-northeast-spire", "nottingham-castle-courtyard-ground"],
+  "size": [7000, 5000],
+  "copyXs": [1800.25, 5200.25],
+  "assemblyY": 3000.75,
+  "terrainHeight": 0,
+  "tracePassages": true,
+  "missingEntrances": true,
+  "entrances": [
+    {
+      "asset": "nottingham-castle-northeast-spire",
+      "door": "interior-0/door-0",
+      "sourceLocal": [-25.41876220703125, 37.717664868118895]
+    }
+  ],
+  "placementOffsets": {
+    "nottingham-castle-northeast-spire": [0, 32, 0]
+  }
+}
