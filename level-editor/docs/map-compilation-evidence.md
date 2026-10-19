@@ -18,7 +18,7 @@ Lincoln's north-bailey plateau still uses a projected ground exclusion and
 receiver rather than an independently authored raised walking surface. Candidate
 `raised-terrain-surface-ixzLD9` promotes its top and selects 26 neighboring solid
 parts across eighteen edited assets. Export `saved-map-exports-A3LN3J` constructs
-natively but loses one tower entrance and one stair; only 27/34 emitted entrance
+natively but loses one tower entrance and one wall climb; only 27/34 emitted entrance
 trips pass. This candidate is rejected for publication.
 
 The mesh-footprint authoring tool now accepts a selected plateau asset, pins its
@@ -34,13 +34,13 @@ asset edits and reject a changed gameplay fingerprint. The negative check is
 `stale-door-stage-check-0m8m3nh4`. Candidate `local-door-structure-stage-L9K1CV`
 declares six entrances' own structures. Export `saved-map-exports-XA9nuC` passes
 33/34 emitted entrance trips in `saved-map-entrances-phhouz`, including the north
-hall. It still loses the tower entrance and stair, so it is not publishable.
+hall. It still loses the tower entrance and wall climb, so it is not publishable.
 
 The tower omission comes from the newly selected south-curtain support volume:
 its top is about 344 while its explicitly authored walkway is at 340.001.
 The raised-surface staging tool now preserves each selected support's existing
 walking outlines and holes as asset-local clearances; foreign collision remains
-effective. This does not invent new floor coverage. The missing stair landing
+effective. This does not invent new floor coverage. The missing climb landing
 needs separate support review. All changes here are authoring tools and staged
 data; the installed plateau and runtime engine remain unchanged.
 
@@ -51,8 +51,27 @@ tower entrance still meets the neighboring wall volume between its outdoor
 anchor and doorway midpoint; the west round tower retains its plateau conflict.
 The north hall passes. The east-curtain `building-157-lift` remains omitted:
 its lower anchor at world [2788, 1249.001, 220.001] has no supporting raised floor.
-The wall support volume and stair contact both need further asset geometry review.
+The wall support volume and climb contact both need further asset geometry review.
 Neither this candidate nor its predecessor changes the installed library result.
+
+### Wall support height review
+
+The support-volume authoring helper can now explicitly select a non-stair floor
+with `--surface=<surface-id>`. Candidate `floor-movement-volumes-SkBqkA` derives
+the south-curtain support from its existing walking outline and height instead
+of its taller visual collision envelope. Export `saved-map-exports-oLyESM` retains
+all 35 entrances; native audit `saved-map-entrances-ew4nmQ` passes 34/35, leaving
+the west round tower's plateau conflict. The wall climb remains omitted.
+
+This result does **not** authorize publication. Near-plane mesh review in
+`south-curtain-floor-review-gojpp19w` fails: there are no faces within 0.5 units
+of the authored 340.001 floor. The asset-authoring definition in
+`blender/lincoln/refine_east_gate.py` deliberately sets `SOUTH_RUN.walk` to 344
+to align the visible walkway; `MIDDLE_RUN.walk` also uses 344. The navigation
+metadata needs calibration against those authored meshes and adjoining asset
+contacts. Lowering a collision support alone preserves a stale walking height.
+The selected-floor tool remains an unpublished authoring operation requiring
+mesh, independent-placement and native checks. Runtime movement is unchanged.
 
 ## Lincoln keep and turret entrance publication (2026-10-19)
 

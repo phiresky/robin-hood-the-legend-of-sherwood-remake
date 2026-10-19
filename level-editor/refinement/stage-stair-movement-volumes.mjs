@@ -8,8 +8,15 @@ import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 // matching movement collision when placed against a newly authored floor.
 const args = process.argv.slice(2);
 const standalone = args.includes("--standalone");
-const [map, stage, ...ids] = args.filter((argument) => argument !== "--standalone");
+const surfaceOptions = args.filter((argument) => argument.startsWith("--surface="));
+assert.ok(surfaceOptions.length <= 1, "Select at most one explicit support surface");
+const surfaceId = surfaceOptions[0]?.slice("--surface=".length);
+assert.ok(surfaceId === undefined || surfaceId.length, "Surface ID must not be empty");
+const [map, stage, ...ids] = args.filter(
+  (argument) => argument !== "--standalone" && !argument.startsWith("--surface="),
+);
 assert.ok(map && stage && ids.length, "Provide map, gameplay stage and stair asset IDs");
+assert.ok(surfaceId === undefined || ids.length === 1, "Explicit surface needs one asset");
 assert.ok(![map, stage, ...ids].some((argument) => argument.startsWith("--")), "Unknown option");
 const document = await readStoredMap(`library/scenes/${map}.rhlos-map.json`, "library");
 const assets = await pinnedDescriptors("library", document.assetSources, document.sceneAssets);
@@ -26,7 +33,11 @@ for (const id of ids) {
   );
   const gameplay = edit.gameplay;
   const stairs = (gameplay.lifts ?? []).filter((lift) => lift.type === 1);
-  assert.ok(stairs.length, `No stair flights in ${id}`);
+  const floors =
+    surfaceId === undefined
+      ? stairs.map((lift) => gameplay.surfaces.find((surface) => surface.id === lift.surface))
+      : gameplay.surfaces.filter((surface) => surface.id === surfaceId);
+  assert.ok(floors.length && floors.every(Boolean), `Missing support surfaces in ${id}`);
   if (standalone) {
     // Publishable stair-only reviews must not inherit unrelated solids enabled
     // by a larger terrain experiment. Keep the library's other collision rules.
@@ -37,14 +48,11 @@ for (const id of ids) {
     gameplay.movementSolids = [
       ...new Set([
         ...(descriptor.gameplay.movementSolids ?? []),
-        ...stairs.map(
-          (lift) => gameplay.surfaces.find((surface) => surface.id === lift.surface).node,
-        ),
+        ...floors.map((floor) => floor.node),
       ]),
     ];
   }
-  for (const lift of stairs) {
-    const floor = gameplay.surfaces.find((surface) => surface.id === lift.surface);
+  for (const floor of floors) {
     const part = descriptor.parts.find((part) => part.node === floor?.node);
     assert.ok(part?.obstacle_local_game?.solid && !floor.holes?.length);
     assert.ok(
@@ -101,14 +109,19 @@ for (const id of ids) {
   }
   gameplay.draft ??= { issues: [] };
   gameplay.draft.issues.push(
-    "Unpublished stair movement volume follows the authored flight; moved contact and mesh review remain required.",
+    "Unpublished movement support follows its authored floor; moved contact and mesh review remain required.",
   );
   validateAssetGameplay(gameplay, descriptor);
 }
-const output = await fs.mkdtemp("work/needs-review/map-compile/stair-movement-volumes-");
+const output = await fs.mkdtemp(
+  `work/needs-review/map-compile/${surfaceId === undefined ? "stair" : "floor"}-movement-volumes-`,
+);
 await fs.writeFile(
   `${output}/edits.json`,
   JSON.stringify(standalone ? edits.filter((edit) => ids.includes(edit.asset)) : edits),
 );
-await fs.writeFile(`${output}/review.json`, JSON.stringify({ map, stage, standalone, changes }));
-console.log(JSON.stringify({ output, changedFlights: changes.length }));
+await fs.writeFile(
+  `${output}/review.json`,
+  JSON.stringify({ map, stage, standalone, surfaceId, changes }),
+);
+console.log(JSON.stringify({ output, changedSupports: changes.length }));
