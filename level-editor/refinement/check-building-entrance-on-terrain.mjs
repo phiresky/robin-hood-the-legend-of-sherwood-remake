@@ -10,8 +10,15 @@ import { partMatrix } from "../shared/src/level3d.ts";
 import { gameToScene } from "../shared/src/scene.ts";
 import { sceneToGame, applyAffineMatrix } from "../shared/src/geometry.ts";
 
-const [directory, stage, doorId] = process.argv.slice(2);
+const [directory, stage, doorId, sourceArgument] = process.argv.slice(2);
 assert.ok(directory && stage && doorId, "Supply asset directory, gameplay stage and entrance ID");
+// Narrow rooftops may not support the default straight approach. A separately
+// authored local standing point tests entry from that floor, not terrain contact.
+const sourceLocal = sourceArgument === undefined ? undefined : JSON.parse(sourceArgument);
+if (sourceLocal !== undefined)
+  assert.ok(
+    Array.isArray(sourceLocal) && sourceLocal.length === 2 && sourceLocal.every(Number.isFinite),
+  );
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const bytes = await fs.readFile(`library/${directory}/asset.json`);
 const asset = JSON.parse(bytes);
@@ -43,7 +50,10 @@ const save = (complete) =>
   fs.writeFile(
     `${output}/diagnostics.json`,
     JSON.stringify({
-      scope: "selected-entrance-on-matching-authored-terrain-awaiting-native-verification",
+      scope: sourceLocal
+        ? "selected-entrance-from-asset-local-standing-point-awaiting-native-verification"
+        : "selected-entrance-on-matching-authored-terrain-awaiting-native-verification",
+      sourceLocal,
       complete,
       asset: asset.id,
       stage,
@@ -123,11 +133,13 @@ for (const height of [0, 40])
         layer: door.layer_out,
         sector: door.sector_out,
         source_layer: door.layer_out,
-        source_world: [
-          door.point_out[0] + (dx / length) * 32,
-          door.point_out[1] + (dy / length) * 32 + terrainHeight,
-          terrainHeight,
-        ],
+        source_world: sourceLocal
+          ? transform(group, [...sourceLocal, definition.outside[2]])
+          : [
+              door.point_out[0] + (dx / length) * 32,
+              door.point_out[1] + (dy / length) * 32 + terrainHeight,
+              terrainHeight,
+            ],
       });
     }
     await save(false);

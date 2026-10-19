@@ -33,6 +33,22 @@ layers alone allowed entry but left return clicks blocked. With corrected layer
 precedence, `building-entrance-on-terrain-ppFdRb` passes all sixteen round trips.
 This is entrance evidence, not complete keep traversal certification.
 
+The follow-up keep middle entrance passes sixteen click trips in
+`building-entrance-on-terrain-FYP4YQ`. The top entrance's default straight start
+lies beyond its small roof; all sixteen `building-entrance-on-terrain-php1rX`
+cases correctly report no supporting sector there. An experimental exterior
+socket (`exterior-floor-contact-A1Vmfi`, tested as
+`building-entrance-on-terrain-bDt2OA`) does not make that starting position usable
+and remains rejected for publication. Selecting an actual roof standing point
+at local `[70,5]` instead passes all sixteen click-entry/return cases in
+`building-entrance-on-terrain-NV2pZw`, without that experimental socket.
+The helper records explicit local starts separately from its default terrain
+approaches, so this is roof traversal evidence, not a terrain-to-roof connection
+claim. The two turret entrances and three keep entrances now have eighty
+successful native click round trips across independently copied, rotated and
+raised placements. Their combined neighboring-platform behavior and browser
+archive still require verification before publishing either asset.
+
 The latest full Derby export `saved-map-exports-N8q2vA` is identical to the
 25/25-tested `saved-map-exports-GIasUY`. Fresh independent placements pass 48
 doorway trips (`asset-building-doors-PFF1Kd`, `asset-building-doors-y5ugQO`) and
