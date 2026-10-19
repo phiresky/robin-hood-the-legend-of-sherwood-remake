@@ -1,0 +1,30 @@
+{
+  "map": "nottingham",
+  "assets": [
+    "nottingham-castle-gate-west-tower",
+    "nottingham-castle-gate-arch",
+    "nottingham-castle-west-courtyard-wall"
+  ],
+  "terrainHeight": 0,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "nottingham-castle-gate-west-tower",
+      "door": "interior-0/door-0",
+      "sourceLocal": [-46.12762451171875, 25.188697663922966]
+    },
+    {
+      "asset": "nottingham-castle-gate-west-tower",
+      "door": "interior-0/door-1",
+      "sourceLocal": [81.87237548828125, -7.565158205987674]
+    },
+    {
+      "asset": "nottingham-castle-gate-west-tower",
+      "door": "interior-0/door-2",
+      "sourceLocal": [-19.12762451171875, -13.565158205987554]
+    }
+  ],
+  "placementOffsets": {
+    "nottingham-castle-west-courtyard-wall": [-100, 0, 0]
+  }
+}

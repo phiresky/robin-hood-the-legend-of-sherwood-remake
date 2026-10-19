@@ -98,6 +98,17 @@ const placements = ids.map((id) => {
   }
   return matches[0];
 });
+for (const [id, offset] of Object.entries(fixture?.placementOffsets ?? {})) {
+  assert.ok(Array.isArray(offset) && offset.length === 3 && offset.every(Number.isFinite));
+  const placement = placements.find((entry) => entry.assets[0] === id);
+  assert.ok(placement, `Unknown offset asset ${id}`);
+  placement.transform = {
+    ...placement.transform,
+    dx: placement.transform.dx + offset[0],
+    dy: placement.transform.dy + offset[1],
+    dz: placement.transform.dz + offset[2],
+  };
+}
 const origin = placements[0].transform;
 const output = await fs.mkdtemp(
   `work/needs-review/map-compile/${fixture ? "selected-neighbor" : "keep-neighbor"}-placements-`,

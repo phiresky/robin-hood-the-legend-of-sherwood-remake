@@ -147,6 +147,11 @@ gives 48/48 native trips with the supporting arch. With the neighbouring courtya
 wall present, 44/48 pass; its four 90-degree obstructions remain enforced. Only
 doorway permission data and warnings change, not walking or sight geometry.
 This newer candidate is still unpublished.
+Repositioning the independent wall clears all 48 entrance trips while retaining
+wall collision. The 90-degree new assembly passes browser export/reopen with
+identical gameplay/color/depth, native ZIP loading without base data and all six
+archived entrance trips. Derivative validation and guarded library publication
+remain pending; the original overlapping arrangement is not thereby repaired.
 Sherwood's three doorway corrections retain walking geometry and pass 48 moved
 placement trips, browser reopening and six archived terrain-start trips. Its five
 entrance checks now pass; this does not certify all other map features.

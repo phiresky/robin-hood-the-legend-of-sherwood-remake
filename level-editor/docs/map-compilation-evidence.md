@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Repositioned west-wall assembly and exact ZIP checks (2026-10-20)
+
+Moving the independently placed west courtyard wall 100 local X units away,
+while retaining its collision, gives 48/48 native entrance round trips in
+`selected-neighbor-placements-RqEtVA`. The tower and supporting arch keep their
+relative placement. The assembly auditor now accepts explicit per-asset
+placement offsets, applied before the shared rotation/elevation. The fixture
+`nottingham-west-gate-separated-wall.json` preserves this new-map arrangement.
+This does not repair the overlapping original arrangement or exempt the wall.
+
+The 90-degree scene was packaged using only the reviewed west-tower gameplay
+edit (`west-gate-reviewed-subset-ac1lcozh`). Browser fixture
+`draft-scene-render-ZqQAnc` exports and reopens `nottingham-west-gate.zip` with
+identical gameplay, color and depth. The archive is 22,740,033 bytes, SHA-256
+`1a4d902a0b41e33924794eba57789c7c0be62d2f844191ccdbb2eba1e030bf9c`.
+Native loading without base data passes: 39 sight obstacles, eight door
+projections, 27,000 grid blocks, color/depth/minimap and embedded editor scene.
+Exact archived level bytes extracted into `exact-map-archive-jnwqhdiv` pass all
+six complete sprite entrance round trips (`saved-map-entrances-EQYKbI`).
+
+These checks establish the tested new arrangement, not full map parity.
+The west tower remains unpublished while library derivative receipts and guarded
+publication inputs are prepared. No mission entities or runtime changes were added.
+
 ## West gate structural side and foreign-wall isolation (2026-10-20)
 
 Candidate `west-gate-slope-Bny8ah` retains slope precision and declares volume
