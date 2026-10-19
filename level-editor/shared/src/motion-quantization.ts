@@ -45,6 +45,37 @@ function collinear(points: Point[]): boolean {
   return !b || points.every((p) => (b[0] - a[0]) * (p[1] - a[1]) === (b[1] - a[1]) * (p[0] - a[0]));
 }
 
+/** Boolean comparisons normalize crossed rings, so validate a precision overlay
+ * before using equality of its rounded coverage as proof of a valid contour. */
+export function isSimpleRoundedMotionRing(points: Point[]): boolean {
+  const ring = normalizeRoundedMotionRing(
+    points.map(([x, y]): Point => [Math.round(x), Math.round(y)]),
+  );
+  if (ring.length < 3 || collinear(ring)) return false;
+  const cross = (a: Point, b: Point, c: Point) =>
+    (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i]!,
+      b = ring[(i + 1) % ring.length]!;
+    for (let j = i + 2; j < ring.length; j++) {
+      if (i === 0 && j === ring.length - 1) continue;
+      const c = ring[j]!,
+        d = ring[(j + 1) % ring.length]!;
+      if (
+        [0, 1].some(
+          (axis) =>
+            Math.max(a[axis]!, b[axis]!) < Math.min(c[axis]!, d[axis]!) ||
+            Math.max(c[axis]!, d[axis]!) < Math.min(a[axis]!, b[axis]!),
+        )
+      )
+        continue;
+      if (cross(a, b, c) * cross(a, b, d) <= 0 && cross(c, d, a) * cross(c, d, b) <= 0)
+        return false;
+    }
+  }
+  return true;
+}
+
 /** Remove a crossed corner only when its width fits within grid-rounding error.
  * The precise contour remains separate; larger crossings remain invalid. */
 export function normalizeRoundedMotionRing(points: Point[]): Point[] {

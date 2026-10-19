@@ -91,7 +91,11 @@ import {
   movementVolumeHeightSlice,
   MOVEMENT_CONTACT_TOLERANCE,
 } from "./movement-volume-height-slice.ts";
-import { quantizeGeneratedMotionPolygon, simplifyMotionRing } from "./motion-quantization.ts";
+import {
+  isSimpleRoundedMotionRing,
+  quantizeGeneratedMotionPolygon,
+  simplifyMotionRing,
+} from "./motion-quantization.ts";
 import { restoreReceivingBoundary, restoreObstacleBoundary } from "./restore-receiving-boundary.ts";
 import {
   motionBoundsKey,
@@ -2267,12 +2271,18 @@ function compileAssetGameplayAttempt(
             const candidates = (preciseBlockers.get(motionBoundsKey(points)) ?? []).filter(
               ({ rounded }) => polygonClipping.xor([rounded], [points]).length === 0,
             );
-            const exact =
+            let exact =
               candidates.length === 1
                 ? candidates[0]!.exact
                 : candidates.length === 0
                   ? recoverJoinedBlocker(points)
                   : undefined;
+            if (exact && !isSimpleRoundedMotionRing(exact)) {
+              warnings.push(
+                `Movement layer ${layer}: reconstructed precise obstacle crosses itself after grid rounding; retained the valid grid collision contour.`,
+              );
+              exact = undefined;
+            }
             return {
               state_id: 0,
               polygon: { points },

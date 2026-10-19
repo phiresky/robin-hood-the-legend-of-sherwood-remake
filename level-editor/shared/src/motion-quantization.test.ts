@@ -1,11 +1,63 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  isSimpleRoundedMotionRing,
   normalizeRoundedMotionRing,
   quantizeGeneratedMotionPolygon,
   simplifyMotionRing,
 } from "./motion-quantization.ts";
 import type { Point } from "./level.ts";
+
+test("precision overlays reject nonadjacent crossings hidden by boolean normalization", () => {
+  const crossed: Point[] = [
+    [522, 671],
+    [514, 669],
+    [515, 669],
+    [518, 663],
+    [472, 660],
+    [433, 676],
+    [413, 714],
+    [416, 719],
+    [404, 729],
+    [420, 750],
+    [452, 757],
+    [464, 752],
+    [465, 752],
+    [510, 755],
+    [556, 744],
+    [580, 721],
+    [586, 694],
+    [556, 670],
+    [550, 677],
+    [573, 696],
+    [551, 677],
+    [549, 677],
+    [551, 675],
+    [557, 666],
+    [531, 660],
+  ];
+  const before = structuredClone(crossed);
+  assert.equal(isSimpleRoundedMotionRing(crossed), false);
+  assert.deepEqual(crossed, before);
+  assert.equal(
+    isSimpleRoundedMotionRing([
+      [0, 0],
+      [10, 0],
+      [10, 10],
+      [5, 5],
+      [0, 10],
+    ]),
+    true,
+  );
+  assert.equal(
+    isSimpleRoundedMotionRing([
+      [0, 0],
+      [5, 0],
+      [10, 0],
+    ]),
+    false,
+  );
+});
 
 test("grid rounding repairs a crossed subpixel corner without accepting larger crossings", () => {
   const rounded: Point[] = [

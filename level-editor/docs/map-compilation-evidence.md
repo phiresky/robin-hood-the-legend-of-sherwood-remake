@@ -4,6 +4,25 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Rounded obstacle precision overlays (2026-10-19)
+
+An independently rotated Derby watchtower exposed a reconstructed precision
+overlay whose rounded contour crossed itself. Boolean coverage comparison had
+normalized the crossing and accepted it; native geometry validation correctly
+rejected the export. The compiler now checks the normalized rounded ring before
+installing an optional precision overlay. Invalid overlays produce a warning
+and retain the valid, already-generated grid collision contour. This preparation
+runs only during export; engine validation and movement are unchanged.
+
+The regression reproduces the crossing and covers valid concave and degenerate
+controls. All 100 focused quantization, contour, boundary and map compilation
+tests pass, along with app typechecking, focused lint, formatting and app build.
+`asset-building-doors-tvjFLZ` passes all 32 native doorway round trips across
+copied, rotated and raised watchtower placements. The full Derby descriptor in
+`saved-map-exports-pglqf6` is identical to the preceding 25/25 tested candidate
+`saved-map-exports-P78uu2`. These doorway candidates are separate from publication
+and do not establish terrain access or full map parity.
+
 ## Continuous receivers after native-precision splitting (2026-10-19)
 
 When a receiving outline pinches at native coordinate precision, triangulation
