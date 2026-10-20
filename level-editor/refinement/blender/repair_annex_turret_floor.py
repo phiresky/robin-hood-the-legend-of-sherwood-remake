@@ -10,7 +10,7 @@ import bpy
 from mathutils import Vector
 
 
-def render_review(path, center, scale):
+def render_review(path, center, scale, azimuth=0):
     scene = bpy.context.scene
     scene.render.engine = 'CYCLES'
     scene.cycles.device = 'CPU'
@@ -26,7 +26,8 @@ def render_review(path, center, scale):
     camera_data.clip_end = 10000
     camera = bpy.data.objects.new('Review camera', camera_data)
     scene.collection.objects.link(camera)
-    camera.location = center + Vector((0, -1500, 1500))
+    angle = math.radians(azimuth)
+    camera.location = center + Vector((1500 * math.sin(angle), -1500 * math.cos(angle), 1500))
     camera.rotation_euler = (center - camera.location).to_track_quat('-Z', 'Y').to_euler()
     scene.camera = camera
     scene.render.filepath = str(path.resolve())
@@ -121,11 +122,60 @@ def fit_floor_uv_to_textured_cap(triangles, material):
             'scope': 'single-affine-floor-UV-remap-existing-atlas-pixels-unchanged'}
 
 
+def fit_inner_wall_uv(triangles, cap, material, cosine, floor_height):
+    image = next(n.image for n in material.node_tree.nodes if n.type == 'TEX_IMAGE' and n.image)
+    width, height = image.size
+    pixels = list(image.pixels)
+    center = sum((p for t in cap for p in t['positions']), Vector()) / (3 * len(cap))
+    weights = [(a / 8, b / 8, 1 - (a + b) / 8)
+               for a in range(9) for b in range(9 - a)]
+
+    def neutral(uv):
+        offset = (int(uv.y * height) * width + int(uv.x * width)) * 4
+        rgb = pixels[offset:offset + 3]
+        return max(rgb) - min(rgb) < 0.01 and 0.04 < rgb[0] < 0.4
+
+    changed, unresolved = [], []
+    for index, triangle in enumerate(triangles):
+        positions = triangle['positions']
+        heights = [p.z * cosine for p in positions]
+        if min(heights) < floor_height or max(heights) > 510:
+            continue
+        normal = (positions[1] - positions[0]).cross(positions[2] - positions[0]).normalized()
+        radial = sum(positions, Vector()) / 3 - center
+        radial.z = 0
+        if normal.dot(radial) >= 0:
+            continue
+        samples = [sum((uv * w for uv, w in zip(triangle['uv'], weights_)), Vector((0, 0)))
+                   for weights_ in weights]
+        if not any(neutral(uv) for uv in samples):
+            continue
+        donors = [uv for uv in samples if not neutral(uv)]
+        found = None
+        for scale in (0.9, 0.75, 0.5, 0.25, 0.125):
+            for donor in donors:
+                if all(not neutral(donor + (uv - donor) * scale) for uv in samples):
+                    found = donor, scale
+                    break
+            if found:
+                break
+        if not found:
+            unresolved.append(index)
+            continue
+        donor, scale = found
+        triangle['uv'] = [donor + (uv - donor) * scale for uv in triangle['uv']]
+        changed.append({'triangle': index, 'scale': scale, 'center': list(donor)})
+    return {'changed': changed, 'unresolved': unresolved,
+            'scope': 'inward-upper-wall-UV-only-existing-atlas-no-geometry-edits'}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--library', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--fit-floor-uv', action='store_true')
+    parser.add_argument('--fit-inner-wall-uv', action='store_true')
+    parser.add_argument('--review-all-sides', action='store_true')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     scene = json.loads((args.library / 'scenes/lincoln.rhlos-map.json').read_bytes())
     source = next(r for r in scene['assetSources'] if r['id'] == 'lincoln-keep-annex-round-turret')
@@ -158,6 +208,7 @@ def main():
     points = next(p for p in descriptor['parts'] if p['node'] == 'building-228')['obstacle_local_game']['points']
     height = points[0]['z_top']
     assert all(abs(p['z_top'] - height) < 1e-6 for p in points)
+    wall_uv = fit_inner_wall_uv(retained, cap, material, math.cos(angle), height) if args.fit_inner_wall_uv else None
     for triangle in cap:
         for position in triangle['positions']:
             position.z = height / math.cos(angle)
@@ -167,13 +218,17 @@ def main():
     bpy.ops.export_scene.gltf(filepath=str(output.resolve()), export_format='GLB',
                               export_extras=True, export_yup=True, export_animations=False)
     render_review(args.output / 'after.png', center, scale)
+    if args.review_all_sides:
+        for azimuth in (90, 180, 270):
+            render_review(args.output / f'after-{azimuth}.png', center, scale, azimuth)
     (args.output / 'review.json').write_text(json.dumps({
         'scope': 'unpublished-mesh-receiver-repair-requires-render-and-gameplay-review',
         'source': source, 'outputSha256': hashlib.sha256(output.read_bytes()).hexdigest(),
         'retainedWallTriangles': len(retained), 'loweredCapTriangles': len(cap),
         'beforeCapHeight': 486, 'afterCapHeight': height,
         'floorUv': floor_uv,
-        'appearance': 'Wall/battlement positions, corner normals, UVs and material retained; floor UV changes recorded separately. Atlas pixels unchanged.',
+        'innerWallUv': wall_uv,
+        'appearance': 'Positions, corner normals and materials retained; floor and inward upper-wall UV changes recorded separately. Exterior UVs and atlas pixels unchanged.',
     }, indent=2) + '\n')
 
 

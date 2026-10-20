@@ -80,6 +80,11 @@ A staged floor UV adjustment now removes the larger lower gray band without
 changing the walking geometry or atlas pixels. A separate upper wall band remains;
 the model is still unpublished. See the
 [UV repair review](map-compilation-evidence.md#turret-floor-uv-repair-removes-the-lower-gray-band-2026-10-20).
+The subsequent bounded inner-wall UV repair removes the remaining band in all
+four reviewed asset views. The paired textured model still passes 713/713 floor
+samples and preserves the previously tested gameplay definition. Paired-model
+browser verification and publication remain pending; see the
+[textured candidate evidence](map-compilation-evidence.md#turret-wall-texture-repaired-and-paired-with-its-floor-definition-2026-10-20).
 See the
 [rotated lighting evidence](map-compilation-evidence.md#multi-height-terrace-lighting-survives-asset-rotation-2026-10-20),
 [light-selector repair](map-compilation-evidence.md#terrace-light-selectors-restored-to-physical-floors-2026-10-20),

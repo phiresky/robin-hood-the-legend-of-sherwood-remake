@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Turret wall texture repaired and paired with its floor definition (2026-10-20)
+
+`repair_annex_turret_floor.py --fit-floor-uv --fit-inner-wall-uv --review-all-sides`
+now produces a coherent candidate without either gray band in the reviewed views.
+The wall adjustment contracts UVs on 176 inward-facing upper triangles into
+painted portions of their existing texture charts. It does not edit atlas pixels
+or geometry. Candidate `annex-turret-mesh-review-16/geometry-invariance.json`
+verifies identical positions and normals throughout, identical floor attributes
+against candidate 14, and the unchanged embedded atlas hash.
+
+Candidate 17 reproduces the same model SHA-256:
+`b2499e11908186a53f401bba801a6f740786b84f04baaaa6dd43fa45290eb454`.
+Its CPU renders at 0, 90, 180 and 270 degrees were reviewed. The exterior is
+retained and the two previously exposed gray bands are absent. This is an
+asset-only visual review, not rendered actor contact or a game screenshot.
+
+Minimal staged library `turret-textured-library-dq5cn5ee` pairs that exact model
+with gameplay stage `annex-turret-floor-xuccNq`. The clipped receiver still passes
+713/713 sampled support points. Apart from draft review notes, the staged edits
+are identical to `annex-turret-floor-tqEX5p`, used for the earlier native moved
+assembly and control checks. The installed library is unchanged. Paired-model
+browser export/reopen, full NPC traversal, rendered actor contact and publication
+with refreshed model derivatives remain pending. Python compilation and diff
+checks pass; no runtime implementation changed.
+
 ## Turret floor UV repair removes the lower gray band (2026-10-20)
 
 The cap repair tool now offers `--fit-floor-uv`. It uniformly contracts the
