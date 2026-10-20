@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Explicit receiving-volume placement
+
+Gameplay volumes now transform their explicit receiving-plane anchors along
+with their vertices. Previously the vertices moved while the anchors remained
+asset-local, causing native loading to reject the receiving plane.
+The compiler regression covers translated and elevated receivers at
+0°, 37°, 90° and 180°. All 177 asset compiler tests pass; targeted formatting
+and lint checks pass. No engine code changed.
+
+The golden-house receiver-volume experiment
+`york-golden-roof-ridge-DJbQoH` preserves the original movement surfaces and
+uses two thin, non-solid, non-opaque receivers with the corrected ridge.
+Before the compiler fix, `connected-jump-placements-JfT1ov` fails native loading
+with an invalid receiving plane. After the fix, `connected-jump-placements-csz36q`
+loads and passes 156/160 direct jump probes. The published baseline has the
+same four endpoint failures at 180°; this is not complete jump coverage.
+All eight pre-fix assembly descriptors have movement and jump-pair data
+identical to the published baseline, confirming that this candidate isolates
+receiver geometry. The candidate is still unpublished.
+
 ## Golden timber-house ridge candidate
 
 `refinement/stage-york-golden-roof-ridge.mjs` stages an unpublished correction
@@ -42,8 +62,13 @@ movement geometry, passes all 18 probes in `golden-ridge-receiver-only-ds1qy81q`
 This isolates the receiver repair but is not production compiler evidence.
 
 The staging script now retains the asset's movement-grid policy.
-Revised candidate `york-golden-roof-ridge-ldL2lc` is being compiled in
-`saved-map-exports-yeJYXy`; native verification remains required.
+Revised candidate `york-golden-roof-ridge-ldL2lc` compiles in
+`saved-map-exports-yeJYXy` in 250.8 seconds. Exact normal-click replay
+`replayed-jump-clicks-VN95E6` still fails six of 18 probes: editing the shared
+surface polygons changes assembled movement even without the precision flag.
+It is superseded by the explicit receiver-volume experiment above.
+The full-scene batch `saved-map-exports-gKkgFH` started before the receiving-plane
+transform fix and cannot serve as native verification of that fix.
 `refinement/replay-jump-click-probes.mjs` preserves original coordinates and
 selection modes and checks jump-pair identity before producing replay inputs.
 The asset library has not been changed by these experiments.

@@ -746,6 +746,15 @@ function compileAssetGameplayAttempt(
         ...volume.shape,
         projection_area: null,
         material_indices: [],
+        ...(volume.shape.projection_plane
+          ? {
+              projection_plane: [
+                transform(volume.node, volume.shape.projection_plane[0]),
+                transform(volume.node, volume.shape.projection_plane[1]),
+                transform(volume.node, volume.shape.projection_plane[2]),
+              ] as [Vec3, Vec3, Vec3],
+            }
+          : {}),
         points: volume.shape.points.map((p) => {
           const bottom = transform(volume.node, [p.x, p.y, p.z_bottom]);
           const top = transform(volume.node, [p.x, p.y, p.z_top]);

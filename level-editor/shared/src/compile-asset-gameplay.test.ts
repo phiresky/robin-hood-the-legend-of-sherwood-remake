@@ -1745,6 +1745,43 @@ test("feature anchors use the physical receiver's elevation within shared ground
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /outside must resolve/);
 });
 
+test("explicit volume receiving planes follow translated elevated and rotated placements", () => {
+  for (const rotation of [0, 37, 90, 180]) {
+    const { document, assets, hut } = projectionVolumeCompilerFixture();
+    const gameplay = hut.gameplay!;
+    gameplay.doors = [];
+    gameplay.surfaces = [gameplay.surfaces[0]!];
+    const shape = gameplay.volumes![0]!.shape;
+    for (const point of shape.points) point.z_bottom = point.z_top;
+    shape.projection_plane = shape.points
+      .slice(0, 3)
+      .map((point) => [point.x, point.y, point.z_top]) as [
+      [number, number, number],
+      [number, number, number],
+      [number, number, number],
+    ];
+    const part = document.objects.find((p) => p.node.endsWith(":building-999"))!;
+    part.transform.dx += 100;
+    part.transform.dz += 40;
+    part.transform.rot_deg = rotation;
+    const geometry = compileAssetGameplay(document, assets, bounds);
+    const receiver = geometry.sight_obstacles[0]!;
+    const anchors = receiver.projection_plane!;
+    assert.ok(anchors);
+    for (const anchor of anchors)
+      assert.ok(
+        receiver.points.some(
+          (point) =>
+            Math.hypot(point.x - anchor[0], point.y - anchor[1], point.z_top - anchor[2]) < 1e-5,
+        ),
+        `Receiving anchor must move with its volume at ${rotation} degrees`,
+      );
+    const plane = heightPlane(anchors);
+    for (const point of receiver.points)
+      assert.ok(Math.abs(planeHeight(plane, [point.x, point.y]) - point.z_top) < 1e-5);
+  }
+});
+
 test("receiving volumes retain thickness, materials and state links after placement", () => {
   const { document, assets } = projectionVolumeCompilerFixture();
   const compile = () => compileAssetGameplay(document, assets, bounds);
