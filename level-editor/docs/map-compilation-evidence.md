@@ -73,6 +73,11 @@ compiled in `saved-map-exports-BZhLwR`. Production integration is complete;
 a fresh ZIP with the cleanup remains pending. The normal production imports
 pass all 194 targeted compiler/navigation tests, application typechecking,
 targeted lint and formatting. Engine code is unchanged.
+The fresh descriptor additionally passes 40/40 native climb player-click routes
+and 130/130 native stair routes with hidden-floor selection, with no forbidden
+routes. Reports are `actor-climb-player-click-report.json` and
+`actor-stair-hidden-selection-report.json` in `saved-map-exports-lc8MNY`.
+This does not supersede the recorded ordinary-selection stair failure.
 
 The guarded `preparePreciseFloor` wrapper additionally requires that cleaned
 geometry serialize back to the same prepared integer boundary; otherwise it
