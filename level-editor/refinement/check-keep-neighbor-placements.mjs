@@ -26,7 +26,7 @@ assert.ok(size.length === 2 && size.every((n) => Number.isFinite(n) && n > 0));
 assert.ok(copyXs.length === 2 && copyXs.every(Number.isFinite));
 assert.ok(Number.isFinite(assemblyY));
 if (fixture) {
-  assert.ok(Array.isArray(fixture.assets) && fixture.assets.length > 1);
+  assert.ok(Array.isArray(fixture.assets) && fixture.assets.length > 0);
   assert.equal(new Set(fixture.assets).size, fixture.assets.length);
   assert.ok(Number.isFinite(fixture.terrainHeight));
   assert.ok(

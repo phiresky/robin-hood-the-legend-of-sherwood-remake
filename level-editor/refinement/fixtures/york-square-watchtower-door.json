@@ -1,0 +1,16 @@
+{
+  "map": "york",
+  "assets": ["york-castle-northeast-square-watchtower"],
+  "size": [3200, 3200],
+  "copyXs": [800.25, 2400.25],
+  "assemblyY": 1800.75,
+  "terrainHeight": 225.001,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "york-castle-northeast-square-watchtower",
+      "door": "interior-0/door-0",
+      "sourceLocal": [-60.944453217031935, 75.75319190296413]
+    }
+  ]
+}

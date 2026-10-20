@@ -4,6 +4,45 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## York doorway structure audit and timber-house repair (2026-10-20)
+
+Installed trace `saved-map-exports-Mmk7jO` identifies 20 blocked interior
+corridors: nine intersect their own asset's structure and eleven intersect
+foreign geometry. One additional denied entrance is lock-only. Three entrances
+are authored locked overall; two of those also have blocked corridors. Those
+locks must remain distinct from geometry defects, including after unlocking.
+
+The southeast timber house's own `building-382` volume blocks its doorway.
+Unmodified fixture `selected-neighbor-placements-FoTTX7` fails all 16 normal
+click trips. `stage-york-southeast-doorway.mjs` declares that volume as the
+door's structure, preserving collision, doorway geometry and lock flags.
+Stage `york-southeast-doorway-gxygtK` passes all 16 normal click trips in
+`selected-neighbor-placements-6D5uQc`, with no passage collisions, and all 16
+direct doorway trips in `saved-map-entrances-CfJiKr`.
+
+Full export `saved-map-exports-kq4up2` constructs with 170 areas, 1,227 sight
+obstacles, 254 doors, 72 jump pairs, 281,260 grid blocks and 342 elevation
+boundaries. `saved-map-entrances-Fxgwbl` improves 74/95 to 75/95 with only door
+70 changing from failure to success. Browser fixture `draft-scene-render-Dkyzgg`
+exports and reopens matching gameplay/color/depth; its 21,841,390-byte ZIP has
+SHA-256 `97ee9970a19597fc954c99ac43d393fe6595bfffbc559b95391afb9dd166a1d9`.
+It loads natively without base data, and exact archive `exact-map-archive-2zmubk0o`
+passes both normal click round trips. Publication
+`york-southeast-doorway-publication-installed` installs the asset definition and
+scene pin; all nine installed hashes match its report. Unrelated southwest York
+model edits are preserved separately.
+
+The remaining 20 denied trips comprise eight same-asset corridor failures,
+eleven foreign-geometry failures and one lock-only denial. Stage
+`york-owned-doorways-KYAvN8` explicitly declares reviewed walls for the castle
+round/square towers, precinct north gateway and precinct west great hall.
+It is unpublished. Five moved fixtures pass 96 normal click trips:
+`selected-neighbor-placements-ySiaGF` (round tower ground, 16), `PTbAtv`
+(round tower upper, 32), `NKzbIe` (square tower, 16), `INUcuu` (hall lower, 16),
+and `bJIopq` (hall upper, 16). The abbreviated names share the same prefix.
+Full regression `saved-map-exports-Mcj8fa` is running. Gateway lock-state checks,
+browser verification and publication for this four-asset candidate remain open.
+
 ## York raised-terrain walking surface candidate (2026-10-20)
 
 The storehouse's remaining receiver mismatch is between the exported zero-height

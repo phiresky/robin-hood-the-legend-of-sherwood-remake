@@ -1,0 +1,16 @@
+{
+  "map": "york",
+  "assets": ["york-precinct-west-great-hall"],
+  "size": [3200, 3200],
+  "copyXs": [800.25, 2400.25],
+  "assemblyY": 1800.75,
+  "terrainHeight": 250.001,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "york-precinct-west-great-hall",
+      "door": "interior-0/door-2",
+      "sourceLocal": [231.19227436339318, 89.14356642691818]
+    }
+  ]
+}

@@ -147,6 +147,15 @@ this audit has no receiver mismatches. The terrain definition and scene pin are
 installed in the main library, with all nine publication hashes verified.
 See the [raised-terrain evidence](map-compilation-evidence.md#york-raised-terrain-walking-surface-candidate-2026-10-20).
 
+The southeast timber-house doorway structure repair is installed and improves
+York to **75/95** entrance trips without regressions. Its moved native click and
+doorway tests, browser round-trip and native archive checks pass. The remaining
+20 denials comprise eight same-asset corridor failures, eleven foreign-geometry
+failures and one lock-only denial; two geometry failures also have authored locks.
+A four-asset tower/hall/gateway candidate passes 96 moved normal click trips for
+its unlocked entrances, but full-scene, gateway lock-state and browser checks
+remain pending. See the [doorway audit](map-compilation-evidence.md#york-doorway-structure-audit-and-timber-house-repair-2026-10-20).
+
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
 The published Derby ownership correction moves three tower entrances out of
 the main-hall definition and links the split room in the editor. It preserves
