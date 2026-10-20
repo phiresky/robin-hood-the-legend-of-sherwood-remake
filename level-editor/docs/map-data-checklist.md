@@ -160,6 +160,14 @@ denials. All four browser export/reopen and native archive checks pass; all
 36 publication file hashes were verified at installation. See the
 [doorway audit](map-compilation-evidence.md#york-doorway-structure-audit-and-timber-house-repair-2026-10-20).
 
+The published south city east gate repair brings the current York result to
+**82/95**, with no regressions and all 254 doors/72 jump pairs retained.
+Its 16 moved click trips, 32 doorway trips, browser round-trip and native archive
+checks pass; all nine installed file hashes are verified. Eleven cross-asset
+geometry blockages and two lock-only denials remain. Castle entrance ownership
+repairs are staged but unpublished; isolated placement checks do not yet prove
+assembled interior connectivity or the buildings' other gameplay features.
+
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
 The published Derby ownership correction moves three tower entrances out of
 the main-hall definition and links the split room in the editor. It preserves

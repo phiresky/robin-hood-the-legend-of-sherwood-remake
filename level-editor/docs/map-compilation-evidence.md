@@ -74,8 +74,14 @@ existing trapdoors. Browser fixture `draft-scene-render-m4X01Y` exports/reopens
 matching gameplay/color/depth. Its 20,772,975-byte ZIP has SHA-256
 `36eef91cb8ef954770ed2d04d62a379cfeb577c8c5048b4805e61fcec56c26e4`.
 It constructs natively without base data, and `exact-map-archive-tog3r0_5`
-passes both archived normal click trips. Full-scene regression and publication
-remain pending for this fifth asset.
+passes both archived normal click trips. Full-scene export
+`saved-map-exports-QwGISk` constructs natively with unchanged counts; entrance
+audit `saved-map-entrances-hYm0hC` improves 81/95 to 82/95, fixing door 59 with
+no regressions. Eleven foreign-geometry corridors and two lock-only denials
+remain. Publication dry run `york-east-gate-publication-dry-run` passes.
+Installation `york-east-gate-publication-installed` publishes the asset and
+scene pin, with all nine file hashes verified. The installed York entrance
+measurement is now 82/95.
 
 Castle ownership candidate `york-castle-door-ownership-0TzkCY` moves two
 entrances from the courtyard terrain into the great hall and main keep.
