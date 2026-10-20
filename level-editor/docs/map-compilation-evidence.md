@@ -19,6 +19,20 @@ Lincoln and Croisement03 checks in this batch are still pending.
 
 ## Market-house roof seam investigation
 
+The targeted `removeMotionSpikes` candidate removes only backtracking spikes
+whose endpoints are within 0.0001 units, retaining all surrounding vertices.
+Three unit tests cover the real roof contour, cyclic order/winding, traversable
+clearance, unchanged real gaps and fractional corners. It is not yet wired into
+the compiler: the active browser batch must finish against its current code.
+
+Diagnostic `market-seam-targeted-3Zzj2c` applies this cleanup to the affected
+contour and rebuilds the native graph at export time. All 36 ordinary-click probes
+on lines 128–131 pass in `replayed-jump-clicks-R40zM6`.
+The complete unchanged 1,296-probe replay in `replayed-jump-clicks-D5lu2H` improves
+from 1,245 to 1,263 passes: all 18 affected failures fixed, zero regressions.
+The remaining 33 failures are outside this seam repair. This is diagnostic
+descriptor evidence, not yet a fresh compiler export or published ZIP.
+
 The movement contour for York sector 307 contains a near-zero-width inward slit:
 two vertices near `[177.57867,1355.26965]` enclose a spike reaching
 `[228.41462,1414.66054]`. Character clearance separates the far roof end from the
