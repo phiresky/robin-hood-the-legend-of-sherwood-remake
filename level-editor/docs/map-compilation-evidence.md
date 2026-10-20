@@ -305,9 +305,18 @@ projections and 289,296 fast-grid blocks. Archive audit
 definition and updates its York scene pin. All nine installed hashes match
 the report. Models and derivatives are unchanged; only the gatehouse descriptor,
 catalog entry and saved-scene pin change. Unrelated scene edits are preserved.
-Fresh installed export `saved-map-exports-c0zI4K` is running and is not yet
-counted as additional traversal evidence. Remaining geometry and climb gaps
-are unchanged; this publication does not certify full parity.
+Fresh installed export `saved-map-exports-c0zI4K` completes in 143 seconds.
+Its full parsed descriptor is identical to the natively checked staged export
+`saved-map-exports-XKxUWP`. Remaining geometry and climb gaps are unchanged;
+this publication does not certify full parity.
+
+The remaining courtyard-owned entrance is `interior-2/door-2`, at world
+`[2729,1488,0]`. Its click region overlaps the north water-gate bastion's
+`building-266`; the current terrain asset has only `building-098`. Ownership
+review must preserve both existing scene room links to the great hall and main
+keep. The detached-room authoring helper correctly rejects transferring this
+room without a reviewed link migration. No ownership or link change was
+published as part of the gatehouse ramp repair.
 
 ## York tower/gatehouse room ownership (2026-10-20)
 
