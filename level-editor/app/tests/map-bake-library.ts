@@ -48,6 +48,8 @@ try {
   let candidate = await prepareMapCandidate(name, library.handle, null, (count, total) => {
     result.textContent = `RUNNING loading ${count}/${total}`;
   });
+  const mapOnly = parameters.get("map-only") === "1";
+  if (mapOnly) delete candidate.document.mission;
   viewport = new EditorViewport({
     document: () => candidate.document,
     selection: () => null,
@@ -93,6 +95,10 @@ try {
   }
   if (heartbeats < 2) throw new Error("Bake did not yield to browser input and progress updates");
   const { compiled, pixels, appearance } = baked;
+  if (mapOnly) {
+    check(compiled.descriptor.spawn_points?.length === 0, "Map-only export contains PC spawns");
+    check(compiled.descriptor.soldiers === undefined, "Map-only export contains soldiers");
+  }
   const roundtrip = parameters.get("roundtrip") === "1";
   const originalHashes = roundtrip
     ? await Promise.all([imageHash(pixels.color), imageHash(pixels.depth)])
@@ -202,6 +208,7 @@ try {
     }
     result.textContent = "RUNNING reopening ZIP editor document and pinned models";
     const stored = readJson(report.editor_document);
+    if (mapOnly) check(stored.mission === undefined, "Map-only ZIP retained mission content");
     const reopened = await prepareMapCandidate(
       name,
       library.handle,

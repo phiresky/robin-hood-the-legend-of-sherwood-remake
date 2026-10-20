@@ -4,6 +4,29 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Croisement01 map-only browser round trip
+
+On 2026-10-20, `map-bake-library.html?map=croisement01&roundtrip=1&map-only=1`
+passes a real Chromium bake, ZIP packaging, editor reopening and rebake.
+The optional map-only mode removes mission authoring before export and asserts
+empty PC spawns, absent soldiers and absent mission content in the embedded scene.
+Gameplay descriptors, warnings, color pixels and 16-bit depth pixels match
+exactly after reopening. The bake continues to yield browser progress updates.
+
+Artifact: `work/needs-review/map-compile/browser-map-only-NAJUH8/croisement01.zip`,
+19,988,918 bytes, SHA-256
+`ece5e8aeac359723798a91a2851999fa912e34acc8affb756bb7410eac6e4642`.
+The existing native `editor_mod_export-5d5f290f29a00ab8` test binary passes
+`full_editor_archive_constructs_native_map_without_base_datadir` on that exact ZIP
+in 4.03 seconds: 1408×960 color/depth, minimap, embedded scene, 3,790 sight
+obstacles, two masks, 16 door projections and 4,180 grid blocks. There are no
+appearance regions for its six controls. This run used the already-built native
+binary; it did not rebuild or change engine code.
+
+Targeted lint and formatting checks pass for the browser fixture. This evidence
+does not establish visual correctness, actor traversal, state-driven appearance
+coverage or fresh rendered round trips for the other nine maps.
+
 ## York entrance-ramp reproduction
 
 `stage-york-entrance-ramps.mjs` prepares an unpublished candidate for the red

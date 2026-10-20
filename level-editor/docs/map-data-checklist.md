@@ -17,6 +17,12 @@ Eligible changing sectors in eight maps additionally pass 1,032 independent-stat
 and 426 combined-state sampled routes against live collision connectivity.
 See [fresh scene sweep](map-compilation-evidence.md#fresh-map-only-scene-sweep).
 
+Croisement01 additionally passes a fresh map-only browser ZIP export/reopen/rebake:
+gameplay, warnings and rendered color/depth match exactly, and the exact archive
+loads natively without a base datadir. This verifies packaging and deterministic
+rebaking, not actor traversal or visual correctness. See
+[Croisement01 browser round trip](map-compilation-evidence.md#croisement01-map-only-browser-round-trip).
+
 The York red-house ramp and terrain connection metadata are now **published**.
 The reviewed export passes 88/95 full-scene doorway trips, recovering one entrance without
 regressing the installed baseline. All 130 stair routes pass; four of 40 climb
