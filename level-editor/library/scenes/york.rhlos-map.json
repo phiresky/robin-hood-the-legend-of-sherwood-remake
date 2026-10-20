@@ -136,14 +136,14 @@
       "model": "3d-assets/york/york-castle-north-round-watchtower/model.glb",
       "model_sha256": "f495b0a0981e0bad5b97a73693f2d7024d3df42792119ac036392e125a63012b",
       "descriptor": "3d-assets/york/york-castle-north-round-watchtower/asset.json",
-      "descriptor_sha256": "b7389bc15ac3585c85a018e949c8fc2e68f029ed29aaac569708b16c104483ff",
+      "descriptor_sha256": "2220dae7e2ecf40a638725305983071015a5fcbc3d5e55b526c530d0b03ed72e",
       "id": "york-castle-north-round-watchtower"
     },
     {
       "model": "3d-assets/york/york-castle-northeast-square-watchtower/model.glb",
       "model_sha256": "1d4bc578d0735ab39db3204d8e58dbd4a5e7324402b449de04a96157c7befbba",
       "descriptor": "3d-assets/york/york-castle-northeast-square-watchtower/asset.json",
-      "descriptor_sha256": "2574d4c4a9f61d34d0b0fbfd1f07b375354f4bb31e9bc1bbcf8129cdc3ad1b21",
+      "descriptor_sha256": "e542961039561cff8fc32bec77184dee466c79a9caa2f3c4ac69439281603568",
       "id": "york-castle-northeast-square-watchtower"
     },
     {
@@ -941,7 +941,7 @@
       "model": "3d-assets/york/york-precinct-north-connecting-gateway/model.glb",
       "model_sha256": "0763d8dcf52f437e544b0f10c88839ec66aa2abf39a090fa5df17d7e2ce7e0a2",
       "descriptor": "3d-assets/york/york-precinct-north-connecting-gateway/asset.json",
-      "descriptor_sha256": "d0b806cf53d6afb547d285c0a5aa5659145191931543a4b120d914c25b67695f",
+      "descriptor_sha256": "b619172b9188ac732c0dae58d66331f22ef9e063798a4c0f452ecdd5562a9e0d",
       "id": "york-precinct-north-connecting-gateway"
     },
     {
@@ -1004,7 +1004,7 @@
       "model": "3d-assets/york/york-precinct-west-great-hall/model.glb",
       "model_sha256": "70bab68e9d4aa0fb5f2dd64bdb5bd43ecdc5b3a434ea3d754a7e744fe40a84b9",
       "descriptor": "3d-assets/york/york-precinct-west-great-hall/asset.json",
-      "descriptor_sha256": "bc3864171e527a02538cf5594e915ae373b945a9324038d31ef7d2064ae12253",
+      "descriptor_sha256": "216a6a6c0e648bd2717b71db8047d77fe3d77b94331f72efce4302280c6256dd",
       "id": "york-precinct-west-great-hall"
     },
     {

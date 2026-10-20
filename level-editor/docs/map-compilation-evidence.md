@@ -36,7 +36,7 @@ The remaining 20 denied trips comprise eight same-asset corridor failures,
 eleven foreign-geometry failures and one lock-only denial. Stage
 `york-owned-doorways-KYAvN8` explicitly declares reviewed walls for the castle
 round/square towers, precinct north gateway and precinct west great hall.
-It is unpublished. Five moved fixtures pass 96 normal click trips:
+It is now published. Five moved fixtures pass 96 normal click trips:
 `selected-neighbor-placements-ySiaGF` (round tower ground, 16), `PTbAtv`
 (round tower upper, 32), `NKzbIe` (square tower, 16), `INUcuu` (hall lower, 16),
 and `bJIopq` (hall upper, 16). The abbreviated names share the same prefix.
@@ -52,8 +52,30 @@ Gateway fixture `selected-neighbor-placements-laAZy0` and
 `authored-door-states-JduEzq`. Native checks pass all 16 initial locked rejections
 and all 16 complete unlocked round trips. The second snapshot applies only the
 exported after-patch lock flags; it does not verify a mission's runtime trigger.
-Browser/archive verification and publication for the four-asset candidate remain
-open. The installed library remains at the verified 75/95 result.
+Browser fixtures `draft-scene-render-eTslHe`, `wWkOKc`, `Kkoon2` and `mSjmQ8`
+(the abbreviated names share the prefix) export and reopen matching gameplay,
+color and depth for the round tower, square tower, gateway and hall respectively.
+All four ZIPs construct natively without base data. Exact archives
+`exact-map-archive-tvx0cq5s`, `l3_5cedl`, `g17bj2ia` and `jdq3vcrs` retain the
+reviewed approaches. Unlocked archives pass native click trips; gateway snapshots
+in `authored-door-states-Q6QtKv` pass locked rejection and unlocked round trips.
+Publication batch `doorway-publication-batch-yfc11296/installed.json` records the
+four installation reports. All 36 file hashes were verified immediately after
+their respective installations. Shared index/scene hashes are superseded by
+subsequent installations in the batch. Installed definitions now carry the
+verified 81/95 result; this is entrance coverage, not full map parity.
+
+The south city east gate candidate `york-east-gate-structure-JY2rNY` declares
+both its tower body and perimeter wall as its ordinary doorway's structure.
+Collision and lock flags remain unchanged. Fixture
+`selected-neighbor-placements-eZjQoK` passes 16 moved normal click round trips;
+`saved-map-entrances-bRLxqN` passes all 32 emitted doorway trips, including the
+existing trapdoors. Browser fixture `draft-scene-render-m4X01Y` exports/reopens
+matching gameplay/color/depth. Its 20,772,975-byte ZIP has SHA-256
+`36eef91cb8ef954770ed2d04d62a379cfeb577c8c5048b4805e61fcec56c26e4`.
+It constructs natively without base data, and `exact-map-archive-tog3r0_5`
+passes both archived normal click trips. Full-scene regression and publication
+remain pending for this fifth asset.
 
 ## York raised-terrain walking surface candidate (2026-10-20)
 
