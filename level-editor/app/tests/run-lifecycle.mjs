@@ -109,7 +109,10 @@ try {
     if (images) {
       await mkdir(process.env.TEST_ARTIFACT_DIR, { recursive: true });
       for (const [name, data] of Object.entries(images)) {
-        if (!["before", "after", "difference"].includes(name))
+        if (
+          !["before", "after", "difference"].includes(name) &&
+          !/^(initial|forward|applied)-engine(0|[1-9][0-9]{0,9})-(native|physical)$/.test(name)
+        )
           throw new Error("Unexpected migration artifact");
         await writeFile(
           join(process.env.TEST_ARTIFACT_DIR, name + ".png"),

@@ -1,5 +1,11 @@
 # Post-port Features
 
+- **Recorded state capture inspection.** The editor's state preview can import
+  source-qualified, hash-pinned runtime snapshots and advance their observed
+  patch and target clocks explicitly. Reloading retires pending file reads;
+  corrupt captures and failed presentation updates stop further delivery.
+  This is recorded inspection, not a live gameplay connection.
+
 - **Export-prepared wall approaches.** Compiled high wall doors may mark their
   inside endpoint with `approach_prepared`. The exporter selects an actor-safe
   endpoint when the fixed animation offset would leave the floor. Mission

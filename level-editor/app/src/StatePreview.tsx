@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
+import { RecordedStateCaptureSource } from "./state-runtime-capture-source.ts";
 import type { Level3D } from "@rle/shared";
 import type { MissionStateSource } from "./mission-state-layer.ts";
 import type { EditorViewport } from "./editor-viewport.ts";
@@ -43,6 +44,75 @@ export default function StatePreview(props: {
   const [actorReceiver, setActorReceiver] = createSignal("");
   const [physicalEffects, setPhysicalEffects] = createSignal(false);
   const [physicalReceiver, setPhysicalReceiver] = createSignal(false);
+  const [recorded, setRecorded] = createSignal(false);
+  const [captureBusy, setCaptureBusy] = createSignal(false);
+  const [captureRemaining, setCaptureRemaining] = createSignal(0);
+  const [captureStatus, setCaptureStatus] = createSignal("");
+  const [captureAuthority, setCaptureAuthority] = createSignal("");
+  let capture: RecordedStateCaptureSource | null = null;
+  function retireCapture() {
+    capture?.invalidate();
+    capture = null;
+    setRecorded(false);
+    setCaptureBusy(false);
+    setCaptureRemaining(0);
+    setCaptureStatus("");
+    setCaptureAuthority("");
+  }
+  async function nextCapture() {
+    const source = capture;
+    if (!source) return;
+    setCaptureBusy(true);
+    try {
+      const batch = await source.next();
+      if (source !== capture) return;
+      setCaptureRemaining(source.remaining);
+      setCaptureStatus(
+        `Recorded engine frame ${batch.simulation_tick}. ${source.remaining} snapshots remain.`,
+      );
+    } catch (error) {
+      if (source !== capture) return;
+      setCaptureRemaining(0);
+      setCaptureStatus(`Capture stopped; reload the state to continue. ${String(error)}`);
+      props.onError(String(error));
+    } finally {
+      if (source === capture) setCaptureBusy(false);
+    }
+  }
+  async function importCapture(files: File[]) {
+    const entry = entries().find((e) => e.id === selected()),
+      root = props.library?.();
+    if (!entry || !root) return;
+    // Start from a freshly loaded presentation: manual playback cannot own these clocks.
+    const context = generation;
+    const pendingRequest = request + 1;
+    await choose(entry, root, context);
+    if (context !== generation || pendingRequest !== request || !contract()) return;
+    const source = new RecordedStateCaptureSource(contract()!, (batch) => {
+      if (capture !== source || !props.active)
+        throw new Error("Recorded preview was retired or hidden");
+      props.viewport.sampleDeliveredSourceState(batch);
+    });
+    capture = source;
+    setRecorded(true);
+    setCaptureBusy(true);
+    try {
+      await source.load(files);
+      if (capture !== source) return;
+      setCaptureRemaining(source.remaining);
+      const authority = source.authority!;
+      setCaptureAuthority(
+        `Authority: ${authority.receipt.file}. ${authority.limitations.join(" ")}`,
+      );
+      setCaptureStatus("Recorded capture loaded.");
+    } catch (error) {
+      if (capture !== source) return;
+      setCaptureStatus(`Capture stopped; reload the state to continue. ${String(error)}`);
+      props.onError(String(error));
+    } finally {
+      if (capture === source) setCaptureBusy(false);
+    }
+  }
   let receiverActor = "";
   const receiverChoices = () => {
     props.document();
@@ -137,6 +207,10 @@ export default function StatePreview(props: {
     );
   };
   function applyMode(view: "art" | "initial" | "applied" | "motion", familyId: string) {
+    if (recorded()) {
+      props.viewport.setDeliveredStateMode(view === "art" ? "native-art" : "physical-motion");
+      return;
+    }
     if (loopContract() || patchContract())
       props.viewport.setStatePresentationMode(
         view === "initial" && (loopContract()?.physical || actorSource())
@@ -157,6 +231,7 @@ export default function StatePreview(props: {
     context: number,
   ) {
     const attempt = ++request;
+    retireCapture();
     setLoadedScope(null);
     clearActor();
     setSelected(entry.id);
@@ -221,6 +296,7 @@ export default function StatePreview(props: {
       lastMission = mission;
       const context = ++generation;
       request++;
+      retireCapture();
       setLoadedScope(null);
       clearActor();
       setEntries([]);
@@ -309,10 +385,12 @@ export default function StatePreview(props: {
   onCleanup(() => {
     generation++;
     request++;
+    retireCapture();
     clearInterval(timer);
     props.viewport.clearNativeArtPresentation();
   });
   function play() {
+    if (recorded()) return;
     const patch = patchContract();
     if (patch) {
       if (
@@ -347,6 +425,7 @@ export default function StatePreview(props: {
     setPlaying(true);
   }
   function reset() {
+    if (recorded()) return;
     if (patchContract()) {
       props.viewport.seekNativePatch(family(), "initial", 0);
       setPatchStarted(false);
@@ -392,6 +471,47 @@ export default function StatePreview(props: {
           </label>
         </Show>
         <Show when={contract() || loopContract() || patchContract()}>
+          <Show when={contract()}>
+            <label>
+              Recorded runtime capture
+              <input
+                type="file"
+                multiple
+                accept=".json"
+                aria-label="Recorded runtime capture"
+                disabled={captureBusy() || recorded()}
+                onChange={(event) => {
+                  const files = Array.from(event.currentTarget.files ?? []);
+                  if (files.length) void importCapture(files);
+                }}
+              />
+            </label>
+            <p class="hint">
+              Snapshot inspection only; this does not connect live gameplay. Select
+              runtime-capture.json and its files. Reload the state to return to manual playback.
+            </p>
+            <Show when={recorded()}>
+              <p class="hint">{captureAuthority()}</p>
+              <p role="status">{captureStatus()}</p>
+              <button
+                type="button"
+                disabled={!props.active || captureBusy() || captureRemaining() === 0}
+                onClick={() => void nextCapture()}
+              >
+                Next recorded snapshot
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const entry = entries().find((e) => e.id === selected()),
+                    root = props.library?.();
+                  if (entry && root) void choose(entry, root, generation);
+                }}
+              >
+                Reload state
+              </button>
+            </Show>
+          </Show>
           <p class="hint">
             {patchContract()
               ? "Original artwork previews this change. Physical states are not included in this preview."
@@ -475,6 +595,7 @@ export default function StatePreview(props: {
             <label>
               Part
               <select
+                disabled={recorded()}
                 aria-label="State preview part"
                 value={family()}
                 onChange={(event) => {
@@ -577,8 +698,10 @@ export default function StatePreview(props: {
                 </option>
               </Show>
               <Show when={contract()}>
-                <option value="initial">3D initial</option>
-                <option value="applied">3D final</option>
+                <Show when={!recorded()}>
+                  <option value="initial">3D initial</option>
+                  <option value="applied">3D final</option>
+                </Show>
                 <Show when={current()?.physical.motion}>
                   <option value="motion">3D motion</option>
                 </Show>
@@ -604,16 +727,17 @@ export default function StatePreview(props: {
             }
           >
             <div class="actions">
-              <button type="button" onClick={play}>
+              <button type="button" disabled={recorded()} onClick={play}>
                 {playing() ? "Pause" : "Play"}
               </button>
-              <button type="button" onClick={reset}>
+              <button type="button" disabled={recorded()} onClick={reset}>
                 Reset
               </button>
             </div>
             <label>
               Frame {tick()} / {lastTick()}
               <input
+                disabled={recorded()}
                 aria-label="State preview frame"
                 type="range"
                 min="0"
