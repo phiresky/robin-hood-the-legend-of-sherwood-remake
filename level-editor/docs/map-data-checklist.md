@@ -29,6 +29,13 @@ improves to 90/95 raw doorway trips (93/95 when authored locks are respected),
 retains all 130 stairs, and has the same four failed climb routes as the baseline.
 These changes run during export and add no runtime solver.
 
+The remaining water-gate entrance has a staged ownership transfer from terrain
+to its bastion, preserving the two editor room links. Its standalone doorway
+passes 16 moved cases, but the neighboring terrace blocks all 16 paired cases.
+The bastion also needs explicit ground-body collision: its current empty blocker
+list suppresses movement solids. The draft remains unpublished pending those
+physical checks and a validated room-link migration.
+
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.
 This fixes sixteen moved Lincoln keep entrance cases and an existing island-floor

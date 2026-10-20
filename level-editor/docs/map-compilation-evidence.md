@@ -318,6 +318,35 @@ keep. The detached-room authoring helper correctly rejects transferring this
 room without a reviewed link migration. No ownership or link change was
 published as part of the gatehouse ramp repair.
 
+### Water-gate room ownership staged; physical collision review remains
+
+`stage-york-water-gate-room.mjs` authors a candidate transfer of the courtyard's
+single `interior-2` entrance into `york-east-water-gate-north-bastion`. The thin
+`building-266` wall does not contain the inside anchor; the filled
+`building-282--component-bastion` body does. Both are explicitly named in the
+candidate doorway structure. World anchors, click polygon and door rules are
+preserved. The two existing scene links are migrated to the bastion placement;
+their opposite endpoints, identifiers and total room membership remain unchanged.
+
+Stage `york-water-gate-room-B5Ew6N` passes 16/16 standalone native ground-click
+trips in `selected-neighbor-placements-Y2BxZg`. Full scene
+`staged-map-export-qxyaRF` retains the exact room entrance grouping of the
+installed export. Door audit `saved-map-entrances-6PYu0c` remains 90/95 with the
+same five raw failures. Refreshed stage `york-water-gate-room-ckQTLP` also emits
+a two-asset bastion/terrace fixture; `selected-neighbor-placements-RXCIUq` fails
+all 16 native trips, isolating the neighboring terrace obstruction.
+
+The standing point and its footprint are outside the exported ground exclusions,
+but the approach toward the virtual doorway is rejected by the terrace volume.
+Experiments that restricted collision to the declared building body did not
+recover traversal and were removed. Tracing also revealed that the bastion's
+empty `movementBlockers` list, with no explicit `movementSolids`, leaves its
+rendered body out of ground-volume collision. Standalone doorway success does
+not validate that missing collision. Physical body/floor definitions and the
+two-asset approach need review before publication. The existing publisher also
+requires an explicitly validated room-link migration rather than its append-only
+connection operation. No candidate asset or scene-link edits have been installed.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
