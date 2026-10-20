@@ -5,6 +5,7 @@ import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
 import clipping from "polygon-clipping";
 import { stairBoundaryPlanes, stairCenterRegion } from "./stair-center-region.ts";
 import { simplifyMotionRing } from "./motion-quantization.ts";
+import { pointInGameplayPolygon } from "./navigation-anchor.ts";
 
 /**
  * Recover a floor whose projection cannot fit a native actor. Native
@@ -144,5 +145,13 @@ export function projectStairClearance(
     )
   )
     throw new Error("Stair clearance projection exceeds the game coordinate range");
+  // Preparing footprint clearance must not strand an authored entry inside the
+  // original floor. Climbing transitions use those entry points directly.
+  if (
+    options.requiredCenters?.some(
+      (point) => pointInGameplayPolygon(point, projected) && !pointInGameplayPolygon(point, output),
+    )
+  )
+    return undefined;
   return output;
 }

@@ -16,6 +16,32 @@ const corners: Point[] = [
 const fits = (center: Point, boundary: Point[]) =>
   corners.every(([x, y]) => pointInGameplayPolygon([center[0] + x, center[1] + y], boundary));
 
+test("climbing clearance does not shorten a floor past its authored entry points", () => {
+  const boundary: Point[] = [
+    [-21.210555198463695, 24.619085917792447],
+    [-11.151052927796925, 17.88712169831387],
+    [0.8762140558006088, 23.55170283995741],
+    [-9.183288214866161, 30.283667059435988],
+  ];
+  const heights = [113.99990036444105, 158.99989036444106, 158.99989036444106, 113.99990036444105];
+  const plane = heightPlane(boundary.map(([x, y], i): Vec3 => [x, y, heights[i]!]));
+  const requiredCenters: Point[] = [
+    [-13.16796875, -98.90468236456681],
+    [-10.16796875, -117.90468236456695],
+  ];
+  const projected = boundary.map(([x, y], i): Point => [x, y - heights[i]!]);
+  assert.ok(requiredCenters.every((point) => pointInGameplayPolygon(point, projected)));
+  for (const precise of [false, true])
+    assert.equal(
+      projectStairClearance(boundary, plane, precise, {
+        movementHalf: [6, 3],
+        requiredCenters,
+      }),
+      undefined,
+      "retain the authored floor when preparation excludes its established entry points",
+    );
+});
+
 test("projected clearance retains a supported chamfer when an offset edge becomes redundant", () => {
   const boundary: Point[] = [
     [747.5817355295376, 787.2261659742442],

@@ -130,11 +130,46 @@ matches full-frame color and depth exactly for all eight states of three
 overlapping controls. Targeted lint and formatting pass.
 
 The full Leicester retry in `browser-exports-j6Syyl` cleared the previous budget
-failure and began rendering 85 regions. Its full ZIP/rebake/native checks are
-still pending. A development-server reload during test-file formatting restarted
+failure and rendered 85 appearance jobs across 39 regions. A development-server
+reload during test-file formatting restarted
 that same live browser check; no separate duplicate bake was launched. The
 batch also selects Lincoln, Nottingham, Sherwood, York and Wychford. Its manifest
 and logs distinguish finished results from pending work.
+
+Leicester subsequently passes the full ZIP/reopen/rebake check in 657.009 seconds
+(including the reload). Its 44,187,654-byte archive has SHA-256
+`c04cf3cd893ae8dc0dcef3f866eae0fd8de3b886970e469ad476b7d6e19f3dd8`.
+The existing native archive test passes in 2.29 seconds without a base datadir:
+3136×1984 color/depth, minimap, embedded scene, 446 sight obstacles, 24 masks,
+105 door projections, 66,885 grid blocks and 39 appearance regions for 12 controls.
+The batch was stopped between maps before the climbing-clearance change below.
+The five other selected maps are not counted as finished.
+
+## Preserve authored climb entries during clearance preparation
+
+The exact Derby browser archive passes all 28 stair player-click routes but only
+two of four climb routes. Both directions of the upper postern ladder stall.
+Clearance preparation shortened its movement outline from approximately
+Y=2302–2359 to Y=2323–2338; both authored inside points fell outside the prepared
+outline. The unchanged asset's projected floor contains both points.
+`browser-exports-hZZrJv/derby-authored-ladder-diagnostic` replaces only this
+outline with the asset projection and passes four climb routes, isolating the
+exporter defect without changing engine behavior.
+
+The exporter now rejects a clearance adjustment that excludes an authored entry
+already contained in the projected floor, retaining that authored outline.
+Nineteen targeted clearance tests and 184 compiler/region tests pass, as do lint
+and formatting. Fresh Derby export `saved-map-exports-MMYCdv` passes all four
+climb routes and all 28 stair routes. The older browser ZIP still predates this
+climb correction.
+
+Published postern assets were additionally compiled at rotations 0/37/90/180
+and elevations 0/40, with eight raised-ground rejection checks.
+Baseline `local-stair-placements-yw9tGy` passes only 12/32 native climb-click
+routes; corrected `local-stair-placements-yjA6Tn` passes 28/32.
+The remaining four failures are both directions of the lower ladder at 90
+degrees, at both elevations: its narrow projected outline still blocks the
+actor. This improvement is not full moved-asset traversal parity.
 
 ## York entrance-ramp reproduction
 
