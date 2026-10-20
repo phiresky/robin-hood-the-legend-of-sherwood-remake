@@ -4,6 +4,7 @@ import { navigationPosturePassages } from "./navigation-posture-passages.ts";
 import type { NavigationConnection } from "./assemble-navigation-joins.ts";
 import type { NavigationAnchorArea } from "./navigation-anchor.ts";
 import type { Point } from "./level.ts";
+import rampPartition from "../test-fixtures/entrance-ramp-partition.json" with { type: "json" };
 
 function fixture() {
   const from: NavigationAnchorArea = {
@@ -47,6 +48,43 @@ function fixture() {
   };
   return { from, to, connection };
 }
+
+test("a rounded oblique ramp handoff retains supported endpoints and collision checks", () => {
+  const { connection, from, to } = rampPartition as {
+    connection: NavigationConnection;
+    from: NavigationAnchorArea;
+    to: NavigationAnchorArea;
+  };
+  const before = structuredClone(rampPartition);
+  for (const reverse of [false, true]) {
+    const link = reverse ? { ...connection, from: connection.to, to: connection.from } : connection;
+    const source = reverse ? to : from,
+      target = reverse ? from : to;
+    assert.ok(navigationPosturePassages(link, source, target).length > 0);
+    const blocked = structuredClone(target);
+    blocked.blockers.push([
+      [700, 1600],
+      [800, 1600],
+      [800, 1800],
+      [700, 1800],
+    ]);
+    assert.deepEqual(navigationPosturePassages(link, source, blocked), []);
+    const unsupported = structuredClone(target);
+    unsupported.receivingFloors = [
+      {
+        plane: target.plane,
+        polygon: [
+          [0, 0],
+          [10, 0],
+          [10, 10],
+          [0, 10],
+        ],
+      },
+    ];
+    assert.deepEqual(navigationPosturePassages(link, source, unsupported), []);
+  }
+  assert.deepEqual(rampPartition, before);
+});
 
 test("matched seams tolerate clipping-grid noise but not an authored gap", () => {
   for (const [gap, connects] of [

@@ -42,6 +42,33 @@ region then leaves ambiguous receiving heights. Resolve that preparation and
 repeat moved/full-scene checks before browser verification or publication.
 The main library remains unchanged by this candidate.
 
+### Rounded seam handoff correction
+
+The exporter previously required an off-axis integer handoff point to lie
+exactly inside both physical receiving contours. Rounding an oblique shared
+edge can put that point just outside one contour. The check now permits only
+the nearest-integer displacement (at most `sqrt(0.5)` units, plus numerical
+epsilon). Approach endpoints still need exact floor support; both swept legs
+still pass the integer and precise collision checks. Authored gaps and blockers
+are not relaxed.
+
+The captured ramp partition is a regression fixture. Forward/reverse passages
+pass; solid and unsupported-floor variants reject the connection. All 191 tests
+in the passage, partition and asset compiler suites pass, and lint passes.
+Native fixture `selected-neighbor-placements-caDHvF` improves red-house
+ground-click round trips to 12/16, recovering both copies at 90/180 degrees and
+both elevations. All four remaining failures are at 37 degrees.
+Gatehouse fixture `selected-neighbor-placements-6Cd3Vn` remains 4/32.
+
+Full export `saved-map-exports-hjJuGl` and doorway audit
+`saved-map-entrances-CLxGs7` remain 88/95, with the same known regression.
+The 37-degree ramp loses its precise outer boundary during movement contour
+reconstruction. Its rounded boundary is then checked against the ground's
+precise obstacle edge, leaving a seam mismatch. Captured passage geometry in
+`york-entrance-ramps-9L9fmp/passage-debug.log` isolates that next issue.
+The correction changes export preparation only; no runtime code or library
+definitions were changed.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall

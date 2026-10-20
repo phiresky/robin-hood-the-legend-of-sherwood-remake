@@ -12,6 +12,9 @@ placements, but native traversal exposes missing seam passages and overlapping
 receivers. Its full-scene doorway audit passes 88/95, including two recovered
 entrances and one regression; this does not supersede the installed results.
 See the [ramp reproduction](map-compilation-evidence.md#york-entrance-ramp-reproduction).
+An export-side seam rounding correction subsequently improves moved red-house
+ground-click trips from 4/16 to 12/16. The 37-degree precision-boundary failure
+and bridge gatehouse failures remain; the candidate is still unpublished.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

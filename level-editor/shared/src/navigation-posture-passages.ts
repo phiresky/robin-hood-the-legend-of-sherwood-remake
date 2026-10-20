@@ -167,14 +167,32 @@ export function navigationPosturePassages(
     });
     for (const middle of middles.values())
       for (const clear of crossings) {
-        // Off-axis approaches must not travel beyond a receiving edge before
-        // the sector handoff. Rounding a seam can put its midpoint outside it.
+        // A shared oblique seam rarely contains an integer point. Its rounded
+        // handoff may lie just outside either receiver, but only by the
+        // nearest-integer displacement. Endpoints still require exact support
+        // and both swept legs must pass every collision representation.
         if (
           [from, to].some(
             (area) =>
               area.receivingFloors &&
-              !area.receivingFloors.some((floor) =>
-                pointInGameplayPolygon(middle, floor.polygon, true),
+              !area.receivingFloors.some(
+                (floor) =>
+                  pointInGameplayPolygon(middle, floor.polygon, true) ||
+                  floor.polygon.some((a, index) => {
+                    const b = floor.polygon[(index + 1) % floor.polygon.length]!;
+                    const dx = b[0] - a[0],
+                      dy = b[1] - a[1];
+                    const length2 = dx * dx + dy * dy;
+                    if (length2 === 0) return false;
+                    const t = Math.max(
+                      0,
+                      Math.min(1, ((middle[0] - a[0]) * dx + (middle[1] - a[1]) * dy) / length2),
+                    );
+                    return (
+                      Math.hypot(middle[0] - a[0] - t * dx, middle[1] - a[1] - t * dy) <=
+                      Math.SQRT1_2 + 1e-6
+                    );
+                  }),
               ),
           )
         )
