@@ -436,7 +436,7 @@ surface is ground height zero. Ground-projected inside and middle anchors
 lie inside the combined `building-421`/`building-422` house footprint;
 the outside anchor lies outside it.
 
-`stage-york-south-lane-room.mjs` stages a transfer to the separate
+The rejected `stage-york-south-lane-room.mjs` candidate staged a transfer to the separate
 `york-south-gate-lane-rear-timber-house`, using its ground-blocker height as
 the local ground datum. It preserves assembled projected anchors, click
 polygon and door rules, explicitly selects the receiving house's physical
@@ -450,7 +450,33 @@ elevations. The paired fixture `selected-neighbor-placements-f490Ku` fails
 all 16: the remaining contributor is the separate terrace's
 `building-090-ground-blocker-254-0-0`. The new physical house definition
 does not exempt that exterior obstruction. Full-scene comparison and terrace
-geometry review remain pending; no candidate definitions are published.
+geometry review were still pending; no candidate definitions were published.
+
+Further geometric inspection rejects that ownership transfer: the physical
+plane of `york-south-town-raised-terrace` evaluates to exactly
+73.3015271020916 at the original entrance's world XY. The tower door was already
+on its supporting slope. Ground projection alone was insufficient evidence to
+change ownership. The transfer helper has been removed.
+
+`stage-york-south-town-floor.mjs` instead gives the terrace an explicit physical
+walking surface, own-volume clearance and movement solid. It preserves the
+existing tower entrance. The receiver plane is defined by the first three top
+vertices; the other vertices differ by less than 0.00136 units and are normalized
+onto that same plane. Stage `york-south-town-floor-uA6JUo` passes all 16 native
+doorway trips from slope approaches in `selected-neighbor-placements-Osppyg`.
+Full scene `staged-map-export-w6vj7x`, audited by
+`saved-map-entrances-bB25iV`, reaches 92/95 raw door trips; only the three
+previously identified authored locks fail. All 130 stair routes pass, and the
+four climb failures retain the same world start/goal coordinates as the installed
+baseline.
+
+The follow-up stage `york-south-town-floor-9YSm6v` additionally authors perimeter
+navigation sockets for adjoining asset or terrain surfaces. This is still
+unpublished; `selected-neighbor-placements-efMOOw` retains all 16 native slope
+approach round trips. The lowest edge spans approximately 0.001–0.196 units above flat
+ground, so these doorway-start-on-slope checks do not prove access from flat
+terrain. Ground connections and browser/native archive verification remain
+required before publication.
 
 ## York tower/gatehouse room ownership (2026-10-20)
 

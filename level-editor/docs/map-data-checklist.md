@@ -44,9 +44,12 @@ the exact ZIP loads without a base datadir, retaining 91/95 doorway trips and
 130/130 stairs. The publication helper validates the exact endpoint migrations
 against both the prior scene and the verified editor archive.
 The fresh installed York export equals the tested staged descriptor.
-The remaining south-lane entrance has an unpublished ground-height/house
-ownership candidate: 16/16 standalone native trips pass, but its neighboring
-terrace still blocks all 16 paired trips. That obstruction remains unresolved.
+The south-lane entrance matches its terrace's physical slope, which was missing
+a walking surface. An unpublished terrace-floor candidate preserves the door's
+owner and height, passes 16 moved/copied/elevated native trips, and improves
+full York to 92/95 raw doorway trips; the remaining three are authored locks.
+All 130 stairs pass and the four existing climb failures remain. Access from
+neighboring terrain, visual verification and publication are still pending.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.
