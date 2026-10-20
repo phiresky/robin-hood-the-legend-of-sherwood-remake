@@ -1,0 +1,16 @@
+{
+  "map": "york",
+  "assets": [
+    "york-east-riverside-northern-wall-stair",
+    "york-east-riverside-northern-boundary-wall"
+  ],
+  "terrainHeight": 0,
+  "entrances": [],
+  "missingLifts": true,
+  "lifts": [
+    {
+      "asset": "york-east-riverside-northern-wall-stair",
+      "id": "building-286-lift"
+    }
+  ]
+}

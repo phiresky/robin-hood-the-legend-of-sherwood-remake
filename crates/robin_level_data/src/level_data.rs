@@ -1795,6 +1795,9 @@ pub struct RawJumpLinePair {
     bitcode::Decode,
 )]
 pub struct RawDoor {
+    /// The map compiler supplied the final inside approach; loading must not offset it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub approach_prepared: bool,
     /// Export-prepared obstacle-state requirements for the animated passage.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub passage_states: Vec<PassageStateRequirement>,
@@ -3049,6 +3052,9 @@ impl LoadedLevel {
                     | RawBuildingEntry::StandaloneDoors { doors } => doors,
                 }))
             {
+                if door.approach_prepared && !matches!(door.door_type, 4 | 6) {
+                    return Err("prepared approaches require a high wall door".into());
+                }
                 for requirement in &door.passage_states {
                     let area = geometry
                         .motion_data
@@ -3366,6 +3372,7 @@ impl LoadedLevel {
                     }
                     || lift.doors.iter().any(|door| {
                         !matches!(door.door_type, 4..=6)
+                            || (door.approach_prepared && lift.lift_type != 3)
                             || door.sector_in != lift.motion_area_index
                             || !area_refs.contains(&(door.sector_in, door.layer_in))
                             || lift_refs.contains(&door.sector_out)
@@ -5629,6 +5636,7 @@ fn read_one_door(reader: &mut ChunkReader, format: LevelFormat) -> Result<RawDoo
     let layer_in = reader.read_u16()?;
 
     Ok(RawDoor {
+        approach_prepared: false,
         passage_states: Vec::new(),
         world_endpoints: None,
         door_type,
@@ -6375,6 +6383,31 @@ mod tests {
             LoadedLevel::hackable_from_json(&serde_json::to_vec(&descriptor).unwrap()).unwrap();
         assert!(empty.proto.animations.is_empty());
         assert!(empty.proto.element_chunk_order.is_empty());
+    }
+
+    #[test]
+    fn compiled_prepared_approaches_are_limited_to_high_wall_doors() {
+        let original: serde_json::Value = serde_json::from_slice(include_bytes!(
+            "../../robin_engine/tests/fixtures/asset-lift.level.json"
+        ))
+        .unwrap();
+        for lift_type in [1, 2, 3] {
+            for door_type in [4, 5, 6] {
+                let mut descriptor = original.clone();
+                let lift = &mut descriptor["asset_geometry"]["lifts"][0];
+                lift["lift_type"] = lift_type.into();
+                lift["doors"][1]["door_type"] = door_type.into();
+                lift["doors"][1]["approach_prepared"] = true.into();
+                let result =
+                    LoadedLevel::hackable_from_json(&serde_json::to_vec(&descriptor).unwrap());
+                assert_eq!(
+                    result.is_ok(),
+                    lift_type == 3 && door_type != 5,
+                    "lift {lift_type}, door {door_type}: {:?}",
+                    result.err()
+                );
+            }
+        }
     }
 
     #[test]

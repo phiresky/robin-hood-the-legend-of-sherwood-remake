@@ -1,5 +1,39 @@
 use super::*;
 
+#[test]
+fn compiled_wall_approaches_use_exported_endpoints_without_load_time_offset() {
+    for high_type in [4, 6] {
+        for prepared in [false, true] {
+            let bytes = placed_stair_fixture(
+                include_bytes!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/asset-lift.level.json"
+                )),
+                0,
+                3,
+            );
+            let mut document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            let door = &mut document["asset_geometry"]["lifts"][0]["doors"][1];
+            door["door_type"] = high_type.into();
+            door["approach_prepared"] = prepared.into();
+            let authored = MapPoint::new(
+                door["point_in"][0].as_f64().unwrap() as f32,
+                door["point_in"][1].as_f64().unwrap() as f32,
+            );
+            let (engine, _) = compiled_walkway(&serde_json::to_vec(&document).unwrap());
+            let door = &engine.script_domains.interactables.doors[1];
+            if prepared {
+                assert_eq!(door.point_in, authored);
+            } else {
+                let distance =
+                    (door.point_in.x - door.point_mid.x).hypot(door.point_in.y - door.point_mid.y);
+                assert!((distance - if high_type == 6 { 65. } else { 60. }).abs() < 1e-4);
+                assert_ne!(door.point_in, authored);
+            }
+        }
+    }
+}
+
 fn placed_point(point: MapPoint, turn: u8) -> MapPoint {
     if turn == 0 {
         return point;

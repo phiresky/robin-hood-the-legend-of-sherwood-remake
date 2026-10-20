@@ -60,6 +60,41 @@ function fixture(point: Point, state?: number) {
   return { geometry, door };
 }
 
+test("short walls retain a supported prepared approach instead of an unsupported fixed offset", () => {
+  const { geometry, door } = fixture([20, 25]);
+  geometry.lifts![0]!.lift_type = 3;
+  door.door_type = 6;
+  door.point_mid = [20, 55];
+  compileLiftApproaches(geometry);
+  assert.equal(door.approach_prepared, true);
+  assert.deepEqual(door.point_in, [20, 25]);
+  assert.deepEqual(geometry.warnings, []);
+  const prepared = structuredClone(geometry);
+  compileLiftApproaches(geometry);
+  assert.deepEqual(geometry, prepared);
+});
+
+test("a short wall cannot prepare an approach inside a permanent obstacle", () => {
+  const { geometry, door } = fixture([20, 25]);
+  geometry.lifts![0]!.lift_type = 3;
+  door.door_type = 6;
+  door.point_mid = [20, 55];
+  geometry.motion_data.layers[0]![0]!.obstacles.push({
+    state_id: 0,
+    polygon: {
+      points: [
+        [15, 15],
+        [25, 15],
+        [25, 35],
+        [15, 35],
+      ],
+    },
+  });
+  compileLiftApproaches(geometry);
+  assert.equal(door.approach_prepared, undefined);
+  assert.ok(geometry.warnings?.some((warning) => warning.includes("no actor-sized in approach")));
+});
+
 test("exported approaches fit the actor without crossing a permanent barrier", () => {
   for (const [source, expected] of [
     [

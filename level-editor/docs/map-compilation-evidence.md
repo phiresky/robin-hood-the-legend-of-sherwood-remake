@@ -575,11 +575,48 @@ that the joined surfaces cannot form one connected traversal area and retries
 without the climb. This candidate is unpublished and does not fix the defect.
 
 The runtime applies its fixed upper-door offset at mission loading, before
-computing door penalties. A possible small data-format extension would carry
-an export-prepared inside approach, with loading using that point directly.
-Its animation behavior and collision safety still require native proof; no
-such production change has been made. Any solution must also preserve
-view-independent physical support and the actual crenellated animation.
+computing door penalties. This motivated the small data-format extension
+tested below: carry an export-prepared inside approach and use that point
+directly during loading. The asset-apron experiment remains unpublished.
+
+### Export-prepared high wall approaches
+
+The small `approach_prepared` door-format extension preserves a checked final
+inside point during mission loading. The exporter uses it only when the fixed
+wall offset fails the full actor-box clearance check and the existing authored
+point passes. It changes neither the receiving geometry nor the crenellated
+animation. The loader still computes penalties from the final point. Ordinary
+doors and unmarked wall doors retain their existing load behavior; there is no
+new per-tick work or runtime geometry preparation.
+
+With the installed asset definitions (no apron edit),
+`selected-neighbor-placements-2YQ1h8` passes all 32 complete-profile native
+climb routes. Full export `saved-map-exports-HKca3X` passes all 40 climbs and
+130 stairs. `authored-door-states-PdIt2W` passes all 95 doorway expectations in
+each snapshot. The two zero-degree copied exports still report the existing
+physical clipping warning on the second copy; passing traversal does not
+certify that warning or full physical/rendered fidelity.
+Removing the receiving wall in `selected-neighbor-placements-Q02sxE`
+correctly leaves all 16 copied climb connections unavailable. Prepared
+approaches do not invent a missing landing.
+
+Format validation rejects prepared low doors and non-wall lifts. Exporter
+tests cover both supported short-wall approaches and rejection of a permanently
+blocked approach, plus idempotent compilation. All 92 non-ignored level-data
+tests and 22 focused native loading, door-adaptation and compiled-lift tests
+pass.
+
+Browser snapshot `york-rendered-library-XzXTyz` passes export/reopen with matching
+gameplay and rendered color/depth. `york-prepared-climbs.zip` is 46,645,626 bytes,
+SHA-256 `cb19e3b08a8d7744fce039c122087d64268aed5080f877465b32aa3242c81df4`.
+Its complete gameplay descriptor equals the native-tested full export.
+Exact archive audit `exact-map-archive-1wk10cuj` passes all 40 climb routes,
+130 stair routes and 95 initial doorway expectations. This is native actor
+execution plus editor rendering, not an in-game rendered animation review;
+that visual review remains outstanding.
+The game binary builds successfully with `cargo build -p robin_rs --bin robin`.
+Editor typechecking, focused lint/format checks and Rust formatting pass.
+Exports using `approach_prepared` require this updated loader.
 
 ## York tower/gatehouse room ownership (2026-10-20)
 

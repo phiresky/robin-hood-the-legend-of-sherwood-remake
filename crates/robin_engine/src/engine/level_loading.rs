@@ -4299,11 +4299,12 @@ impl EngineInner {
                         ..Default::default()
                     });
                 if let Some(door) = self.script_domains.interactables.doors.last_mut() {
-                    // Order: `adapt_points` then penalty.  LiftHigh /
-                    // LiftHighCrenel doors on wall lifts get their
-                    // `point_in` nudged toward `point_mid`; other lift
-                    // types leave `point_in` alone.
-                    door.adapt_points(lift_wall);
+                    // Export-prepared approaches already fit their static
+                    // floor. Other wall doors retain the fixed animation
+                    // offset. Compute penalties from the final endpoint.
+                    if !raw.approach_prepared {
+                        door.adapt_points(lift_wall);
+                    }
                     door.compute_door_penalty();
                     door.rebuild_click_bbox();
                 }

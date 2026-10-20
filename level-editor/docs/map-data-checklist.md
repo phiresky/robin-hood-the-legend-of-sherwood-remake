@@ -67,6 +67,15 @@ The wall failure also reproduces in all 32 isolated three-asset placement
 routes: its upper crenellated transition needs a 65-unit approach, but the
 saved climb's actor-safe polygon reaches only 60.364 units from that doorway.
 Preparing supported animation approaches remains export work.
+The subsequent `approach_prepared` format change resolves these native routes
+without extending the floor: export marks an actor-safe endpoint, and mission
+loading preserves it instead of applying the fixed wall offset. All 32 moved
+wall-climb routes pass. Full York now passes 40/40 climbs, 130/130 stairs and
+95/95 doorway expectations in both authored lock snapshots. The change adds
+no per-tick work. Browser ZIP/reopen preserves gameplay and color/depth, and
+the exact archive retains all 40 climb routes, 130 stair routes and 95 initial
+doorway expectations. Rendered actor animation review remains outstanding;
+these results do not certify full parity.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

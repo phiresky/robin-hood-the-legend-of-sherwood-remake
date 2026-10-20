@@ -360,7 +360,7 @@ fn derive_with_spatial_index(
                 })
                 .map_or(u16::MAX, |receiver| receiver.index);
             let mut inside = [f32::from(door.point_in.0), f32::from(door.point_in.1)];
-            if lift.lift_type == 3 && door.door_type == 4 {
+            if lift.lift_type == 3 && door.door_type == 4 && !door.approach_prepared {
                 inside = crate::level_data::offset_door_approach(
                     inside,
                     [f32::from(door.point_mid.0), f32::from(door.point_mid.1)],

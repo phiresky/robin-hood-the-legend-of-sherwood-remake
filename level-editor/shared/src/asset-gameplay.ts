@@ -438,6 +438,8 @@ export interface CompiledAssetGeometry {
     door_links?: { mode: "trigger-transition" | "swap-rights"; indices: number[] };
   }[];
   doors: {
+    /** Final export-prepared inside approach; skip the load-time animation offset. */
+    approach_prepared?: boolean;
     passage_states?: { layer: number; area: number; allowed_states: number[] }[];
     world_endpoints?: { inside: Vec3; middle: Vec3; outside: Vec3 };
     door_type: number;

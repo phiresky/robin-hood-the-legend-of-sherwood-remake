@@ -147,7 +147,7 @@ function compileApproaches(geometry: CompiledAssetGeometry, buildingsOnly: boole
         const delta: Point = [point[0] - middle[0], point[1] - middle[1]];
         const length = Math.hypot(...delta);
         const radius =
-          side === "in" && lift?.lift_type === 3
+          side === "in" && lift?.lift_type === 3 && !door.approach_prepared
             ? door.door_type === 6
               ? 65
               : door.door_type === 4
@@ -165,6 +165,10 @@ function compileApproaches(geometry: CompiledAssetGeometry, buildingsOnly: boole
         };
         const source = adapt(point);
         if (fits(source)) continue;
+        if (radius !== undefined && fits(point)) {
+          door.approach_prepared = true;
+          continue;
+        }
         let adjusted: Point | undefined;
         const reachable = (candidate: Point) =>
           candidate.every((value) => value >= -32768 && value <= 32767) &&

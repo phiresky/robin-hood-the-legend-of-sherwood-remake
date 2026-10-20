@@ -1,5 +1,12 @@
 # Post-port Features
 
+- **Export-prepared wall approaches.** Compiled high wall doors may mark their
+  inside endpoint with `approach_prepared`. The exporter selects an actor-safe
+  endpoint when the fixed animation offset would leave the floor. Mission
+  loading preserves that point and computes its normal door penalty; animation
+  execution and per-tick movement stay unchanged. This field requires an engine
+  build that supports it.
+
 - **Prepared clearance for narrow ordinary floors.** Export retains corrected
   subpixel movement contours independently of the physical receiving surface.
   The loader uses those contours when constructing static collision lines and
