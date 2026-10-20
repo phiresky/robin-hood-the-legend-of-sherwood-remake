@@ -1148,14 +1148,21 @@ identity to find authored coverage and holes. Partitioned contours now retain
 their source plane references. A focused compiler regression assembles an
 overlapping multi-plane loop with a finite receiving probe, and verifies binding
 without dropping the receiver. The 185 partition/compiler tests pass, followed
-by that additional integration case; lint passes. Full Wychford recompilation
-is still required before declaring its export fixed.
+by that additional integration case; lint passes. The full Wychford retry below
+validates the fix against the saved scene.
 The retry `saved-map-exports-nTMy7G` passes receiving binding and reaches jump/
 door construction, confirming the original fatal lookup is gone. It then
 retries in best-effort mode because the placed church-side tower's lower stair
 endpoint is at height 134.101 while available terrain is about 88.325. The
 unsupported traversal is explicitly omitted; this is a separate placement gap,
-and the full export has not yet completed.
+and remains an explicit omission.
+The retry subsequently completes in about 601 seconds, including its best-effort
+retry, with empty PC spawns and no soldiers. Its descriptor SHA-256 is
+`ba73ba6dda750724863438f43d6b1cf7782f64b4b60d66a8cb6eac8c8dc7e99b`.
+Native construction passes with 245 areas, 15,428 sight obstacles, 92 doors,
+zero jump pairs and 79,002 grid blocks. All three state transitions apply/reset,
+and all three light contours pass the three ambience settings. Successful
+construction does not make the omitted stair or other review warnings disappear.
 
 ### Fresh map-only scene sweep
 
@@ -1176,6 +1183,14 @@ changing ordinary sectors in Croisement01/02/03, Derby, Lincoln, Nottingham and
 York; Leicester and Sherwood contribute no probes to these two audits. Both
 reports remain alongside the hashed subset descriptors. This is sampled
 connectivity evidence, not complete actor traversal or mission execution.
+Together with Wychford's completed retry above, all ten saved scenes now have
+fresh successful map-only exports and native construction checks. The batches
+contain 71 tested state transitions and 180 light contours; the original
+nine-map subset remains explicitly separate from the corrected Wychford export.
+Wychford adds 114 independent-state route samples and 114 combined-state
+samples, all passing before application, after application and after reset.
+The full recorded totals are 1,032 independent-state and 426 combined-state
+route samples across eight maps with eligible changing ordinary sectors.
 
 ## York tower/gatehouse room ownership (2026-10-20)
 
