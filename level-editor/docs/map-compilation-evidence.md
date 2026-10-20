@@ -4,6 +4,32 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Golden timber-house ridge candidate
+
+`refinement/stage-york-golden-roof-ridge.mjs` stages an unpublished correction
+for the gap between `building-339-walk-0` and `building-341-walk-0` in
+`york-central-south-golden-timber-house`. It intersects the two existing height
+planes, joins their ridge endpoints, preserves precise movement coordinates,
+and updates the receiving footprints. Neither plane nor engine behavior changes.
+
+Candidate `york-golden-roof-ridge-k0ftqf` passes gameplay validation.
+Mesh review `roof-slab-mesh-review-m4lmqo` samples 17 points per boundary edge:
+maximum nearest-mesh distance stays at 1.859 units for the first face and
+improves from 0.527 to 0.472 for the second. This is boundary evidence, not
+complete rendered or traversal verification.
+
+The isolated golden/jettied-house connection was compiled at rotations
+0°, 37°, 90° and 180°, each at heights 0 and 40. Both the staged assembly
+`connected-jump-placements-muGsnF` and published baseline
+`connected-jump-placements-jp4WNQ` pass 80/160 ordinary native click probes,
+with identical pass/fail classifications. The remaining rotated selection
+failures therefore predate this candidate. The separate hidden-overlay test
+exercises zero traversals and is not passing coverage.
+
+Full-scene compilation is staged in `saved-map-exports-76SS0C`; replay of the
+same previously failing supported-floor clicks remains required before
+publication. The asset library has not been changed by this experiment.
+
 ## Wychford map-only browser round trip
 
 The frozen `c24c55429` browser batch is complete. Wychford exports, reopens and
