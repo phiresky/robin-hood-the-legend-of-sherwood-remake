@@ -1210,6 +1210,33 @@ fn dispatch_jump(
         let (_, distances) =
             capture_motion_distances(|| engine.t_tick_actor_owner_envelopes(&assets));
         let element = engine.ent(owner).element_data();
+        if approach
+            && !flew
+            && element.posture() != Posture::Flying
+            && !engine
+                .entities()
+                .current_element_for_actor(owner)
+                .and_then(|(id, index)| engine.seq().get_element(id, index))
+                .is_some_and(|selected| selected.command == Command::JumpCmd)
+            && receiver.is_some()
+            && source.z_a > 0.
+            && source.z_b > 0.
+        {
+            if element.sprite.position_iface.get_obstacle().is_none() {
+                return Err(format!(
+                    "elevated jump approach lost receiver before takeoff: position={:?}, start={start:?}, line={selected_jump_line}",
+                    element.position(),
+                ));
+            }
+            actor_receiver_result(
+                &engine,
+                &assets,
+                owner,
+                element.sector().ok_or("jump approach lost sector")?,
+                element.layer(),
+                element.position_map(),
+            )?;
+        }
         if let Some(trajectory) = &mut trajectory {
             let position = element.position();
             trajectory.push(serde_json::json!({

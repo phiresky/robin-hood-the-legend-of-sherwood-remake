@@ -6,8 +6,10 @@ import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
-const [stage] = process.argv.slice(2);
+const [stage, spanArgument = "3"] = process.argv.slice(2);
 assert.ok(stage, "Supply the unpublished inset/selection stage");
+const span = Number(spanArgument);
+assert.ok(Number.isFinite(span) && span >= 1 && span <= 10);
 const edits = JSON.parse(await fs.readFile(`${stage}/edits.json`));
 const scene = JSON.parse(await fs.readFile(`${stage}/scene.json`));
 const sides = [];
@@ -45,8 +47,8 @@ for (const [side, entry] of sides.entries()) {
     ["b", 1],
   ]) {
     const point = [
-      center[0] + direction[0] * sign * end * 1.5,
-      center[1] + direction[1] * sign * end * 1.5,
+      center[0] + (direction[0] * sign * end * span) / 2,
+      center[1] + (direction[1] * sign * end * span) / 2,
     ];
     assert.ok(pointInGameplayPolygon(point, entry.surface.polygon, true));
     edge[key] = [...point, planeHeight(entry.plane, point)];
@@ -63,7 +65,7 @@ await fs.writeFile(
   JSON.stringify({
     stage,
     direction,
-    span: 3,
+    span,
     published: false,
     scope: "common-tangent-candidate-requires-placement-flight-and-mesh-review",
     sides: sides.map(({ edit, before, segment, plane }) => ({

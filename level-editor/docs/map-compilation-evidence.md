@@ -768,7 +768,47 @@ The recorded mode-selected run `roof-span-mode-traces-dyhyi01h` passes all
 samples, maximum penetration 27.2753 units. The largest contact is in the red
 roof volume during a 180-degree route. Successful arrival does not clear that
 finding. No asset is published and no runtime behavior changes. Full-scene
-candidate export `staged-map-export-YQyisL` is still under validation.
+candidate export `staged-map-export-YQyisL` completes and passes its 720
+ordinary offset probes. The stronger approach checks below supersede arrival-only
+claims for the rotated fixtures.
+
+### Receiver continuity before roof takeoff
+
+Inspection of the largest recorded contact revealed that an actor had already
+lost its receiver while walking toward takeoff. It then jumped from height zero
+through the roof and nevertheless reached its destination. The native audit now
+rejects receiver loss or receiver/height mismatches during elevated approaches,
+before accepting flight or arrival. This adds no production runtime logic.
+
+Re-running `roof-span-mode-traces-dyhyi01h` with that check rejects 24 of its
+264 cases. Its earlier passing arrival-only report is superseded. The common-span
+authoring helper now accepts a reviewed span length; the five-unit stage
+`york-roof-common-span-2XzTGG` exports as `connected-jump-placements-Kig17V`.
+Replaying the same 264 normal/hidden inputs in
+`same-click-five-unit-span-o771plwy` passes with receiver continuity enforced.
+However, its 4,368 recorded airborne samples still contain 364 solid contacts,
+maximum penetration 22.9385 units.
+
+The largest contact is a final landing snap into the dormer volume. On this
+almost edge-on roof, integer screen-coordinate error produces a large change in
+the world-space landing point. A precision diagnostic with the five-unit matched
+spans (`connected-jump-placements-hBorT2`,
+`supported-five-span-precision-kbn8v23r`) passes the identical 264 inputs and
+reduces recorded contacts to 264 among 4,266 samples, maximum penetration
+6.99186 units. This differs from the preceding precision experiment, which used
+the earlier misaligned spans. Neither experiment constitutes an exported-format
+change or clears the flight.
+
+The remaining largest contact occurs near takeoff at 90 degrees. The existing
+long-jump sequence advances fifteen screen units along the edge normal at the
+authored source height before its subsequent trajectory. That segment intersects
+the rising roof. Anchor placement and export-time flight clearance remain open;
+no asset or format extension is published.
+The approach check applies while walking toward the jump, before its departure
+command owns movement; departure animation is evaluated by the flight audit.
+With that distinction, the three-unit full-scene stage retains 720/720 offset
+checks, the rotated three-unit fixture exposes 24 failures, and the five-unit
+fixture retains 264/264. The three regular jump-module tests and formatting pass.
 
 ## York tower/gatehouse room ownership (2026-10-20)
 
