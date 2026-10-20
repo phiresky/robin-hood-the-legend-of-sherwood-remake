@@ -4,6 +4,26 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## York detached room ownership review (2026-10-20)
+
+Stage `york-detached-room-ownership-oKjZ7x` moves complete single-entrance rooms
+from precinct/west-town terrain into the cathedral nave, precinct east gate
+wall and west gallery house. The authoring script preserves assembled door
+coordinates and lock rules, checks that no explicit room connections need
+migrating, and changes only interior metadata on the five affected assets.
+The receiving structures are declared locally; foreign collision remains active.
+
+Isolated cathedral/gallery fixtures `selected-neighbor-placements-feOM6o` and
+`selected-neighbor-placements-ckaTJ8` each pass 16 moved normal click trips.
+Gate fixture `selected-neighbor-placements-l1PPox` produces state snapshots
+`authored-door-states-onKifJ`: 16 initial locked rejections and 16 unlocked
+doorway round trips pass. These snapshots do not verify a mission trigger.
+Assembled precinct/gallery fixtures `selected-neighbor-placements-osRJEH` and
+`selected-neighbor-placements-KfpGGC` each pass 16 normal click trips on their
+actual terrain. Precinct snapshots `authored-door-states-bXyUB8` pass all 32
+initial and 32 after-patch checks, preserving the cathedral's unlocked entrance.
+Full-scene regression, browser/archive checks and publication remain pending.
+
 ## York doorway structure audit and timber-house repair (2026-10-20)
 
 Installed trace `saved-map-exports-Mmk7jO` identifies 20 blocked interior
