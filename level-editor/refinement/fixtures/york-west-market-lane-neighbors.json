@@ -1,0 +1,39 @@
+{
+  "map": "york",
+  "assets": [
+    "york-west-town-raised-lane",
+    "york-west-market-frontage-gabled-house",
+    "york-west-market-frontage-dormer-house",
+    "york-west-market-frontage-red-roof-house",
+    "york-west-market-frontage-north-end-house",
+    "york-precinct-stone-causeway",
+    "york-light-region-18"
+  ],
+  "size": [4000, 3200],
+  "copyXs": [1000.25, 2800.25],
+  "assemblyY": 1800.75,
+  "terrainHeight": 90.00101,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "york-west-market-frontage-gabled-house",
+      "door": "interior-0/door-0",
+      "sourceLocal": [73, 78.73016518510309]
+    },
+    {
+      "asset": "york-west-market-frontage-dormer-house",
+      "door": "interior-0/door-0",
+      "sourceLocal": [58, 47.32070456982375]
+    }
+  ],
+  "lightReceivers": [{ "asset": "york-light-region-18", "light": "light-18", "indices": [0] }],
+  "passages": [
+    { "asset": "york-precinct-stone-causeway", "id": "passage-0/door-0" },
+    { "asset": "york-precinct-stone-causeway", "id": "passage-1/door-0" },
+    { "asset": "york-precinct-stone-causeway", "id": "passage-2/door-0" },
+    { "asset": "york-precinct-stone-causeway", "id": "passage-3/door-0" },
+    { "asset": "york-precinct-stone-causeway", "id": "passage-4/door-0" },
+    { "asset": "york-precinct-stone-causeway", "id": "passage-5/door-0" },
+    { "asset": "york-precinct-stone-causeway", "id": "passage-6/door-0" }
+  ]
+}

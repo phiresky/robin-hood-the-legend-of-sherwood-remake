@@ -23,7 +23,11 @@ const results = [];
 for (const asset of assets) {
   const source = document.assetSources.find((source) => source.id === asset);
   assert.ok(source, `Missing asset ${asset}`);
-  const model = await loadSceneModel(library, source);
+  const descriptor = JSON.parse(await fs.readFile(`${library}/${source.descriptor}`));
+  const model = await loadSceneModel(library, {
+    ...source,
+    resources: descriptor.resources ?? [],
+  });
   for (const object of document.objects.filter((object) =>
     object.node.startsWith(`asset:${asset}:`),
   )) {

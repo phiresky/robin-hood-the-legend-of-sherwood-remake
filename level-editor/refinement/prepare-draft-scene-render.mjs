@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { serializeStoredMap } from "../shared/src/stored-level.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
@@ -92,7 +93,27 @@ for (const reference of document.assetSources) {
     if (current.model_sha256 !== undefined) assert.equal(current.model_sha256, hash(model));
     assert.equal(`3d-assets/${current.descriptor}`, reference.descriptor);
     assert.equal(`3d-assets/${current.model}`, reference.model);
-    for (const key of ["lossy_model", "preview_model"]) {
+    const derivativeKeys = ["lossy_model", "preview_model"];
+    if (derivativeKeys.every((key) => !current[key])) {
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          [
+            "import json, sys",
+            "from pathlib import Path",
+            "sys.path.insert(0, 'refinement')",
+            "from publish_library import gameplay_frame_glb",
+            "entry = json.load(sys.stdin)",
+            "gameplay_frame_glb(Path(sys.argv[1]).read_bytes(), entry)",
+          ].join("\n"),
+          path.join("library", reference.model),
+        ],
+        { input: JSON.stringify(current) },
+      );
+      derivativeKeys.length = 0;
+    }
+    for (const key of derivativeKeys) {
       assert.ok(current[key], `Missing ${key}: ${descriptor.id}`);
       publicationFields[key] = current[key];
       for (const suffix of ["", ".receipt.json"]) {

@@ -20,7 +20,7 @@ the lane under the two house endpoints at 105.782381 and 118.905021, within 0.02
 units of their authored heights. `stage-york-raised-lane.mjs` restores a local
 walking surface from the retained footprint and removes the erroneous receiver
 anchor. Height normalization to one plane is bounded below 0.001 units; model
-bytes and house definitions are unchanged. No level-data lookup or runtime
+bytes are unchanged. No level-data lookup or runtime
 solver is involved.
 
 Stage `york-raised-lane-PoiaH7` lets all 32 entrances bind in copied/rotated/raised
@@ -36,6 +36,50 @@ Audit `saved-map-entrances-p24uz4` improves to 49/95: doors 87, 88 and 90 now pa
 with no regressions. One receiver mismatch remains at door 57; 45 routes remain
 blocked. Browser export/reopen, broader neighboring-floor support and rendered
 contact still need review before publication. The installed library is unchanged.
+
+Follow-up stage `york-raised-lane-jhSGs2` fixes the return-click failure: fitting
+the plane through both shared bottom-edge vertices prevents a corner from
+falling 0.000351 units below the adjoining ground and creating contradictory
+receiver ordering. The two houses' asset-local outside endpoint heights are
+reconciled to that plane, with each adjustment bounded below 0.001 units.
+`selected-neighbor-placements-TsTWxQ` now passes all 32 normal entry-and-return
+clicks without crossing-height warnings; `saved-map-entrances-XevX3U` retains
+32/32 direct round trips. Removing the lane in
+`selected-neighbor-placements-XLkbFS` still rejects all 32 unsupported entrances.
+
+Browser fixture `draft-scene-render-njlTcu` exports and reopens identical gameplay,
+color and depth. Its 25,641,690-byte `york-west-market.zip` has SHA-256
+`efd09b13e55d7260b3bbb3d847e20d3a550c5ba60576dcc33b0d90328b6bddfe`.
+Native archive construction passes without base data; exact archive audit
+`exact-map-archive-wg92zyae` passes all four normal click round trips. Publication
+dry run `york-raised-lane-publication-dry-run` passes for the three asset definitions.
+
+The full refined export `saved-map-exports-jLWWDW` catches a regression absent
+from that isolated fixture: 245 doors and 71 jump pairs remain, versus 254 and
+72 before refinement. Two other house entrances, seven causeway passages, a
+jump landing and a lighting receiver depend on the same plane. Differences of
+0.0001–0.00035 units exceed strict anchor binding tolerance. Native construction
+passes, but `saved-map-entrances-0Kvhuc` reaches only 47/93 emitted doorway trips.
+This candidate must not be published based on its isolated results.
+
+Stage `york-raised-lane-xaTMqr` additionally reconciles those local anchors,
+retaining the below-0.001 adjustment bound and unchanged model bytes. Its full
+export is `saved-map-exports-WBzPQ5` (verification pending). New seven-asset
+fixture `york-west-market-lane-neighbors.json` includes causeway passages and
+explicit lighting coverage. Run `selected-neighbor-placements-eGtWoe` exposes
+a separate light footprint failure at 90 degrees: the receiver resolves, but
+the exported light polygon does not cover it. This remains unresolved; no
+library publication has occurred.
+
+Stage `york-raised-lane-7SegL2` addresses that rotation failure by splitting the
+light into footprints on its sloped and lower receiving floors. Their projected
+contours remain unchanged at the authored placement. No light format or runtime
+change is needed. `selected-neighbor-placements-bU2suI` completes all eight
+placements, with 16 lane lighting checks, 112 causeway passage bindings and
+32/32 native normal entrance clicks. `saved-map-entrances-WbAbx5` additionally
+passes all 64 doorway round trips, including the other two frontage houses.
+This expanded candidate still needs full-scene and browser verification before
+publication; passage binding alone does not certify actor traversal.
 
 ## Soldier and civilian gate round trips verified (2026-10-20)
 

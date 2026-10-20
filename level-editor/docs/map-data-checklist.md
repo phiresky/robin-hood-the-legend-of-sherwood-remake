@@ -117,9 +117,18 @@ loads without base data, and passes all four archived terrain-start entrance tri
 A fresh York audit confirms the installed 46/95 result. A staged restoration of
 the west-town raised lane's missing local walking surface improves the full scene
 to 49/95 with no regressions, fixing two receiver mismatches and another blocked
-route. It passes 32 moved doorway round trips; removing the lane rejects all 32
-unsupported entrances. Normal return-click selection still fails in 24/32 cases,
-and the candidate is unpublished. See the
+route. A refined plane preserves the shared ground edge and reconciles the two
+house landing heights by less than 0.001 units. It passes all 32 moved normal
+entry-and-return clicks and all 32 direct doorway round trips; removing the lane
+rejects all 32 unsupported entrances. Browser export/reopen, native ZIP loading
+without base data and all four archived normal click trips pass. Publication dry
+run passes, but full-scene regression found omitted neighboring doors, a jump
+landing and a light receiver whose anchors also need the plane correction.
+The expanded seven-asset stage also separates the light footprints onto their
+receiving floors so they follow rotation. All eight placement fixtures now pass
+lighting coverage and 112 causeway passage bindings; native checks pass 64/64
+direct doorway trips and 32/32 normal click trips. Full-scene and browser checks
+for this expanded candidate remain pending; it is unpublished. See the
 [raised-lane evidence](map-compilation-evidence.md#york-raised-lane-surface-restores-reusable-house-approaches-2026-10-20).
 
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
