@@ -251,6 +251,41 @@ test("copied roof takeoffs follow precise floor contours without fictitious grou
   }
 });
 
+test("receiving segments bind authored floors after overlapping navigation is partitioned", () => {
+  const { document, hut, assets } = anchoredReceiverCompilerFixture();
+  hut.gameplay!.projectionReceivers![0]!.receiverSegment = [
+    [50, 50, -8],
+    [50, 50, 8],
+  ];
+  const patches = [
+    [0, 0, 200, 100, 0, 0],
+    [200, 0, 300, 100, 0, 0],
+    [200, 100, 300, 300, 0.4, -40],
+    [200, 300, 300, 400, 0, 80],
+    [0, 300, 200, 400, 0, 80],
+    [0, 0, 100, 300, 0, 80],
+  ];
+  assets.get("marker")!.gameplay!.surfaces = patches.map(([x0, y0, x1, y1, slope, offset], i) => {
+    const points: Point[] = [
+      [x0!, y0!],
+      [x1!, y0!],
+      [x1!, y1!],
+      [x0!, y1!],
+    ];
+    const height = points.map(([, y]) => slope! * y + offset!);
+    return {
+      id: `loop-${i}`,
+      node: "scenery-marker",
+      navigationRegion: "folded-loop",
+      polygon: points.map(([x, y], index): Point => [x, y + height[index]!]),
+      height,
+    };
+  });
+  const compiled = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+  assert.ok(compiled.sight_obstacles!.some((shape) => shape.projection_area));
+  assert.doesNotMatch((compiled.warnings ?? []).join("\n"), /navigation binding omitted/);
+});
+
 test("forced crouching remains local to authored floors with working passages", () => {
   const { document, hut, assets } = forcedCrouchCompilerFixture();
   const gameplay = hut.gameplay!;

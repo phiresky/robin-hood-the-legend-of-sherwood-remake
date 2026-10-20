@@ -23,7 +23,8 @@
   "volumes": [],
   "asset_geometry": {
     "warnings": [
-      "Jump hut-a/hut/lower-edge: solid obstacles obstruct the flight; 1 usable span(s) retained."
+      "Jump hut-a/hut/lower-edge: solid obstacles obstruct the flight; 1 usable span(s) retained.",
+      "Jump hut-a/hut/lower-edge/to/jump-upper/jump-upper/upper-edge: direction 2 elevated takeoff animation lacks receiving coverage within its fifteen-unit departure strip; connection retained for review."
     ],
     "motion_data": {
       "layers": [
@@ -268,6 +269,23 @@
         "material_indices": []
       },
       {
+        "projection_plane": [
+          [
+            411,
+            410,
+            100
+          ],
+          [
+            501,
+            410,
+            100
+          ],
+          [
+            411,
+            510,
+            100
+          ]
+        ],
         "points": [
           {
             "x": 411,
@@ -303,24 +321,7 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": [],
-        "projection_plane": [
-          [
-            411,
-            410,
-            100
-          ],
-          [
-            501,
-            410,
-            100
-          ],
-          [
-            411,
-            510,
-            100
-          ]
-        ]
+        "material_indices": []
       }
     ],
     "doors": []

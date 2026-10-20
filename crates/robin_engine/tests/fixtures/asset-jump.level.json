@@ -23,7 +23,7 @@
   "volumes": [],
   "asset_geometry": {
     "warnings": [
-      "Jump hut-a/hut/wall-jump: flight clearance is unverified: Ledges leave no forward flight after the 15-unit takeoff."
+      "Jump hut-a/hut/wall-jump: direction 2 elevated takeoff animation lacks receiving coverage within its fifteen-unit departure strip; connection retained for review."
     ],
     "motion_data": {
       "layers": [
@@ -170,12 +170,12 @@
         "line1": {
           "point_a": [
             385,
-            330,
+            370,
             0
           ],
           "point_b": [
             385,
-            370,
+            330,
             0
           ],
           "jump_zone_index": 1
@@ -183,12 +183,12 @@
         "line2": {
           "point_a": [
             415,
-            270,
+            230,
             100
           ],
           "point_b": [
             415,
-            230,
+            270,
             100
           ],
           "jump_zone_index": 0

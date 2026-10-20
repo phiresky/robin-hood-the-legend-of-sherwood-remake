@@ -1129,6 +1129,28 @@ The wider map-export suite is not yet green: additional sword/courtyard/detached
 jump fixtures and lift/light/state fixture comparisons still differ. Those must
 be inspected and verified independently; this refresh does not waive them.
 
+The follow-up fixture review resolves those comparisons: sword/courtyard/
+detached/basic jumps differ by departure warnings, forward bands or corrected
+endpoint order. Lift, compound-lift, traversal-light, changing and copied
+climb/stair fixtures differ only by preserved precise obstacle contours. Their
+graphs, heights and control bindings are unchanged. All 80 map/roof export tests
+now pass. Native map-construction integration passes 72 tests with seven
+environment-dependent cases ignored. Both copied stair/climb state-isolation
+tests and all seven changing-climb barrier/animation tests pass with the complete
+character profile.
+
+### Receiving probes after navigation partitioning
+
+The fresh map-only sweep `saved-map-exports-yTaekO` found a fatal Wychford
+receiver lookup on the southwest field bank. Navigation partitioning deep-copied
+canonical plane objects, but later receiver-segment resolution uses their
+identity to find authored coverage and holes. Partitioned contours now retain
+their source plane references. A focused compiler regression assembles an
+overlapping multi-plane loop with a finite receiving probe, and verifies binding
+without dropping the receiver. The 185 partition/compiler tests pass, followed
+by that additional integration case; lint passes. Full Wychford recompilation
+is still required before declaring its export fixed.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall

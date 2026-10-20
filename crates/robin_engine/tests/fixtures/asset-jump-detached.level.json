@@ -25,7 +25,7 @@
     "warnings": [
       "Jump hut-a/hut/lower-edge: no matching edge after placement; connection is unavailable.",
       "Jump jump-upper/jump-upper/upper-edge: no matching edge after placement; connection is unavailable.",
-      "Jump hut-a-copy/hut/lower-edge: flight clearance is unverified: Ledges leave no forward flight after the 15-unit takeoff."
+      "Jump hut-a-copy/hut/lower-edge: direction 2 elevated takeoff animation lacks receiving coverage within its fifteen-unit departure strip; connection retained for review."
     ],
     "motion_data": {
       "layers": [
@@ -250,12 +250,12 @@
         "line1": {
           "point_a": [
             1385,
-            330,
+            370,
             0
           ],
           "point_b": [
             1385,
-            370,
+            330,
             0
           ],
           "jump_zone_index": 1
@@ -263,12 +263,12 @@
         "line2": {
           "point_a": [
             1415,
-            270,
+            230,
             100
           ],
           "point_b": [
             1415,
-            230,
+            270,
             100
           ],
           "jump_zone_index": 0

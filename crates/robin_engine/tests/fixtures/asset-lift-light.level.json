@@ -72,7 +72,25 @@
                       340
                     ]
                   ]
-                }
+                },
+                "precise_polygon": [
+                  [
+                    340,
+                    340
+                  ],
+                  [
+                    350,
+                    340
+                  ],
+                  [
+                    350,
+                    350
+                  ],
+                  [
+                    340,
+                    350
+                  ]
+                ]
               }
             ]
           }
@@ -201,6 +219,23 @@
         "material_indices": []
       },
       {
+        "projection_plane": [
+          [
+            410,
+            300,
+            100
+          ],
+          [
+            500,
+            300,
+            100
+          ],
+          [
+            410,
+            400,
+            100
+          ]
+        ],
         "points": [
           {
             "x": 410,
@@ -236,26 +271,26 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": [],
-        "projection_plane": [
-          [
-            410,
-            300,
-            100
-          ],
-          [
-            500,
-            300,
-            100
-          ],
-          [
-            410,
-            400,
-            100
-          ]
-        ]
+        "material_indices": []
       },
       {
+        "projection_plane": [
+          [
+            390,
+            200,
+            0
+          ],
+          [
+            410,
+            300,
+            100
+          ],
+          [
+            390,
+            400.00000000000006,
+            0
+          ]
+        ],
         "points": [
           {
             "x": 390,
@@ -291,24 +326,7 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": [],
-        "projection_plane": [
-          [
-            390,
-            200,
-            0
-          ],
-          [
-            410,
-            300,
-            100
-          ],
-          [
-            390,
-            400.00000000000006,
-            0
-          ]
-        ]
+        "material_indices": []
       }
     ],
     "doors": [],

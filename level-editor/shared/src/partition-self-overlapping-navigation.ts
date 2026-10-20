@@ -126,7 +126,14 @@ export function partitionSelfOverlappingNavigation(
   const regions = groups.flatMap((members) =>
     assembleNavigationRegions(
       members.flatMap((i) => {
-        const piece = structuredClone(region.pieces[i]!);
+        const source = region.pieces[i]!;
+        const piece = {
+          ...structuredClone(source),
+          // Canonical plane identity binds later receiver probes to authored
+          // coverage and holes. Only the partitioned contours need copies.
+          plane: source.plane,
+          worldPlane: source.worldPlane,
+        };
         // Rebuild the integer outline from its retained precision source.
         // Re-rounding intermediate union vertices can create a one-pixel tooth
         // that prevents serialization of the matching-height receiving edge.

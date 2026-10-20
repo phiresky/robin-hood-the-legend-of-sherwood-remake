@@ -18,6 +18,12 @@ test("partitioned ramps rebuild grid edges from their retained precise contour",
   const result = partitionSelfOverlappingNavigation(region, []);
   assert.equal(result.regions.length, 2);
   assert.equal(result.passages.length, 1);
+  const authoredPlanes = new Map(pieces.map((piece) => [piece.plane, piece]));
+  for (const part of result.regions.flatMap((region) => region.pieces)) {
+    const authored = authoredPlanes.get(part.plane);
+    assert.ok(authored, "receiver probes must retain their authored plane identity");
+    assert.equal(part.worldPlane, authored.worldPlane);
+  }
   const ramp = result.regions.find((r) => r.pieces[0]!.plane[0] !== 0)!;
   assert.deepEqual(ramp.polygon, [
     [729, 1721],

@@ -72,7 +72,25 @@
                       340
                     ]
                   ]
-                }
+                },
+                "precise_polygon": [
+                  [
+                    340,
+                    340
+                  ],
+                  [
+                    350,
+                    340
+                  ],
+                  [
+                    350,
+                    350
+                  ],
+                  [
+                    340,
+                    350
+                  ]
+                ]
               }
             ]
           }
@@ -437,6 +455,23 @@
         "material_indices": []
       },
       {
+        "projection_plane": [
+          [
+            26,
+            791,
+            40
+          ],
+          [
+            200,
+            791,
+            40
+          ],
+          [
+            26,
+            843,
+            40
+          ]
+        ],
         "points": [
           {
             "x": 26,
@@ -472,26 +507,26 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": [],
-        "projection_plane": [
-          [
-            26,
-            791,
-            40
-          ],
-          [
-            200,
-            791,
-            40
-          ],
-          [
-            26,
-            843,
-            40
-          ]
-        ]
+        "material_indices": []
       },
       {
+        "projection_plane": [
+          [
+            410,
+            300,
+            100
+          ],
+          [
+            500,
+            300,
+            100
+          ],
+          [
+            410,
+            400,
+            100
+          ]
+        ],
         "points": [
           {
             "x": 410,
@@ -527,26 +562,26 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": [],
-        "projection_plane": [
-          [
-            410,
-            300,
-            100
-          ],
-          [
-            500,
-            300,
-            100
-          ],
-          [
-            410,
-            400,
-            100
-          ]
-        ]
+        "material_indices": []
       },
       {
+        "projection_plane": [
+          [
+            26,
+            854,
+            140
+          ],
+          [
+            200,
+            854,
+            140
+          ],
+          [
+            26,
+            906,
+            140
+          ]
+        ],
         "points": [
           {
             "x": 26,
@@ -582,26 +617,26 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": [],
-        "projection_plane": [
-          [
-            26,
-            854,
-            140
-          ],
-          [
-            200,
-            854,
-            140
-          ],
-          [
-            26,
-            906,
-            140
-          ]
-        ]
+        "material_indices": []
       },
       {
+        "projection_plane": [
+          [
+            390,
+            200,
+            0
+          ],
+          [
+            410,
+            300,
+            100
+          ],
+          [
+            390,
+            400.00000000000006,
+            0
+          ]
+        ],
         "points": [
           {
             "x": 390,
@@ -637,26 +672,26 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": [],
-        "projection_plane": [
-          [
-            390,
-            200,
-            0
-          ],
-          [
-            410,
-            300,
-            100
-          ],
-          [
-            390,
-            400.00000000000006,
-            0
-          ]
-        ]
+        "material_indices": []
       },
       {
+        "projection_plane": [
+          [
+            26.07638755451015,
+            854.3553992681319,
+            140
+          ],
+          [
+            200.42106711661995,
+            854.3553992681319,
+            140
+          ],
+          [
+            26.07638755451015,
+            842.8838705411109,
+            40
+          ]
+        ],
         "points": [
           {
             "x": 26.07638755451015,
@@ -692,24 +727,7 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": [],
-        "projection_plane": [
-          [
-            26.07638755451015,
-            854.3553992681319,
-            140
-          ],
-          [
-            200.42106711661995,
-            854.3553992681319,
-            140
-          ],
-          [
-            26.07638755451015,
-            842.8838705411109,
-            40
-          ]
-        ]
+        "material_indices": []
       }
     ],
     "doors": [],
@@ -724,7 +742,6 @@
         ],
         "doors": [
           {
-            "passage_states": [{"layer":4,"area":0,"allowed_states":[1]}],
             "door_type": 5,
             "active": true,
             "locked_pc": false,
@@ -753,10 +770,18 @@
               317
             ],
             "sector_in": 6,
-            "layer_in": 4
+            "layer_in": 4,
+            "passage_states": [
+              {
+                "layer": 4,
+                "area": 0,
+                "allowed_states": [
+                  1
+                ]
+              }
+            ]
           },
           {
-            "passage_states": [{"layer":4,"area":0,"allowed_states":[1]}],
             "door_type": 4,
             "active": true,
             "locked_pc": false,
@@ -785,7 +810,16 @@
               283
             ],
             "sector_in": 6,
-            "layer_in": 4
+            "layer_in": 4,
+            "passage_states": [
+              {
+                "layer": 4,
+                "area": 0,
+                "allowed_states": [
+                  1
+                ]
+              }
+            ]
           }
         ]
       },
