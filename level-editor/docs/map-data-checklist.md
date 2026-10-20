@@ -9,7 +9,9 @@ Connections and runtime indices are rebuilt after placement, rotation and copyin
 York's golden-house ridge receivers are corrected in the published asset metadata.
 The full-scene candidate fixes three landing failures with no regressions among
 1,296 unchanged normal-click probes (1,245 pass). Movement and jump connections
-are unchanged. Rotated endpoint/selection failures remain; this is not full parity.
+are unchanged. The published-library compile matches the tested candidate exactly,
+and 288/288 supported-floor clicks pass across copied, rotated and elevated
+assemblies. Rotated endpoint/selection failures remain; this is not full parity.
 See [receiving ridge evidence](map-compilation-evidence.md#published-golden-house-receiving-ridge).
 
 An earlier full-scene sweep and corrected Wychford retry export all ten saved scenes and

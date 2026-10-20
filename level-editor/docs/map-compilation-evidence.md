@@ -33,9 +33,17 @@ Mesh review `roof-slab-mesh-review-2muO9S` evaluates the actual receiver volumes
 not the unchanged walking polygons. Maximum sampled boundary distance remains
 1.859 units on one face and improves from 0.527 to 0.472 on the other.
 The publication manifest and prior descriptor are retained in
-`york-golden-roof-ridge-DJbQoH`. A fresh export without staged overrides is
-running in `saved-map-exports-ft00zc`; comparison to the tested candidate remains
-required. These checks are not a new browser ZIP or complete gameplay parity.
+`york-golden-roof-ridge-DJbQoH`. Fresh export `saved-map-exports-ft00zc`, using
+the published library without staged overrides, completes in 195.0 seconds
+and is byte-identical to the tested full-scene candidate. Descriptor SHA-256:
+`c2abc2f9f47194692c1baa9c0a47834ac0c3d92fc49711a69ede24d983f31b77`.
+
+Additional supported-floor click probes in `interior-jump-clicks-U2NUiP`
+pass 288/288 natively across the copied assemblies at rotations 0°, 37°, 90°
+and 180°, each at heights 0 and 40. They exercise interior start/goal choices
+on both sides, independently of the earlier edge-offset and endpoint probes.
+The endpoint and visible-selection failures above remain outstanding; these
+checks are not a new browser ZIP or complete gameplay parity.
 
 ## Explicit receiving-volume placement
 
