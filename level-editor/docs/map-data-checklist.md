@@ -133,14 +133,18 @@ with no regressions. The split-light candidate also passes browser export/reopen
 native archive loading and archived click checks. Its exact full-scene export
 retains identical gameplay data and 49/95 entrance results. All seven repaired
 definitions and York scene pins are installed in the main library; 41 installed
-file hashes match the verified publication report. Remaining York failures are
-45 blocked routes and one storehouse receiver mismatch. See the
+file hashes match the verified publication report. This stage left 45 blocked
+routes and one storehouse receiver mismatch; the terrain repair below improves
+that result further. See the
 [raised-lane evidence](map-compilation-evidence.md#york-raised-lane-surface-restores-reusable-house-approaches-2026-10-20).
 
-The remaining storehouse mismatch has a staged raised-terrain floor repair.
-It retains the terrain's material regions and passes 16 moved normal click
-trips, 32 emitted doorway round trips and 16 missing-terrain rejections.
-Full-scene and browser verification remain pending; this candidate is unpublished.
+The raised-terrain floor repair improves the full York result to **74/95**
+entrance trips with no regressions, retaining all 254 doors and 72 jump pairs.
+It preserves material regions and passes 16 moved normal click trips, 32 emitted
+doorway trips and 16 missing-terrain rejections. Browser export/reopen and native
+archive loading/click checks pass. The remaining 21 failures are blocked routes;
+this audit has no receiver mismatches. The terrain definition and scene pin are
+installed in the main library, with all nine publication hashes verified.
 See the [raised-terrain evidence](map-compilation-evidence.md#york-raised-terrain-walking-surface-candidate-2026-10-20).
 
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.

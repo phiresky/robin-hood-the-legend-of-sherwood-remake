@@ -26,10 +26,27 @@ several receiving areas. Revised stage `york-raised-terrain-CKwI9s` generates
 receivers per area using the same five authored material regions, retaining the
 existing collision volume. Moved fixture `selected-neighbor-placements-j8Ty81`
 retains all 16 normal click trips; `saved-map-entrances-O5fiVi` retains all 32
-doorway round trips. Its full export `saved-map-exports-XtyXMw` and browser
-fixture `draft-scene-render-DaUsmb` are under verification.
-This candidate is unpublished; assembled regressions, broader neighboring joins
-and browser archive verification remain open.
+doorway round trips. Full export `saved-map-exports-XtyXMw` constructs natively
+with 170 areas, 1,227 sight obstacles, 254 doors, 72 jump pairs, 281,260 grid
+blocks and 342 elevation boundaries. `saved-map-entrances-RYIAah` improves from
+49/95 to 74/95 doorway round trips with no regressions. Doors 0, 1, 2, 16–23,
+39, 40, 57, 61, 63, 75–81, 84 and 85 are fixed. All 21 remaining failures are
+blocked routes; no receiver mismatches remain in this audit.
+
+Browser fixture `draft-scene-render-DaUsmb` exports and reopens matching gameplay,
+color and depth at 8400×6200. Its 134,076,276-byte archive has SHA-256
+`950f878fc93acbebb8f3e7e7c940d60094f290e4a12466535f81a9899a5de899`.
+The finished ZIP loads without base data, including color/depth/minimap/editor
+content, 17 sight obstacles, two masks, four door projections and 53,328 grid
+blocks. `exact-map-archive-89c_twyj` passes both archived normal click round trips.
+Publication dry run `york-raised-terrain-publication-dry-run` passes. Broader
+neighboring joins and full actor/rendered integration remain separate checks.
+
+Publication `york-raised-terrain-publication-installed` installs the repaired
+terrain definition and York scene pin. All nine installed hashes match the
+report. The model, its material regions and its derivatives are unchanged.
+Authoring tooling and fixtures are committed in `ac3e2849a`; there are no engine
+runtime changes. The full parity goal remains incomplete.
 
 ## York raised-lane surface restores reusable house approaches (2026-10-20)
 
