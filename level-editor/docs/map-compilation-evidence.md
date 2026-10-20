@@ -77,6 +77,20 @@ It constructs natively without base data, and `exact-map-archive-tog3r0_5`
 passes both archived normal click trips. Full-scene regression and publication
 remain pending for this fifth asset.
 
+Castle ownership candidate `york-castle-door-ownership-0TzkCY` moves two
+entrances from the courtyard terrain into the great hall and main keep.
+The authoring script preserves assembled door coordinates and connects the
+split interiors explicitly in the editor scene. The separate terrace entrance
+remains on its existing asset pending review. Hall fixture
+`selected-neighbor-placements-tg5wZt` passes all 16 moved normal click trips.
+Keep fixture `selected-neighbor-placements-zBpDsc` passes 12/16: at 180 degrees,
+the near return click selects an upper surface rather than ground. Direct
+doorway audit `saved-map-entrances-i8Fhki` passes all 16. Exposed-ground fixture
+`selected-neighbor-placements-Ec3JnG` passes all 16 normal click trips; the script
+retains both near and exposed probes. These isolated fixtures do not validate
+all upper passages, state controls or shared-room connectivity. Full assembled
+regression, browser verification and publication remain open for this candidate.
+
 ## York raised-terrain walking surface candidate (2026-10-20)
 
 The storehouse's remaining receiver mismatch is between the exported zero-height
