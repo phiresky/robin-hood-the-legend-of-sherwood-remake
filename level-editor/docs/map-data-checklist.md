@@ -19,6 +19,9 @@ failures (160/160 direct jumps, 288/288 unchanged interior clicks). Combat start
 still fails 20/160 probes; full-scene click results have no regressions.
 The local catalog's stale embedded gameplay was also repaired: all 1,287 entries
 now match their pinned descriptors. Index validation now checks that relationship.
+The stale Croisement03 group-033 derivative and preview have been regenerated
+with material colors and geometry preserved; full-library validation now passes
+all 1,287 assets. Rendered appearance of that new derivative remains unverified.
 All ten scenes reconstruct the same scene/gameplay data through the editor's
 index reader and the descriptor-file reader; York and Lincoln exports also
 match byte-for-byte through those two paths.

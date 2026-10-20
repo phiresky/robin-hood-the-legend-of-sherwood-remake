@@ -31,6 +31,21 @@ which the quantization preflight refuses. Its retry uses `--no-quantize` to reta
 those transforms. The retained-material path does not run atlas render
 comparisons; structural tests do not establish visual parity.
 
+Run `croisement03-group033-tinted-unquantized-20261020` completed and published
+the derivative and preview, with no failures. The original GLB remains
+218,851,448 bytes; the derivative is 84,434,176 bytes and preview 28,127,260 bytes.
+An accessor-by-accessor comparison of all 541 primitives confirms exact
+positions, UVs and indices; all 262 materials, nodes and scenes are unchanged.
+Both source and output match the receipt hashes. The source SHA-256 is
+`794815faacadfddf2a976559a8ce2609b21576743309dff2e749ffad38b62e64`;
+the derivative is
+`0d031d4df73ace7fd1f08b756475c0d7ead7b6801ec7313d86ef3e87207b702b`.
+The publication record contains backups and hashes for all four replaced
+derivative/receipt files. Its canonical catalog SHA-256 is
+`21b925ddeb151a26cc0feca2c92fad232aad21cebc41873e0619fe7fbeb28968`.
+After publication, `python3 refinement/asset_index.py --check` validates all
+1,287 assets successfully.
+
 ## Embedded catalog integrity
 
 The local publication step updated descriptor hashes without refreshing the
@@ -64,10 +79,12 @@ All ten saved scenes additionally reconstruct identical expanded documents and
 gameplay definitions through the two readers. This verifies catalog-driven map
 data construction, not a fresh browser image bake.
 
-Full-library derivative validation separately reports that
+Full-library derivative validation at the time separately reported that
 `croisement03-group-033` has a lossy receipt not bound to its current model.
 The scoped catalog repair did not rewrite that model or derivative and is not
-a passing full-library publication preflight.
+a passing full-library publication preflight. The subsequent
+[tinted derivative publication](#tinted-model-derivative-support) replaces that
+stale derivative and preview using the current source.
 
 ## Published golden-house jump endpoint inset
 
