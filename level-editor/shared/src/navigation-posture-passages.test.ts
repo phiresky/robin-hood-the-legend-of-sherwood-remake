@@ -5,6 +5,9 @@ import type { NavigationConnection } from "./assemble-navigation-joins.ts";
 import type { NavigationAnchorArea } from "./navigation-anchor.ts";
 import type { Point } from "./level.ts";
 import rampPartition from "../test-fixtures/entrance-ramp-partition.json" with { type: "json" };
+import foldedRampContacts from "../test-fixtures/folded-ramp-contacts.json" with { type: "json" };
+import type { HeightPlane } from "./gameplay-plane.ts";
+import type { Vec3 } from "./scene.ts";
 
 function fixture() {
   const from: NavigationAnchorArea = {
@@ -334,6 +337,47 @@ function foldedFixture() {
   };
   return { from, to, connection };
 }
+
+test("folded ramp contacts select the seam plane and retain precise floor exclusions", () => {
+  const point = (p: number[]): Point => [p[0]!, p[1]!];
+  const plane = (p: number[]): HeightPlane => [p[0]!, p[1]!, p[2]!];
+  const floor = (area: (typeof foldedRampContacts)[number]["from"]): NavigationAnchorArea => ({
+    plane: plane(area.plane),
+    polygon: area.polygon.map(point),
+    blockers: area.blockers.map((ring) => ring.map(point)),
+    receivingFloors: area.receivingFloors.map((floor) => ({
+      plane: plane(floor.plane),
+      polygon: floor.polygon.map(point),
+      holes: floor.holes.map((ring) => ring.map(point)),
+    })),
+  });
+  for (const fixture of foldedRampContacts) {
+    const from = floor(fixture.from),
+      to = floor(fixture.to);
+    const edge: [Vec3, Vec3] = [plane(fixture.edge[0]!), plane(fixture.edge[1]!)];
+    const connection: NavigationConnection = {
+      from: { owner: "ramp", region: "ramp", edge },
+      to: { owner: "ground", region: "ground", edge: [edge[1], edge[0]] },
+      overlap: [0, 1],
+    };
+    const before = structuredClone({ from, to, connection });
+    const crossings = navigationPosturePassages(connection, from, to, [from, to]);
+    assert.ok(crossings.length, `${fixture.rotation} degree contact must connect`);
+    assert.deepEqual({ from, to, connection }, before);
+    // The physical support check cannot replace endpoint collision checks.
+    const blocked = { ...from, blockers: [from.polygon] };
+    assert.deepEqual(navigationPosturePassages(connection, blocked, to, [blocked, to]), []);
+    assert.deepEqual(navigationPosturePassages(connection, from, to, [blocked, to]), []);
+    const unsupported = {
+      ...from,
+      receivingFloors: from.receivingFloors!.map((receiver) => ({
+        ...receiver,
+        holes: [receiver.polygon],
+      })),
+    };
+    assert.deepEqual(navigationPosturePassages(connection, unsupported, to), []);
+  }
+});
 
 test("folded physical neighbors connect in either order despite overlapping projections", () => {
   for (const reverse of [false, true]) {

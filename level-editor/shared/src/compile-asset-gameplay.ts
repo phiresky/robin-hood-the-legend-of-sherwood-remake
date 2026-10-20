@@ -1523,6 +1523,7 @@ function compileAssetGameplayAttempt(
     });
   const areas: (NavigationAnchorArea & {
     receivingPolygon?: Point[];
+    preciseBlockers?: Point[][];
     /** A raised receiver aliases this floor's coverage and holes. */
     authoredPlane?: HeightPlane;
     physical?: NavigationAnchorArea;
@@ -2006,6 +2007,19 @@ function compileAssetGameplayAttempt(
     }
   }
   const partitionPassages: PartitionPassage[] = [];
+  const receivingHoles = (piece: { blockers: Point[][]; preciseBlockers?: Point[][] }) => {
+    if (!piece.preciseBlockers?.length) return piece.blockers;
+    const matches = piece.blockers.map((hole) =>
+      piece.preciseBlockers!.filter(
+        (exact) => fixedPolygonBoolean("intersection", [hole], [[exact]]).length > 0,
+      ),
+    );
+    return matches.map((found, index) =>
+      found.length === 1 && matches.filter((other) => other.includes(found[0]!)).length === 1
+        ? found[0]!
+        : piece.blockers[index]!,
+    );
+  };
   navigationRegions = navigationRegions.flatMap((region) => {
     const planned = partitionSelfOverlappingNavigation(region, warnings);
     if (planned.regions.length === 1) return planned.regions;
@@ -2019,6 +2033,7 @@ function compileAssetGameplayAttempt(
             receivingFloors: from.pieces.map((piece) => ({
               plane: piece.plane,
               polygon: piece.receivingPolygon ?? piece.polygon,
+              holes: receivingHoles(piece),
             })),
           },
           {
@@ -2027,6 +2042,7 @@ function compileAssetGameplayAttempt(
             receivingFloors: to.pieces.map((piece) => ({
               plane: piece.plane,
               polygon: piece.receivingPolygon ?? piece.polygon,
+              holes: receivingHoles(piece),
             })),
           },
         ).length > 0,
@@ -3058,30 +3074,19 @@ function compileAssetGameplayAttempt(
               .map((other) => ({
                 plane: other.plane,
                 polygon: other.receivingPolygon ?? other.polygon,
+                holes: receivingHoles(other),
               })),
             blockers: motion.obstacles
               .filter((o) => o.state_id === 0)
               .map((o) => (precise ? (o.precise_polygon ?? o.polygon.points) : o.polygon.points)),
           };
         };
-        const folded = (1 + from.plane[1]) * (1 + to.plane[1]) < 0;
-        const preciseCandidates = folded
-          ? new Set(
-              navigationPosturePassages(connection, floor(from, true), floor(to, true)).map(
-                (candidate) => JSON.stringify(candidate),
-              ),
-            )
-          : undefined;
-        // Choose ordinary endpoints against both representations together;
+        // Choose endpoints against both representations together;
         // independently choosing their first valid candidates can miss a shared one.
-        const candidates = navigationPosturePassages(
-          connection,
-          floor(from),
-          floor(to),
-          folded ? undefined : [floor(from, true), floor(to, true)],
-        ).filter(
-          (candidate) => !preciseCandidates || preciseCandidates.has(JSON.stringify(candidate)),
-        );
+        const candidates = navigationPosturePassages(connection, floor(from), floor(to), [
+          floor(from, true),
+          floor(to, true),
+        ]);
         const [a, b] = connection.from.edge;
         const dx = b[0] - a[0],
           dy = b[1] - b[2] - (a[1] - a[2]);

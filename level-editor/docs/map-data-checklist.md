@@ -18,12 +18,16 @@ Browser export/reopen matches gameplay and rendered color/depth; its exact ZIP
 loads without a base datadir. Bridge gatehouse failures and broader parity gaps
 remain. See the publication evidence below; these results do not establish full parity.
 
-Gatehouse ramp compilation now prepares disconnected floor pieces independently
-and removes clipping-grid noise before projecting their clearance. All tested
-door bindings survive rotation; native ground-click trips improve to 16/32.
-The 90° and 180° approaches still stall on the ground, so the gatehouse metadata
-remains unpublished. The red-house and narrow-house placement checks retain
-16/16 each. These changes run during export and add no runtime solver.
+Gatehouse ramp compilation now prepares disconnected floor pieces independently,
+removes clipping-grid noise, and prepares folded crossings using the physical seam
+and each floor's precise exclusions. Crossing endpoints select the receiving
+plane that meets the seam and must fit both native and precise movement contours.
+All 32 copied/rotated/raised native ground-click trips pass; the red-house and
+narrow-house placement checks retain 16/16 each. Gatehouse metadata remains
+unpublished pending browser verification. The staged full York scene improves to
+90/95 doorway trips without regressions, retains all 130 stairs, and has the same
+four failed climb routes as the baseline. These changes run during export and add
+no runtime solver.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

@@ -10,7 +10,7 @@ export interface NavigationAnchorArea {
   coordinateSpace?: "projected" | "world";
   floorPatches?: { plane: HeightPlane; boundary: Point[] }[];
   /** Physical receiving contours in projected coordinates, separate from movement clearance. */
-  receivingFloors?: { plane: HeightPlane; polygon: Point[] }[];
+  receivingFloors?: { plane: HeightPlane; polygon: Point[]; holes?: Point[][] }[];
 }
 
 /** Receiving contours pass through the fixed clipping grid before binding. */

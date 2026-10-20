@@ -7,6 +7,7 @@ import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
 import type { Point } from "./level.ts";
 import { prepareFoldedNavigationPassage } from "./folded-navigation-passage.ts";
 import { closeNavigationSeams } from "./close-navigation-seams.ts";
+import { planeHeight } from "./gameplay-plane.ts";
 
 /** Find collision-checked crossings on an explicitly matched projected seam. */
 export function navigationPosturePassages(
@@ -18,6 +19,16 @@ export function navigationPosturePassages(
   if (from.coordinateSpace === "world" || to.coordinateSpace === "world")
     throw new Error("Posture passages require projected movement contours");
   const [a, b] = connection.from.edge;
+  // A connected region may contain several slopes. The seam selects its
+  // receiving plane, independently of the order in which those floors arrived.
+  const seamFloor = (area: NavigationAnchorArea) => {
+    const matching = area.receivingFloors?.filter((floor) =>
+      [a, b].every((p) => Math.abs(planeHeight(floor.plane, [p[0], p[1] - p[2]]) - p[2]) < 1e-4),
+    );
+    return matching?.length === 1 ? { ...area, plane: matching[0]!.plane } : area;
+  };
+  from = seamFloor(from);
+  to = seamFloor(to);
   const dx = b[0] - a[0],
     dy = b[1] - b[2] - (a[1] - a[2]);
   const length = Math.hypot(dx, dy);
@@ -32,7 +43,7 @@ export function navigationPosturePassages(
   if (end <= start) return [];
   const folded =
     (1 + from.plane[1]) * (1 + to.plane[1]) < 0
-      ? prepareFoldedNavigationPassage(from, to)
+      ? prepareFoldedNavigationPassage(from, to, precise)
       : undefined;
   const obstacles = (area: NavigationAnchorArea) =>
     area.blockers.map((points) => ({
@@ -122,7 +133,12 @@ export function navigationPosturePassages(
     ];
     middles.set(middle.join(","), middle);
     if (folded) {
-      const crossing = folded(middle, normal, tangent, depth);
+      // Integer projection can change reconstructed height dramatically on a
+      // nearly edge-on floor. Sweep through the actual shared world-space seam.
+      const crossing = folded(middle, normal, tangent, depth, [
+        a[0] + ((b[0] - a[0]) * offset) / length,
+        a[1] + ((b[1] - a[1]) * offset) / length,
+      ]);
       if (crossing) {
         const key = `${crossing.outside}/${crossing.inside}`;
         if (!seen.has(key)) {

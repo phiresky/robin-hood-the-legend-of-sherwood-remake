@@ -250,6 +250,41 @@ physical seam from its integer projected handoff while retaining native endpoint
 and swept-collision checks. The evidence does not yet prove that correcting
 that distinction alone resolves all remaining approaches.
 
+### Folded gatehouse contacts pass moved native traversal
+
+The candidate separates physical receiving exclusions from rounded movement
+obstacles. Ground holes beneath a supported ramp are subtracted from the ground
+before joining the two floors' physical support. A one-to-one overlap match
+retains each available precise exclusion; unmatched or ambiguous holes keep their
+grid contour. Endpoint checks still use both native and precise movement
+representations.
+
+Physical sweeps use the exact shared seam rather than reconstructing two different
+heights from its rounded screen coordinate. Endpoint search covers a
+footprint-sized tangential neighborhood, and each endpoint must lie on its own
+receiving floor. Where a region contains multiple slopes, the seam selects the
+matching plane instead of inheriting the first piece's plane.
+
+The isolated candidate `selected-neighbor-placements-jNd8zj` passes 32/32 native
+ground-click round trips. Main-compiler fixtures
+`selected-neighbor-placements-OE61KX` and `selected-neighbor-placements-cVAXiv`
+confirm all 32 after retaining unmatched holes and adding explicit endpoint
+receiving checks. These cover two independent copies, rotations 0°, 37°, 90°,
+180°, and elevations 0/40. Red-house fixture
+`selected-neighbor-placements-IKDyfT` and narrow-house fixture
+`selected-neighbor-placements-NIotvc` each retain all 16 trips.
+
+The focused suite passes 209 tests, including captured 90°/180° seams and negative
+checks for native/precise endpoint blockers and missing physical support.
+Installed-scene export `saved-map-exports-p65tqe`, before the final endpoint
+receiving guard, retains 88/95 doorway trips in `saved-map-entrances-lVcs2C` and all
+130 stairs. Full-scene gatehouse-stage export `saved-map-exports-XKxUWP`
+completes in 131 seconds. `saved-map-entrances-c3ZUkN` improves to 90/95 doorway
+trips, recovering both gatehouse entrances with no new failures. All 130 stairs
+pass; the four failed climbs are the same four routes as the baseline.
+Browser snapshot `draft-scene-render-0y3eth` is being checked before publication.
+Gatehouse definitions remain unpublished; no runtime changes are part of this repair.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
