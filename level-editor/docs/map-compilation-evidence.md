@@ -147,6 +147,22 @@ their blocked coverage. This is diagnostic evidence, not a compiled/native
 success: the compiler must still retain that coverage at joined ordinary
 floor contacts and the moved/native fixtures must be rerun.
 
+Private source snapshot `precision-contact-source-v_mifb0e` isolates the proposed
+fix from the ongoing browser verification. A single partitioned piece may retain
+precise blockers even when its rounded obstacle no longer matches them exactly.
+Coverage reconstruction now restores that obstacle from its stored precise
+blocked coverage; the compiler permits this recovery for a single piece with
+precise blockers. Integer-only pieces retain their previous serialization.
+The snapshot's 177 compiler/contour tests pass, including the captured regression.
+Native fixtures `selected-neighbor-placements-RxO0QB` and `wBByi8` pass all
+16 narrow-house ground-click round trips. The latter removes an unnecessary
+experimental expansion of landing classification.
+
+This fix is still private to the snapshot and has not changed the main compiler.
+Full snapshot export `saved-map-exports-MeiB0e` was started for broader verification.
+Browser verification separately continues against the committed compiler.
+Neither pending check is counted as complete or as publication evidence.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
