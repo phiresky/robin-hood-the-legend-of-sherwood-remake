@@ -562,6 +562,25 @@ preserve the crenellated transition and reject unsupported geometry. Enlarging
 the collision boundary without support, changing the door type just to shorten
 the animation, or adding a runtime geometry solver would not establish parity.
 
+`stage-york-wall-animation-apron.mjs` investigates using 24 units of the
+existing lower landing as an additional lift segment. It splits the landing
+without changing its physical plane or combined coverage (fixed-point XOR
+residual 0.000019067688299401198 square units), joins the two climb segments
+with local sockets, and moves the low entrance to the remaining landing.
+Stage `york-wall-animation-apron-shM98Y`, reproduced with complete model pins
+as `york-wall-animation-apron-UIsMWB`, passes 24/32 native placement routes
+in `selected-neighbor-placements-N2CG8d`. All eight routes at 180 degrees
+still fail. Full-scene compilation `staged-map-export-twJ2I7` also reports
+that the joined surfaces cannot form one connected traversal area and retries
+without the climb. This candidate is unpublished and does not fix the defect.
+
+The runtime applies its fixed upper-door offset at mission loading, before
+computing door penalties. A possible small data-format extension would carry
+an export-prepared inside approach, with loading using that point directly.
+Its animation behavior and collision safety still require native proof; no
+such production change has been made. Any solution must also preserve
+view-independent physical support and the actual crenellated animation.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
