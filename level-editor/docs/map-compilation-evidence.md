@@ -193,6 +193,34 @@ Its `browser-snapshot.zip` retains the five built files, and
 Library resources remain external pinned files, not embedded test shortcuts.
 The manifest records finished maps; a running log is not a completed round trip.
 
+## Supported climb entry footprints after rotation
+
+The compiler now prepares a precise entry envelope for unobstructed, convex,
+single-plane climb floors when the projected outline cannot contain the native
+actor box at an authored entry. Both the authored and rounded entry positions
+must lie inside the floor. Before accepting the envelope it computes the
+resulting allowed actor-center region and rejects any extension outside the
+authored projected floor. Receiving geometry is unchanged. Floors with static
+holes, solid collision or changing obstacles retain their existing boundaries.
+This is export-time preparation in the existing format, with no engine changes.
+
+`local-stair-placements-ANZeJK` compiles the published postern at four rotations
+and two elevations. All 32 native player-click climb routes pass, including both
+90-degree directions at both elevations. Its eight raised-ground checks still
+reject the disconnected lower ladder. Fresh complete Derby export
+`saved-map-exports-0fEkZO` passes all four climb and 28 stair routes.
+
+The new envelope tests check complete entry footprints, containment of every
+allowed actor-center region, idempotence, unsupported/concave floors, and static
+and changing barrier identities. Together with the existing compiler/physical
+region tests, 198 tests pass; all 80 map/roof export tests also pass without
+changing their native fixtures. Targeted lint and formatting pass.
+
+The built browser snapshot at `c24c55429` predates this additional correction;
+its map results cannot establish the new envelope behavior. The native placement
+and complete Derby checks above use fresh compiler output. Rendered actor
+integration and broader asset/state coverage remain incomplete.
+
 ## York entrance-ramp reproduction
 
 `stage-york-entrance-ramps.mjs` prepares an unpublished candidate for the red

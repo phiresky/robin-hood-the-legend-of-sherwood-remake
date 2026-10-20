@@ -8,6 +8,7 @@ import { physicalStairFloor } from "./physical-stair-floor.ts";
 import { projectStairClearance } from "./project-stair-clearance.ts";
 import { stairCenterRegion } from "./stair-center-region.ts";
 import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
+import { climbEntryClearance } from "./climb-entry-clearance.ts";
 
 export interface PhysicalStairInput {
   /** Prepare native walking clearance for stair lifts, excluding ladders and walls. */
@@ -85,7 +86,22 @@ export function compilePhysicalStairArea(input: PhysicalStairAreaInput): {
     roundedClearance && stairCenterRegion(roundedClearance, clearanceHalf).length < 3
       ? projectStairClearance(navigation.boundary, floor.plane, true, clearanceOptions)
       : undefined;
-  const clearanceBoundary = preciseClearance ?? roundedClearance;
+  const projectedFloor: Point[] = floor
+    .splitRing(navigation.boundary)
+    .map(([x, y]) => [x, y - floor.heightAt([x, y])]);
+  const entries: Point[] = input.doors.flatMap((door) => {
+    const point: Point = [door.inside[0], door.inside[1] - door.inside[2]];
+    return [point, [Math.round(point[0]), Math.round(point[1])]];
+  });
+  const entryClearance =
+    input.prepareClimbingClearance && !floor.patches && collision.length === 0
+      ? climbEntryClearance(
+          preciseClearance ?? roundedClearance ?? projectedFloor,
+          projectedFloor,
+          entries,
+        )
+      : undefined;
+  const clearanceBoundary = entryClearance ?? preciseClearance ?? roundedClearance;
   const project = (point: Point): Point => {
     const result: Point = [Math.round(point[0]), Math.round(point[1] - floor.heightAt(point))];
     if (result.some((value) => !Number.isFinite(value) || value < -32768 || value > 32767))
@@ -106,7 +122,9 @@ export function compilePhysicalStairArea(input: PhysicalStairAreaInput): {
           ? clearanceBoundary.map(([x, y]): Point => [Math.round(x), Math.round(y)])
           : floor.splitRing(navigation.boundary).map(project),
       },
-      ...(preciseClearance ? { precise_polygon: preciseClearance } : {}),
+      ...((entryClearance ?? preciseClearance)
+        ? { precise_polygon: entryClearance ?? preciseClearance }
+        : {}),
       obstacles: collision.map((obstacle) => ({
         state_id: obstacle.stateId,
         polygon: { points: floor.splitRing(obstacle.polygon).map(project) },

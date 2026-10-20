@@ -34,9 +34,12 @@ combinations. Unit checks, eight-state browser pixel comparisons and the full
 Leicester ZIP/reopen/rebake/native-load checks pass with 39 appearance regions.
 See [appearance partitioning](map-compilation-evidence.md#derby-archive-and-remaining-appearance-budget-failure).
 Fresh Derby compilation also restores all four climb routes by retaining authored
-entry points during clearance preparation; all 28 stair routes pass. Moved
-postern climbs improve from 12/32 to 28/32, with four 90-degree cases still
-blocked. Its verified browser ZIP predates this climb fix.
+entry points during clearance preparation; all 28 stair routes pass. Preparing
+entry footprints without extending supported actor-center positions now also
+passes all 32 moved postern climbs at four rotations and two elevations.
+Static/changing barriers retain their existing boundaries. Its verified browser
+ZIP predates these climb fixes. See
+[rotated climb footprints](map-compilation-evidence.md#supported-climb-entry-footprints-after-rotation).
 
 The York red-house ramp and terrain connection metadata are now **published**.
 The reviewed export passes 88/95 full-scene doorway trips, recovering one entrance without
