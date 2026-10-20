@@ -4,6 +4,31 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Turret floor texture diagnosis and gate audit correction (2026-10-20)
+
+Review-camera ray probes now identify the actual triangle under each sampled
+pixel. In `annex-turret-mesh-review-11/after.hits.json`, all four probes through
+the gray band hit floor node `building-228` (faces 37 and 42), not the wall.
+The ineffective experimental wall UV changes were discarded. The regenerated
+model has the same SHA-256 as candidate 05; the new diagnostic does not alter
+geometry, UVs or texture bytes. The floor texture defect remains unresolved.
+
+The ordinary-passage audit previously assumed that an inactive control must
+block PCs. Rights-swapping controls now carry per-door expectations for initial,
+applied and reset states from the exported descriptor. The native audit checks
+PC, soldier and civilian lock flags and lock-picking availability against those
+expectations, and uses the PC permission for round trips and player clicks.
+This is verification-only; runtime behavior is unchanged. NPC movement through
+the passage still needs a complete actor traversal check.
+
+Native audit `passage-control-audit-DdSDAu` passes all three annex states, including
+both PC click directions and round trips. It also verifies that the NPC lock
+flags change from locked to unlocked and back while PC access stays open.
+Installed terrace regression `passage-control-audit-yJABcE` passes its three
+states with the corrected audit. Formatting, lint and Python compilation pass.
+Negative fixture `passage-rights-negative-9ydoxjzq` deliberately expects an
+unlocked soldier in the initial state and fails on that exact lock assertion.
+
 ## Turret walking outline clipped to repaired mesh (2026-10-20)
 
 The annex staging tool accepts a pinned staged-model library and intersects the

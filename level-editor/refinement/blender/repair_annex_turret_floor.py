@@ -31,6 +31,20 @@ def render_review(path, center, scale):
     scene.camera = camera
     scene.render.filepath = str(path.resolve())
     bpy.ops.render.render(write_still=True)
+    probes = []
+    rotation = camera.matrix_world.to_quaternion()
+    for x, y in [(300, 140), (320, 137), (320, 145), (340, 145)]:
+        origin = camera.location + rotation @ Vector(((x / 640 - 0.5) * scale,
+                                                      (0.5 - y / 640) * scale, 0))
+        hit, position, normal, face, obj, matrix = scene.ray_cast(
+            bpy.context.evaluated_depsgraph_get(), origin, rotation @ Vector((0, 0, -1)))
+        if hit:
+            polygon = obj.data.polygons[face]
+            probes.append({'pixel': [x, y], 'node': obj.get('source_node'), 'face': face,
+                           'position': list(position),
+                           'vertices': [list(matrix @ obj.data.vertices[i].co) for i in polygon.vertices],
+                           'uv': [list(obj.data.uv_layers.active.data[i].uv) for i in polygon.loop_indices]})
+    path.with_suffix('.hits.json').write_text(json.dumps(probes, indent=2) + '\n')
     scene.camera = None
     bpy.data.objects.remove(camera, do_unlink=True)
     bpy.data.cameras.remove(camera_data)

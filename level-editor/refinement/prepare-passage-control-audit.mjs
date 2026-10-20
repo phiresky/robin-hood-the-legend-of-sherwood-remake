@@ -29,6 +29,28 @@ for (const row of manifest.results) {
         patches: [{ index, id: transition.id }],
         doors,
         reject_alternatives: true,
+        ...(transition.door_links.mode === "swap-rights"
+          ? {
+              rights_by_door: Object.fromEntries(
+                doors.map((index) => {
+                  const door = geometry.doors[index - buildingDoorCount];
+                  const rights = (suffix) =>
+                    Object.fromEntries(
+                      ["locked_pc", "locked_npc_villain", "locked_npc_civilian", "unlockable"].map(
+                        (key) => {
+                          assert.equal(typeof door[key + suffix], "boolean");
+                          return [key, door[key + suffix]];
+                        },
+                      ),
+                    );
+                  return [
+                    index,
+                    { closed: rights(""), open: rights("_after_patch"), reset: rights("") },
+                  ];
+                }),
+              ),
+            }
+          : {}),
         ...(unlocks.length ? { unlock_before_open: unlocks } : {}),
       },
     ];

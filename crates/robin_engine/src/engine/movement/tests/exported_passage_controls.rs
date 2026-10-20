@@ -70,6 +70,21 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                 for door in doors {
                     let index = usize::try_from(door.as_u64().unwrap()).unwrap();
                     let runtime = &engine.script_domains.interactables.doors[index];
+                    // A rights change can affect NPCs while leaving PC access open.
+                    let rights = &probe["rights_by_door"][index.to_string()][state];
+                    let expected = if rights.is_null() {
+                        state == "open"
+                    } else {
+                        for (key, actual) in [
+                            ("locked_pc", runtime.locked_pc),
+                            ("locked_npc_villain", runtime.locked_npc_villain),
+                            ("locked_npc_civilian", runtime.locked_npc_civilian),
+                            ("unlockable", runtime.unlockable),
+                        ] {
+                            assert_eq!(Some(actual), rights[key].as_bool(), "{file}: door {index}, {state}, {key}");
+                        }
+                        !rights["locked_pc"].as_bool().unwrap()
+                    };
                     assert!(matches!(
                         runtime.door_type,
                         crate::gate::DoorType::Default | crate::gate::DoorType::Gate
@@ -136,7 +151,7 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                             );
                             gate_search.push(serde_json::json!({
                                 "direct": direct, "route_available": path.is_some(),
-                                "passed": path.is_some() == (state == "open"),
+                                "passed": path.is_some() == expected,
                             }));
                         }
                     }
@@ -148,7 +163,6 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                         Some(&sprite),
                         |_, _, _| {},
                     );
-                    let expected = state == "open";
                     let player_clicks: Vec<_> = if expected || probe["reject_alternatives"] == true
                     {
                         [true, false].into_iter().map(|direct| {

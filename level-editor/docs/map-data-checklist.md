@@ -65,6 +65,12 @@ Clipping the staged receiver to that mesh now passes all 713 sampled floor point
 retains the gate and all 35 entrance trips, and preserves applied-state gate
 traversal. It remains unpublished pending the other checks above; see the
 [clipped-outline evidence](map-compilation-evidence.md#turret-walking-outline-clipped-to-repaired-mesh-2026-10-20).
+Ray probes now locate the gray band on the floor itself; ineffective wall UV
+experiments were discarded. The gate audit now distinguishes PC access from
+NPC locks instead of assuming every inactive gate blocks PCs. Annex and installed
+terrace initial/applied/reset native audits pass. Full NPC traversal,
+moved assemblies and the visual repair remain open; see the
+[floor and permission audit](map-compilation-evidence.md#turret-floor-texture-diagnosis-and-gate-audit-correction-2026-10-20).
 See the
 [rotated lighting evidence](map-compilation-evidence.md#multi-height-terrace-lighting-survives-asset-rotation-2026-10-20),
 [light-selector repair](map-compilation-evidence.md#terrace-light-selectors-restored-to-physical-floors-2026-10-20),
