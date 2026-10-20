@@ -4,6 +4,29 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Ladder oak: independent entrance and rotated-floor failures
+
+The current published ladder oak still does not pass traversal. In
+`work/needs-review/map-compile/local-stair-placements-Ewqp69`,
+`blocked-lift-legs.json` identifies the upper platform's permanent obstacle as
+blocking the midpoint-to-outside legs of entrances 1 and 2. This is distinct
+from the climb interior.
+
+The diagnostic `ladder-oak-passage-diagnostic-bn45mti5` removes only empty
+passage-state requirements from copied descriptors. Its native player-click
+test passes 40 of 48 routes. Both elevations fail the four ground-to-upper
+and upper-to-ground routes at 90 degrees; upper-to-upper routes pass.
+This diagnostic is not a production fix and does not establish safe clearance.
+
+`local-stair-placements-Ewqp69/check-climb-body-support.mts` independently
+checks the exported climb polygon with the native [6, 3] half footprint.
+Its `climb-body-support.json` finds one connected supported center region,
+containing all three entrances, at 0, 37 and 180 degrees at both elevations.
+At 90 degrees it finds no supported center region. This narrows the next
+investigation to the folded climb floor's projected collision envelope, in
+addition to the separate upper entrance obstruction. It does not justify
+removing obstacles or expanding the floor without a support check.
+
 ## Croisement01 map-only browser round trip
 
 On 2026-10-20, `map-bake-library.html?map=croisement01&roundtrip=1&map-only=1`
