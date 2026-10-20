@@ -1,12 +1,58 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import clipping, { type MultiPolygon } from "polygon-clipping";
 import type { NavigationPiece } from "./assemble-navigation-regions.ts";
+import type { Point } from "./level.ts";
 import {
   compileTransitionObstacles,
   compilePhysicalTransitionObstacles,
   type PlacedTransitionBlocker,
 } from "./compile-movement-transitions.ts";
+
+test("translated tangent climb blockers do not fail clipping or erase thin real collisions", () => {
+  const fixture: { boundary: Point[]; blocker: Point[] } = JSON.parse(
+    readFileSync(new URL("../test-fixtures/tangent-climb-blocker.json", import.meta.url), "utf8"),
+  );
+  const verify = () => {
+    for (const offset of [0, -1600, -2200, 8000]) {
+      const place = (ring: Point[], dx = 0): Point[] =>
+        ring.map(([x, y]) => [x + offset + dx, y + offset]);
+      for (const penetration of [0, -0.01, 0.01]) {
+        const result = compilePhysicalTransitionObstacles(
+          place(fixture.boundary),
+          [],
+          [0, 0, 0],
+          [
+            {
+              transition: "gate",
+              applied: false,
+              plane: [0, 0, 0],
+              polygon: place(fixture.blocker, penetration),
+              holes: [],
+            },
+          ],
+        );
+        assert.equal(result.obstacles.length > 0, penetration < 0);
+        assert.equal(result.pairs.size, penetration < 0 ? 1 : 0);
+      }
+    }
+  };
+  verify();
+  const original = clipping.intersection;
+  try {
+    clipping.intersection = () => {
+      throw new Error("Unable to complete output ring: injected kernel failure");
+    };
+    verify();
+    clipping.intersection = () => {
+      throw new Error("unexpected clipping failure");
+    };
+    assert.throws(verify, /unexpected clipping failure/);
+  } finally {
+    clipping.intersection = original;
+  }
+});
 
 test("physical collision removes a clipped seam spike without changing the solid", () => {
   const polygon: [number, number][] = [

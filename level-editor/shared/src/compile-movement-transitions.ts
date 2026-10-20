@@ -7,7 +7,7 @@ import { movementVolumeHeightSlice } from "./movement-volume-height-slice.ts";
 import { quantizeGeneratedMotionPolygon, simplifyMotionRing } from "./motion-quantization.ts";
 import { preserveMovementBoundary } from "./preserve-movement-boundary.ts";
 import { assembleMovementContour } from "./assemble-movement-contour.ts";
-import { fixedClipping } from "./fixed-polygon-boolean.ts";
+import { fixedClipping, fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import { subtractMovementCollision } from "./subtract-movement-collision.ts";
 
 export interface PlacedTransitionBlocker {
@@ -171,7 +171,24 @@ function compileTransitionObstaclesInFrame(
           ]),
         );
       clipped = fragments.length ? polygonClipping.union(fragments[0]!, ...fragments.slice(1)) : [];
-    } else clipped = polygonClipping.intersection(walkable, [blocker.polygon, ...blocker.holes]);
+    } else {
+      try {
+        clipped = polygonClipping.intersection(walkable, [blocker.polygon, ...blocker.holes]);
+      } catch (error) {
+        if (
+          !physical ||
+          !(error instanceof Error) ||
+          !error.message.startsWith("Unable to complete output ring")
+        )
+          throw error;
+        // Tangent placed edges can prevent floating-point ring stitching.
+        // Resolve that intersection at subpixel precision, retaining actual
+        // overlap and control identities rather than omitting the physical lift.
+        clipped = fixedPolygonBoolean("intersection", walkable, [
+          [blocker.polygon, ...blocker.holes],
+        ]);
+      }
+    }
     // Keep the complete contour after testing overlap. Rounding its clipped
     // intersections would change narrow routes along the movement envelope.
     if (preserveBoundary && clipped.length && !blocker.terrainVolume) {

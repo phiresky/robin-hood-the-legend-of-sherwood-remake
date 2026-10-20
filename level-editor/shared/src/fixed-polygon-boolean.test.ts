@@ -4,6 +4,31 @@ import { readFileSync } from "node:fs";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 import type { Polygon } from "polygon-clipping";
 
+test("high-precision physical clipping preserves nonempty full-range intersections", () => {
+  for (const offset of [0, 2200, 12000]) {
+    const rectangle = (low: number, high: number): Polygon => [
+      [
+        [offset + low, offset + low],
+        [offset + high, offset + low],
+        [offset + high, offset + high],
+        [offset + low, offset + high],
+      ],
+    ];
+    const result = fixedPolygonBoolean(
+      "intersection",
+      rectangle(0, 100),
+      [rectangle(10, 90)],
+      2 ** 32,
+    );
+    assert.equal(result.length, 1, "The locked clipping patch must preserve a contained rectangle");
+    assert.equal(result[0]!.length, 1);
+    assert.deepEqual(
+      result[0]![0]!.slice(0, -1).sort((a, b) => a[0] - b[0] || a[1] - b[1]),
+      rectangle(10, 90)[0]!.sort((a, b) => a[0] - b[0] || a[1] - b[1]),
+    );
+  }
+});
+
 test("landing comparison preserves real seam changes among nearly coincident edges", () => {
   const [precise, rounded]: Polygon[] = JSON.parse(
     readFileSync(

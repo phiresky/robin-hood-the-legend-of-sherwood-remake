@@ -76,6 +76,14 @@ no per-tick work. Browser ZIP/reopen preserves gameplay and color/depth, and
 the exact archive retains all 40 climb routes, 130 stair routes and 95 initial
 doorway expectations. Rendered actor animation review remains outstanding;
 these results do not certify full parity.
+The copied wall-climb clipping warning is also resolved: tangent contacts no
+longer defeat physical obstacle construction. All eight moved placement exports
+retain physical compilation and all 32 native routes pass. A regression also
+checks the locked clipping-library patch, after a nested unpatched dependency
+installation was found and corrected. Fresh full York retains 40/40 climb routes,
+130/130 stair routes and 95/95 doorway expectations in each lock-state snapshot.
+Its descriptor matches the previously verified export. All sixteen missing-landing
+controls still reject unsupported connections.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

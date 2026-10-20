@@ -618,6 +618,42 @@ The game binary builds successfully with `cargo build -p robin_rs --bin robin`.
 Editor typechecking, focused lint/format checks and Rust formatting pass.
 Exports using `approach_prepared` require this updated loader.
 
+### Tangent physical climb collision survives translation
+
+Captured intersection `climb-clipping-inputs-WwmLWO/0-intersection.json`
+reproduces the copied climb warning inside physical transition-obstacle
+construction. The placed floor and solid only touch. Floating-point ring
+stitching fails on that contact, although translating the same assembly can
+avoid the failure. The compiler now retries that specific physical intersection
+at fixed subpixel precision. Other errors still propagate. It retains the
+physical lift instead of dropping its construction after the numerical error.
+
+The regression covers four translations, tangent and separated contours, and
+a real 0.01-unit overlap. It also injects a ring-stitching failure for every
+case: true overlap still allocates its collision/control identity, and empty
+contact does not. Existing physical clipping and control-state tests pass.
+
+An environment check found that `shared/node_modules` resolved a nested
+unpatched `clipper-lib` installation despite the workspace's locked patch.
+Restoring dependencies with `pnpm install --frozen-lockfile` fixes the
+resolution without changing manifests, lockfile or patch. A separate
+high-precision rectangle regression detects the unpatched installation's
+incorrect empty intersections.
+
+With the intended dependencies, `selected-neighbor-placements-VCsvbM`
+retains physical compilation in all eight exports, with no physical-navigation
+warning, and passes all 32 native climb routes. The focused compiler suite
+passes 208 tests. The missing-landing fixture
+`selected-neighbor-placements-jxjv8Q` rejects all sixteen unsupported bindings.
+
+Fresh full York `saved-map-exports-kOnKJD` passes 40/40 native climb routes
+and 130/130 stair routes. `authored-door-states-SkumTp` passes all 95 doorway
+expectations in each of its initial and changed lock-state snapshots. Its full
+level descriptor is identical to `saved-map-exports-HKca3X`, preserving the
+previous exact-ZIP gameplay verification. Typechecking and formatting pass.
+This repair adds no engine changes or per-tick work. Rendered actor review and
+broader feature coverage remain separate outstanding checks.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
