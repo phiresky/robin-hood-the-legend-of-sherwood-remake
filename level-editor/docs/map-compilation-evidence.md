@@ -285,6 +285,30 @@ pass; the four failed climbs are the same four routes as the baseline.
 Browser snapshot `draft-scene-render-0y3eth` is being checked before publication.
 Gatehouse definitions remain unpublished; no runtime changes are part of this repair.
 
+Lock-aware audit `authored-door-states-9RTDDT` passes 93/95 checks in both
+`initial` and `after` snapshots. The two geometry failures remain at
+`[2729,1488]` and `[1440,2223]`. These snapshots validate authored lock values
+and traversal authorization, not mission-trigger execution.
+
+### Gatehouse ramp publication verified
+
+Browser snapshot `draft-scene-render-0y3eth` completes real export/reopen checks:
+3136×2318 pixels, 47,167,273 ZIP bytes, SHA-256
+`776347bd43cce80333ca98b2f7068caee387acb5fc08c982a63f8837926f5ead`.
+Reopened gameplay and rendered color/depth match. The exact archive constructs
+the native map without a base datadir: 1,235 sight obstacles, 28 masks, 257 door
+projections and 289,296 fast-grid blocks. Archive audit
+`exact-map-archive-_93a104i` reproduces 90/95 raw doorway trips and passes all
+130 stair routes.
+
+`york-gatehouse-ramp-publication-installed` publishes the reviewed gatehouse
+definition and updates its York scene pin. All nine installed hashes match
+the report. Models and derivatives are unchanged; only the gatehouse descriptor,
+catalog entry and saved-scene pin change. Unrelated scene edits are preserved.
+Fresh installed export `saved-map-exports-c0zI4K` is running and is not yet
+counted as additional traversal evidence. Remaining geometry and climb gaps
+are unchanged; this publication does not certify full parity.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall

@@ -23,11 +23,11 @@ removes clipping-grid noise, and prepares folded crossings using the physical se
 and each floor's precise exclusions. Crossing endpoints select the receiving
 plane that meets the seam and must fit both native and precise movement contours.
 All 32 copied/rotated/raised native ground-click trips pass; the red-house and
-narrow-house placement checks retain 16/16 each. Gatehouse metadata remains
-unpublished pending browser verification. The staged full York scene improves to
-90/95 doorway trips without regressions, retains all 130 stairs, and has the same
-four failed climb routes as the baseline. These changes run during export and add
-no runtime solver.
+narrow-house placement checks retain 16/16 each. Gatehouse metadata is now
+published after browser export/reopen and exact-ZIP native verification. Full York
+improves to 90/95 raw doorway trips (93/95 when authored locks are respected),
+retains all 130 stairs, and has the same four failed climb routes as the baseline.
+These changes run during export and add no runtime solver.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.
