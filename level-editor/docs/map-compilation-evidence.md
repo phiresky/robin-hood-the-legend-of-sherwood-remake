@@ -46,6 +46,16 @@ records archive paths and descriptor hashes). Across these ten snapshots only
 the identified York floor changes. Its complete output exactly matches the
 targeted candidate that passed 1,263/1,296 unchanged native clicks.
 These scans do not upgrade older snapshots to current full-compiler evidence.
+The eight moved, rotated and elevated market-house assemblies from
+`connected-jump-placements-LZaOLx` also have zero changed contours in
+`motion-spike-cleanup-DeEIGA`.
+
+`market-seam-hidden-retries-7w2m_ecv` retries the exact 33 remaining ordinary-click
+failures with hidden-floor selection, preserving coordinates and descriptor
+bytes. Thirty pass; the three remaining probes are all line 57, the previously
+identified red/rear-house takeoff. Together, ordinary and hidden selection cover
+1,293 of the same 1,296 probes. This is not a claim that hidden selection fixes
+the three remaining approaches or that other gameplay checks are complete.
 
 The movement contour for York sector 307 contains a near-zero-width inward slit:
 two vertices near `[177.57867,1355.26965]` enclose a spike reaching
