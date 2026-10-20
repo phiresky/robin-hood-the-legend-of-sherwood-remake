@@ -50,8 +50,11 @@ owner and height, passes 16 moved/copied/elevated native trips, and improves
 full York to 92/95 raw doorway trips; the remaining three are authored locks.
 All 130 stairs pass and the four existing climb failures remain. Access from
 height-matched editor terrain passes 16 native round trips, and lowering that
-terrain by two units rejects all 16. A bounded low-edge correction for flat
-ground is under review; visual verification and publication remain pending.
+terrain by two units rejects all 16. A bounded low-edge correction also passes
+all 16 flat-ground approaches. Full York passes 95/95 doorway expectations in
+both authored door-state snapshots, including intended lock denials; this does
+not prove mission-trigger execution. Browser verification and publication remain
+pending.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

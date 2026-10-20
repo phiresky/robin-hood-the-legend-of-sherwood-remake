@@ -97,10 +97,13 @@ fn building_click_round_trip(
     let position = element.sprite.position_iface.clone();
     element.sprite = sprite.clone();
     element.sprite.position_iface = position;
-    let receiver = engine
-        .get_projection_area_index(&assets, handle, layer, source)
-        .ok_or("terrain source has no receiver")?;
-    engine.set_obstacle_and_material(&assets, owner, Some(receiver));
+    let receiver = engine.get_projection_area_index(&assets, handle, layer, source);
+    // Zero-height ground may use the implicit receiver. Elevated approaches
+    // still require an exported physical receiving surface.
+    if receiver.is_none() && (layer != 0 || world[2].as_f64().unwrap().abs() > 1e-6) {
+        return Err("terrain source has no receiver".into());
+    }
+    engine.set_obstacle_and_material(&assets, owner, receiver);
     if !engine
         .world
         .fast_grid

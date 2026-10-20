@@ -495,9 +495,17 @@ Stage `york-south-town-floor-UXqE6r`, tested in
 `selected-neighbor-placements-6FgPcO`, passes all eight elevated flat-ground
 approaches. The eight zero-height approaches encounter an overly strict native
 test precondition: zero-height ground legitimately has no explicit receiving
-obstacle. A test-only correction is being validated; production movement and
-compiler receiver emission remain unchanged. Full-scene and visual checks of
-this bounded contact correction remain pending.
+obstacle. The test-only correction now validates all 16 flat-ground trips,
+including zero height. Elevated approaches still require a receiving surface;
+production movement and compiler receiver emission remain unchanged.
+
+Full candidate `staged-map-export-2gSgUU` and entrance audit
+`saved-map-entrances-5DhBSq` retain 92/95 raw doorway trips and all 130 stairs.
+The same four climb failures remain. `authored-door-states-NTK8JU` passes all
+95 doorway expectations in both its `initial` and `after` snapshots, including
+intended lock denials. These snapshots test authored permissions, not execution
+of mission triggers. Browser fixture `draft-scene-render-2m6zfz` is under
+export/reopen verification; the terrace candidate is still unpublished.
 
 ## York tower/gatehouse room ownership (2026-10-20)
 
