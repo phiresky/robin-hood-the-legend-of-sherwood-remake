@@ -77,6 +77,58 @@ test("doorway structure references are local, explicit, and limited to virtual i
   assert.throws(() => validateAssetGameplay(gameplay, hut), /passage structure/);
 });
 
+test("virtual entrances ignore overlapping geometry only inside their declared physical body", () => {
+  for (const mode of ["inside", "outside", "straddling", "undeclared"] as const) {
+    const { document, hut, assets } = interiorAssetCompilerFixture();
+    const gameplay = hut.gameplay!;
+    gameplay.doors = [];
+    const shape = hut.parts[0]!.obstacle_local_game!;
+    shape.points = [
+      [0, 90],
+      [40, 90],
+      [40, 140],
+      [0, 140],
+    ].map(([x, y]) => ({
+      x: x!,
+      y: y!,
+      z_bottom: -10,
+      z_top: 40,
+    }));
+    shape.material_indices = [];
+    const door = gameplay.interiors![0]!.doors[0]!;
+    gameplay.interiors![0]!.doors = [door];
+    if (mode !== "undeclared") door.passageStructure = { volumes: ["building-999"], blockers: [] };
+    const barrier = structuredClone(hut);
+    barrier.id = "barrier";
+    barrier.gameplay!.interiors = [];
+    barrier.gameplay!.surfaces = [];
+    const bottom = mode === "outside" ? 84 : mode === "straddling" ? 87 : 91;
+    barrier.parts[0]!.obstacle_local_game!.points = [
+      [10, bottom],
+      [30, bottom],
+      [30, bottom + 4],
+      [10, bottom + 4],
+    ].map(([x, y]) => ({
+      x: x!,
+      y: y!,
+      z_bottom: -10,
+      z_top: 40,
+    }));
+    assets.set(barrier.id, barrier);
+    document.assetSources.push({ ...document.assetSources[0]!, id: barrier.id });
+    document.objects.push({
+      ...structuredClone(document.objects[0]!),
+      id: "barrier-body",
+      node: "asset:barrier:building-999",
+      obstacle: barrier.parts[0]!.obstacle_local_game!,
+    });
+    const geometry = compileAssetGameplay(document, assets, [0, 0, 2000, 2000]);
+    const exported = geometry.buildings![0]!.Building.doors[0]!;
+    const blocked = exported.passage_states?.some((state) => !state.allowed_states.length) ?? false;
+    assert.equal(blocked, mode !== "inside", mode);
+  }
+});
+
 test("connected floor caps support an entrance corridor without exempting walls or holes", () => {
   const compile = (
     mode: "connected" | "independent" | "disconnected" | "raised" | "hole" | "wall",

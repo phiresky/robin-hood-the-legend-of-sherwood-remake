@@ -10,6 +10,9 @@ import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 import { validateInteriorConnections } from "../shared/src/interior-connections.ts";
 
 const scenePath = "library/scenes/york.rhlos-map.json";
+const flags = process.argv.slice(2);
+assert.ok(flags.every((flag) => flag === "--physical"));
+const physical = flags.includes("--physical");
 const document = await readStoredMap(scenePath, "library");
 const assets = await pinnedDescriptors("library", document.assetSources, document.sceneAssets);
 const source = assets.get("york-castle-courtyard-raised-terrain");
@@ -69,6 +72,26 @@ for (const key of ["inside", "outside", "middle"])
     assert.ok(Math.abs(door[key][axis] + to[axis] - oldDoor[key][axis] - from[axis]) < 1e-8);
 source.gameplay.interiors = source.gameplay.interiors.filter((room) => room !== original);
 target.gameplay.interiors.push(room);
+if (physical) {
+  assert.equal(target.gameplay.movementSolids, undefined);
+  assert.equal(target.gameplay.movementClearances, undefined);
+  target.gameplay.movementSolids = target.parts
+    .filter(
+      (part) =>
+        part.obstacle_local_game?.solid &&
+        part.collision !== "none" &&
+        part.mission_profile === undefined,
+    )
+    .map((part) => part.node);
+  assert.ok([node, bodyNode].every((node) => target.gameplay.movementSolids.includes(node)));
+  target.gameplay.movementClearances = target.gameplay.surfaces.map((surface) => ({
+    id: `${surface.id}-support-clearance`,
+    node: surface.node,
+    polygon: structuredClone(surface.polygon),
+    height: structuredClone(surface.height),
+    holes: structuredClone(surface.holes ?? []),
+  }));
+}
 const sourcePart = placement(source, original.node),
   targetPart = placement(target, node);
 const sourceEndpoint = {
@@ -98,6 +121,10 @@ const edits = [source, target].map((asset) => {
   validateAssetGameplay(asset.gameplay, asset);
   const unchanged = structuredClone(asset.gameplay);
   unchanged.interiors = before.get(asset.id).interiors;
+  if (physical && asset === target) {
+    delete unchanged.movementSolids;
+    delete unchanged.movementClearances;
+  }
   assert.deepEqual(unchanged, before.get(asset.id));
   const ref = document.assetSources.find((ref) => ref.id === asset.id);
   return {
@@ -114,6 +141,7 @@ await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify({
     scope: "unpublished-linked-room-ownership-candidate-not-traversal-proof",
+    physical,
     scenePath,
     sceneSha256: createHash("sha256")
       .update(await fs.readFile(scenePath))
@@ -128,9 +156,14 @@ await fs.writeFile(
 const direction = door.outside.slice(0, 2).map((value, axis) => value - door.middle[axis]);
 const length = Math.hypot(...direction);
 assert.ok(length > 0);
-for (const { name, neighbors } of [
-  { name: "bastion", neighbors: [] },
-  { name: "bastion-terrace", neighbors: ["york-southeast-riverside-raised-terrace"] },
+for (const { name, neighbors, distance } of [
+  { name: "bastion", neighbors: [], distance: 24 },
+  { name: "bastion-terrace", neighbors: ["york-southeast-riverside-raised-terrace"], distance: 24 },
+  {
+    name: "bastion-terrace-far",
+    neighbors: ["york-southeast-riverside-raised-terrace"],
+    distance: 96,
+  },
 ])
   await fs.writeFile(
     `${output}/${name}.json`,
@@ -146,7 +179,9 @@ for (const { name, neighbors } of [
         {
           asset: target.id,
           door: door.id,
-          sourceLocal: direction.map((value, axis) => door.outside[axis] + (value * 24) / length),
+          sourceLocal: direction.map(
+            (value, axis) => door.outside[axis] + (value * distance) / length,
+          ),
         },
       ],
     }),

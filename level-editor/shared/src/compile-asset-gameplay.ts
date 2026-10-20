@@ -3260,9 +3260,20 @@ function compileAssetGameplayAttempt(
     let check = checks.get(key);
     if (!check) {
       const contributors: PassageCheck["contributors"] = [];
+      const virtualBody =
+        door.interior && structure
+          ? (permanentPassageCuts.get(plane) ?? [])
+              .filter(
+                (cut) =>
+                  cut.owner === door.owner &&
+                  cut.kind === "volume" &&
+                  structure.volumes.includes(cut.source),
+              )
+              .map((cut) => cut.polygon)
+          : [];
       const obstacles = (permanentPassageCuts.get(plane) ?? []).flatMap((cut) => {
         // Virtual-room animation leaves the outdoor floor and may cross its
-        // declared structure. Foreign and undeclared barriers remain checked.
+        // declared structure. Exterior foreign and undeclared barriers remain checked.
         if (
           (door.interior && cut.kind === "floor") ||
           (structure &&
@@ -3272,6 +3283,8 @@ function compileAssetGameplayAttempt(
         )
           return [];
         let coverage = [cut.polygon];
+        if (virtualBody.length)
+          coverage = fixedPolygonBoolean("difference", coverage, [virtualBody]);
         if (navigationRegion && cut.kind === "volume") {
           const solid = solidGeometry.find(
             (solid) => solid.owner === cut.owner && solid.source === cut.source,

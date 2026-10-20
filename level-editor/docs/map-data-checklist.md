@@ -30,11 +30,14 @@ retains all 130 stairs, and has the same four failed climb routes as the baselin
 These changes run during export and add no runtime solver.
 
 The remaining water-gate entrance has a staged ownership transfer from terrain
-to its bastion, preserving the two editor room links. Its standalone doorway
-passes 16 moved cases, but the neighboring terrace blocks all 16 paired cases.
-The bastion also needs explicit ground-body collision: its current empty blocker
-list suppresses movement solids. The draft remains unpublished pending those
-physical checks and a validated room-link migration.
+to its bastion, preserving the two editor room links. A physical-body candidate
+and export-time doorway clipping now pass all 16 paired native round trips from
+visible ground targets across copies, rotations and elevations. Exterior walls
+still block the doorway in compiler regression checks. The nearer target remains
+occluded by the terrace in eight orientations, although all 16 entries succeed.
+Full-scene native checks improve raw doorway trips to 91/95, retain 130/130
+stairs and the same four climb failures. The draft remains unpublished pending
+roof checks and a validated room-link migration.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

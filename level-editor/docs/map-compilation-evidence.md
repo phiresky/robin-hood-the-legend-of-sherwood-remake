@@ -347,6 +347,31 @@ two-asset approach need review before publication. The existing publisher also
 requires an explicitly validated room-link migration rather than its append-only
 connection operation. No candidate asset or scene-link edits have been installed.
 
+The subsequent `--physical` candidate explicitly selects the bastion's solid
+parts for movement collision and gives each authored roof its own support
+clearance. Stage `york-water-gate-room-gIdLqp` combines this with export-time
+clipping of foreign doorway obstructions inside the explicitly declared physical
+building body. Exterior obstruction coverage remains checked. A compiler
+regression covers contained, exterior, straddling and undeclared structures;
+all 210 focused navigation/compiler tests pass.
+
+Standalone physical stage `york-water-gate-room-XbBmFz` passes 16/16 native
+round trips (`selected-neighbor-placements-H8bEWL`). Its near-target paired
+probe `selected-neighbor-placements-5jiYeG` enters in all 16 cases but completes
+only eight returns: the terrace occludes the return ground click in the other
+eight. The additional 96-unit ground approach in
+`selected-neighbor-placements-UQ7bhK` completes all 16 native round trips across
+copies, rotations and elevations. These are complementary probes; the farther
+target does not resolve the near-target selection limitation.
+
+Full scene `staged-map-export-nWG57Y` and entrance audit
+`saved-map-entrances-ehX2IL` improve raw doorway trips from 90/95 to 91/95.
+The recovered entrance is `[2729,1488]`; the four other failures are unchanged.
+All 130 stairs pass. The four climb failures retain the same world start/goal
+coordinates, blockers and interrupted routes as `saved-map-exports-XKxUWP`
+(sector numbering changes with the new body geometry). Roof traversal and
+publication/link-migration verification remain pending.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
