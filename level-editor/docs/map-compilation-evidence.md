@@ -171,6 +171,28 @@ The remaining four failures are both directions of the lower ladder at 90
 degrees, at both elevations: its narrow projected outline still blocks the
 actor. This improvement is not full moved-asset traversal parity.
 
+An additional diagnostic, `climb-envelope-diagnostic-nucqt79x`, starts from all
+eight corrected placement descriptors and expands each ladder outline to include
+the existing inside points' native actor boxes, with one unit of rounding margin.
+All 32 native player-click routes then pass, including the four previously
+blocked directions. This modifies only diagnostic descriptors, not published
+assets or compiler behavior. It establishes the remaining footprint issue but
+does not yet prove nearby-solid clearance, state-barrier behavior or exact
+physical support for the added envelope. Those checks are required before a
+general exporter change.
+
+## Built browser verification snapshot
+
+The pending five-map browser batch moved from the development server to a built
+snapshot so compiler edits cannot restart long bakes through hot reload.
+`browser-exports-fHPNTM` was explicitly stopped during Lincoln and has no completed
+map result. Replacement `browser-exports-9u4BL3` selects Lincoln, Nottingham,
+Sherwood, York and Wychford against `http://127.0.0.1:5182`.
+Its `browser-snapshot.zip` retains the five built files, and
+`browser-snapshot.json` records their hashes and source commit `c24c55429`.
+Library resources remain external pinned files, not embedded test shortcuts.
+The manifest records finished maps; a running log is not a completed round trip.
+
 ## York entrance-ramp reproduction
 
 `stage-york-entrance-ramps.mjs` prepares an unpublished candidate for the red
