@@ -11,16 +11,19 @@ import { parseStoredMap, serializeStoredMap } from "../shared/src/index.ts";
 const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", import.meta.url))(
   "fflate",
 );
+const riseArgument = process.argv.slice(2);
+assert.ok(riseArgument.length <= 1 && (!riseArgument.length || riseArgument[0].startsWith("--rise=")));
+const rise = riseArgument.length ? Number(riseArgument[0].slice("--rise=".length)) : 0;
+assert.ok(Number.isFinite(rise) && rise >= 0 && rise <= 40);
 const { document: source, assets } = surfaceJumpCompilerFixture();
 for (const asset of assets.values())
   for (const surface of asset.gameplay?.surfaces ?? [])
     if (surface.jump) {
-      surface.height = 100;
+      surface.height = 100 + (surface.id === "east" ? rise : 0);
       surface.jump.inset = 17;
       surface.jump.maxGap = 100;
     }
-// Equal-height platforms isolate startup support from rotation-dependent
-// projected overlap between floors at different heights.
+// Place physically adjacent platforms independently of their elevation.
 for (const group of source.groups) {
   group.transform.dx = 0;
   group.transform.dy = 0;
@@ -39,8 +42,8 @@ const output = await fs.mkdtemp("work/needs-review/map-compile/generated-departu
 console.log(output);
 const results = [];
 const report = (complete) => fs.writeFile(`${output}/diagnostics.json`, JSON.stringify({
-  scope: "equal-height-surface-only-generated-departures-zip-roundtrip-awaiting-native-traversal",
-  complete, results,
+  scope: "surface-only-generated-departures-zip-roundtrip-awaiting-native-traversal",
+  rise, complete, results,
 }));
 await report(false);
 for (const rotation of [0, 37, 90, 180]) {

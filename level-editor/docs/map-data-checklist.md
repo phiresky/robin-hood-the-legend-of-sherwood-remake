@@ -146,7 +146,11 @@ bounded by the authored inset. A sufficiently inset surface-only export passes
 10/10 combat launches; the rotated roof ZIP regression passes 120/120 click
 routes. The equal-height surface-only fixture also passes eight ZIP/editor
 round trips, 160/160 combat launches and 160/160 click routes across rotated,
-elevated copies. Unequal-height rotation matching remains unproven.
+elevated copies. The tested unequal-height rotation omission is explained by
+backward-facing or non-overlapping selected edges; broader unequal-height native
+placement coverage remains incomplete. An adjacent-platform case with an
+eight-unit rise passes the same eight round trips and 160 combat/160 click
+traversals across rotations and elevations.
 Shallow insets still warn. See
 [generated departure bands](map-compilation-evidence.md#generated-jump-departure-receiving-bands).
 

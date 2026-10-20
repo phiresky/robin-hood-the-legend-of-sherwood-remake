@@ -2,6 +2,27 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { assembleJumpSegments, type PlacedJumpSegment } from "./assemble-jump-segments.ts";
 
+test("a projected neighbour behind an outward ledge stays disconnected even with generous limits", () => {
+  const attachment = { maxGap: 1000, maxRise: 1000, maxDrop: 1000, minOverlap: 1 };
+  const source: PlacedJumpSegment = {
+    id: "source",
+    long: true,
+    attachment,
+    edge: { zone: "source", a: [0, 40, 0], b: [0, 0, 0] },
+  };
+  const destination: PlacedJumpSegment = {
+    id: "destination",
+    long: true,
+    attachment,
+    edge: { zone: "destination", a: [-30, 100, 100], b: [-30, 140, 100] },
+  };
+  assert.equal(assembleJumpSegments([source, destination]).pairs.length, 0);
+  assert.equal(assembleJumpSegments([destination, source]).pairs.length, 0);
+  const moved = structuredClone(destination);
+  moved.edge.a[0] = moved.edge.b[0] = 30;
+  assert.equal(assembleJumpSegments([source, moved]).pairs.length, 1);
+});
+
 test("clearance exposed by movement-grid snapping trims again instead of discarding the connection", () => {
   const attachment = { maxGap: 50, maxRise: 20, maxDrop: 20, minOverlap: 8 };
   const segments: PlacedJumpSegment[] = [

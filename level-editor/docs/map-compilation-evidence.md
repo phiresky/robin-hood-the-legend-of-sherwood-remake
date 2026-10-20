@@ -1088,6 +1088,30 @@ It is not counted as a pass: projected overlap/matching for that arrangement
 requires separate analysis. The equal-height regression isolates departure
 support and does not prove all unequal-height placements are connected.
 
+The unequal-height fixture's missing match has now been traced to selected-edge
+geometry. Applying the editor placement matrices and regenerating the ledges
+gives a positive facing gap of 55 and overlapping span of 82 at zero degrees.
+At 37 degrees, overlap is still about 41.15 but the signed gap is -29.65:
+the destination is behind the selected outward takeoff. At 90 degrees, signed
+gap is -53.95 and overlap is -31.43; at 180 degrees, gap returns to 55 but overlap
+is -118. Negative overlap means disjoint spans. Relaxing gap, rise/drop and
+minimum-overlap limits independently and together does not reconnect 37 degrees.
+This particular omission is expected matching behavior, not evidence that
+departure-band construction discarded a valid facing pair. A regression checks
+that a behind-edge destination stays disconnected in either discovery order
+despite generous limits, and connects when moved to the facing side. All six
+segment-assembly tests pass. Other unequal-height arrangements still need native
+placement coverage; this diagnosis does not establish general parity.
+
+The generated-placement script also accepts `--rise=8` to place physically
+adjacent platforms at heights 100 and 108, preserving the same selected facing
+edges and authored limits. `generated-departure-placements-QIGNpA` passes all
+eight ZIP/editor round trips, retains both copied connections without departure
+warnings, and passes 160/160 combat launches plus 160/160 player click routes.
+This supplies unequal-height traversal coverage for a layout whose projected
+edges remain eligible at all four tested rotations; it does not claim that
+arbitrary height differences or narrow sloped roofs are solved.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
