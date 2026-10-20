@@ -54,6 +54,7 @@ import { auditCompiledJump } from "./audit-compiled-jump.ts";
 import { createJumpReceiverSupportAudit } from "./audit-jump-receiver-support.ts";
 import { partitionJumpReceivers } from "./partition-jump-receivers.ts";
 import { orientCompiledJump } from "./orient-compiled-jump.ts";
+import { createJumpDepartureSupportAudit } from "./audit-jump-departure-support.ts";
 import { createJumpWalkingClearance, type JumpWalkArea } from "./jump-walking-clearance.ts";
 import {
   generateJumpLedges,
@@ -2946,8 +2947,9 @@ function compileAssetGameplayAttempt(
   const partitionedJumps = partitionJumpReceivers(compiledJumpPairs, compiledJumpZones, sight);
   warnings.push(...partitionedJumps.warnings);
   const auditReceiverSupport = createJumpReceiverSupportAudit(sight, partitionedJumps.zones);
+  const auditDepartureSupport = createJumpDepartureSupportAudit(sight, partitionedJumps.zones);
   for (const { pair, sourceIndex } of partitionedJumps.pairs)
-    for (const issue of auditReceiverSupport(pair))
+    for (const issue of [...auditReceiverSupport(pair), ...auditDepartureSupport(pair)])
       warnings.push(`Jump ${jumpPairs[sourceIndex]!.id}: ${issue}.`);
   // Runtime construction order is motion, materials, projection planes, then buildings.
   // Motion adds an out-of-map sector; each door also consumes a constructor slot.

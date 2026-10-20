@@ -130,6 +130,12 @@ upright launches with zero recorded airborne contacts. Combat launches still
 intersect roof solids, so this remains a candidate, not a completed repair.
 Dedicated zones restore twenty neighboring routes broken by the earlier stage.
 See [upright/combat evidence](map-compilation-evidence.md#opposite-ridge-shift-clear-upright-samples-unresolved-combat-flight).
+The compiler now warns when an elevated long-jump takeoff animation can leave
+its receiving faces before flight. This export-time check covers gaps inside
+the whole departure strip and retains the connection for review. The latest
+full York candidate passes all 18 supported-click probes for the pair but still
+has seven failures in the broader 720-case offset audit; combat departure remains
+unresolved. See [departure support](map-compilation-evidence.md#export-time-receiving-support-during-departure).
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

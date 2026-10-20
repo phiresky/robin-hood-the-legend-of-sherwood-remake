@@ -3363,6 +3363,25 @@ test("jump pairs rebuild crossed destination links and preserve height after dup
     20,
   );
 });
+test("export warns when a grounded jump startup leaves its elevated receiver", () => {
+  const { document, assets, hut } = jumpAssetCompilerFixture();
+  const unsupported = compileAssetGameplay(document, assets, bounds);
+  assert.equal(unsupported.jump_line_pairs!.length, 1);
+  assert.match(
+    unsupported.warnings!.join("\n"),
+    /wall-jump: direction 2 elevated takeoff animation lacks receiving coverage/,
+  );
+  const upper = hut.gameplay!.jumpPairs![0]!.edges[1]!;
+  upper.a[0] += 20;
+  upper.b[0] += 20;
+  const supported = compileAssetGameplay(document, assets, bounds);
+  assert.equal(supported.jump_line_pairs!.length, 1);
+  assert.doesNotMatch(
+    (supported.warnings ?? []).join("\n"),
+    /takeoff animation lacks receiving coverage/,
+  );
+});
+
 test("jump contact warnings name the blocking asset copy and directed span", () => {
   const { document, assets, hut } = jumpAssetCompilerFixture();
   const gameplay = hut.gameplay!;

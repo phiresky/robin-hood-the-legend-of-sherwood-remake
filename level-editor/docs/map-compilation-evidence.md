@@ -981,6 +981,35 @@ trace fixture from the normal/hidden mode review. It checks descriptor hashes,
 identical descriptor bytes, probe identities, selection modes, review outcomes,
 and recorded trajectories before combining successful cases.
 
+Full York export `staged-map-export-daenqi` retains 7/720 offset-probe failures,
+all on this pair. The five line-56 landing probes lie outside its destination
+zone; the two line-57 failures report no authorized arrival. These remain
+reported failures, not claimed successes. Sampling supported floor points in
+the full scene (`interior-jump-clicks-YTNsNW` and `interior-jump-clicks-24AHS4`)
+passes all 18 normal-or-hidden cases: nine normal and nine hidden-only. This
+does not resolve the combat departure problem or prove full flight clearance.
+
+### Export-time receiving support during departure
+
+The compiler now checks the fifteen-unit projected takeoff strip of each
+elevated forced long-jump direction against the union of its receiving faces.
+This catches the missing-floor portion of the takeoff animation even when
+airborne samples or eventual arrival pass. It uses the opposite line's zone
+reference to identify the source topology, checks interior gaps as well as
+boundaries, and retains unsupported connections with an explicit warning.
+Ground departures and non-forced jumps are outside this check.
+It checks geometric coverage only, not receiver-state availability, height
+continuity, sprite clearance, or the airborne path. There is no runtime change.
+
+The new audit flags direction 1 of pair 1 in the 180-degree zero-elevation
+`connected-jump-placements-D2R95n` descriptor, matching the native combat
+ground-drop trace. The compiler integration test also verifies that moving an
+elevated takeoff inward clears the warning without dropping its connection.
+Five new unit cases cover complete strips, unions, enclosed holes, topology,
+sloped receivers, and ground/non-forced handling. The 195-test focused suite
+and the additional compiler integration test pass; lint and app typechecking
+pass.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
