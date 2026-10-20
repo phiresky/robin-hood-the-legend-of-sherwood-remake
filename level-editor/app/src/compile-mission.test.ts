@@ -102,7 +102,7 @@ test("invalid placement warns and omits only the affected marker", () => {
   assert.match(result.warnings[0]!, /start.*omitted/);
 });
 
-test("legacy preview population alone never produces mission entities", () => {
+test("map without mission authoring produces no mission entities", () => {
   const doc = document();
   delete doc.mission;
   assert.deepEqual(compileMission(doc, [0, 0, 100, 100], geometry), {

@@ -16,7 +16,7 @@ export interface MissionSoldier {
   profile: string;
   allegiance: number;
 }
-/** Explicit mission authoring, independent of map assets and preview population. */
+/** Explicit mission authoring, independent of map assets. */
 export interface EditorMission {
   version: 1;
   spawnPoints: MissionSpawnPoint[];

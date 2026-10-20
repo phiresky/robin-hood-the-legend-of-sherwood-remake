@@ -3290,7 +3290,7 @@ Mission content remains separate from reusable map definitions:
 |---|---|
 | Player starts | Explicit Mission-tab entries export as `spawn_points`; resolve current terrain, sector/layer and receiver. No implicit PC is added to an empty map. |
 | NPC soldiers | Explicit entries export as `soldiers`, retaining type, facing and allegiance and resolving placement against compiled geometry. |
-| Imported missions | Explicit import restores available PC slots and soldiers with warnings. Preview population is not silently exported. |
+| Imported missions | Explicit import restores available PC slots and soldiers with warnings. Authored Mission entries use the shared export path. |
 | Scripts, patrols, inventory, objectives and other actors | Not provided by the minimal mission editor; outside map-only compilation parity. |
 
 Detailed results, reproduction commands and historical diagnostics are in

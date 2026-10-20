@@ -39,7 +39,7 @@ the ZIP does not duplicate library models and textures.
 
 Compilation renders the actual placed assets and spline geometry from the map
 camera at one pixel per map unit. It excludes selection outlines, grids,
-population/mission previews and other editing guides. Hidden objects/groups are
+mission previews and other editing guides. Hidden objects/groups are
 excluded. Patch visuals always use their initial state, independent of preview
 switches. Synthesized texture fill is included regardless of the display switch.
 The document's sunlight settings are included.

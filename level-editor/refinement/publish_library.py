@@ -213,7 +213,6 @@ def stage_library(library, output, *, worker_name='robinhood-editor-library'):
             # Palette thumbnails can use the optimized model; never fall back to the original.
             entry['preview_model'] = entry['lossy_model']
 
-    sprites = {}
     maps = sorted(path.name for path in (library/'scenes').iterdir()
                   if path.is_file() and path.name.endswith('.rhlos-map.json') and not path.name.startswith('.'))
     for name in maps:
@@ -230,21 +229,6 @@ def stage_library(library, output, *, worker_name='robinhood-editor-library'):
                 raise ValueError(f'Map source has no matching optimized catalog asset: {name}: {reference["model"]}')
             if reference.get('descriptor') and descriptors.get(reference['descriptor']) != reference['descriptor_sha256']:
                 raise ValueError(f'Map descriptor pin is stale: {name}: {reference["descriptor"]}')
-        population = document.get('population')
-        if population:
-            required = sprites.setdefault(population['spriteCatalog'], set())
-            required.update(item['sprite'] for item in population.get('actors', []) + population.get('items', []))
-    for relative, required in sprites.items():
-        catalog = json.loads(safe_file(library, relative).read_bytes())
-        if catalog.get('version') != 1 or not isinstance(catalog.get('sprites'), dict):
-            raise ValueError(f'Invalid population sprite catalog: {relative}')
-        selected = {}
-        for identity in sorted(required):
-            if identity not in catalog['sprites']:
-                raise ValueError(f'Missing population sprite: {relative}: {identity}')
-            selected[identity] = catalog['sprites'][identity]
-            copy(selected[identity]['image'])
-        put(relative, encoded({'version': 1, 'sprites': selected}))
     for relative in game_index['files']:
         path = safe_file(library/'game-data', relative)
         put('game-data/'+relative, path.read_bytes())

@@ -1442,7 +1442,7 @@ test("asset export retains a reopenable pinned scene and matches the Rust runtim
   assert.deepEqual(reopened, expected);
 });
 
-test("best effort ZIP retains omitted mission and wall authoring and reports missing gameplay", async () => {
+test("best effort ZIP retains wall authoring and reports missing gameplay", async () => {
   const { document, assets, hut } = assetCompilerFixture();
   delete hut.gameplay;
   document.splines = [
@@ -1461,25 +1461,8 @@ test("best effort ZIP retains omitted mission and wall authoring and reports mis
       repeatLength: 20,
     },
   ];
-  document.population = {
-    version: 1,
-    spriteCatalog: "catalog.json",
-    actors: [],
-    routes: [],
-    items: [
-      {
-        id: "item",
-        name: "Item",
-        sprite: "apple",
-        position: [10, 10, 0],
-        quantity: 1,
-        purpose: "Preview",
-      },
-    ],
-  };
   const expected = structuredClone(document);
   const compiled = compileMap(document, [0, 0, 512, 512], assets, { bestEffort: true });
-  assert.ok(compiled.warnings.some((message) => message.includes("Mission population omitted")));
   const files = unzipSync(
     await packageCompiledMap(compiled, {
       color: new Uint8Array(512 * 512 * 4),

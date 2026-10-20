@@ -388,18 +388,7 @@ function compileAssetGameplayAttempt(
     for (const id of missing)
       warnings.push(`Asset ${id}: gameplay omitted because no local gameplay definition exists.`);
     placements = placements.filter((placement) => placement.descriptor.gameplay);
-    if (document.population?.actors.length || document.population?.items.length)
-      warnings.push(
-        "Mission population omitted from map gameplay; retained in the embedded editor document.",
-      );
   }
-  if (
-    !options.bestEffort &&
-    (document.population?.actors.length || document.population?.items.length)
-  )
-    throw new Error(
-      "Map compilation does not support embedded mission population; keep NPCs and items in a separate mission",
-    );
   if (document.groups.some((g) => g.states) && !options.bestEffort)
     throw new Error(
       "Asset state transitions need gameplay compilation support before this map can be exported",

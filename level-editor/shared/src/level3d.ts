@@ -80,7 +80,6 @@ export interface Level3D {
   exportBounds?: [number, number, number, number];
   /** Sun azimuth is clockwise from north; elevation is above the ground. */
   lighting?: { enabled: boolean; sunAzimuth: number; sunElevation: number; shadowOpacity: number };
-  population?: import("./population.ts").Population;
   mission?: import("./mission.ts").EditorMission;
   interiorConnections?: import("./interior-connections.ts").InteriorConnection[];
   customMaterials?: import("./terrain-materials.ts").CustomTerrainMaterial[];

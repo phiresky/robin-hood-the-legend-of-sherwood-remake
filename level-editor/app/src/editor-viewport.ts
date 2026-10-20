@@ -98,7 +98,6 @@ import {
   type ProtoLevel,
   type Vec3,
 } from "@rle/shared";
-import type { SceneEntities } from "./population-view.ts";
 import type { Selection } from "./document-commands.ts";
 import { disposeObjectResources } from "./resources.ts";
 import { prepareGpuTextures } from "./prepare-gpu-textures.ts";
@@ -352,7 +351,7 @@ export class EditorViewport {
   private framingKey = "";
   private framingDistance = 0;
   private readonly perspectiveCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 200000);
-  private entities: SceneEntities | null = null;
+  private entities: MissionEntities | null = null;
 
   setPerspective(value: number) {
     if (this.nativeSurface)
@@ -407,18 +406,12 @@ export class EditorViewport {
   setSpriteOrientationLock(enabled: boolean) {
     this.spriteOrientationLock = enabled;
   }
-  replaceEntities(entities: SceneEntities | null) {
+  replaceEntities(entities: MissionEntities | null) {
     this.clearNativeArtPresentation();
     this.missionStates.clear();
     this.entities?.dispose();
     this.entities = entities;
     if (entities) this.scene.add(entities.root);
-  }
-  setPopulationPlaying(value: boolean) {
-    this.entities?.setPlaying?.(value);
-  }
-  setPopulationRoutesVisible(value: boolean) {
-    this.entities?.setRoutesVisible?.(value);
   }
   setEntitiesVisible(visible: boolean) {
     this.missionStates.root.visible = visible;

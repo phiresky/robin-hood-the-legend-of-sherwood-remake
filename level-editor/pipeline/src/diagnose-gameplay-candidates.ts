@@ -4,7 +4,6 @@ import { compileAssetGameplay } from "../../shared/src/compile-asset-gameplay.ts
 
 export function staticGameplaySnapshot(document: Level3D): Level3D {
   const scene = structuredClone(document);
-  delete scene.population;
   delete scene.splines;
   for (const group of scene.groups) {
     delete group.states;

@@ -52,7 +52,6 @@ import { disposeObjectResources } from "./resources";
 import { listFiles, subdir, writeText } from "./fs";
 import { MissionEntities, readMission } from "./mission";
 import { loadEditableMission, remainingMissionPreview } from "./import-mission.ts";
-import { PopulationView, type SceneEntities } from "./population-view";
 import type { DatadirIndex } from "./datadir";
 import { missionsForMap } from "./mission-catalog.ts";
 import { downloadMap, downloadMapFile } from "./http-library.ts";
@@ -110,8 +109,6 @@ export default function Editor3D(props: EditorProps) {
   const availableMissions = () =>
     missionsForMap(props.index(), doc()?.sourceMap ?? doc()?.map ?? mapName());
   const [missionInfo, setMissionInfo] = createSignal("");
-  const [populationPlaying, setPopulationPlaying] = createSignal(true);
-  const [populationRoutes, setPopulationRoutes] = createSignal(false);
   const [perspective, setPerspective] = createSignal(0);
   const [rotationSnap, setRotationSnap] = createSignal(false);
   const [spriteOrientationLock, setSpriteOrientationLock] = createSignal(true);
@@ -632,7 +629,7 @@ export default function Editor3D(props: EditorProps) {
     const current = () =>
       !disposed && attempt === openAttempt && props.index() === idx && props.library() === lib;
     let preparedAsset: THREE.Object3D | null = null;
-    let preparedEntities: SceneEntities | null = null;
+    let preparedEntities: MissionEntities | null = null;
     let importedMission: Level3D["mission"];
     props.onStatus(null);
     setMapLoadProgress({ completed: 0, total: 1, phase: "Reading map" });
@@ -681,13 +678,7 @@ export default function Editor3D(props: EditorProps) {
             return null;
           });
         } else if (mission) throw new Error("Mission import requires its source level data");
-        else if (currentDocument.population && !currentDocument.mission)
-          preparedEntities = await PopulationView.load(
-            lib.handle,
-            currentDocument.population,
-            currentDocument.camera,
-            current,
-          );
+
         if (
           disposed ||
           attempt !== openAttempt ||
@@ -706,8 +697,6 @@ export default function Editor3D(props: EditorProps) {
         }
         viewport.replaceEntities(preparedEntities);
         viewport.setEntitiesVisible(showEntities());
-        viewport.setPopulationPlaying(populationPlaying());
-        viewport.setPopulationRoutesVisible(populationRoutes());
         setMissionName(mission?.name ?? "");
         setMissionInfo(
           importedMission
@@ -754,13 +743,6 @@ export default function Editor3D(props: EditorProps) {
           );
           return null;
         });
-      } else if (candidate.document.population && !candidate.document.mission) {
-        preparedEntities = await PopulationView.load(
-          lib.handle,
-          candidate.document.population,
-          candidate.document.camera,
-          current,
-        );
       }
       const {
         document: baseDocument,
@@ -806,8 +788,6 @@ export default function Editor3D(props: EditorProps) {
       preparedAsset = null;
       viewport.replaceEntities(preparedEntities);
       viewport.setEntitiesVisible(showEntities());
-      viewport.setPopulationPlaying(populationPlaying());
-      viewport.setPopulationRoutesVisible(populationRoutes());
       setMissionName(mission?.name ?? d.mission?.importedFrom ?? "");
       setMissionInfo(
         d.mission
@@ -1941,60 +1921,6 @@ export default function Editor3D(props: EditorProps) {
                   </label>
                 )}
               </For>
-              <Show when={doc()?.population}>
-                {(population) => (
-                  <details>
-                    <summary>
-                      Town population — {population().actors.length} people,{" "}
-                      {population().items.length} items
-                    </summary>
-                    <label class="check">
-                      <input
-                        type="checkbox"
-                        checked={populationPlaying()}
-                        onChange={(e) => {
-                          setPopulationPlaying(e.currentTarget.checked);
-                          viewport.setPopulationPlaying(e.currentTarget.checked);
-                        }}
-                      />{" "}
-                      Animate routines and patrols
-                    </label>
-                    <label class="check">
-                      <input
-                        type="checkbox"
-                        checked={populationRoutes()}
-                        onChange={(e) => {
-                          setPopulationRoutes(e.currentTarget.checked);
-                          viewport.setPopulationRoutesVisible(e.currentTarget.checked);
-                        }}
-                      />{" "}
-                      Show patrol and civilian routes
-                    </label>
-                    <p class="hint">
-                      Preview of authored routines. Combat, dialogue and item collection require a
-                      playable mission export.
-                    </p>
-                    <For each={population().actors}>
-                      {(actor) => (
-                        <details>
-                          <summary>{actor.name}</summary>
-                          <p>{actor.duty}</p>
-                          <Show when={actor.information}>
-                            <p>{actor.information}</p>
-                          </Show>
-                        </details>
-                      )}
-                    </For>
-                    <For each={population().items}>
-                      {(item) => (
-                        <p>
-                          {item.name} ×{item.quantity} — {item.purpose}
-                        </p>
-                      )}
-                    </For>
-                  </details>
-                )}
-              </Show>
               <Show when={missionName()}>
                 <p class="mission-summary">
                   {missionName()} — {missionInfo()}
@@ -2012,8 +1938,7 @@ export default function Editor3D(props: EditorProps) {
               <p class="hint">
                 Choose Export mod ZIP, put the downloaded ZIP in the game’s configured mods
                 directory, then select your map in Custom Missions. Use the base game data for
-                characters and shared resources. The editor’s population preview does not run
-                mission scripts.
+                characters and shared resources. Exported maps do not run mission scripts.
               </p>
               <h2>Export frame</h2>
               <p class="hint">

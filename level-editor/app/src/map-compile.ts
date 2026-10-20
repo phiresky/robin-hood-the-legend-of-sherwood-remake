@@ -194,7 +194,7 @@ export function compileMap(
         "Visual/depth state resources and mask recovery for existing assets remain incomplete. This export is not a full gameplay-parity certification.",
       ]
     : [
-        "This is an unscripted map sandbox. Mission scripts, triggers, and preview population are not exported.",
+        "This is an unscripted map sandbox. Mission scripts and triggers are not exported.",
         "Navigation uses one ground layer. Raised walkways, lifts, jumps, and sloped obstacle heights are not compiled; sight volumes use their full height range.",
         "Scenery without authored obstacles and spline surfaces are visual only. Add obstacle-bearing assets where gameplay collision is required.",
       ];

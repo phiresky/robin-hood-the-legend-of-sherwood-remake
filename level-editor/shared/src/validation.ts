@@ -11,7 +11,6 @@ import {
   isSceneryNode,
   obstaclePartIdentity,
 } from "./component-parts.ts";
-import { validatePopulation } from "./population.ts";
 import { validateMission } from "./mission.ts";
 import { maskReferenceResolver } from "./mask-references.ts";
 import {
@@ -606,7 +605,6 @@ export function parseLevel3D(value: unknown, context: DocumentContext = {}): Lev
       "expected 0–1",
     );
   }
-  if (d.population !== undefined) validatePopulation(d.population);
   if (d.mission !== undefined) validateMission(d.mission);
   if (d.interiorConnections !== undefined)
     validateInteriorConnections(d.interiorConnections, d.objects);
