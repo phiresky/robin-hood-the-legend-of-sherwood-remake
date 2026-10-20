@@ -192,6 +192,7 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                         [true, false].into_iter().map(|direct| {
                             let outcome = click_exported_passage(
                                 engine.clone(), assets.clone(), index, direct, expected, &sprite,
+                                crate::element::ElementKind::ActorPc,
                             );
                             serde_json::json!({"direct": direct, "passed": outcome.is_ok(), "outcome": outcome})
                         }).collect()
@@ -225,8 +226,21 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                                 dispatch,
                                 |_, _, _| {},
                             );
+                            let actor_kind = if kind == "soldier" {
+                                crate::element::ElementKind::ActorSoldier
+                            } else {
+                                crate::element::ElementKind::ActorCivilian
+                            };
+                            let dispatched: Vec<_> = [true, false].into_iter().map(|direct| {
+                                let result = click_exported_passage(
+                                    engine.clone(), assets.clone(), index, direct, expected,
+                                    &sprite, actor_kind,
+                                );
+                                serde_json::json!({"direct": direct, "passed": result.is_ok(), "outcome": result})
+                            }).collect();
                             serde_json::json!({"actor": kind, "expected_round_trip": expected,
-                                "passed": outcome == Ok(expected), "outcome": outcome})
+                                "passed": outcome == Ok(expected) && dispatched.iter().all(|r| r["passed"] == true),
+                                "outcome": outcome, "dispatched": dispatched})
                         })
                         .collect()
                     };
@@ -261,12 +275,13 @@ fn click_exported_passage(
     direct: bool,
     expected_crossing: bool,
     sprite: &crate::sprite::Sprite,
+    kind: crate::element::ElementKind,
 ) -> Result<(), String> {
     let door = engine.script_domains.interactables.doors[index].clone();
     let mut source = door.clone();
     let mut target = door.clone();
     // The landing selector reads only the outside endpoint fields. Keep the
-    // actual runtime door unchanged and let player dispatch discover the route.
+    // actual runtime door unchanged and let movement dispatch discover the route.
     if direct {
         target.point_out = door.point_in;
         target.sector_out = door.sector_in;
@@ -287,12 +302,13 @@ fn click_exported_passage(
     if source_sector == target_sector {
         return Err("ordinary passage does not separate two sectors".into());
     }
-    let owner = walking_pc(
+    let owner = walking_test_actor(
         &mut engine,
         &mut assets,
         start,
         source.layer_out,
         source_sector,
+        kind,
     );
     let element = engine.ent_mut(owner).element_data_mut();
     let position = element.sprite.position_iface.clone();
@@ -302,18 +318,32 @@ fn click_exported_passage(
         engine.get_projection_area_index(&assets, source_sector, source.layer_out, start);
     engine.set_obstacle_and_material(&assets, owner, receiver);
     let sim = crate::sim_rng::test_context();
-    engine.perform_group_move(
-        TickCtx::new(&sim, &assets),
-        &[owner],
-        goal,
-        false,
-        false,
-        None,
-        None,
-        None,
-        &[],
-        &[],
-    );
+    if kind.is_pc() {
+        engine.perform_group_move(
+            TickCtx::new(&sim, &assets),
+            &[owner],
+            goal,
+            false,
+            false,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+        );
+    } else {
+        engine.duty_go_to(
+            TickCtx::new(&sim, &assets),
+            owner,
+            crate::ai::Position {
+                x: goal.x,
+                y: goal.y,
+                sector: Some(target_sector),
+                level: target.layer_out,
+            },
+            crate::ai::GotoFlags::empty(),
+        );
+    }
     let mut previous = start;
     let mut stationary = 0;
     for _ in 0..2000 {

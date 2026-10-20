@@ -1056,6 +1056,18 @@ full AI command execution or rendered actor-contact verification. The change
 only extends test coverage; it adds no runtime work. The regular compiled
 navigation suite passes 38 tests, with 57 separate-fixture tests ignored.
 
+The same three artifacts now also pass 228 dispatched NPC movement checks.
+Each probe creates an actual soldier or civilian, sends the normal AI go-to
+request to a supported point in the other sector, and ticks sequences and
+pathfinding without injecting a gate route. All 76 open-state traversals reach
+the target sector, layer and point with valid receiving surfaces. All 152
+closed/reset requests stay in the source sector. The original prepared round
+trips, graph searches and PC clicks remain green, as does the terrace fixture.
+The regular compiled-navigation suite still passes 38 tests. This verifies
+the AI movement request through completion for these passages, not autonomous
+mission duties, soldier-specific sprite appearance, or rendered contact.
+Only test code changes.
+
 ## Annex and turret repair published with current derivatives (2026-10-20)
 
 Publication `turret-publication-installed` installs both reviewed asset definitions,
