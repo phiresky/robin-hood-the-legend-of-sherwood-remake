@@ -4,6 +4,22 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Frozen browser verification builds
+
+`node refinement/serve-map-bake-snapshot.mjs PORT` builds the map-bake test page
+into a unique directory and serves it with Vite preview. Its snapshot manifest
+records HEAD, the relevant tracked source patch hash, and hashes of every built
+artifact. The library remains live; this freezes test code, not asset data.
+The build rejects tracked source changes during bundling. Later source edits
+cannot trigger a development reload in the already-built test page.
+
+Snapshot `browser-build-qLQTog` serves on port 5184. Its compiled page, script
+and library mount respond successfully, and the HTML has no development reload
+client. Build, targeted lint and formatting checks pass. These checks establish
+the snapshot server, not a completed map bake. The existing
+`browser-exports-C2HFPf` batch continues on its original development server and
+has not been restarted or switched to this snapshot.
+
 ## Fresh York browser archive after published roof repairs
 
 Batch `browser-exports-C2HFPf` uses the current editor at localhost port 5183.
