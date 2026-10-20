@@ -2942,6 +2942,41 @@ test("a narrow sloping landing retains its prepared movement contour separately 
   assert.ok(compiled.sight_obstacles.some((obstacle) => obstacle.projection_area));
 });
 
+test("unconnectable overlapping receivers retain separate native sectors", () => {
+  const { document, assets, hut } = assetCompilerFixture();
+  hut.gameplay!.collision = "none";
+  hut.gameplay!.doors = [];
+  hut.gameplay!.surfaces = [20, 100].map((height, index) => ({
+    id: `floor-${index}`,
+    node: "building-999",
+    navigationRegion: "shared",
+    height,
+    polygon: [
+      [0, height],
+      [100, height],
+      [100, 100 + height],
+      [0, 100 + height],
+    ],
+  }));
+  document.objects = document.objects.filter((object) => object.group);
+  const before = structuredClone(hut.gameplay);
+  const compiled = compileAssetGameplay(document, assets, [0, 0, 3000, 2000]);
+  assert.equal(compiled.motion_data.layers.flat().length, 2);
+  const receivers = compiled.sight_obstacles.filter((obstacle) => obstacle.projection_area);
+  assert.equal(receivers.length, 2);
+  assert.equal(new Set(receivers.map((receiver) => receiver.projection_area![0])).size, 2);
+  assert.equal(compiled.doors.length, 0, "No passage may bridge unmatched heights");
+  assert.ok(
+    compiled.warnings?.some((warning) => warning.includes("disconnected floors remain separate")),
+  );
+  assert.ok(
+    !compiled.warnings?.some((warning) =>
+      warning.includes("receiving floors overlap at different heights"),
+    ),
+  );
+  assert.deepEqual(hut.gameplay, before);
+});
+
 test("a rotated authored loop exports connected floors without an explicit precision flag", () => {
   const { document, assets, hut } = assetCompilerFixture();
   const surface = (

@@ -6,16 +6,16 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-The latest York entrance-ramp candidate remains **unpublished**. Asset-local
-floor promotion and endpoint normalization make all reviewed doors bind in moved
-placements, but native traversal exposes missing seam passages and overlapping
-receivers. Its full-scene doorway audit passes 88/95, including two recovered
-entrances and one regression; this does not supersede the installed results.
+The latest York entrance-ramp candidate remains **unpublished**. The red-house-only
+candidate passes 88/95 full-scene doorway trips, recovering one entrance without
+regressing the installed baseline. All 130 stair routes pass; four of 40 climb
+routes fail identically in the installed baseline and this candidate.
 See the [ramp reproduction](map-compilation-evidence.md#york-entrance-ramp-reproduction).
 Export-side seam rounding and precision-boundary corrections now pass all 16
-moved red-house ground-click trips. Bridge gatehouse failures remain. Enabling
-terrain joins also exposes an existing narrow-house ramp's ambiguous receiver,
-so the candidate is still unpublished.
+moved red-house ground-click trips. Separate receiving sectors fix the neighboring
+narrow-house receiver regression. Its ground approaches still fail at zero
+rotation, and bridge gatehouse failures remain. Browser verification has not
+completed, so no publication or full-parity claim is made.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

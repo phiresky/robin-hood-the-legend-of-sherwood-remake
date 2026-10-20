@@ -2031,9 +2031,13 @@ function compileAssetGameplayAttempt(
           reached.add(passage.to);
         }
     }
-    // Preserve best-effort geometry when no actor-sized matching-height seams
-    // reconnect the split floors. Layer ordering reports the unresolved overlap.
-    if (reached.size !== planned.regions.length) return [region];
+    // An unavailable seam must not merge different receiving heights back into
+    // one sector. Retain each valid floor and every usable connection; report
+    // the disconnected components for authoring repair.
+    if (reached.size !== planned.regions.length)
+      warnings.push(
+        `Navigation ${region.pieces[0]?.navigationRegion ?? "unnamed"}: partitioned receiving floors have no character-sized connection between all components; disconnected floors remain separate.`,
+      );
     partitionPassages.push(...usable);
     return planned.regions;
   });

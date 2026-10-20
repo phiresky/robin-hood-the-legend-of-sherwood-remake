@@ -102,6 +102,35 @@ snapshot `draft-scene-render-UslJut` is prepared for the house-only review;
 browser verification was started, but no completed archive or publication is
 claimed here. Neither candidate is published.
 
+### Preserve disconnected receiving sectors
+
+Export no longer merges partitioned receiving floors back into an ambiguous
+sector when it cannot construct every connecting passage. Valid floors and
+usable passages are retained, and a warning identifies disconnected components.
+The regression test checks separate sectors for overlapping floors, no invented
+passage across unequal heights, and unchanged source metadata. All 193 focused
+compiler/partition/passage tests pass.
+
+House-only export `saved-map-exports-PEIyh4` and doorway audit
+`saved-map-entrances-jkBuhE` pass 88/95: entrance 23 recovers, and no installed
+baseline entrance regresses. All 130 complete-sprite stair routes pass.
+The climb audit passes 36/40; comparison against both installed baseline
+`staged-map-export-sUhPoS` and earlier candidate `saved-map-exports-UW7wLq`
+reproduces the same four failures at the same positions and goals.
+These are existing parity gaps, not successful climb coverage.
+
+Moved red-house fixture `selected-neighbor-placements-Hi2gUD` retains all 16
+ground-click trips. A separate narrow-house ground fixture
+`selected-neighbor-placements-0wAhPG` passes 12/16, failing both zero-rotation
+copies at both elevations. Gatehouse fixture `selected-neighbor-placements-Vo24Ip`
+stops during compilation at 180 degrees: two second-door endpoints have no
+supported floor after partitioning. Its incomplete manifest is not traversal
+evidence.
+
+Browser job for `draft-scene-render-UslJut` reached rendering, but its process
+handle is now missing and no browser evidence or ZIP exists. Verification is
+incomplete and must be rerun; no asset publication has occurred.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
