@@ -17,12 +17,15 @@ Eligible changing sectors in eight maps additionally pass 1,032 independent-stat
 and 426 combined-state sampled routes against live collision connectivity.
 See [fresh scene sweep](map-compilation-evidence.md#fresh-map-only-scene-sweep).
 
-Croisement01, Croisement02, Croisement03, Derby and Leicester additionally pass fresh map-only
+Croisement01, Croisement02, Croisement03, Derby, Leicester and Lincoln additionally pass map-only
 browser ZIP export/reopen/rebakes: gameplay, warnings and rendered color/depth
-match exactly, and all five exact archives
+match exactly, and all six exact archives
 load natively without a base datadir. This verifies packaging and deterministic
 rebaking, not actor traversal or visual correctness. See
 [Croisement01 browser round trip](map-compilation-evidence.md#croisement01-map-only-browser-round-trip).
+Lincoln uses the frozen `c24c55429` browser build, so its ZIP does not verify
+the subsequent climb-entry footprint correction. See
+[Lincoln browser round trip](map-compilation-evidence.md#lincoln-map-only-browser-round-trip).
 Croisement01 also passes 130 sampled player-click jump routes and 90 forced-long
 combat jumps; visible asset texture defects and compiler warnings remain.
 Croisement03's corrected browser fixture includes its pinned animated-tree

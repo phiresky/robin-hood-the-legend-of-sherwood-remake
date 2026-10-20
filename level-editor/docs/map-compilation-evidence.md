@@ -4,6 +4,24 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Lincoln map-only browser round trip
+
+The frozen `c24c55429` browser build passes Lincoln's map-only export,
+editor reopening and rebake, with matching gameplay, warnings and color/depth
+pixels. The 56,191,107-byte ZIP is
+`work/needs-review/map-compile/browser-exports-9u4BL3/lincoln.zip`,
+SHA-256 `20c70e357258cd72f3b5a57eed915e754582af69561151901e700782e8ff5fbd`.
+The browser run took 1,714.207 seconds. This snapshot predates the later
+climb-entry footprint correction.
+
+The existing native archive-test binary loads that exact ZIP without a base
+datadir in 6.16 seconds: 2944×2176 pixels, 620 sight obstacles, no masks,
+88 door projections, 94,392 fast-find blocks, and 38 appearance regions for
+11 controls. Color, depth, minimap and the embedded editor scene load.
+This is packaging/construction evidence, not full actor or visual parity.
+The sequential browser batch continues with Nottingham, Sherwood, York and
+Wychford; Lincoln's pass does not establish their results.
+
 ## Ladder oak: independent entrance and rotated-floor failures
 
 The current published ladder oak still does not pass traversal. In
@@ -26,6 +44,11 @@ At 90 degrees it finds no supported center region. This narrows the next
 investigation to the folded climb floor's projected collision envelope, in
 addition to the separate upper entrance obstruction. It does not justify
 removing obstacles or expanding the floor without a support check.
+A further diagnostic unions the polygon with its [6, 3] body sweeps and
+recomputes supported centers. At 90 degrees this restores a connected center
+region but introduces approximately 58.27 square units of centers outside
+the original exported polygon at each elevation. A simple box expansion is
+therefore not accepted as a production correction.
 
 ## Croisement01 map-only browser round trip
 
