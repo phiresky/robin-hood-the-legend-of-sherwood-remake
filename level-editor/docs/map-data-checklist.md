@@ -6,7 +6,7 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
-The latest sweep and corrected Wychford retry export all ten saved scenes and
+An earlier full-scene sweep and corrected Wychford retry export all ten saved scenes and
 load them through native geometry construction. Their 71 state transitions pass
 apply/reset checks; 180 lighting contours pass three ambience settings.
 Wychford's receiver-plane identity failure is fixed and verified in its full
@@ -17,12 +17,15 @@ Eligible changing sectors in eight maps additionally pass 1,032 independent-stat
 and 426 combined-state sampled routes against live collision connectivity.
 See [fresh scene sweep](map-compilation-evidence.md#fresh-map-only-scene-sweep).
 
-Croisement01, Croisement02, Croisement03, Derby, Leicester, Lincoln, Nottingham, Sherwood and York pass map-only
-browser ZIP export/reopen/rebakes: gameplay, warnings and rendered color/depth
-match exactly, and all nine exact archives
+All ten saved maps, including Wychford, have now passed map-only browser ZIP
+export/reopen/rebakes across the recorded compiler snapshots: gameplay, warnings
+and rendered color/depth match exactly, and all ten exact archives
 load natively without a base datadir. This verifies packaging and deterministic
 rebaking, not actor traversal or visual correctness. See
 [Croisement01 browser round trip](map-compilation-evidence.md#croisement01-map-only-browser-round-trip).
+The five-map frozen batch is complete; Wychford also passes native loading.
+See [Wychford archive verification](map-compilation-evidence.md#wychford-map-only-browser-round-trip).
+These archives are not all built with the latest compiler or asset corrections.
 Lincoln uses the frozen `c24c55429` browser build, so its ZIP does not verify
 the subsequent climb-entry footprint correction. See
 [Lincoln browser round trip](map-compilation-evidence.md#lincoln-map-only-browser-round-trip).
@@ -54,6 +57,9 @@ full-scene routes are no longer forbidden. Export prepares supported concave
 climb clearance and low-ladder handoffs; native graph corners remain integers.
 Fresh Derby/Lincoln/Nottingham/Sherwood exports pass all 22 available climb
 routes and 140 stair routes, with no forbidden routes in those checks.
+The fresh York export also passes all 40 climbs. Its stair audit passes 129/130
+ordinary visible clicks and all 130 with hidden-floor selection; the same
+visible-click limitation occurs in the earlier frozen ZIP.
 See [concave climb correction](map-compilation-evidence.md#supported-concave-climb-routes)
 and the earlier
 [published climb checks](map-compilation-evidence.md#broader-published-climb-checks).
@@ -144,6 +150,12 @@ all before takeoff on the red/rear timber-house connection. The earlier passing
 descriptor still passes on the same test binary. An isolated moved/copy fixture
 fails 92/160 offset clicks; changed receiving-floor partitions need investigation.
 See [current climb and jump evidence](map-compilation-evidence.md#normal-climb-clicks-and-current-jump-regression).
+The latest broader York audit checks 1,296 supported-floor probes: 1,242 pass
+normally and 30 more pass when the identical failed clicks use hidden-floor
+selection. The remaining 24 include 18 probes across disconnected permanent
+body-clearance components, three takeoff failures and three receiving-surface
+mismatches. These remain classified gaps, not passing traversal.
+See [current York route audit](map-compilation-evidence.md#current-york-selection-and-jump-coverage).
 An unpublished six-unit takeoff inset along the existing roof plane restores
 all 720 full-York jump checks, changing only that jump pair in the exported
 geometry. It improves the isolated placement result from 68/160 to 96/160;

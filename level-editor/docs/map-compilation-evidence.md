@@ -4,6 +4,58 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Wychford map-only browser round trip
+
+The frozen `c24c55429` browser batch is complete. Wychford exports, reopens and
+rebakes with matching gameplay, warnings and color/depth in 1,767.189 seconds.
+`work/needs-review/map-compile/browser-exports-9u4BL3/Wychford.zip`
+contains 162,669,787 bytes, SHA-256
+`10d9c5c349239d7cb0e6e6f09c80e4fd6e65522e044ec87a04d6a61a750d4437`.
+Native loading of that exact ZIP without a base datadir passes in 29.89 seconds:
+3600×2400 pixels, 15,428 sight obstacles, three masks, 92 door projections,
+79,002 fast-find blocks, five appearance regions for three controls.
+
+Together with the previous archives, all ten saved maps now have recorded
+map-only browser export/reopen/rebake and native archive-load passes. This does
+not mean that all ten were rebuilt after the newest compiler and asset changes,
+nor that their actor, state and visual behavior is fully verified.
+
+## Current York selection and jump coverage
+
+The `saved-map-exports-JhW5Fb` sweep is complete. Tests in its `york-native`
+subdirectory use the fresh York descriptor from the current exporter:
+
+- All 40 climb routes pass with no forbidden routes.
+- Ordinary visible stair clicks pass 129/130. The remaining route (entrance
+  146 to exit 147) cannot find a visible landing near [1800,191].
+  The frozen `browser-exports-9u4BL3/york-native` descriptor reproduces that
+  same failure on the same test binary. Hidden-floor selection passes all 130
+  routes on the fresh descriptor. This is not a new traversal regression.
+- Ordinary offset jump clicks pass 715/720. All five failures are line 57,
+  before takeoff, reproducing the existing red/rear timber-house problem.
+
+The broader supported-floor sampler produces 1,296 probes in
+`work/needs-review/map-compile/interior-jump-clicks-Ws3Bs1`. Ordinary selection
+passes 1,242; 54 fail. `york-hidden-retries-wqgfndpf` retries exactly those
+54 start/goal pairs with hidden-floor selection, without changing geometry or
+resampling. Thirty then pass, giving 1,272 successful normal-or-hidden cases
+and 24 unresolved cases:
+
+- Eighteen on lines 128–131 involve distinct components of the permanent
+  actor-body free space. Their start or goal is separated from the approach
+  component. This explains the stalls but is not proof that the asset's
+  disconnected walkable regions are intentional or that alternate gate routes
+  cannot connect them.
+- Three on line 57 have neither midpoint nor four-unit approach support for
+  the native footprint, consistent with the existing takeoff failure.
+- Three on line 49 reach the goal with a receiving-surface mismatch despite
+  source, approach and goal being in the expected connected free components.
+
+`york-hidden-retries-wqgfndpf/permanent-floor-components.json` records the
+component diagnosis. It considers permanent motion obstacles only and is not
+a replacement for native state, gate-connectivity or rendered-flight checks.
+The 24 cases are retained as unresolved evidence, not removed from the result.
+
 ## Supported concave climb routes
 
 The exporter now prepares body clearance through unobstructed concave climb
@@ -40,7 +92,7 @@ Verification:
   in-progress `saved-map-exports-JhW5Fb` sweep. Native checks pass 22 available
   climb routes (4/8/0/10 respectively) and 140 stair routes (28/18/92/2),
   with no failures or forbidden routes. Nottingham's zero climb count supplies
-  no climb coverage. The fresh York export is still pending at this checkpoint.
+  no climb coverage. The subsequent York results are recorded above.
 
 The frozen browser batch predates these corrections. Its Sherwood ZIP loading
 success does not verify the corrected traversal geometry. Rendered character
