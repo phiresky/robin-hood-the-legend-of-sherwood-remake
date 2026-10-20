@@ -19,6 +19,14 @@ datadir in 6.16 seconds: 2944×2176 pixels, 620 sight obstacles, no masks,
 88 door projections, 94,392 fast-find blocks, and 38 appearance regions for
 11 controls. Color, depth, minimap and the embedded editor scene load.
 This is packaging/construction evidence, not full actor or visual parity.
+Native actor tests against the descriptor extracted from this exact ZIP
+(`browser-exports-9u4BL3/lincoln-native`) additionally pass 100 sampled upright
+jump clicks, all eight available climb routes and 16 stair routes. Two stair
+routes are forbidden and are not counted as successful traversal. The exported
+stair at lift index 6 has an empty allowed-state requirement on its upper
+entrance's inside leg (layer 48, area 0), despite both entrances being active
+and unlocked. That permanent approach obstruction remains to be resolved;
+the green stair test alone does not establish complete stair coverage.
 The sequential browser batch continues with Nottingham, Sherwood, York and
 Wychford; Lincoln's pass does not establish their results.
 
