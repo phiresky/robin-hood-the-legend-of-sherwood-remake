@@ -539,6 +539,29 @@ both directions of `building-286-lift` on the northern riverside wall stair.
 two snapshots. These checks use compiled descriptors; a fresh browser ZIP bake
 of the climbing precision change has not yet been verified.
 
+### Northern wall animation approach still exceeds its exported floor
+
+`york-northern-wall-climb.json` assembles the climb, its curtain-wall landing
+and its independent boundary-wall opening. Unmodified stage
+`york-climb-review-yxDRc7` produces `selected-neighbor-placements-TAOfiD`;
+all 32 native directed routes fail across two copies, four rotations and
+two elevations. This reproduces the problem independently of the rest of York.
+
+The native crenellated-wall door adapts its inside approach to a radius of
+65 map units around its midpoint. In `saved-map-exports-oIBwLa`, the upper
+door midpoint is `[2999,805]`, and adaptation produces approximately
+`[3007.0623,869.49805]`. The emitted climb polygon's full-box center region
+has maximum distance only 60.36388432512314 from that midpoint. Changing
+the approach direction alone therefore cannot fit the required animation.
+The compiler already reports `Lift 4 door 1: no actor-sized in approach near
+the authored passage; traversal may be unavailable.`
+
+The remaining work is to construct a physically supported animation approach
+at export time, including any necessary adjoining landing support. It must
+preserve the crenellated transition and reject unsupported geometry. Enlarging
+the collision boundary without support, changing the door type just to shorten
+the animation, or adding a runtime geometry solver would not establish parity.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall

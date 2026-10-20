@@ -63,6 +63,10 @@ not climbing. Full York improves to 38/40 climb routes, retains all 130 stairs,
 and passes 95/95 doorway expectations in both authored lock-state snapshots.
 The remaining two failures are the northern riverside wall climb in both
 directions. Engine movement is unchanged.
+The wall failure also reproduces in all 32 isolated three-asset placement
+routes: its upper crenellated transition needs a 65-unit approach, but the
+saved climb's actor-safe polygon reaches only 60.364 units from that doorway.
+Preparing supported animation approaches remains export work.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.
