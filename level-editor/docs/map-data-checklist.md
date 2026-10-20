@@ -115,6 +115,11 @@ crosses the rising roof. No candidate is published; see
 Raising flight endpoints by 8, 24, or 40 units still leaves roof contacts and
 worsens the landing displacement; this workaround is rejected. See
 [height diagnostic](map-compilation-evidence.md#flight-height-diagnostic-rejected-as-a-roof-repair).
+Alternate receiving slopes retain 288/288 normal-or-hidden click routes, but
+still intersect solids. The compiler now explicitly warns when a placed
+long-jump edge faces away from its destination; correcting endpoint order in
+a diagnostic reduces contacts without clearing the whole flight. These candidates
+remain unpublished. See [alternate-slope evidence](map-compilation-evidence.md#alternate-roof-receiving-slopes).
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

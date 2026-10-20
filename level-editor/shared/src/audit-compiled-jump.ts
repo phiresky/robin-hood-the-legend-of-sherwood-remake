@@ -20,6 +20,23 @@ export function auditCompiledJump(
     issues.push(
       "opposing edges differ after movement-grid rounding; runtime landings can miss the authored edge",
     );
+  if (
+    pair.jump_long &&
+    [
+      [line1, line2],
+      [line2, line1],
+    ].some(([source, destination]) => {
+      const dx = source!.point_b[0] - source!.point_a[0];
+      const dy = source!.point_b[1] - source!.point_a[1];
+      return [
+        [source!.point_a, destination!.point_b],
+        [source!.point_b, destination!.point_a],
+      ].some(([from, to]) => -dy * (to![0] - from![0]) + dx * (to![1] - from![1]) <= 0);
+    })
+  )
+    issues.push(
+      "long-jump takeoff normal does not face the destination across the full span; review placed endpoint order",
+    );
   const world = ([x, y, z]: Vec3): Vec3 => [x, y + z, z];
   const edges: [JumpEdge, JumpEdge] = [line1, line2].map((line, index) => ({
     // Each line stores its destination zone; the opposite line identifies

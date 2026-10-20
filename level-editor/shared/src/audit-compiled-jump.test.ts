@@ -20,6 +20,42 @@ test("integer jump audit detects unequal landing vectors without changing the pa
   assert.deepEqual(input, before);
 });
 
+test("long-jump audit warns about backward or tangent takeoff while retaining the authored pair", () => {
+  for (const distance of [-60, 0]) {
+    const input = pair();
+    input.line2.point_a[0] = distance;
+    input.line2.point_b[0] = distance;
+    const before = structuredClone(input);
+    let checked = false;
+    const issues = auditCompiledJump(input, () => {
+      checked = true;
+      return [];
+    });
+    assert.equal(issues.length, 1);
+    assert.match(issues[0]!, /takeoff normal does not face the destination/);
+    assert.ok(checked, "orientation warnings must not skip the flight audit");
+    assert.deepEqual(input, before);
+  }
+  assert.deepEqual(
+    auditCompiledJump(pair(), () => []),
+    [],
+  );
+});
+
+test("long-jump orientation audit checks both endpoints and both directions", () => {
+  const input = pair();
+  // The first normal faces the landing, but the return edge faces away.
+  input.line2.point_a = [60, 120, 12];
+  input.line2.point_b = [60, 100, 12];
+  assert.match(auditCompiledJump(input, () => []).join("\n"), /takeoff normal/);
+  // A different edge faces the source at one endpoint but crosses it at the other.
+  input.line2.point_a = [-10, 0, 12];
+  input.line2.point_b = [60, 100, 12];
+  assert.match(auditCompiledJump(input, () => []).join("\n"), /takeoff normal/);
+  input.jump_long = false;
+  assert.doesNotMatch(auditCompiledJump(input, () => []).join("\n"), /takeoff normal/);
+});
+
 test("integer jump audit checks fractional solids in world coordinates", () => {
   const obstacle: SightObstacle = {
     points: [

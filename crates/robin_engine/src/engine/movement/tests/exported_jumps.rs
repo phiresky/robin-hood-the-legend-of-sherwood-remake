@@ -1085,7 +1085,12 @@ fn dispatch_jump(
             engine.world.fast_grid.get_sector_screen(goal, start)
         };
         let selected_index = hit.sector_idx;
-        let selected_goal = hit.sector.map(|sector| (sector, hit.layer));
+        let Some(selected_sector) = hit.sector else {
+            return Err(format!(
+                "click has no selectable destination sector: {goal:?}, index={selected_index:?}"
+            ));
+        };
+        let selected_goal = Some((selected_sector, hit.layer));
         let planned = engine.plan_recorded_group_move(
             &assets,
             &[owner],

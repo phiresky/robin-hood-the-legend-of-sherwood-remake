@@ -837,6 +837,65 @@ landing paths clear the actual assembly, and reject or warn about connections
 that cannot satisfy that at export time. No library or production engine change
 was made for this diagnostic.
 
+### Alternate roof receiving slopes
+
+`refinement/stage-york-roof-facing-receiver.mjs` stages an alternate red-roof
+receiver (`building-322-walk-0`) and matching local zone/anchor, keeping endpoint
+heights on the receiving planes. Opposing spans retain matching three-dimensional
+vectors. The helper validates source hashes and asset metadata; it does not
+publish or change model geometry.
+
+Stage `york-roof-facing-receiver-Tao4q6`, compiled into
+`connected-jump-placements-83JV5n`, was tested at rotations 0, 37, 90, and 180
+degrees, elevations 0 and 40, with two copies per placement.
+`interior-jump-clicks-w64plU` and `interior-jump-clicks-V5alfC` contain matching
+normal/hidden inputs. Their mode review finds 216 normal selections and 72
+hidden-only selections, with no unreachable cases among 288 probes.
+These probes differ from the previous 264-case fixture because the receiving
+floor and jump zone changed; this is not an identical-input improvement claim.
+
+`facing-roof-mode-traces-0i5nu79j` combines the successful native traces, preserving
+descriptor hashes and selection mode. Its exported endpoints still produce
+252 contacts among 5,064 airborne samples, maximum penetration 11.46684 units.
+The precise-endpoint diagnostic passes the same 288 selected-mode inputs but
+still produces 216 contacts among 5,028 samples, maximum penetration 9.77137.
+The separate `observed-solid-contact-export.json` and
+`observed-solid-contact-precision.json` preserve both results.
+Changing the red-roof slope alone therefore does not clear the flight.
+
+The second stage, `york-roof-facing-receiver-9PvrZ6`, also chooses rear slope
+`building-330-walk-0`. It compiles into `connected-jump-placements-Kdqi38`.
+The normal/hidden audits (`interior-jump-clicks-xg1HkT` and
+`interior-jump-clicks-JaaxOD`) cover 204 normal and 84 hidden-only selections.
+All 288 are reachable, but `both-roof-mode-traces-utosdqvj` records 108 contacts
+among 3,948 samples, maximum penetration 10.26933 units.
+The first normal audit stopped on an unselectable screen hit with no public
+sector identity. The test harness now records that as a failed click before
+requesting a route, allowing the remaining probes and hidden-selection audit
+to complete. Its rerun and three regular jump-module tests completed; production
+engine code was unchanged.
+
+The alternate slopes also expose an endpoint-order problem: at some rotations,
+the projected long-jump normal faces away from the other edge. Diagnostic
+`roof-facing-normal-diagnostic-c9g_zhm9` reverses both endpoints of eight pairs
+whose normals face away at both ends in both directions. It retains all 288
+selected-mode arrivals and reduces observed contacts to 36 among 3,984 samples;
+maximum penetration remains 10.26933. This descriptor-only experiment is not a
+published repair or a replacement for compiling and checking a complete export.
+Repeating that diagnostic with precise endpoints still passes 288/288 but leaves
+36 contacts (maximum 10.38526) among 3,984 samples. All remaining contacts occur
+in the zero-degree assemblies, on lines 1 and 3. The integer and precision
+contact reports are saved separately. Endpoint precision alone therefore cannot
+finish this candidate; the remaining zero-degree flight geometry needs review.
+
+The compiler's jump audit now warns explicitly when a forced long-jump normal
+does not face its destination across the full span, checking both traversal
+directions. It preserves authored data and still runs flight clearance, including
+for best-effort exports. Unit checks cover backward normals, tangent endpoints,
+partial-span crossings, return-direction errors, and unchanged valid edges.
+The focused compiler, assembly, and jump-audit suites pass all 184 tests; lint
+and formatting checks also pass.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
