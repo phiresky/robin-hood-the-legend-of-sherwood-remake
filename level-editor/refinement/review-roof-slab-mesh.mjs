@@ -44,14 +44,24 @@ for (const [id, surfaceId] of reviewed) {
   );
   assert.ok(mesh.length);
   const triangles = mesh.map((triangle) => new Triangle(...triangle.map((p) => new Vector3(...p))));
-  const points = (surface) =>
-    surface.polygon.map(([x, y], i) => [
+  const points = (surface, gameplay) => {
+    if (surface.projectionVolume) {
+      const volume = gameplay.volumes?.find((volume) => volume.id === surface.projectionVolume);
+      assert.ok(volume, "Receiver mesh review requires an explicit gameplay volume");
+      assert.equal(volume.node, surface.node, "Receiver and surface must use the same local frame");
+      return volume.shape.points.map((point) => [point.x, point.y, point.z_top]);
+    }
+    return surface.polygon.map(([x, y], i) => [
       x,
       y,
       Array.isArray(surface.height) ? surface.height[i] : surface.height,
     ]);
-  const before = points(descriptor.gameplay.surfaces.find((surface) => surface.id === surfaceId));
-  const after = points(surface);
+  };
+  const before = points(
+    descriptor.gameplay.surfaces.find((surface) => surface.id === surfaceId),
+    descriptor.gameplay,
+  );
+  const after = points(surface, edit.gameplay);
   const measure = (boundary) =>
     boundary.flatMap((a, i) => {
       const b = boundary[(i + 1) % boundary.length];

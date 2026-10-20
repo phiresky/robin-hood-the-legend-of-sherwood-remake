@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Published golden-house receiving ridge
+
+The receiver-volume candidate is published in
+`york-central-south-golden-timber-house`, descriptor SHA-256
+`81a8a481c9f47759a47e5cefc7431a7924f8e6a14b16a5528827da4add4e980d`.
+The library index and York scene pin use that descriptor.
+It retains the existing movement surfaces and supplies two thin,
+non-solid receiving faces meeting on the intersection of their unchanged planes.
+
+Full-scene candidate export `saved-map-exports-cmvxGk` completes in 305.8 seconds.
+Compared with the baseline, only `sight_obstacles` differs; movement, doors,
+jump pairs, state definitions and other gameplay fields are identical.
+Replay `replayed-jump-clicks-hrjJf3` retains all 1,296 original normal-click
+coordinates and modes: 1,245 pass, up from 1,242. The three line-49 receiver
+mismatches are fixed, with zero pass-to-fail regressions. All remaining 51
+failures are retained as outstanding work.
+
+Moved-assembly candidate `connected-jump-placements-csz36q` matches every
+published-baseline pass/fail result and error for both direct jumps and ordinary
+clicks: 156/160 direct and 80/160 visible-click probes pass. The four direct
+failures occur at the end of the jump span after a 180° rotation. Unequal paired
+spans transfer the endpoint about 0.009 units outside the receiving boundary;
+the existing export audit warns about this unsupported span. It remains a
+separate defect, as do the rotated selection failures.
+
+Mesh review `roof-slab-mesh-review-2muO9S` evaluates the actual receiver volumes,
+not the unchanged walking polygons. Maximum sampled boundary distance remains
+1.859 units on one face and improves from 0.527 to 0.472 on the other.
+The publication manifest and prior descriptor are retained in
+`york-golden-roof-ridge-DJbQoH`. A fresh export without staged overrides is
+running in `saved-map-exports-ft00zc`; comparison to the tested candidate remains
+required. These checks are not a new browser ZIP or complete gameplay parity.
+
 ## Explicit receiving-volume placement
 
 Gameplay volumes now transform their explicit receiving-plane anchors along
@@ -22,7 +55,8 @@ loads and passes 156/160 direct jump probes. The published baseline has the
 same four endpoint failures at 180°; this is not complete jump coverage.
 All eight pre-fix assembly descriptors have movement and jump-pair data
 identical to the published baseline, confirming that this candidate isolates
-receiver geometry. The candidate is still unpublished.
+receiver geometry. Subsequent full-scene verification and publication are
+recorded above.
 
 ## Golden timber-house ridge candidate
 

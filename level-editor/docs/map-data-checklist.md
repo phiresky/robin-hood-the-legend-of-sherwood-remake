@@ -6,6 +6,12 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
+York's golden-house ridge receivers are corrected in the published asset metadata.
+The full-scene candidate fixes three landing failures with no regressions among
+1,296 unchanged normal-click probes (1,245 pass). Movement and jump connections
+are unchanged. Rotated endpoint/selection failures remain; this is not full parity.
+See [receiving ridge evidence](map-compilation-evidence.md#published-golden-house-receiving-ridge).
+
 An earlier full-scene sweep and corrected Wychford retry export all ten saved scenes and
 load them through native geometry construction. Their 71 state transitions pass
 apply/reset checks; 180 lighting contours pass three ambience settings.
