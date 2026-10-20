@@ -169,7 +169,10 @@ export function compileNavigationGraph(layers: Layers): number[] {
       const allowed = prepareCorridorStates(area.obstacles, boundary);
       const nodes: Node[] = [];
       for (const [ringIndex, raw] of [
-        area.is_lift ? boundary : area.polygon.points,
+        // The native graph stores integer corner positions and edge vectors.
+        // Keep clearance checks on the precise contour above, but derive graph
+        // corners from the same integer geometry used by other motion areas.
+        area.polygon.points,
         ...area.obstacles.map((obstacle) => obstacle.polygon.points),
       ].entries()) {
         const ring =

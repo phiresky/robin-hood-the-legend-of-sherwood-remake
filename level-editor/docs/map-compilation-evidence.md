@@ -4,6 +4,61 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Supported concave climb routes
+
+The exporter now prepares body clearance through unobstructed concave climb
+floors. It constructs candidate paths within a triangulated floor, sweeps the
+native body around them, and accepts an envelope only when all entrances share
+a connected supported center region and no admitted center lies outside the
+original floor. Alternate triangulations can avoid unsafe concave bends;
+the final support check always uses the original contour. Existing obstacles
+and state-dependent barriers disable this preparation.
+
+Low ladder handoffs can move toward their landing by at most one actor radius,
+using the existing two-sided permanent-collision checks. Collision geometry,
+endpoints, high ladder transitions and wall transitions remain unchanged.
+Regression tests cover shared permanent blockers, excessive distances and
+switchable barriers.
+
+Graph generation previously took fractional corner positions and edge vectors
+from precise lift contours, although the native stream requires integers.
+It now derives graph corners from integer motion geometry while checking each
+docking position and connection against the precise collision contour.
+No engine or per-tick code changes are required.
+
+Verification:
+
+- 302 compiler, clearance, graph and map/roof export tests pass; the additional
+  low-ladder barrier variants also pass. Targeted lint and formatting pass.
+- `work/needs-review/map-compile/local-stair-placements-wA5mf4` is an actual
+  export of the published ladder oak, not an edited descriptor diagnostic.
+  All 48 native player-click routes pass at four rotations and two elevations,
+  with no forbidden routes. This includes the previously failing 90-degree
+  ground-to-platform routes.
+- `work/needs-review/map-compile/climb-route-completed-scenes-7ca5a9c5` snapshots
+  the completed Derby, Lincoln, Nottingham and Sherwood exports from the
+  in-progress `saved-map-exports-JhW5Fb` sweep. Native checks pass 22 available
+  climb routes (4/8/0/10 respectively) and 140 stair routes (28/18/92/2),
+  with no failures or forbidden routes. Nottingham's zero climb count supplies
+  no climb coverage. The fresh York export is still pending at this checkpoint.
+
+The frozen browser batch predates these corrections. Its Sherwood ZIP loading
+success does not verify the corrected traversal geometry. Rendered character
+integration and broader state/mission behavior are not certified by these tests.
+
+## York map-only browser round trip
+
+The frozen browser batch exports, reopens and rebakes York with matching
+gameplay, warnings and color/depth pixels in 420.363 seconds.
+`work/needs-review/map-compile/browser-exports-9u4BL3/york.zip`
+contains 46,713,495 bytes, SHA-256
+`5eb76c56394f01b3ab853cbbf0ed888ca7d464cbdbe0f57e6154542ffecf146f`.
+That exact archive loads natively without a base datadir in 2.39 seconds:
+3136×2318 pixels, 1,237 sight obstacles, 28 masks, 257 door projections,
+291,305 fast-find blocks, no appearance regions and six controls.
+This is archive construction and deterministic rebake evidence, not complete
+actor or visual parity. Wychford remains in progress in this batch.
+
 ## Lincoln north-hall stair contact correction
 
 The upper seam of `lincoln-north-hall-stair` overlapped the neighbouring curtain

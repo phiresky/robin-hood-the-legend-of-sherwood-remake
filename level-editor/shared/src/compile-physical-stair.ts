@@ -9,6 +9,7 @@ import { projectStairClearance } from "./project-stair-clearance.ts";
 import { stairCenterRegion } from "./stair-center-region.ts";
 import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
 import { climbEntryClearance } from "./climb-entry-clearance.ts";
+import { climbRouteClearance } from "./climb-route-clearance.ts";
 
 export interface PhysicalStairInput {
   /** Prepare native walking clearance for stair lifts, excluding ladders and walls. */
@@ -94,12 +95,14 @@ export function compilePhysicalStairArea(input: PhysicalStairAreaInput): {
     return [point, [Math.round(point[0]), Math.round(point[1])]];
   });
   const entryClearance =
-    input.prepareClimbingClearance && !floor.patches && collision.length === 0
-      ? climbEntryClearance(
-          preciseClearance ?? roundedClearance ?? projectedFloor,
-          projectedFloor,
-          entries,
-        )
+    input.prepareClimbingClearance && collision.length === 0
+      ? ((!floor.patches
+          ? climbEntryClearance(
+              preciseClearance ?? roundedClearance ?? projectedFloor,
+              projectedFloor,
+              entries,
+            )
+          : undefined) ?? climbRouteClearance(projectedFloor, entries))
       : undefined;
   const clearanceBoundary = entryClearance ?? preciseClearance ?? roundedClearance;
   const project = (point: Point): Point => {

@@ -17,9 +17,9 @@ Eligible changing sectors in eight maps additionally pass 1,032 independent-stat
 and 426 combined-state sampled routes against live collision connectivity.
 See [fresh scene sweep](map-compilation-evidence.md#fresh-map-only-scene-sweep).
 
-Croisement01, Croisement02, Croisement03, Derby, Leicester, Lincoln, Nottingham and Sherwood pass map-only
+Croisement01, Croisement02, Croisement03, Derby, Leicester, Lincoln, Nottingham, Sherwood and York pass map-only
 browser ZIP export/reopen/rebakes: gameplay, warnings and rendered color/depth
-match exactly, and all eight exact archives
+match exactly, and all nine exact archives
 load natively without a base datadir. This verifies packaging and deterministic
 rebaking, not actor traversal or visual correctness. See
 [Croisement01 browser round trip](map-compilation-evidence.md#croisement01-map-only-browser-round-trip).
@@ -48,9 +48,14 @@ Static/changing barriers retain their existing boundaries. Its verified browser
 ZIP predates these climb fixes. See
 [rotated climb footprints](map-compilation-evidence.md#supported-climb-entry-footprints-after-rotation).
 Broader current checks pass all eight Lincoln and 40 York climb routes, plus
-96 moved routes across six more published assets. Sherwood's ladder oak remains
-blocked at its upper approaches; its six full-scene routes are forbidden and
-are not counted as passes. See
+96 moved routes across six more published assets. Sherwood's ladder oak now
+passes all 48 moved routes, including 90-degree placements, and its six
+full-scene routes are no longer forbidden. Export prepares supported concave
+climb clearance and low-ladder handoffs; native graph corners remain integers.
+Fresh Derby/Lincoln/Nottingham/Sherwood exports pass all 22 available climb
+routes and 140 stair routes, with no forbidden routes in those checks.
+See [concave climb correction](map-compilation-evidence.md#supported-concave-climb-routes)
+and the earlier
 [published climb checks](map-compilation-evidence.md#broader-published-climb-checks).
 
 The York red-house ramp and terrain connection metadata are now **published**.

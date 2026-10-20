@@ -3,7 +3,7 @@ import type { Point } from "./level.ts";
 import { prepareCorridorStates } from "./compile-navigation-graph.ts";
 import { NAVIGATION_HALF_DIAGONAL } from "./navigation-footprint.ts";
 
-/** Prepare the sector handoff where an actor footprint straddles a stair opening. */
+/** Prepare handoffs where a footprint straddles a stair or low ladder opening. */
 export function prepareStairPassages(geometry: CompiledAssetGeometry): void {
   const areas = new Map<number, (a: Point, b: Point) => number[]>();
   let sector = 0;
@@ -14,8 +14,11 @@ export function prepareStairPassages(geometry: CompiledAssetGeometry): void {
     }
   const radius = Math.hypot(...NAVIGATION_HALF_DIAGONAL);
   for (const lift of geometry.lifts ?? []) {
-    if (lift.lift_type !== 1) continue;
+    if (lift.lift_type !== 1 && lift.lift_type !== 2) continue;
     for (const door of lift.doors) {
+      // High ladder exits have a separate crouch/clamber transition. Keep their
+      // authored midpoint; only the low walk/climb handoff uses this adjustment.
+      if (lift.lift_type === 2 && door.door_type !== 5) continue;
       const inside = areas.get(door.sector_in);
       const outside = areas.get(door.sector_out);
       if (!inside || !outside) throw new Error("Stair passage refers to a missing motion area");

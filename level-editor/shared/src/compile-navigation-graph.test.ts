@@ -51,6 +51,29 @@ test("ordinary floors compile the same precise contour used by static collision"
   assert.notDeepEqual(ordinary, compileNavigationGraph([[rounded]]));
 });
 
+test("precise concave lift floors retain integer native graph corners", () => {
+  const points: Point[] = [
+    [0, 0],
+    [100, 0],
+    [100, 40],
+    [40, 40],
+    [40, 100],
+    [0, 100],
+  ];
+  const area: CompiledAssetGeometry["motion_data"]["layers"][number][number] = {
+    is_lift: true,
+    state_id: 0,
+    flags: 0,
+    obstacles: [],
+    skeleton_segments: [],
+    polygon: { points },
+    precise_polygon: points.map(([x, y]) => [x + 0.25, y + 0.25]),
+  };
+  const graph = compileNavigationGraph([[area]]);
+  assert.ok(graph.length > 100, "the concave lift must retain routing nodes");
+  assert.deepEqual(graph, compileNavigationGraph([[{ ...area, is_lift: false }]]));
+});
+
 test("large authored obstacle layouts export extended link indices", () => {
   const bytes = compileNavigationGraph([
     [
