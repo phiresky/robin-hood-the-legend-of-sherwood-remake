@@ -4,8 +4,10 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { prepareCorridorStates } from "../shared/src/compile-navigation-graph.ts";
 import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
+import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 
 const hidden = process.argv.includes("--hidden");
+const receiverSamples = process.argv.includes("--receiver-samples");
 const sampleArguments = process.argv
   .slice(2)
   .filter((argument) => argument.startsWith("--samples="));
@@ -14,7 +16,12 @@ const samples = sampleArguments.length ? Number(sampleArguments[0].slice("--samp
 assert.ok(Number.isInteger(samples) && samples >= 1 && samples <= 16, "Sample count must be 1–16");
 const [directory, indices] = process.argv
   .slice(2)
-  .filter((argument) => argument !== "--hidden" && !argument.startsWith("--samples="));
+  .filter(
+    (argument) =>
+      argument !== "--hidden" &&
+      argument !== "--receiver-samples" &&
+      !argument.startsWith("--samples="),
+  );
 assert.ok(directory, "Supply an export directory and optional comma-separated line indices");
 const selected = indices?.split(",").map(Number);
 assert.ok(!selected || selected.every((index) => Number.isInteger(index) && index >= 0));
@@ -44,7 +51,8 @@ for (const entry of manifest.results) {
     const zone = geometry.jump_zones[opposite.jump_zone_index];
     const area = areas.get(zone.sector);
     assert.ok(area);
-    const contours = [area.polygon.points, ...(area.precise_polygon ? [area.precise_polygon] : [])];
+    // Native loading replaces the integer contour when precise movement is present.
+    const contours = [area.precise_polygon ?? area.polygon.points];
     const allowed = contours.map((contour) => prepareCorridorStates(area.obstacles, contour));
     const polygon = zone.polygon.points;
     const midpoint = line.point_a
@@ -60,6 +68,31 @@ for (const entry of manifest.results) {
         const point = [x + 0.25, y + 0.25];
         if (pointInGameplayPolygon(point, polygon)) candidates.push(point);
       }
+    if (receiverSamples) {
+      for (const receiver of geometry.sight_obstacles) {
+        if (
+          receiver.projection_area?.[0] !== zone.sector ||
+          receiver.projection_area?.[1] !== zone.layer
+        )
+          continue;
+        const world = receiver.points.map((p) => [p.x, p.y]);
+        const plane = heightPlane(
+          receiver.projection_plane ?? receiver.points.slice(0, 3).map((p) => [p.x, p.y, p.z_top]),
+        );
+        const center = [0, 1].map(
+          (axis) => world.reduce((sum, point) => sum + point[axis], 0) / world.length,
+        );
+        // An almost edge-on receiver can fall between every screen-grid sample.
+        // Project actual floor points; do not expand its physical coverage.
+        for (const vertex of world)
+          for (const fraction of [0, 0.25, 0.5, 0.75]) {
+            const point = center.map((value, axis) => value + fraction * (vertex[axis] - value));
+            if (!pointInGameplayPolygon(point, world, true)) continue;
+            const screen = [point[0], point[1] - planeHeight(plane, point)];
+            if (pointInGameplayPolygon(screen, polygon)) candidates.push(screen);
+          }
+      }
+    }
     const distance = (point) => (point[0] - midpoint[0]) ** 2 + (point[1] - midpoint[1]) ** 2;
     candidates.sort((a, b) => distance(a) - distance(b));
     const supported = (point) =>
@@ -75,7 +108,11 @@ for (const entry of manifest.results) {
     // Preserve the nearest-point default, then spread additional probes across
     // the usable zone by maximizing their distance from already sampled points.
     const remaining = [];
+    const seen = new Set();
     for (const point of candidates) {
+      const key = `${point[0]}/${point[1]}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       if (!supported(point)) continue;
       remaining.push(point);
       if (samples === 1) break;
@@ -124,6 +161,7 @@ await fs.writeFile(
     scope: "interior-native-footprint-probes-not-world-support-or-rendering-proof",
     source: directory,
     samplesPerSide: samples,
+    receiverSamples,
     unavailable,
     results,
   }),

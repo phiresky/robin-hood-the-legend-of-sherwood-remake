@@ -98,6 +98,13 @@ geometry. It improves the isolated placement result from 68/160 to 96/160;
 surface-following selection regions improve it to 100/160. The 180-degree
 receiver failures and flight/visual review remain open, so the library is
 unchanged. See [takeoff candidate evidence](map-compilation-evidence.md#red-roof-takeoff-footprint-candidate).
+Correcting the audit to use native precise contours and actual receiver samples
+finds usable points at every rotation. A common-tangent span candidate then fixes
+the eight reproduced landing failures with no regressions on identical inputs.
+All 264 interior cases pass using normal or explicit hidden-floor selection.
+However, recorded flight anchors penetrate roof solids by up to 27.2753 units.
+This remains unpublished and is not parity proof. See
+[rotated receiver evidence](map-compilation-evidence.md#rotated-roof-receiver-sampling-and-common-spans).
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

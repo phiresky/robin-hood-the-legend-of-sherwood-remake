@@ -724,6 +724,52 @@ also reports unavailable 180-degree starts/goals rather than silently dropping
 them. All candidates remain unpublished pending moved receiver, flight-contact,
 mesh and archive review.
 
+### Rotated roof receiver sampling and common spans
+
+At 180 degrees the red roof's world-plane Y slope is approximately
+1.00185595, so its screen projection is almost edge-on. The interior-click
+sampler incorrectly required both integer and precise navigation contours;
+native loading uses the precise contour in place of the integer contour.
+The sampler now follows that rule. Optional `--receiver-samples` projects
+actual floor points so a two-pixel screen sampling grid cannot miss a thin
+receiver. Candidate points are deduplicated and still pass native-footprint
+checks; no floor coverage is enlarged.
+
+`interior-jump-clicks-FkXUAo` (reproduced with deduplication as
+`interior-jump-clicks-qbTUSM`) finds 264 inputs with no unavailable direction
+on `connected-jump-placements-sXuauq`. Native execution passes 220 normally;
+the identical hidden inputs in `interior-jump-clicks-dWIt24` cover another 36.
+The mode verifier confirms eight failures in both modes. Those jumps fly, then
+lose their receiving surface and end at ground height at 180 degrees.
+
+The separate supported-click precision diagnostic retains the exact input
+points and descriptor bytes while overriding only runtime jump endpoints.
+`supported-jump-precision-yohs4ked` fixes none of the eight failures and causes
+40 additional failures. The ordinary offset precision experiment
+`connected-jump-placements-AQiC0s` likewise retains 60/160 failures. These are
+diagnostics, not exported-format validation, and do not justify an endpoint
+format extension.
+
+`stage-york-roof-common-span.mjs` derives a three-unit span tangent to both
+receiving planes, with opposite equal 3D vectors at the two assets. This
+preserves matching projected spans under rotation. It validates both local
+surfaces, pinned sources and the complete 3D-vector invariant. Stage
+`york-roof-common-span-AA37hx` (reproduced as `york-roof-common-span-MjLlBk`)
+exports to `connected-jump-placements-gt1vaV`.
+
+The candidate's interior audits `interior-jump-clicks-456zqg` and
+`interior-jump-clicks-i1O3u3` cover all 264 cases: 228 normal and 36 hidden-only.
+Replaying the baseline's exact 264 inputs in `same-click-span-review-5m2jq9nu`
+fixes all eight landing failures with zero regressions. Apart from the jump
+pairs and diagnostic warnings, those replay descriptors are identical.
+
+The recorded mode-selected run `roof-span-mode-traces-dyhyi01h` passes all
+264 routes but fails airborne anchor/solid review: 384 contacts among 5,514
+samples, maximum penetration 27.2753 units. The largest contact is in the red
+roof volume during a 180-degree route. Successful arrival does not clear that
+finding. No asset is published and no runtime behavior changes. Full-scene
+candidate export `staged-map-export-YQyisL` is still under validation.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall

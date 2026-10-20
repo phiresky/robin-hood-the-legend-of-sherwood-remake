@@ -507,6 +507,16 @@ fn exported_jumps_resolve_player_clicks_and_complete_the_route() {
 #[test]
 #[ignore = "requires explicit supported-floor click probes and ROBIN_CLIMB_RHS"]
 fn exported_jumps_resolve_supported_floor_clicks() {
+    audit_supported_floor_clicks(false);
+}
+
+#[test]
+#[ignore = "diagnostic only: requires supported clicks with unsnapped endpoints"]
+fn exported_supported_floor_jump_precision_diagnostic() {
+    audit_supported_floor_clicks(true);
+}
+
+fn audit_supported_floor_clicks(precise_endpoints: bool) {
     let sprite = super::exported_stairs::complete_climb_sprite();
     let directory = std::path::PathBuf::from(std::env::var("ROBIN_ASSET_MAP_DIAGNOSTICS").unwrap());
     let manifest: serde_json::Value =
@@ -520,13 +530,31 @@ fn exported_jumps_resolve_supported_floor_clicks() {
         let bytes = std::fs::read(directory.join(file)).unwrap();
         let descriptor: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let dims = &descriptor["walkable_polygon"][2];
-        let (engine, assets) = compiled_walkway_with_dimensions(
+        let (mut engine, assets) = compiled_walkway_with_dimensions(
             &bytes,
             (
                 dims[0].as_f64().unwrap() as f32 + 1.,
                 dims[1].as_f64().unwrap() as f32 + 1.,
             ),
         );
+        if precise_endpoints {
+            let endpoints = entry["diagnostic_jump_endpoints"].as_array().unwrap();
+            let grid = std::sync::Arc::make_mut(&mut engine.world.fast_grid);
+            let level = std::sync::Arc::make_mut(&mut grid.level);
+            assert_eq!(endpoints.len(), level.jump_lines.len());
+            for (line, points) in level.jump_lines.iter_mut().zip(endpoints) {
+                let coordinate = |end: usize, axis: usize| {
+                    let value = points[end][axis].as_f64().unwrap() as f32;
+                    assert!(value.is_finite());
+                    value
+                };
+                line.point_a = MapPoint::new(coordinate(0, 0), coordinate(0, 1));
+                line.point_b = MapPoint::new(coordinate(1, 0), coordinate(1, 1));
+                line.z_a = coordinate(0, 2);
+                line.z_b = coordinate(1, 2);
+                assert!(line.vector().length() > 1e-4);
+            }
+        }
         for probe in entry["click_probes"].as_array().unwrap() {
             let point = |key: &str| {
                 MapPoint::new(
@@ -565,10 +593,15 @@ fn exported_jumps_resolve_supported_floor_clicks() {
         .count();
     let report = serde_json::json!({
         "scope": "explicit-supported-floor-clicks-not-perpendicular-approach-coverage-or-rendering",
+        "diagnostic_endpoint_override": precise_endpoints,
         "complete": failed == 0, "results": results,
     });
     std::fs::write(
-        directory.join("actor-supported-floor-click-report.json"),
+        directory.join(if precise_endpoints {
+            "actor-supported-floor-precise-diagnostic-report.json"
+        } else {
+            "actor-supported-floor-click-report.json"
+        }),
         serde_json::to_vec_pretty(&report).unwrap(),
     )
     .unwrap();
