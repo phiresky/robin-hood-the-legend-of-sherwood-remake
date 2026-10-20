@@ -810,6 +810,33 @@ With that distinction, the three-unit full-scene stage retains 720/720 offset
 checks, the rotated three-unit fixture exposes 24 failures, and the five-unit
 fixture retains 264/264. The three regular jump-module tests and formatting pass.
 
+### Flight-height diagnostic: rejected as a roof repair
+
+`refinement/stage-jump-height-diagnostic.mjs` replays the same precise-endpoint
+fixture while increasing endpoint heights without moving projected walking
+contacts. This is a test-only override, not an exported asset or format change.
+All three trials retain 264/264 arrivals with walking receiver continuity:
+
+| Height increase | Diagnostic directory | Airborne contacts / samples | Maximum penetration |
+| --- | --- | --- | --- |
+| 8 | `jump-height-diagnostic-l5XPah` | 210 / 4,350 | 5.42196 |
+| 24 | `jump-height-diagnostic-rKhyHX` | 24 / 4,638 | 3.73884 |
+| 40 | `jump-height-diagnostic-HfOdiv` | 24 / 5,094 | 2.80982 |
+
+None clears the roof. Increasing the height also worsens the final recorded
+flight-frame displacement: its maximum world distance rises from 26.002 units
+in the unmodified precise fixture to 36.108, 56.273, and 77.176 respectively.
+The corresponding maximum vertical steps are 16.617, 24.016, 38.606, and 57.205.
+These are observed frame displacements, not continuous trajectory clearance
+proof. The traces remain in each directory's
+`actor-supported-floor-precise-diagnostic-report.json`.
+
+Artificially lifting both endpoints is rejected as a repair. The remaining
+work is to choose receiving-floor anchors and spans whose native launch and
+landing paths clear the actual assembly, and reject or warn about connections
+that cannot satisfy that at export time. No library or production engine change
+was made for this diagnostic.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall

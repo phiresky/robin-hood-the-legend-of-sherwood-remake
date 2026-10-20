@@ -112,6 +112,9 @@ but still has flight contacts up to 22.9385 units. A test-only precise-endpoint
 experiment reduces that to 6.99186 units, not zero. Native takeoff geometry still
 crosses the rising roof. No candidate is published; see
 [receiver-continuity evidence](map-compilation-evidence.md#receiver-continuity-before-roof-takeoff).
+Raising flight endpoints by 8, 24, or 40 units still leaves roof contacts and
+worsens the landing displacement; this workaround is rejected. See
+[height diagnostic](map-compilation-evidence.md#flight-height-diagnostic-rejected-as-a-roof-repair).
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.
