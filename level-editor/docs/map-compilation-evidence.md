@@ -896,6 +896,91 @@ partial-span crossings, return-direction errors, and unchanged valid edges.
 The focused compiler, assembly, and jump-audit suites pass all 184 tests; lint
 and formatting checks also pass.
 
+### Export-prepared jump orientation and shifted anchors
+
+`orientCompiledJump` now reverses both ends of a forced long-jump pair when its
+integer projected spans are exactly opposite and its takeoff normals face away
+from the paired landing. This preserves endpoint positions, their attached
+heights, zone references, and bidirectional correspondence. It runs before the
+compiled flight audit. Unequal, tangent, collapsed, and non-forced pairs remain
+unchanged for their existing checks; this adds no loading or per-tick work.
+
+Fresh export `connected-jump-placements-45VBOm` from the unchanged alternate-slope
+stage matches all eight descriptors in `roof-facing-normal-diagnostic-c9g_zhm9`
+after removing warnings. The earlier 288-case native result therefore covers the
+actual compiler geometry, including its remaining 36 contacts. The precision
+diagnostic matcher now accepts either asset endpoint order to preserve this
+orientation instead of undoing it.
+
+The remaining zero-degree contact hits a small roof solid during the first
+airborne step. Contact reports now include the complete click probe, making the
+specific trace identifiable even when several probes use the same jump line.
+The staging helper supports a ridge-parallel red-anchor displacement and an
+explicit span length. Two shifted candidates are still unsuitable:
+
+| Stage | Shift / span | Compiled placement set | Native selected-mode traces | Contacts / samples | Maximum penetration |
+| --- | --- | --- | --- | --- | --- |
+| `york-roof-facing-receiver-IyNJt9` | 20 / 16 | `connected-jump-placements-Y6fplG` | `shifted-roof-mode-traces-rn8i70mb` | 216 / 4,896 | 18.11074 |
+| `york-roof-facing-receiver-lcXuWi` | 12 / 5 | `connected-jump-placements-8vCh5J` | `shifted-narrow-roof-mode-traces-hjmqh849` | 192 / 4,368 | 12.90672 |
+
+Both retain 216 normal and 72 hidden-only arrivals among 288 probes. An earlier
+20-unit shift with a five-unit span (`york-roof-facing-receiver-c985CY`) collapses
+an edge on the integer grid at 90 degrees and does not complete its placement
+export (`connected-jump-placements-nkPjFx`). Widening that span avoids collapse
+but does not clear the flight. None of these asset candidates is published.
+
+The wide shifted candidate's full York export (`staged-map-export-gBOy3i`)
+completes but fails 27/720 offset click checks: lines 50, 51, 54, 55, 56, and 57.
+Only compiled pair 28 differs from the installed-map endpoint data; the additional
+failures expose shared landing-zone ownership. Changing a zone for the external
+connection also changed receiving floors for neighboring pairs. The staging
+helper now creates a dedicated zone for each reviewed edge and retains the
+existing zones and internal pairs. Stage `york-roof-facing-receiver-i7jBwi` uses
+that separation with the unshifted five-unit candidate; metadata comparison
+confirms one new zone per asset and unchanged original zones/internal pairs.
+Its isolated export `connected-jump-placements-kaA2Ud` matches the previous
+eight-placement geometry apart from warnings. Full York export
+`staged-map-export-8KfODc` completes the offset audit with 7/720 failures, all on
+lines 56 and 57. The twenty neighboring-route failures are gone.
+
+The offset audit also now accepts upper-floor occlusion only when both the upper
+receiver and lower jump overlay actually exist. Otherwise it evaluates the click
+normally and records any failure instead of aborting the report. The earlier
+`staged-map-export-YQyisL` still passes 720/720 with this stronger audit. The
+three regular native jump tests pass, as do 186 focused compiler/jump tests,
+lint, app typechecking, and formatting.
+
+### Opposite ridge shift: clear upright samples, unresolved combat flight
+
+Stage `york-roof-facing-receiver-JhvfOw` shifts the red anchor twelve units in the
+opposite ridge direction, retains a five-unit span, and uses dedicated zones.
+It compiles into `connected-jump-placements-D2R95n`. Normal and hidden audits
+`interior-jump-clicks-PpfePw` / `interior-jump-clicks-EaP5BB` cover all 288 probes:
+204 normal selections and 84 hidden-only selections.
+`selected-jump-mode-traces-CtNaAx` records 3,660 airborne samples with zero solid
+contacts using the actual exported integer endpoints.
+
+The separate direct-dispatch audit covers 160 upright launches at five span
+fractions including both endpoints. All arrive; its 2,032 airborne samples have
+zero contacts. However, all 160 combat launches arriving is insufficient:
+the sword trajectory records 546 contacts among 4,682 samples, maximum
+penetration 65.81519 units. Both reports and their separate
+`observed-solid-contact-upright.json` / `observed-solid-contact-sword.json`
+files are in `connected-jump-placements-D2R95n`. Upright sampled clearance
+does not certify combat flights, a continuous flight envelope, or rendering.
+This candidate remains unpublished.
+The worst combat trace (180 degrees, elevation zero, line 2, fraction zero)
+loses its receiver during the takeoff animation: frame 4 changes height from
+239.729 to zero while posture is still upright. Flight begins at frame 8.
+Its later arrival is therefore not valid departure evidence. The staged
+connection needs support over the takeoff-animation path, not just at the edge
+or over the recorded airborne samples.
+
+`refinement/stage-jump-click-mode-traces.mjs` now reproduces the selected-mode
+trace fixture from the normal/hidden mode review. It checks descriptor hashes,
+identical descriptor bytes, probe identities, selection modes, review outcomes,
+and recorded trajectories before combining successful cases.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall

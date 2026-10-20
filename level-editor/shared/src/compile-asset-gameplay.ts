@@ -53,6 +53,7 @@ import {
 import { auditCompiledJump } from "./audit-compiled-jump.ts";
 import { createJumpReceiverSupportAudit } from "./audit-jump-receiver-support.ts";
 import { partitionJumpReceivers } from "./partition-jump-receivers.ts";
+import { orientCompiledJump } from "./orient-compiled-jump.ts";
 import { createJumpWalkingClearance, type JumpWalkArea } from "./jump-walking-clearance.ts";
 import {
   generateJumpLedges,
@@ -2923,7 +2924,7 @@ function compileAssetGameplayAttempt(
           lines[1]!.point_b[axis]! + lines[0]!.point_b[axis]! - lines[0]!.point_a[axis]!,
         );
     }
-    return { line1: lines[0]!, line2: lines[1]!, jump_long: pair.long };
+    return orientCompiledJump({ line1: lines[0]!, line2: lines[1]!, jump_long: pair.long });
   });
   for (const [index, pair] of compiledJumpPairs.entries()) {
     auditContacts = new Map();

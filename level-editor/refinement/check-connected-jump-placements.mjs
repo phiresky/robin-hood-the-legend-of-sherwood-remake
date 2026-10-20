@@ -156,20 +156,22 @@ for (const rotation of rotations)
       const used = new Set();
       const match = (line) => {
         const candidates = segments
-          .map((points, index) => ({
-            points,
-            index,
-            distance: points.reduce(
-              (sum, point, endpoint) =>
-                sum +
-                point.reduce(
-                  (sum, value, axis) =>
-                    sum + (value - [line.point_a, line.point_b][endpoint][axis]) ** 2,
-                  0,
-                ),
-              0,
-            ),
-          }))
+          .flatMap((points, index) =>
+            [points, [...points].reverse()].map((points) => ({
+              points,
+              index,
+              distance: points.reduce(
+                (sum, point, endpoint) =>
+                  sum +
+                  point.reduce(
+                    (sum, value, axis) =>
+                      sum + (value - [line.point_a, line.point_b][endpoint][axis]) ** 2,
+                    0,
+                  ),
+                0,
+              ),
+            })),
+          )
           .filter((candidate) => !used.has(candidate.index))
           .sort((a, b) => a.distance - b.distance);
         assert.ok(

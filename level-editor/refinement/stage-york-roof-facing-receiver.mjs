@@ -6,9 +6,14 @@ import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
-const [source, rearSurface = "building-331-walk-0"] = process.argv.slice(2);
+const [source, rearSurface = "building-331-walk-0", redSlideArgument = "0", spanArgument = "5"] =
+  process.argv.slice(2);
 assert.ok(source);
 assert.ok(["building-330-walk-0", "building-331-walk-0"].includes(rearSurface));
+const redSlide = Number(redSlideArgument);
+assert.ok(Number.isFinite(redSlide) && Math.abs(redSlide) <= 30);
+const span = Number(spanArgument);
+assert.ok(Number.isFinite(span) && span >= 1 && span <= 20);
 const edits = JSON.parse(await fs.readFile(`${source}/edits.json`));
 const scene = JSON.parse(await fs.readFile(`${source}/scene.json`));
 const sides = [];
@@ -26,9 +31,15 @@ for (const [asset, surfaceId, segmentId] of [
   const surface = edit.gameplay.surfaces.find((entry) => entry.id === surfaceId);
   const segment = edit.gameplay.jumpSegments.find((entry) => entry.id === segmentId);
   assert.ok(surface && segment && Array.isArray(surface.height));
-  const zone = edit.gameplay.jumpZones.find((entry) => entry.id === segment.edge.zone);
-  assert.ok(zone);
-  const before = { segment: structuredClone(segment), zone: structuredClone(zone) };
+  const sharedZone = edit.gameplay.jumpZones.find((entry) => entry.id === segment.edge.zone);
+  assert.ok(sharedZone);
+  const before = { segment: structuredClone(segment), zone: structuredClone(sharedZone) };
+  // Other jump pairs on this asset retain their original receiving slope.
+  const zone = structuredClone(sharedZone);
+  zone.id = `${sharedZone.id}/alternate-${segment.id}`;
+  assert.ok(!edit.gameplay.jumpZones.some((entry) => entry.id === zone.id));
+  edit.gameplay.jumpZones.push(zone);
+  segment.edge.zone = zone.id;
   const plane = heightPlane(
     surface.polygon.map((point, index) => [...point, surface.height[index]]),
   );
@@ -60,6 +71,13 @@ for (const [asset, surfaceId, segmentId] of [
     );
     center = candidates[0].map((value, axis) => value + 0.35 * (centroid[axis] - value));
   }
+  if (asset === "york-central-south-red-timber-house" && redSlide) {
+    const ridge = surface.polygon[2].map((value, axis) => value - surface.polygon[1][axis]);
+    const length = Math.hypot(...ridge);
+    assert.ok(length > 0);
+    center = center.map((value, axis) => value + (redSlide * ridge[axis]) / length);
+    assert.ok(pointInGameplayPolygon(center, surface.polygon, true));
+  }
   zone.polygon = surface.polygon.map((point, index) => [...point, surface.height[index]]);
   zone.anchor = [...center, planeHeight(plane, center)];
   zone.node = surface.node;
@@ -87,7 +105,7 @@ for (const [index, side] of sides.entries()) {
     ["b", 1],
   ]) {
     const point = side.center.map(
-      (value, axis) => value + tangent[axis] * sign * (index ? -1 : 1) * 2.5,
+      (value, axis) => value + (tangent[axis] * sign * (index ? -1 : 1) * span) / 2,
     );
     assert.ok(pointInGameplayPolygon(point, side.surface.polygon, true));
     side.segment.edge[key] = [...point, planeHeight(side.plane, point)];
@@ -105,6 +123,8 @@ await fs.writeFile(
   `${output}/review.json`,
   JSON.stringify({
     source,
+    redSlide,
+    span,
     published: false,
     scope: "alternate-receiving-slope-requires-placement-flight-and-mesh-review",
     sides: sides.map(({ edit, surface, before, segment, zone }) => ({

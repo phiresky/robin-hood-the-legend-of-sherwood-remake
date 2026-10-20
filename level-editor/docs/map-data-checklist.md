@@ -120,6 +120,16 @@ still intersect solids. The compiler now explicitly warns when a placed
 long-jump edge faces away from its destination; correcting endpoint order in
 a diagnostic reduces contacts without clearing the whole flight. These candidates
 remain unpublished. See [alternate-slope evidence](map-compilation-evidence.md#alternate-roof-receiving-slopes).
+Unambiguous backward-facing parallel long-jump pairs are now reoriented during
+export, preserving their endpoints and receiving zones. Fresh compiler geometry
+matches the native-tested diagnostic. Shifting the roof anchors avoids neither
+all flight contacts nor all integer-grid collapse cases; no roof repair is
+published. See [orientation and anchor evidence](map-compilation-evidence.md#export-prepared-jump-orientation-and-shifted-anchors).
+A later opposite ridge shift passes 288 supported-click cases and 160 direct
+upright launches with zero recorded airborne contacts. Combat launches still
+intersect roof solids, so this remains a candidate, not a completed repair.
+Dedicated zones restore twenty neighboring routes broken by the earlier stage.
+See [upright/combat evidence](map-compilation-evidence.md#opposite-ridge-shift-clear-upright-samples-unresolved-combat-flight).
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

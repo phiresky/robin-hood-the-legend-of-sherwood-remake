@@ -796,14 +796,11 @@ fn audit_jump_dispatch_with_precision(
                                 .world
                                 .fast_grid
                                 .get_sector(goal, start, destination.layer);
-                        let crate::fast_find_grid::SectorHit::Found { sector_idx, .. } = lower
-                        else {
-                            panic!("occluded lower landing must still have a jump overlay");
-                        };
-                        assert!(
-                            engine.world.fast_grid.level.sectors[usize::from(sector_idx)]
-                                .sector_type
-                                .is_jump()
+                        let lower_is_jump = matches!(
+                            lower,
+                            crate::fast_find_grid::SectorHit::Found { sector_idx, .. }
+                                if engine.world.fast_grid.level.sectors[usize::from(sector_idx)]
+                                    .sector_type.is_jump()
                         );
                         let upper_sector = line.sector_index.unwrap();
                         let upper_handle = crate::position_interface::SectorHandle::from_number(
@@ -811,19 +808,20 @@ fn audit_jump_dispatch_with_precision(
                                 .sector_number,
                         )
                         .with_arena_index(upper_sector);
-                        assert!(
-                            engine
+                        if lower_is_jump
+                            && engine
                                 .get_projection_area_index(&assets, upper_handle, line.layer, goal)
                                 .is_some()
-                        );
-                        results.push(serde_json::json!({
-                            "file": file, "line": index, "t": t, "passed": true,
-                            "outcome": "source-platform-occludes-lower-click",
-                            "requested_goal": [goal.x, goal.y],
-                            "source_layer": line.layer, "destination_layer": destination.layer,
-                            "arrival": null, "error": null,
-                        }));
-                        continue;
+                        {
+                            results.push(serde_json::json!({
+                                "file": file, "line": index, "t": t, "passed": true,
+                                "outcome": "source-platform-occludes-lower-click",
+                                "requested_goal": [goal.x, goal.y],
+                                "source_layer": line.layer, "destination_layer": destination.layer,
+                                "arrival": null, "error": null,
+                            }));
+                            continue;
+                        }
                     }
                 }
                 let outcome = dispatch_jump(

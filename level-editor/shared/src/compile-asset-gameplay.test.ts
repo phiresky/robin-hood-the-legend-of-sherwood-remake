@@ -2325,9 +2325,10 @@ test("cross-asset jumps detach and reconnect with independently placed assets", 
   const whole = jumpAssetCompilerFixture();
   const expected = compileAssetGameplay(whole.document, whole.assets, bounds);
   // Identical geometry has different authoring identities in the two fixtures.
-  expected.warnings = expected.warnings?.map((warning) =>
-    warning.replace("/wall-jump:", "/lower-edge:"),
-  );
+  if (expected.warnings)
+    expected.warnings = expected.warnings.map((warning) =>
+      warning.replace("/wall-jump:", "/lower-edge:"),
+    );
   assert.deepEqual(compileAssetGameplay(document, assets, bounds), expected);
   document.groups.find((g) => g.id === "jump-upper")!.transform.dx = 20;
   const detached = compileAssetGameplay(document, assets, bounds);
@@ -3336,8 +3337,8 @@ test("jump pairs rebuild crossed destination links and preserve height after dup
     ],
   );
   assert.deepEqual(first.jump_line_pairs![0], {
-    line1: { point_a: [385, 330, 0], point_b: [385, 370, 0], jump_zone_index: 1 },
-    line2: { point_a: [415, 270, 100], point_b: [415, 230, 100], jump_zone_index: 0 },
+    line1: { point_a: [385, 370, 0], point_b: [385, 330, 0], jump_zone_index: 1 },
+    line2: { point_a: [415, 230, 100], point_b: [415, 270, 100], jump_zone_index: 0 },
     jump_long: true,
   });
   const body = structuredClone(document.objects.find((p) => p.group === "hut-a")!);

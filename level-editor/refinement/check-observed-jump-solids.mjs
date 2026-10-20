@@ -60,6 +60,7 @@ for (const result of report.results) {
         file: result.file,
         line: result.line ?? result.probe?.line,
         t: result.t,
+        probe: result.probe,
         frame,
         action: recorded.action,
         position: recorded.position,
