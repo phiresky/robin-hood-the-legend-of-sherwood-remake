@@ -1043,6 +1043,19 @@ complete-sprite test fixture. They do not claim soldier-specific sprite appearan
 normal AI route discovery or rendered actor-contact verification. Those remain
 separate checks; map-only exports still contain no NPC mission placements.
 
+The subsequent graph audit extends the same fixture to ordinary gate searches
+with soldier and civilian authorization, independently in both directions.
+All 228 NPC searches pass: twelve on the installed full-scene snapshot
+`passage-control-audit-YfDo96`, 192 across moved assemblies
+`passage-control-audit-AjiS69`, and 24 in exact browser archive
+`passage-control-audit-KCSTFN`. Open states find a route; closed and reset
+states reject it, including alternative connections. Existing prepared NPC
+round trips and PC checks still pass, as does the terrace control regression
+`passage-control-audit-yJABcE`. These are native graph-discovery checks, not
+full AI command execution or rendered actor-contact verification. The change
+only extends test coverage; it adds no runtime work. The regular compiled
+navigation suite passes 38 tests, with 57 separate-fixture tests ignored.
+
 ## Annex and turret repair published with current derivatives (2026-10-20)
 
 Publication `turret-publication-installed` installs both reviewed asset definitions,

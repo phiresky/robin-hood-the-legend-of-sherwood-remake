@@ -81,7 +81,11 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                             ("locked_npc_civilian", runtime.locked_npc_civilian),
                             ("unlockable", runtime.unlockable),
                         ] {
-                            assert_eq!(Some(actual), rights[key].as_bool(), "{file}: door {index}, {state}, {key}");
+                            assert_eq!(
+                                Some(actual),
+                                rights[key].as_bool(),
+                                "{file}: door {index}, {state}, {key}"
+                            );
                         }
                         !rights["locked_pc"].as_bool().unwrap()
                     };
@@ -91,68 +95,88 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                     ));
                     let mut gate_search = Vec::new();
                     if probe["reject_alternatives"] == true {
-                        let auth = crate::gate::ActorAuthInfo {
-                            kind: crate::element::ElementKind::ActorPc,
-                            pc_auth_bit: 1,
-                            has_lockpick: false,
-                            has_climb: false,
-                            has_jump: false,
-                            is_rider: false,
-                            posture: Posture::Upright,
-                        };
-                        for direct in [true, false] {
-                            let (
-                                source,
-                                source_sector,
-                                source_index,
-                                goal,
-                                goal_sector,
-                                goal_index,
-                            ) = if direct {
+                        let mut actors =
+                            vec![("pc", crate::element::ElementKind::ActorPc, expected)];
+                        if !rights.is_null() {
+                            actors.extend([
                                 (
-                                    runtime.point_out,
-                                    runtime.sector_out,
-                                    runtime.sector_out_index,
-                                    runtime.point_in,
-                                    runtime.sector_in,
-                                    runtime.sector_in_index,
-                                )
-                            } else {
+                                    "soldier",
+                                    crate::element::ElementKind::ActorSoldier,
+                                    !rights["locked_npc_villain"].as_bool().unwrap(),
+                                ),
                                 (
-                                    runtime.point_in,
-                                    runtime.sector_in,
-                                    runtime.sector_in_index,
-                                    runtime.point_out,
-                                    runtime.sector_out,
-                                    runtime.sector_out_index,
-                                )
+                                    "civilian",
+                                    crate::element::ElementKind::ActorCivilian,
+                                    !rights["locked_npc_civilian"].as_bool().unwrap(),
+                                ),
+                            ]);
+                        }
+                        for (actor, kind, expected_route) in actors {
+                            let auth = crate::gate::ActorAuthInfo {
+                                kind,
+                                pc_auth_bit: 1,
+                                has_lockpick: false,
+                                has_climb: false,
+                                has_jump: false,
+                                is_rider: false,
+                                posture: Posture::Upright,
                             };
-                            let path = crate::gate::find_path_gates_with_sector_indices(
-                                &engine.script_domains.interactables.doors,
-                                (source.x, source.y),
-                                source_sector.into(),
-                                source_index,
-                                (goal.x, goal.y),
-                                goal_sector.into(),
-                                goal_index,
-                                Some(&auth),
-                                false,
-                                &|_| true,
-                                &|number| {
-                                    engine
-                                        .world
-                                        .fast_grid
-                                        .level
-                                        .sectors
-                                        .iter()
-                                        .find(|sector| sector.sector_number == number)
-                                        .and_then(|sector| sector.lift_type)
-                                },
-                            );
-                            gate_search.push(serde_json::json!({
-                                "direct": direct, "route_available": path.is_some(),
-                                "passed": path.is_some() == expected,
-                            }));
+                            for direct in [true, false] {
+                                let (
+                                    source,
+                                    source_sector,
+                                    source_index,
+                                    goal,
+                                    goal_sector,
+                                    goal_index,
+                                ) = if direct {
+                                    (
+                                        runtime.point_out,
+                                        runtime.sector_out,
+                                        runtime.sector_out_index,
+                                        runtime.point_in,
+                                        runtime.sector_in,
+                                        runtime.sector_in_index,
+                                    )
+                                } else {
+                                    (
+                                        runtime.point_in,
+                                        runtime.sector_in,
+                                        runtime.sector_in_index,
+                                        runtime.point_out,
+                                        runtime.sector_out,
+                                        runtime.sector_out_index,
+                                    )
+                                };
+                                let path = crate::gate::find_path_gates_with_sector_indices(
+                                    &engine.script_domains.interactables.doors,
+                                    (source.x, source.y),
+                                    source_sector.into(),
+                                    source_index,
+                                    (goal.x, goal.y),
+                                    goal_sector.into(),
+                                    goal_index,
+                                    Some(&auth),
+                                    false,
+                                    &|_| true,
+                                    &|number| {
+                                        engine
+                                            .world
+                                            .fast_grid
+                                            .level
+                                            .sectors
+                                            .iter()
+                                            .find(|sector| sector.sector_number == number)
+                                            .and_then(|sector| sector.lift_type)
+                                    },
+                                );
+                                gate_search.push(serde_json::json!({
+                                    "actor": actor,
+                                    "direct": direct, "route_available": path.is_some(),
+                                    "expected_route": expected_route,
+                                    "passed": path.is_some() == expected_route,
+                                }));
+                            }
                         }
                     }
                     let outcome = walk_exported_lift_with_tick(
@@ -178,17 +202,33 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                         Vec::new()
                     } else {
                         [
-                            ("soldier", "locked_npc_villain", StairDispatch::SoldierPrepared),
-                            ("civilian", "locked_npc_civilian", StairDispatch::CivilianPrepared),
-                        ].into_iter().map(|(kind, lock, dispatch)| {
+                            (
+                                "soldier",
+                                "locked_npc_villain",
+                                StairDispatch::SoldierPrepared,
+                            ),
+                            (
+                                "civilian",
+                                "locked_npc_civilian",
+                                StairDispatch::CivilianPrepared,
+                            ),
+                        ]
+                        .into_iter()
+                        .map(|(kind, lock, dispatch)| {
                             let expected = !rights[lock].as_bool().unwrap();
                             let outcome = walk_exported_lift_route(
-                                engine.clone(), assets.clone(), index, index, Some(&sprite), dispatch,
+                                engine.clone(),
+                                assets.clone(),
+                                index,
+                                index,
+                                Some(&sprite),
+                                dispatch,
                                 |_, _, _| {},
                             );
                             serde_json::json!({"actor": kind, "expected_round_trip": expected,
                                 "passed": outcome == Ok(expected), "outcome": outcome})
-                        }).collect()
+                        })
+                        .collect()
                     };
                     results.push(serde_json::json!({
                         "file": file, "door": index, "state": state,

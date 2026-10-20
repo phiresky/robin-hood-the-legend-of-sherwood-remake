@@ -138,8 +138,10 @@ passages. A browser ZIP of two rotated, raised copies reopens with matching
 gameplay/color/depth, loads without a base datadir and passes native gate checks.
 Soldier and civilian prepared round trips now pass on the installed scene,
 moved assemblies and exact browser ZIP: 114 NPC permission/traversal checks in
-total. Normal AI route discovery, rendered actor contact and broader map coverage
-remain open. See the
+total. A subsequent native graph audit passes 228 soldier/civilian searches
+in both directions across the full-scene snapshot, moved assemblies and exact
+browser ZIP, including closed/open/reset authorization. Full AI command
+execution, rendered actor contact and broader map coverage remain open. See the
 [NPC gate audit](map-compilation-evidence.md#soldier-and-civilian-gate-round-trips-verified-2026-10-20).
 See the [installed turret repair](map-compilation-evidence.md#annex-and-turret-repair-published-with-current-derivatives-2026-10-20),
 [moved-assembly evidence](map-compilation-evidence.md#annex-gate-survives-moved-assemblies-and-rejects-separated-support-2026-10-20)
