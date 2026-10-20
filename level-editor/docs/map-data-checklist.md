@@ -144,7 +144,10 @@ receiver. Repair requires revisiting the edge geometry or receiving arrangement.
 Generated elevated jump bands now retain available floor in front of takeoff,
 bounded by the authored inset. A sufficiently inset surface-only export passes
 10/10 combat launches; the rotated roof ZIP regression passes 120/120 click
-routes. Shallow insets still warn. See
+routes. The equal-height surface-only fixture also passes eight ZIP/editor
+round trips, 160/160 combat launches and 160/160 click routes across rotated,
+elevated copies. Unequal-height rotation matching remains unproven.
+Shallow insets still warn. See
 [generated departure bands](map-compilation-evidence.md#generated-jump-departure-receiving-bands).
 
 Independent floors inside another region's collision exclusion now receive

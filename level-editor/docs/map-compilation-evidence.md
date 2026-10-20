@@ -1073,6 +1073,21 @@ native click audit passes 120/120 traversals. The intentionally too-narrow
 90-degree layout has no jump connections, as before. These checks do not resolve
 the independently authored York sloped-pair combat failures.
 
+`check-generated-departure-placements.mjs` adds a reproducible surface-only
+equal-height platform fixture with inset 17 and maximum gap 100. It exports two
+independent copies at rotations 0, 37, 90, and 180 degrees, each at elevation
+offsets 0 and 40. `generated-departure-placements-aOqjlD` retains both
+connections without departure-coverage warnings in all eight descriptors.
+Every ZIP is reopened in the editor serializer and recompiled to the same
+descriptor. Native combat dispatch passes 160/160 launches, and native player
+click routing passes 160/160 routes under the grounded-departure guard.
+
+An earlier attempt using the unequal-height fixture stopped at rotation 37
+with no matched pair (`generated-departure-placements-mwG88f`, incomplete).
+It is not counted as a pass: projected overlap/matching for that arrangement
+requires separate analysis. The equal-height regression isolates departure
+support and does not prove all unequal-height placements are connected.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
