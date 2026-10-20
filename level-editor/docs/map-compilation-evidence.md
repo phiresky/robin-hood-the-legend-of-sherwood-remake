@@ -4,6 +4,61 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Lincoln north-hall stair contact correction
+
+The upper seam of `lincoln-north-hall-stair` overlapped the neighbouring curtain
+wall slab by approximately 0.02 map units. Quantization collapsed the resulting
+thin collision polygon into a line across the entrance, forbidding both routes.
+The published asset moves its upper seam 0.04 units along the flight and updates
+its receiving plane, matching clearance and door heights. It removes no collision
+definition and changes no runtime code. The library index and Lincoln scene pin
+now use descriptor SHA-256
+`0d2b130854885c957fb3fa875522047414dd134e0329868e50df1c5e8856e9c3`.
+
+Evidence under `work/needs-review/map-compile`:
+
+- `north-hall-stair-solids.json` identifies the intersecting curtain-wall slab.
+- `north-hall-contact-AYmSau` retains the staged metadata, publication hashes and
+  mesh review. All 598 sampled floor points hit the mesh; the smooth navigation
+  ramp differs from tread heights by approximately -0.05 to +8.32 units.
+  The reviewed PNG shows the corrected boundary within the stair mesh footprint.
+  This is not complete rendered actor verification.
+- `saved-map-exports-HbWF4y` passes all 18 full-scene native player-click stair
+  routes, with zero failures and zero forbidden routes, using the staged asset.
+- `north-hall-assemblies-U9KOu6` passes 32 native player-click routes across two
+  copies, four rotations (0/37/90/180) and two elevations (0/40).
+- `north-hall-assemblies-ix2Gw4` uses the published definition. All eight
+  descriptors match those actor-tested placements except for updated draft
+  warning text. All 16 missing/raised upper-landing cases omit the disconnected
+  stair while retaining the other copy.
+- `saved-map-exports-6LKyJS` is the fresh full-scene export from the published
+  descriptor and updated scene pin. Its native player-click check also passes
+  all 18 stair routes, with zero failures and zero forbidden routes.
+
+Repeat the assembly checks with `refinement/check-north-hall-stair-neighbours.mjs
+STAGE --published`. The previously verified Lincoln browser ZIP predates this
+correction and still contains the obstructed seam.
+
+## Nottingham and Sherwood map-only browser round trips
+
+Both maps pass export, editor reopening and rebake with matching gameplay,
+warnings and rendered color/depth using the frozen `c24c55429` browser build.
+Their exact ZIPs also load natively without a base datadir. These checks do not
+resolve the known Sherwood ladder traversal failures.
+
+Artifacts in `work/needs-review/map-compile/browser-exports-9u4BL3`:
+
+- `nottingham.zip`: 51,863,970 bytes, SHA-256
+  `9d72d4da6e462be2b364a33c4d441f40a31c97c0a26e40ca5baf29a383687d1a`.
+  Browser round trip: 293.260 seconds. Native load: 3.73 seconds; 2304×3520,
+  668 sight obstacles, 20 masks, 173 door projections, 163,548 fast-find blocks,
+  12 appearance regions for 10 controls.
+- `sherwood.zip`: 12,743,466 bytes, SHA-256
+  `daf6e07764098bcd9211a95e03350fb001af26805d863217525426c7645d0ab7`.
+  Browser round trip: 82.404 seconds. Native load: 1.06 seconds; 1920×1088,
+  130 sight obstacles, no masks, 15 door projections, 7,560 fast-find blocks,
+  no appearance regions or controls.
+
 ## Lincoln map-only browser round trip
 
 The frozen `c24c55429` browser build passes Lincoln's map-only export,
