@@ -177,12 +177,21 @@ The cathedral, precinct east gate and west gallery house now own their complete
 entrance rooms instead of inheriting them from terrain. All five affected asset
 definitions are published, with 36 installation file hashes verified. Isolated
 and terrain-supported moved click checks, authored lock-state snapshots, browser
-export/reopen and native ZIP checks pass. Current York coverage is **86/95
+export/reopen and native ZIP checks pass. That batch reaches **86/95
 immediately traversable entrances**, or **89/95 correct authored lock-state
 outcomes** in both initial and unlocked snapshots. The same six geometry
 blockages remain; the three authored locks are verified, not export failures.
 Mission triggers and broader gameplay/rendering parity remain separate work.
 See the [detached-room evidence](map-compilation-evidence.md#york-detached-room-ownership-review-2026-10-20).
+
+The tower/gatehouse ownership repair is published with its additional editor
+room link, preserving the existing castle links. Current York coverage is
+**87/95 immediately traversable entrances** and **90/95 correct authored
+lock-state outcomes**. Five geometry blockages remain. All six full-map crossings
+among the three entrances pass; moved click, copied-room isolation, browser
+round-trip and exact-archive native checks pass. The tower's two local entrances
+remain connected without editor intervention. All 15 installation hashes are
+verified. See the [gatehouse evidence](map-compilation-evidence.md#york-towergatehouse-room-ownership-2026-10-20).
 
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
 The published Derby ownership correction moves three tower entrances out of

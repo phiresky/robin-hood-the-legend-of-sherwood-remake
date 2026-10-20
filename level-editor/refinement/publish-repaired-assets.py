@@ -64,12 +64,14 @@ def add_reviewed_connections(original, review, edits):
     """Add reviewed room links while preserving every existing scene byte."""
     assert digest(original) == review['sceneSha256'], 'Stale connection scene'
     scene = json.loads(original)
-    assert 'interiorConnections' not in scene, 'Do not replace existing scene connections'
+    existing = scene.get('interiorConnections', [])
     connections = review['interiorConnections']
     assert isinstance(connections, list) and connections, 'Missing reviewed connections'
+    assert connections[:len(existing)] == existing, 'Do not change existing scene connections'
+    assert len(connections) > len(existing), 'No new room connections'
     placements = {placement['id']: placement for placement in scene['placements']}
     ids, pairs = set(), set()
-    for connection in connections:
+    for index, connection in enumerate(connections):
         identity = connection['id']
         assert isinstance(identity, str) and identity and identity not in ids, 'Duplicate connection ID'
         ids.add(identity)
@@ -78,8 +80,9 @@ def add_reviewed_connections(original, review, edits):
             endpoint = connection[side]
             asset, placement, interior = (endpoint[key] for key in ('asset', 'placement', 'interior'))
             assert placement in placements and asset in placements[placement]['assets'], 'Missing connection placement'
-            assert asset in edits, 'Connection asset is not in the reviewed publication'
-            assert any(room['id'] == interior for room in edits[asset]['gameplay']['interiors']), 'Missing connection room'
+            assert asset in edits or index < len(existing), 'Connection asset is not in the reviewed publication'
+            if asset in edits:
+                assert any(room['id'] == interior for room in edits[asset]['gameplay']['interiors']), 'Missing connection room'
             endpoints.append((placement, asset, interior))
         assert endpoints[0][:2] != endpoints[1][:2], 'Local room links belong to the asset'
         pair = tuple(sorted(endpoints))
@@ -88,8 +91,33 @@ def add_reviewed_connections(original, review, edits):
     scene['interiorConnections'] = connections
     text = original.decode().rstrip()
     assert text.endswith('}')
-    appended = (text[:-1].rstrip() + ',\n  "interiorConnections": ' +
-                json.dumps(connections, indent=2).replace('\n', '\n  ') + '\n}\n').encode()
+    encoded = json.dumps(connections, indent=2).replace('\n', '\n  ')
+    if 'interiorConnections' in json.loads(original):
+        # Decode root fields to locate the value without rewriting unrelated numbers.
+        decoder = json.JSONDecoder()
+        cursor = text.index('{') + 1
+        while True:
+            while text[cursor].isspace():
+                cursor += 1
+            key, cursor = decoder.raw_decode(text, cursor)
+            while text[cursor].isspace():
+                cursor += 1
+            assert text[cursor] == ':'
+            cursor += 1
+            while text[cursor].isspace():
+                cursor += 1
+            start = cursor
+            value, cursor = decoder.raw_decode(text, cursor)
+            if key == 'interiorConnections':
+                assert value == existing
+                appended = (text[:start] + encoded + text[cursor:] + '\n').encode()
+                break
+            while text[cursor].isspace():
+                cursor += 1
+            assert text[cursor] == ',', 'Missing root connection field'
+            cursor += 1
+    else:
+        appended = (text[:-1].rstrip() + ',\n  "interiorConnections": ' + encoded + '\n}\n').encode()
     assert json.loads(appended) == scene, 'Connection insertion changed unrelated scene data'
     return appended
 

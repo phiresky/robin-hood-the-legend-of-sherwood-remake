@@ -62,8 +62,35 @@ class RepairPublicationTest(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'Missing connection placement'):
             publisher.add_reviewed_connections(original, missing, edits)
         existing = dict(review, sceneSha256=publisher.digest(result))
-        with self.assertRaisesRegex(AssertionError, 'existing scene connections'):
+        with self.assertRaisesRegex(AssertionError, 'No new room connections'):
             publisher.add_reviewed_connections(result, existing, edits)
+
+    def test_append_room_links_preserves_unreviewed_existing_assets_and_exact_numbers(self):
+        old = {'id': 'old', 'from': {'placement': 'a', 'asset': 'hall', 'interior': 'hall-room'},
+               'to': {'placement': 'b', 'asset': 'tower', 'interior': 'room'}}
+        new = {'id': 'new', 'from': {'placement': 'b', 'asset': 'tower', 'interior': 'room'},
+               'to': {'placement': 'c', 'asset': 'gate', 'interior': 'room'}}
+        original = ('{"height":1.0000000000000001,"placements":' + json.dumps([
+            {'id': 'a', 'assets': ['hall']}, {'id': 'b', 'assets': ['tower']},
+            {'id': 'c', 'assets': ['gate']}]) + ',"interiorConnections":' + json.dumps([old]) +
+            ',"nested":{"interiorConnections":[]},"tail":2.0000000000000001}\n').encode()
+        review = {'sceneSha256': publisher.digest(original), 'interiorConnections': [old, new]}
+        edits = {asset: {'gameplay': {'interiors': [{'id': 'room'}]}} for asset in ('tower', 'gate')}
+        result = publisher.add_reviewed_connections(original, review, edits)
+        self.assertEqual(json.loads(result)['interiorConnections'], [old, new])
+        self.assertIn(b'1.0000000000000001', result)
+        self.assertTrue(result.endswith(b',"nested":{"interiorConnections":[]},"tail":2.0000000000000001}\n'))
+        removed = dict(review, interiorConnections=[new])
+        with self.assertRaisesRegex(AssertionError, 'existing scene connections'):
+            publisher.add_reviewed_connections(original, removed, edits)
+        changed = copy.deepcopy(review)
+        changed['interiorConnections'][0]['id'] = 'changed'
+        with self.assertRaisesRegex(AssertionError, 'existing scene connections'):
+            publisher.add_reviewed_connections(original, changed, edits)
+        invalid = copy.deepcopy(edits)
+        invalid['tower']['gameplay']['interiors'] = []
+        with self.assertRaisesRegex(AssertionError, 'Missing connection room'):
+            publisher.add_reviewed_connections(original, review, invalid)
 
     def test_only_reviewed_part_appearance_may_change(self):
         previous = {'model': 'model.glb', 'parts': [{'node': 'fixed'}, {'node': 'removed'}]}

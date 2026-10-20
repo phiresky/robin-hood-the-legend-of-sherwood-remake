@@ -899,14 +899,14 @@
       "model": "3d-assets/york/york-precinct-east-roofed-gatehouse/model.glb",
       "model_sha256": "06dc16198b66ae4370bc6da8af34933b4493a6ff8bb9972543119c6dc06e4722",
       "descriptor": "3d-assets/york/york-precinct-east-roofed-gatehouse/asset.json",
-      "descriptor_sha256": "52705cf3ad6f9269a9a6eac357ffb46d3863da6183ce7eeaff94fb1325977986",
+      "descriptor_sha256": "33d5e50490b275fe19502a2a2d78db3e0b1b123fad24fb5153fcc47dc223e713",
       "id": "york-precinct-east-roofed-gatehouse"
     },
     {
       "model": "3d-assets/york/york-precinct-east-tall-square-tower/model.glb",
       "model_sha256": "21fbeed8594f6af795219c846780ca227d7651fe2df37c38e8ad6613c3fecc51",
       "descriptor": "3d-assets/york/york-precinct-east-tall-square-tower/asset.json",
-      "descriptor_sha256": "5e161e42835c3d93315e3d874f8d5750d779c46dd5ce0ab83289692abaaae162",
+      "descriptor_sha256": "2302558d3739e8d48283052e4879b0ce8495af6b04094d75f258e5b998efb865",
       "id": "york-precinct-east-tall-square-tower"
     },
     {
@@ -5701,6 +5701,19 @@
         "placement": "york-castle-main-keep",
         "asset": "york-castle-main-keep",
         "interior": "interior-2"
+      }
+    },
+    {
+      "id": "interior-link-3",
+      "from": {
+        "placement": "york-precinct-east-tall-square-tower",
+        "asset": "york-precinct-east-tall-square-tower",
+        "interior": "interior-0"
+      },
+      "to": {
+        "placement": "york-precinct-east-roofed-gatehouse",
+        "asset": "york-precinct-east-roofed-gatehouse",
+        "interior": "interior-0"
       }
     }
   ]

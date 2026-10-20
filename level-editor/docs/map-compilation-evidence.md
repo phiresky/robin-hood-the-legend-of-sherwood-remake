@@ -4,6 +4,44 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## York tower/gatehouse room ownership (2026-10-20)
+
+Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
+square tower into the roofed gatehouse. Its assembled coordinates and lock rules
+are preserved. The tower keeps its other two entrances in the same local room;
+an explicit editor link connects that room to the gatehouse. The existing castle
+links remain unchanged. The publication tool now supports appending reviewed
+links while preserving existing links and unrelated scene numbers; six tests
+cover stale input, missing rooms, transaction rollback and link preservation.
+
+Fixtures `selected-neighbor-placements-HgwxDm` (gatehouse), `jatrVj` (lower tower)
+and `6GvnTC` (upper tower), sharing the prefix, each pass 16 moved normal click
+trips. `building-gallery-dG8ZsL` combines matching support levels and retains all
+six emitted entrances. `linked-building-gallery-dMygEY` passes 60 native room
+checks, including default connections within each tower, optional gatehouse
+links and isolation between copies. The gallery tools now preserve actual input
+door counts and tested approach points instead of assuming every emitted door
+was included in the input click probes.
+
+Full export `staged-map-export-sUhPoS` constructs with unchanged 170 areas,
+1,227 sight obstacles, 254 doors, 72 jump pairs, 281,260 grid blocks and 342
+elevation boundaries. `saved-map-entrances-g2pgOI` improves 86/95 to 87/95,
+fixing only [1804, 192], with no regressions. Authored lock-state snapshots
+`authored-door-states-eNCjZ5` pass 90/95 in both initial and after-patch states.
+Five geometry failures remain. `york-gatehouse-full-room-gadikjxd` passes all
+six directed crossings among [1804, 192], [2012, 235] and [2015, 158].
+
+Browser fixture `draft-scene-render-EFaoCt` exports/reopens matching gameplay,
+color and depth at 3200×7200. Its 46,543,024-byte ZIP has SHA-256
+`4b12d636f95354417af4e1079eb0180d900e418d1b526484d52ccf807766570b`.
+Native ZIP loading passes with 23 sight obstacles, six door projections and
+23,400 grid blocks. `exact-map-archive-au1rewql` passes 30 native room checks.
+After verifying identical motion layers and matching doorway bindings,
+`archive-ground-clicks-ob3h0jzf` passes all four archived normal click trips.
+Publication dry run `york-gatehouse-ownership-publication-dry-run` passes.
+Installation `york-gatehouse-ownership-publication-installed` publishes both
+asset definitions and the new scene link; all 15 file hashes are verified.
+
 ## York detached room ownership review (2026-10-20)
 
 Stage `york-detached-room-ownership-oKjZ7x` moves complete single-entrance rooms

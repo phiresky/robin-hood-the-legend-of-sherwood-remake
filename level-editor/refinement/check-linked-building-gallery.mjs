@@ -22,7 +22,7 @@ for (const edit of JSON.parse(await fs.readFile(`${stage}/edits.json`))) {
 }
 const members = [...assets.values()].map((asset) => {
   const room = asset.gameplay.interiors.find((room) => room.id === roomId);
-  assert.equal(room?.doors.length, 1, "This fixture links one entrance on each side");
+  assert.ok(room?.doors.length > 0, "Each selected asset needs the requested room");
   return base.groups
     .filter((group) =>
       base.objects.some(
@@ -58,8 +58,7 @@ for (const connected of [false, true]) {
       0,
     ) * members[0].length;
   assert.equal(doors.length, expected);
-  const outside = ({ group, asset, room }) => {
-    const source = room.doors[0];
+  const outside = ({ group, asset }, source) => {
     const object = document.objects.find(
       (part) => part.group === group.id && part.node === `asset:${asset.id}:${source.node}`,
     );
@@ -78,16 +77,20 @@ for (const connected of [false, true]) {
     assert.equal(matches.length, 1);
     return matches[0].point_out;
   };
+  const entrances = members.flatMap((row, assetIndex) =>
+    row.flatMap((member, copyIndex) =>
+      member.room.doors.map((door) => ({ point: outside(member, door), assetIndex, copyIndex })),
+    ),
+  );
   const pairs = [];
-  for (const [assetIndex, row] of members.entries())
-    for (const otherRow of members.slice(assetIndex + 1))
-      for (const [copyIndex, member] of row.entries())
-        for (const [otherCopyIndex, other] of otherRow.entries()) {
-          const from = outside(member),
-            to = outside(other);
-          const joined = connected && copyIndex === otherCopyIndex;
-          pairs.push({ from, to, connected: joined }, { from: to, to: from, connected: joined });
-        }
+  for (const [index, entry] of entrances.entries())
+    for (const other of entrances.slice(index + 1)) {
+      const from = entry.point,
+        to = other.point;
+      const joined =
+        entry.copyIndex === other.copyIndex && (entry.assetIndex === other.assetIndex || connected);
+      pairs.push({ from, to, connected: joined }, { from: to, to: from, connected: joined });
+    }
   const file = `${connected ? "linked" : "separate"}.level.json`;
   await fs.writeFile(`${output}/${file}`, JSON.stringify(compiled.descriptor));
   await fs.writeFile(`${output}/${file}.scene.json`, JSON.stringify(document));
