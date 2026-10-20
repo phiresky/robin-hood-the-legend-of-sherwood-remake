@@ -108,6 +108,45 @@ class RepairPublicationTest(unittest.TestCase):
             publisher.verify_descriptor_edit(previous, replacement,
                 {'gameplay': {}, 'partAppearances': {'missing': {}}})
 
+    def test_room_transfer_requires_exact_review_and_preserves_other_endpoints(self):
+        old = {'id': 'link', 'from': {'placement': 'a', 'asset': 'terrain', 'interior': 'room'},
+               'to': {'placement': 'b', 'asset': 'hall', 'interior': 'hall-room'}}
+        target = {'placement': 'c', 'asset': 'bastion', 'interior': 'room'}
+        original = ('{"height":1.0000000000000001,"placements":' + json.dumps([
+            {'id': 'a', 'assets': ['terrain']}, {'id': 'b', 'assets': ['hall']},
+            {'id': 'c', 'assets': ['bastion']}]) + ',"interiorConnections":' +
+            json.dumps([old]) + '}\n').encode()
+        new = dict(old, **{'from': target})
+        review = {'sceneSha256': publisher.digest(original), 'beforeLinks': [old],
+                  'interiorConnections': [new],
+                  'migrated': [{'id': 'link', 'side': 'from', 'before': old['from'], 'after': target}]}
+        edits = {'terrain': {'gameplay': {'interiors': []}},
+                 'bastion': {'gameplay': {'interiors': [{'id': 'room'}]}}}
+        result = publisher.add_reviewed_connections(original, review, edits)
+        self.assertIn(b'1.0000000000000001', result)
+        self.assertEqual(json.loads(result)['interiorConnections'], [new])
+        for field in ('id', 'to'):
+            invalid = copy.deepcopy(review)
+            invalid['interiorConnections'][0][field] = 'changed'
+            with self.subTest(field=field), self.assertRaisesRegex(AssertionError, 'Unreviewed'):
+                publisher.add_reviewed_connections(original, invalid, edits)
+        duplicate = copy.deepcopy(review)
+        duplicate['migrated'] *= 2
+        with self.assertRaisesRegex(AssertionError, 'Duplicate endpoint'):
+            publisher.add_reviewed_connections(original, duplicate, edits)
+        stale = copy.deepcopy(review)
+        stale['migrated'][0]['before']['interior'] = 'wrong'
+        with self.assertRaisesRegex(AssertionError, 'Stale migration'):
+            publisher.add_reviewed_connections(original, stale, edits)
+        missing = copy.deepcopy(edits)
+        missing['bastion']['gameplay']['interiors'] = []
+        with self.assertRaisesRegex(AssertionError, 'Missing connection room'):
+            publisher.add_reviewed_connections(original, review, missing)
+        retained = copy.deepcopy(edits)
+        retained['terrain']['gameplay']['interiors'] = [{'id': 'room'}]
+        with self.assertRaisesRegex(AssertionError, 'source room must be removed'):
+            publisher.add_reviewed_connections(original, review, retained)
+
     def test_rejects_concurrent_change_before_writing_any_asset(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

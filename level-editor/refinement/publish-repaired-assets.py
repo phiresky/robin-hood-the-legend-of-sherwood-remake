@@ -61,14 +61,37 @@ def install(library, before, replacements):
 
 
 def add_reviewed_connections(original, review, edits):
-    """Add reviewed room links while preserving every existing scene byte."""
+    """Install reviewed links while preserving unrelated scene bytes."""
     assert digest(original) == review['sceneSha256'], 'Stale connection scene'
     scene = json.loads(original)
     existing = scene.get('interiorConnections', [])
     connections = review['interiorConnections']
     assert isinstance(connections, list) and connections, 'Missing reviewed connections'
-    assert connections[:len(existing)] == existing, 'Do not change existing scene connections'
-    assert len(connections) > len(existing), 'No new room connections'
+    migrations = review.get('migrated', [])
+    if migrations:
+        assert review['beforeLinks'] == existing, 'Stale migration connections'
+        expected = copy.deepcopy(existing)
+        touched = set()
+        for migration in migrations:
+            identity, side = migration['id'], migration['side']
+            assert side in ('from', 'to'), 'Invalid migration side'
+            assert (identity, side) not in touched, 'Duplicate endpoint migration'
+            touched.add((identity, side))
+            links = [link for link in expected if link['id'] == identity]
+            assert len(links) == 1, 'Missing migration connection'
+            before, after = migration['before'], migration['after']
+            assert links[0][side] == before, 'Stale migration endpoint'
+            assert before != after, 'Empty endpoint migration'
+            assert all(endpoint['asset'] in edits for endpoint in (before, after)), \
+                'Migration assets must both be reviewed'
+            assert not any(room['id'] == before['interior']
+                           for room in edits[before['asset']]['gameplay']['interiors']), \
+                'Migrated source room must be removed'
+            links[0][side] = after
+        assert connections == expected, 'Unreviewed connection migration'
+    else:
+        assert connections[:len(existing)] == existing, 'Do not change existing scene connections'
+        assert len(connections) > len(existing), 'No new room connections'
     placements = {placement['id']: placement for placement in scene['placements']}
     ids, pairs = set(), set()
     for index, connection in enumerate(connections):

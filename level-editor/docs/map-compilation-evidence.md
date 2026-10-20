@@ -369,8 +369,23 @@ Full scene `staged-map-export-nWG57Y` and entrance audit
 The recovered entrance is `[2729,1488]`; the four other failures are unchanged.
 All 130 stairs pass. The four climb failures retain the same world start/goal
 coordinates, blockers and interrupted routes as `saved-map-exports-XKxUWP`
-(sector numbering changes with the new body geometry). Roof traversal and
-publication/link-migration verification remain pending.
+(sector numbering changes with the new body geometry).
+
+`bastion-roof-routes-eickm_ze` prepares two conservative walking directions
+on each exported receiver above height 190 from the eight paired placement
+exports. All 32 native sprite routes pass. `bastion-body-collision-jqr1_x5t`
+checks each entrance's inside coordinate against the outdoor fast-find layer:
+all 16 remain blocked by the physical body, while 32 directed walks on nearby
+ground pass. These probes cover copies, four rotations and two elevations.
+
+The publisher now accepts explicit endpoint migrations in addition to appended
+links. It checks the scene hash, exact prior links and endpoint, both reviewed
+asset definitions, removal of the former room and existence of the destination
+room. Replaying only the listed migrations must produce the exact reviewed
+connection list, preserving IDs and opposite endpoints. All seven publication
+tests pass, and the actual two staged migrations validate against the current
+scene without writing library files. Browser round-trip and final archive
+verification still precede installation.
 
 ## York tower/gatehouse room ownership (2026-10-20)
 

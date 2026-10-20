@@ -36,8 +36,10 @@ visible ground targets across copies, rotations and elevations. Exterior walls
 still block the doorway in compiler regression checks. The nearer target remains
 occluded by the terrace in eight orientations, although all 16 entries succeed.
 Full-scene native checks improve raw doorway trips to 91/95, retain 130/130
-stairs and the same four climb failures. The draft remains unpublished pending
-roof checks and a validated room-link migration.
+stairs and the same four climb failures. Native roof checks pass 32 walks;
+16 ground-body probes remain blocked while nearby ground walks pass.
+The publication helper now validates the exact two endpoint migrations.
+The draft remains unpublished pending browser round-trip and final archive checks.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.
