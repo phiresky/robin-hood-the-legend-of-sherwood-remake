@@ -17,9 +17,9 @@ Eligible changing sectors in eight maps additionally pass 1,032 independent-stat
 and 426 combined-state sampled routes against live collision connectivity.
 See [fresh scene sweep](map-compilation-evidence.md#fresh-map-only-scene-sweep).
 
-Croisement01, Croisement02 and Croisement03 additionally pass fresh map-only
+Croisement01, Croisement02, Croisement03 and Derby additionally pass fresh map-only
 browser ZIP export/reopen/rebakes: gameplay, warnings and rendered color/depth
-match exactly, and all three exact archives
+match exactly, and all four exact archives
 load natively without a base datadir. This verifies packaging and deterministic
 rebaking, not actor traversal or visual correctness. See
 [Croisement01 browser round trip](map-compilation-evidence.md#croisement01-map-only-browser-round-trip).
@@ -28,6 +28,11 @@ combat jumps; visible asset texture defects and compiler warnings remain.
 Croisement03's corrected browser fixture includes its pinned animated-tree
 resources; all 14 frames load and play natively without base map data. See
 [scenery resource verification](map-compilation-evidence.md#browser-round-trips-include-pinned-scenery-resources).
+Leicester exposed excessive appearance-state allocation from merging overlapping
+bounds. Export now partitions these into disjoint regions with local switch
+combinations. Unit checks and eight-state browser pixel comparisons pass; the
+full Leicester retry has cleared its previous budget failure but has not yet
+completed. See [appearance partitioning](map-compilation-evidence.md#derby-archive-and-remaining-appearance-budget-failure).
 
 The York red-house ramp and terrain connection metadata are now **published**.
 The reviewed export passes 88/95 full-scene doorway trips, recovering one entrance without

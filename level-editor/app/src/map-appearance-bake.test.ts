@@ -12,6 +12,7 @@ import { validateAssetGameplay } from "../../shared/src/asset-gameplay.ts";
 import {
   bindBakeAppearances,
   planAppearanceRegions,
+  partitionAppearanceRegions,
   bakeAppearanceRegions,
   bakeAppearanceRegionsAsync,
 } from "./map-appearance-bake.ts";
@@ -314,7 +315,7 @@ test("sunlit independent switches stay bounded and respect non-casting geometry"
   );
 });
 
-test("appearance planning includes hidden variants and merges intersecting dependencies", () => {
+test("appearance planning includes hidden variants and combines dependencies only where they overlap", () => {
   const root = scene();
   assert.deepEqual(
     planAppearanceRegions(root, camera, bounds, transitions, false).map((p) => p.patches),
@@ -323,13 +324,52 @@ test("appearance planning includes hidden variants and merges intersecting depen
   const overlap = mesh(15, 15, "b");
   root.add(overlap);
   const plans = planAppearanceRegions(root, camera, bounds, transitions, false);
-  assert.equal(plans.length, 1);
-  assert.deepEqual(plans[0]!.patches, ["a", "b"]);
-  assert.ok(plans[0]!.bounds[0] <= 10 && plans[0]!.bounds[2] >= 70);
+  assert.ok(plans.some((plan) => plan.patches.join(",") === "a,b"));
+  assert.ok(plans.some((plan) => plan.patches.join(",") === "b"));
+  assert.ok(plans.every((plan) => plan.patches.length <= 2));
   root.remove(overlap);
   assert.deepEqual(planAppearanceRegions(root, camera, bounds, transitions, true), [
     { bounds, patches: ["a", "b"] },
   ]);
+});
+
+test("appearance partitions preserve every pixel dependency without overlap or filling gaps", () => {
+  const sources = [
+    { bounds: [1, 1, 8, 8] as BakeBounds, patches: ["a"] },
+    { bounds: [5, 4, 9, 7] as BakeBounds, patches: ["b"] },
+    { bounds: [11, 8, 7, 9] as BakeBounds, patches: ["c"] },
+    { bounds: [1, 14, 3, 3] as BakeBounds, patches: ["a"] },
+  ];
+  const regions = partitionAppearanceRegions(sources);
+  const covers = (bounds: BakeBounds, x: number, y: number) =>
+    x >= bounds[0] && x < bounds[0] + bounds[2] && y >= bounds[1] && y < bounds[1] + bounds[3];
+  for (let y = 0; y < 20; y++)
+    for (let x = 0; x < 20; x++) {
+      const expected = [
+        ...new Set(sources.filter((s) => covers(s.bounds, x, y)).flatMap((s) => s.patches)),
+      ].sort();
+      const covering = regions.filter((r) => covers(r.bounds, x, y));
+      assert.equal(covering.length, expected.length ? 1 : 0, `coverage at ${x},${y}`);
+      assert.deepEqual(covering[0]?.patches ?? [], expected, `dependencies at ${x},${y}`);
+    }
+});
+
+test("a chain of intersecting appearance bounds does not multiply unrelated switches", () => {
+  const sources = Array.from({ length: 10 }, (_, i) => ({
+    bounds: [i * 900, 0, 1000, 1000] as BakeBounds,
+    patches: [`switch-${i}`],
+  }));
+  const regions = partitionAppearanceRegions(sources);
+  assert.ok(regions.every((region) => region.patches.length <= 2));
+  const pixels = regions.reduce(
+    (sum, r) => sum + r.bounds[2] * r.bounds[3] * 2 ** r.patches.length,
+    0,
+  );
+  assert.ok(pixels < 64 * 1024 * 1024);
+  assert.equal(
+    regions.reduce((sum, r) => sum + r.bounds[2] * r.bounds[3], 0),
+    9100 * 1000,
+  );
 });
 
 test("appearance planning respects hidden owners and validates bindings and state budgets", () => {

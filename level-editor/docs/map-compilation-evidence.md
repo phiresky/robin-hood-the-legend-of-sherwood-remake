@@ -96,6 +96,46 @@ sight obstacles, three masks, 15 door projections and 5,016 grid blocks.
 Its nine controls have zero appearance regions, so this remains short of visual
 state parity and complete gameplay verification.
 
+## Derby archive and remaining appearance-budget failure
+
+Derby's corrected browser round trip passes in 112.090 seconds, including four
+appearance regions and their combinations. Its exact ZIP,
+`browser-exports-hZZrJv/derby.zip`, is 25,153,166 bytes with SHA-256
+`5998c10f7074818fe6c58da667a727ae94f7cc9edccd56d58c7ccfee56ce6f52`.
+The existing native archive test loads it without a base datadir in 1.78 seconds:
+1920×2752 color/depth, minimap, embedded scene, 341 sight obstacles, 11 masks,
+70 door projections and 67,680 grid blocks; four appearance regions reference
+five controls.
+
+The exact Croisement02/03 archive descriptors were additionally sampled through
+native player-click jump routing in `browser-exports-hZZrJv/native-jumps`.
+Croisement03 passes all 100 samples. Croisement02 passes 35/40 upright samples;
+the five rejected samples ascend its 54-unit pair whose destination requires a
+helper. `native-assisted` tests that pair's two directions with assisted ascent
+and upright descent: all ten player-click samples pass. The failed upright report
+is retained; it is not counted as a successful all-upright check.
+
+Leicester then failed before rendering with the 64-megapixel appearance-state
+budget. The planner had merged entire bounding rectangles whenever they
+intersected, multiplying every switch in a connected chain over the whole
+enclosing rectangle. It now partitions the union into disjoint rectangles with
+exactly the controlling switches at each location, coalescing adjacent rectangles
+with equal dependencies. It retains every local combination and the existing
+budget and format limits; no runtime or file-format extension is required.
+
+Seventeen targeted planning/packaging tests pass. New tests verify per-pixel
+coverage/dependencies, gaps and a ten-switch overlapping chain within budget.
+The real browser bake contract also verifies that recomposing split regions
+matches full-frame color and depth exactly for all eight states of three
+overlapping controls. Targeted lint and formatting pass.
+
+The full Leicester retry in `browser-exports-j6Syyl` cleared the previous budget
+failure and began rendering 85 regions. Its full ZIP/rebake/native checks are
+still pending. A development-server reload during test-file formatting restarted
+that same live browser check; no separate duplicate bake was launched. The
+batch also selects Lincoln, Nottingham, Sherwood, York and Wychford. Its manifest
+and logs distinguish finished results from pending work.
+
 ## York entrance-ramp reproduction
 
 `stage-york-entrance-ramps.mjs` prepares an unpublished candidate for the red

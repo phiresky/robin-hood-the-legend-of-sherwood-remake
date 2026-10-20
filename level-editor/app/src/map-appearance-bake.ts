@@ -85,6 +85,62 @@ interface AppearancePlan {
   patches: string[];
 }
 
+/** Disjoint rectangles need only the switches whose bounds cover their pixels. */
+export function partitionAppearanceRegions(sources: readonly AppearancePlan[]): AppearancePlan[] {
+  const xs = [...new Set(sources.flatMap(({ bounds: [x, , w] }) => [x, x + w]))].sort(
+    (a, b) => a - b,
+  );
+  const result: AppearancePlan[] = [];
+  let previous = new Map<string, AppearancePlan>();
+  for (let i = 1; i < xs.length; i++) {
+    const x = xs[i - 1]!,
+      right = xs[i]!;
+    const active = sources.filter(
+      ({ bounds: [left, , width] }) => left < right && left + width > x,
+    );
+    const ys = [...new Set(active.flatMap(({ bounds: [, y, , h] }) => [y, y + h]))].sort(
+      (a, b) => a - b,
+    );
+    const column: AppearancePlan[] = [];
+    for (let j = 1; j < ys.length; j++) {
+      const y = ys[j - 1]!,
+        bottom = ys[j]!;
+      const patches = [
+        ...new Set(
+          active
+            .filter(({ bounds: [, top, , height] }) => top < bottom && top + height > y)
+            .flatMap((source) => source.patches),
+        ),
+      ].sort();
+      if (!patches.length) continue;
+      const last = column.at(-1);
+      if (
+        last &&
+        last.bounds[1] + last.bounds[3] === y &&
+        JSON.stringify(last.patches) === JSON.stringify(patches)
+      ) {
+        last.bounds[3] += bottom - y;
+      } else {
+        column.push({ bounds: [x, y, right - x, bottom - y], patches });
+      }
+    }
+    const current = new Map<string, AppearancePlan>();
+    for (const region of column) {
+      const key = JSON.stringify([region.bounds[1], region.bounds[3], region.patches]);
+      const left = previous.get(key);
+      if (left && left.bounds[0] + left.bounds[2] === x) {
+        left.bounds[2] += region.bounds[2];
+        current.set(key, left);
+      } else {
+        result.push(region);
+        current.set(key, region);
+      }
+    }
+    previous = current;
+  }
+  return result;
+}
+
 /** Include hidden applied variants and their shadows down to the lowest scene geometry. */
 export function planAppearanceRegions(
   root: THREE.Object3D,
@@ -165,32 +221,24 @@ export function planAppearanceRegions(
           ),
         );
     if (box.isEmpty() || box.min.x === box.max.x || box.min.y === box.max.y) continue;
-    const patches = [patch];
-    // Merging bounding rectangles can create a new intersection, so revisit earlier regions.
-    for (let i = 0; i < regions.length;) {
-      const other = regions[i]!;
-      if (!box.intersectsBox(other.box)) {
-        i++;
-        continue;
-      }
-      box.union(other.box);
-      patches.push(...other.patches);
-      regions.splice(i, 1);
-      i = 0;
-    }
-    regions.push({ box, patches });
+    regions.push({ box, patches: [patch] });
   }
   let statePixels = 0;
-  return regions.map(({ box, patches }) => {
+  const partitioned = partitionAppearanceRegions(
+    regions.map(({ box, patches }) => ({
+      bounds: [box.min.x, box.min.y, box.max.x - box.min.x, box.max.y - box.min.y],
+      patches,
+    })),
+  );
+  return partitioned.map(({ bounds, patches }) => {
     if (patches.length > 16) throw new Error("Too many overlapping appearance switches to bake");
-    const w = box.max.x - box.min.x,
-      h = box.max.y - box.min.y;
+    const [, , w, h] = bounds;
     statePixels += w * h * 2 ** patches.length;
     if (statePixels > 64 * 1024 * 1024)
       throw new Error(
         "Appearance combinations exceed 64 megapixels; reduce the export frame or overlapping state geometry",
       );
-    return { bounds: [box.min.x, box.min.y, w, h], patches: patches.sort() };
+    return { bounds, patches };
   });
 }
 

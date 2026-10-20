@@ -468,6 +468,75 @@ try {
     mesh.geometry.dispose();
     mesh.material.dispose();
   }
+  // Recompose partitioned regions for every global state, including shared switches.
+  const partitionRoot = new THREE.Group();
+  const partitionGround = surface([0, 0, 64, 64], 0x808080, -10);
+  const controls = ["left", "middle", "right"];
+  const variants = controls.map((id, i) => {
+    const mesh = surface(
+      [4 + i * 16, 8 + i * 8, 24, 24],
+      [0xff0000, 0x00ff00, 0x0000ff][i]!,
+      i * 5,
+    );
+    mesh.userData.reveal_show_when_applied = [id];
+    return mesh;
+  });
+  partitionRoot.add(partitionGround, ...variants);
+  const partitionBounds: [number, number, number, number] = [0, 0, 64, 64];
+  display.clear();
+  display.apply(partitionRoot);
+  const partitionBase = renderMapBake(partitionRoot, camera, partitionBounds);
+  const partitionPlans = planAppearanceRegions(
+    partitionRoot,
+    camera,
+    partitionBounds,
+    controls.map((id) => ({ id })),
+    false,
+  );
+  check(partitionPlans.length > 3, "fixture must partition intersecting bounds");
+  check(
+    partitionPlans.some((plan) => plan.patches.length === 2),
+    "fixture must contain combined state regions",
+  );
+  const partitionImages = bakeAppearanceRegions(
+    partitionRoot,
+    partitionPlans,
+    64,
+    partitionBase,
+    () => renderMapBake(partitionRoot, camera, partitionBounds),
+  );
+  for (let state = 0; state < 8; state++) {
+    display.clear();
+    controls.forEach((id, bit) => display.set(id, (state & (1 << bit)) !== 0));
+    display.apply(partitionRoot);
+    const full = renderMapBake(partitionRoot, camera, partitionBounds);
+    const color = partitionBase.color.slice(),
+      depth = partitionBase.depth.slice();
+    for (const region of partitionImages) {
+      const localState = region.patches.reduce(
+        (mask, id, bit) => mask | (((state >> controls.indexOf(id)) & 1) << bit),
+        0,
+      );
+      const pixels = region.states[localState]!;
+      const [x, y, w, h] = region.bounds;
+      for (let row = 0; row < h; row++) {
+        const offset = (y + row) * 64 + x;
+        color.set(pixels.color.subarray(row * w * 4, (row + 1) * w * 4), offset * 4);
+        depth.set(pixels.depth.subarray(row * w, (row + 1) * w), offset);
+      }
+    }
+    check(
+      color.every((value, i) => value === full.color[i]) &&
+        depth.every((value, i) => value === full.depth[i]),
+      `partitioned color/depth differs from full render for state ${state}`,
+    );
+  }
+  display.clear();
+  display.apply(partitionRoot);
+  for (const mesh of [partitionGround, ...variants]) {
+    mesh.geometry.dispose();
+    mesh.material.dispose();
+  }
   const files = unzipSync(archive);
   const depth = decode(files["Data/Levels/Day/editor-bake-contract.occlusion-depth.png"]!);
   check(
