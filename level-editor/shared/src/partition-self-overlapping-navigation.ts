@@ -127,8 +127,14 @@ export function partitionSelfOverlappingNavigation(
     assembleNavigationRegions(
       members.flatMap((i) => {
         const piece = structuredClone(region.pieces[i]!);
+        // Rebuild the integer outline from its retained precision source.
+        // Re-rounding intermediate union vertices can create a one-pixel tooth
+        // that prevents serialization of the matching-height receiving edge.
         const rounded = quantizeGeneratedMotionPolygon(
-          [piece.polygon, ...piece.blockers],
+          [
+            piece.preciseMovementPolygon ?? piece.receivingPolygon ?? piece.polygon,
+            ...piece.blockers,
+          ],
           Math.round,
           "Partitioned navigation receiver",
           warnings,

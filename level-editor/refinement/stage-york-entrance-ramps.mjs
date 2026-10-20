@@ -13,10 +13,16 @@ const reviewed = [
   { asset: "york-central-south-red-timber-house", ramps: ["building-327"] },
   { asset: "york-west-bridge-approach-gatehouse", ramps: ["building-171", "building-177"] },
 ];
+const selected = process.argv.slice(2);
+assert.ok(
+  selected.every((id) => reviewed.some((entry) => entry.asset === id)),
+  "Unknown ramp asset",
+);
 const changed = [],
   review = [],
   fixtures = [];
 for (const { asset: id, ramps } of reviewed) {
+  if (selected.length && !selected.includes(id)) continue;
   const asset = assets.get(id),
     gameplay = structuredClone(asset.gameplay);
   assert.equal(gameplay.movementSolids, undefined);

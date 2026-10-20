@@ -69,6 +69,39 @@ precise obstacle edge, leaving a seam mismatch. Captured passage geometry in
 The correction changes export preparation only; no runtime code or library
 definitions were changed.
 
+### Precise contour preserved through partitioning
+
+Partition preparation now rebuilds each integer contour from its retained precise
+movement boundary, or its physical receiver when no adjusted clearance exists.
+Previously, re-rounding an intermediate union contour retained a one-pixel tooth
+that prevented the matching precise contour from being serialized. Blockers
+remain present. The captured 37-degree case fails on the old code and passes on
+the correction, including precise-contour serialization and seam availability.
+The existing 185 partition/assembly/compiler tests pass, as does the added
+regression; lint passes.
+
+Native fixture `selected-neighbor-placements-Sx2AUK` now passes all 16 red-house
+ground-click round trips, including both independent copies at four rotations
+and two elevations. Gatehouse fixture `selected-neighbor-placements-nixLFY`
+remains 4/32. Full combined export `saved-map-exports-901E1P` and audit
+`saved-map-entrances-h55ak5` remain 88/95 with the same regression.
+
+The authoring script can select a reviewed asset by positional ID. House-only
+stage `york-entrance-ramps-exM1pD` retains the terrain join change; its full export
+`saved-map-exports-UW7wLq` and audit `saved-map-entrances-ByJQvd` pass 87/95:
+the red-house entrance recovers, but `[578,1105]` regresses. This is the existing
+`york-west-town-lane-narrow-timber-house` floor `building-602-receiver-physical-floor`,
+whose ground socket starts joining when the terrain accepts connections.
+The combined region retains both its sloped receiver and the underlying terrain
+at the same projected position. Floor partitioning must retain distinct valid
+receivers even when it cannot prepare a usable connecting passage.
+
+The browser-review packager now expands compact stored maps and includes
+scene-level descriptors/models as well as placed asset sources. Full-scene
+snapshot `draft-scene-render-UslJut` is prepared for the house-only review;
+browser verification was started, but no completed archive or publication is
+claimed here. Neither candidate is published.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall

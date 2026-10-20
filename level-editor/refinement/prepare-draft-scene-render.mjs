@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { serializeStoredMap } from "../shared/src/stored-level.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
+import { readStoredMap } from "../pipeline/src/stored-map.ts";
 
 const [scenePath, editsPath, name, mode] = process.argv.slice(2);
 assert.ok(scenePath && editsPath && name, "Supply scene.json edits.json fixture-name");
@@ -30,13 +31,17 @@ const relative = (value) => {
   assert.ok(value.split("/").every((part) => part && part !== "." && part !== ".."));
   return value;
 };
-const document = JSON.parse(await fs.readFile(scenePath));
+const input = JSON.parse(await fs.readFile(scenePath));
+const document = input.objects ? input : await readStoredMap(scenePath, "library");
 const edits = JSON.parse(await fs.readFile(editsPath));
 assert.equal(new Set(edits.map((edit) => edit.asset)).size, edits.length);
 const output = await fs.mkdtemp("work/needs-review/map-compile/draft-scene-render-");
 const descriptors = new Map(),
   entries = [];
-for (const reference of document.assetSources) {
+for (const reference of [
+  ...document.assetSources,
+  ...(document.sceneAssets ?? []).filter((source) => source.descriptor),
+]) {
   relative(reference.descriptor);
   relative(reference.model);
   const bytes = await fs.readFile(path.join("library", reference.descriptor));

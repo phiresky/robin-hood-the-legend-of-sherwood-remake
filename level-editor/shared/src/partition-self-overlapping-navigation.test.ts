@@ -6,6 +6,40 @@ import { warnSelfOverlappingNavigation } from "./warn-self-overlapping-navigatio
 import { navigationPosturePassages } from "./navigation-posture-passages.ts";
 import type { HeightPlane } from "./gameplay-plane.ts";
 import type { Point } from "./level.ts";
+import rampPieces from "../test-fixtures/ramp-precise-partition.json" with { type: "json" };
+import { joinedReceivingBoundary } from "./precise-movement-contours.ts";
+import { serializePreciseMotionRing } from "./serialize-precise-motion-ring.ts";
+
+test("partitioned ramps rebuild grid edges from their retained precise contour", () => {
+  const pieces = rampPieces as NavigationPiece[];
+  const before = structuredClone(pieces);
+  const [region] = assembleNavigationRegions(pieces, []);
+  assert.ok(region);
+  const result = partitionSelfOverlappingNavigation(region, []);
+  assert.equal(result.regions.length, 2);
+  assert.equal(result.passages.length, 1);
+  const ramp = result.regions.find((r) => r.pieces[0]!.plane[0] !== 0)!;
+  assert.deepEqual(ramp.polygon, [
+    [729, 1721],
+    [781, 1674],
+    [785, 1691],
+    [733, 1737],
+  ]);
+  const exact = joinedReceivingBoundary(ramp.pieces, ramp.polygon);
+  assert.ok(exact);
+  assert.ok(serializePreciseMotionRing(exact, ramp.polygon));
+  const { from, to, connection } = result.passages[0]!;
+  const floor = (r: typeof region) => ({
+    ...r,
+    plane: r.pieces[0]!.plane,
+    receivingFloors: r.pieces.map((p) => ({
+      plane: p.plane,
+      polygon: p.receivingPolygon ?? p.polygon,
+    })),
+  });
+  assert.ok(navigationPosturePassages(connection, floor(from), floor(to)).length > 0);
+  assert.deepEqual(pieces, before);
+});
 
 function rectangle(
   plane: HeightPlane,
