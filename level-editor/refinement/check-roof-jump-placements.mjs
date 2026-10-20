@@ -10,12 +10,22 @@ const { unzipSync, strFromU8 } = createRequire(new URL("../app/package.json", im
   "fflate",
 );
 const zipRoundtrip = process.argv.includes("--zip-roundtrip");
+const insetArguments = process.argv.slice(2).filter((argument) => argument.startsWith("--inset="));
+assert.ok(insetArguments.length <= 1);
+const diagnosticInset = insetArguments.length ? Number(insetArguments[0].slice(8)) : undefined;
+assert.ok(
+  diagnosticInset === undefined || (Number.isFinite(diagnosticInset) && diagnosticInset >= 0),
+  "Diagnostic inset must be a nonnegative finite number",
+);
 
 const input = JSON.parse(
   await fs.readFile("shared/test-fixtures/complete-roof-jumps.json", "utf8"),
 );
 const source = parseLevel3D(input.document);
 const asset = parseProjectionAssetDescriptor(input.asset);
+if (diagnosticInset !== undefined)
+  for (const surface of asset.gameplay.surfaces)
+    if (surface.jump) surface.jump.inset = diagnosticInset;
 const crouched = process.argv.includes("--crouched");
 if (crouched) for (const surface of asset.gameplay.surfaces) surface.forceCrouched = true;
 const approachDepth = Math.min(
@@ -33,6 +43,7 @@ const report = (complete) =>
       scope: "prepared-roof-jump-placements-awaiting-native-traversal",
       crouched,
       zip_roundtrip: zipRoundtrip,
+      diagnostic_inset: diagnosticInset,
       complete,
       results,
     }),
@@ -47,7 +58,7 @@ for (const rotation of [0, 37, 90, 180]) {
       bestEffort: true,
     });
     // The 90-degree layout is intentionally too narrow for this actor footprint.
-    if (rotation !== 90)
+    if (rotation !== 90 && diagnosticInset === undefined)
       assert.ok(
         compiled.descriptor.asset_geometry?.jump_line_pairs?.length > 0,
         `Roof traversal fixture ${rotation}/${height} exported no jump connections`,

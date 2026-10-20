@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Automatic jump takeoff inset experiment
+
+`check-roof-jump-placements.mjs --inset=N` provides a diagnostic override without
+changing asset definitions or the compiler's production defaults.
+The default fixture in `prepared-roof-placements-gJSVOn` retains connections at
+0, 37 and 180 degrees at both tested elevations, with 120 native sword traversal
+cases. Its 90-degree layout is already too narrow for the actor footprint.
+The 16-unit override in `prepared-roof-placements-8OoNxr` retains only the
+37-degree connections, leaving 40 traversal cases. Both native reports completed.
+Increasing inset globally would remove working connections by exceeding their
+matching limits; it is not an appropriate blanket repair for startup support.
+These reports cover direct sprite dispatch and landing, not click approaches
+or rendering.
+
+## Tinted model derivative support
+
+Textured materials with a non-white base-color factor now use the existing
+material-preserving texture re-encoding path. The atlas path still refuses them
+because its single-image bake does not represent the factor. Regression tests
+cover lit and unlit materials, alpha factors/cutoffs, unchanged UVs, indices and
+positions; all 33 optimizer tests pass.
+
+The current `croisement03-group-033` source also contains transformed mesh nodes,
+which the quantization preflight refuses. Its retry uses `--no-quantize` to retain
+those transforms. The retained-material path does not run atlas render
+comparisons; structural tests do not establish visual parity.
+
 ## Embedded catalog integrity
 
 The local publication step updated descriptor hashes without refreshing the

@@ -270,6 +270,34 @@ class LossyAssetsTest(unittest.TestCase):
         self.assertEqual(result['textures'][0]['extensions']['EXT_texture_avif']['source'], 0)
         self.assertEqual(result['images'][0]['mimeType'], 'image/avif')
 
+    def test_tinted_textures_retain_factors_uvs_and_geometry(self):
+        for extensions in ({}, {'KHR_materials_unlit': {}}):
+            material = {'pbrMetallicRoughness': {
+                'baseColorTexture': {'index': 0},
+                'baseColorFactor': [0.3, 0.7, 0.2, 0.6]},
+                'extensions': extensions, 'alphaMode': 'MASK', 'alphaCutoff': 0.4}
+            source = self.root / 'tinted.glb'
+            source.write_bytes(glb(material))
+            self.assertEqual(lossy_assets.static_check(self.root, source.name), [])
+            doc, binary, _ = lossy_assets.read_glb(source)
+            self.assertTrue(lossy_assets.requires_material_layout(doc))
+            # The atlas path must still refuse tint rather than silently discard it.
+            original = doc['meshes'][0]['primitives'][0]
+            with self.assertRaisesRegex(ValueError, 'baseColorFactor'):
+                lossy_assets.display_texture(doc, original)
+            output = self.root / 'tinted.lossy.glb'
+            lossy_assets.write_lossy(doc, binary, [], b'', output, drop_normals=False,
+                                    reencoded={0: b'encoded-image'})
+            result, body, _ = lossy_assets.read_glb(output)
+            self.assertEqual(result['materials'], doc['materials'])
+            written = result['meshes'][0]['primitives'][0]
+            for name, index in original['attributes'].items():
+                np.testing.assert_array_equal(lossy_assets.accessor_array(doc, binary, index),
+                    lossy_assets.accessor_array(result, body, written['attributes'][name]))
+            np.testing.assert_array_equal(
+                lossy_assets.accessor_array(doc, binary, original['indices']),
+                lossy_assets.accessor_array(result, body, written['indices']))
+
     def test_static_check_accepts_display_textures_and_refuses_others(self):
         model = 'derby/house/model.glb'
         self.assertEqual(lossy_assets.static_check(self.root, model), [])

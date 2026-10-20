@@ -373,6 +373,15 @@ def has_pbr_maps(doc):
                for m in doc.get('materials', []))
 
 
+def requires_material_layout(doc):
+    """Retain material factors and UVs when a single-image atlas cannot represent them."""
+    return has_pbr_maps(doc) or any(
+        pbr.get('baseColorTexture') is not None
+        and pbr.get('baseColorFactor', [1, 1, 1, 1]) != [1, 1, 1, 1]
+        for material in doc.get('materials', [])
+        for pbr in [material.get('pbrMetallicRoughness', {})])
+
+
 def display_texture(doc, primitive):
     """(texture info, image index, sampler) of the texture a primitive displays, or None.
 
@@ -947,7 +956,7 @@ def write_lossy(doc, binary, records, atlas_bytes, output, drop_normals=True, te
                 require(reencoded is not None or display_texture(doc, source) is None,
                         f'Textured primitive {mesh_index}/{prim_index} was not rebuilt')
                 # Untouched primitive, or keep-layout mode (original UVs and images, re-encoded).
-                textured = reencoded is not None and ('material' in source and (has_pbr_maps(doc) or display_texture(doc, source) is not None))
+                textured = reencoded is not None and ('material' in source and (requires_material_layout(doc) or display_texture(doc, source) is not None))
                 unlit = textured and 'KHR_materials_unlit' in doc['materials'][source['material']].get('extensions', {})
                 drop = drop_normals and unlit and 'NORMAL' in source['attributes']
                 primitive['attributes'] = {name: copy_accessor(index, name) for name, index in source['attributes'].items()
@@ -1254,7 +1263,7 @@ def derive(asset_id, model_path, lossy_path, args, work):
     bpy.ops.wm.read_homefile(use_empty=True, use_factory_startup=True)
     doc, binary, source_bytes = read_glb(model_path)
     work.mkdir(parents=True)
-    if has_pbr_maps(doc):
+    if requires_material_layout(doc):
         return derive_pbr(asset_id, model_path, lossy_path, args, work, doc, binary, source_bytes)
     if not any(display_texture(doc, primitive) for mesh in doc['meshes'] for primitive in mesh['primitives']):
         require(not doc.get('images') and not doc.get('textures'), 'Untextured model has unused texture resources')
@@ -1636,7 +1645,7 @@ def static_check(root, model, *, quantize=True):
             for primitive in mesh['primitives']:
                 require(primitive.get('mode', 4) == 4, 'non-triangle primitive')
                 require(not primitive.get('targets'), 'morph targets')
-                textured += has_pbr_maps(doc) or display_texture(doc, primitive) is not None
+                textured += requires_material_layout(doc) or display_texture(doc, primitive) is not None
         require(doc['meshes'], 'no meshes')
         if not textured:
             require(not doc.get('images') and not doc.get('textures'), 'Untextured model has unused texture resources')
