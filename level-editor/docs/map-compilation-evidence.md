@@ -9,8 +9,9 @@ Older counts and limitations below may be superseded by later entries.
 `refinement/stage-york-golden-roof-ridge.mjs` stages an unpublished correction
 for the gap between `building-339-walk-0` and `building-341-walk-0` in
 `york-central-south-golden-timber-house`. It intersects the two existing height
-planes, joins their ridge endpoints, preserves precise movement coordinates,
-and updates the receiving footprints. Neither plane nor engine behavior changes.
+planes, joins their ridge endpoints and updates the receiving footprints.
+Neither plane nor engine behavior changes. The first candidate additionally
+enabled precise movement; the revised candidate retains the existing grid policy.
 
 Candidate `york-golden-roof-ridge-k0ftqf` passes gameplay validation.
 Mesh review `roof-slab-mesh-review-m4lmqo` samples 17 points per boundary edge:
@@ -27,14 +28,25 @@ failures therefore predate this candidate. The separate hidden-overlay test
 exercises zero traversals and is not passing coverage.
 
 Full-scene compilation `saved-map-exports-76SS0C` completes in 301.7 seconds.
-Replay `golden-ridge-same-probes-9ya0hxxc` preserves the three previously failing
-line-49 starts and goal, with an assertion that the exported jump pair is
-unchanged. All three still fail: the goal now selects ordinary sector 222,
-layer 31, rather than the jump overlay, even with hidden-floor selection.
-Closing the ridge alone therefore does not establish a working connection.
-The candidate remains unpublished; the next investigation is receiving-sector
-selection at the same goal. The asset library has not been changed by this
-experiment.
+Replay `golden-ridge-same-probes-9ya0hxxc` preserves three **hidden-selection**
+retries, not the original normal-click failures. All three select ordinary
+sector 222, layer 31; comparison with the baseline confirms this already
+happened before the candidate. It is not a changed selection priority.
+
+The correct normal-click replay, `golden-ridge-normal-probes-91vt7sdv`, keeps
+all 18 original probes on lines 48 and 49. Twelve pass; six involving
+[1182.25,1548.25] become unauthorized starts or goals. Enabling precise
+movement changes the outer movement boundary as well as the ridge.
+A diagnostic replacement of only receiving surfaces, retaining the baseline
+movement geometry, passes all 18 probes in `golden-ridge-receiver-only-ds1qy81q`.
+This isolates the receiver repair but is not production compiler evidence.
+
+The staging script now retains the asset's movement-grid policy.
+Revised candidate `york-golden-roof-ridge-ldL2lc` is being compiled in
+`saved-map-exports-yeJYXy`; native verification remains required.
+`refinement/replay-jump-click-probes.mjs` preserves original coordinates and
+selection modes and checks jump-pair identity before producing replay inputs.
+The asset library has not been changed by these experiments.
 
 ## Wychford map-only browser round trip
 

@@ -43,7 +43,7 @@ for (const [a, b] of [
 }
 for (const [side, surface] of surfaces.entries()) {
   surface.height = surface.polygon.map((point) => planeHeight(planes[side], point));
-  surface.preserveMovementPrecision = true;
+  // Keep the asset's movement-grid policy; changing it also moves outer boundaries.
   surface.projectionMaterials.footprint = surface.polygon.map((point, i) => [
     ...point,
     surface.height[i],
