@@ -1,0 +1,16 @@
+{
+  "map": "york",
+  "assets": ["york-precinct-north-connecting-gateway"],
+  "size": [3200, 3200],
+  "copyXs": [800.25, 2400.25],
+  "assemblyY": 1800.75,
+  "terrainHeight": 160.001,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "york-precinct-north-connecting-gateway",
+      "door": "interior-0/door-0",
+      "sourceLocal": [31.734574724358076, 37.36677249901297]
+    }
+  ]
+}

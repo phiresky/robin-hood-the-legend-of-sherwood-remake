@@ -40,8 +40,20 @@ It is unpublished. Five moved fixtures pass 96 normal click trips:
 `selected-neighbor-placements-ySiaGF` (round tower ground, 16), `PTbAtv`
 (round tower upper, 32), `NKzbIe` (square tower, 16), `INUcuu` (hall lower, 16),
 and `bJIopq` (hall upper, 16). The abbreviated names share the same prefix.
-Full regression `saved-map-exports-Mcj8fa` is running. Gateway lock-state checks,
-browser verification and publication for this four-asset candidate remain open.
+Full regression `saved-map-exports-Mcj8fa` constructs natively with unchanged
+counts. Audit `saved-map-entrances-8XLRcv` improves 75/95 to 81/95: doors 8, 9,
+10, 11, 54 and 56 are fixed, with no regressions. The remaining 14 denials
+comprise one same-asset corridor (south city east gate tower), eleven foreign
+geometry corridors, and two lock-only denials. One foreign corridor is also
+authored locked.
+
+Gateway fixture `selected-neighbor-placements-laAZy0` and
+`prepare-authored-door-state-audit.mjs` produce lock-state snapshots in
+`authored-door-states-JduEzq`. Native checks pass all 16 initial locked rejections
+and all 16 complete unlocked round trips. The second snapshot applies only the
+exported after-patch lock flags; it does not verify a mission's runtime trigger.
+Browser/archive verification and publication for the four-asset candidate remain
+open. The installed library remains at the verified 75/95 result.
 
 ## York raised-terrain walking surface candidate (2026-10-20)
 

@@ -152,9 +152,12 @@ York to **75/95** entrance trips without regressions. Its moved native click and
 doorway tests, browser round-trip and native archive checks pass. The remaining
 20 denials comprise eight same-asset corridor failures, eleven foreign-geometry
 failures and one lock-only denial; two geometry failures also have authored locks.
-A four-asset tower/hall/gateway candidate passes 96 moved normal click trips for
-its unlocked entrances, but full-scene, gateway lock-state and browser checks
-remain pending. See the [doorway audit](map-compilation-evidence.md#york-doorway-structure-audit-and-timber-house-repair-2026-10-20).
+A four-asset tower/hall/gateway candidate improves the full scene to **81/95**
+with no regressions and passes 96 moved normal click trips. Gateway snapshots
+pass 16 locked rejections and 16 unlocked round trips; mission trigger behavior
+is separate. The candidate leaves twelve geometric blockages and two lock-only
+denials. Browser/archive verification and publication remain pending; installed
+definitions are still at 75/95. See the [doorway audit](map-compilation-evidence.md#york-doorway-structure-audit-and-timber-house-repair-2026-10-20).
 
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
 The published Derby ownership correction moves three tower entrances out of
