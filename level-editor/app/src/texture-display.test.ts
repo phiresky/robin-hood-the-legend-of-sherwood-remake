@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { TextureDisplay } from "./texture-display.ts";
+import { TextureDisplay, retainDisplayMaterialVariants } from "./texture-display.ts";
 
 test("smooth and pixel modes apply to all imported material textures", () => {
   const map = new THREE.Texture();
@@ -283,4 +283,137 @@ test("explicit projected RGB sampling stays nearest without affecting shared wal
   assert.equal(shared.minFilter, THREE.LinearMipmapLinearFilter);
   assert.equal(shared.generateMipmaps, true);
   assert.equal(shared.anisotropy, 8);
+});
+
+function opaqueSourceAtlas(map: THREE.Texture) {
+  const material = new THREE.MeshBasicMaterial({ map });
+  material.userData = {
+    export_rgb_sampling: "nearest-required",
+    source_ownership_fill: "synthesized",
+    source_ownership_alpha: "one=observed,zero=inferred;material remains opaque",
+  };
+  return material;
+}
+
+test("opaque source atlases isolate nearest sampling from shared ordinary textures", () => {
+  const pixels = new Uint8Array([49, 32, 8, 255, 74, 48, 16, 0]);
+  const shared = new THREE.DataTexture(pixels, 2, 1);
+  const source = opaqueSourceAtlas(shared);
+  const ordinary = new THREE.MeshBasicMaterial({ map: shared });
+  const root = new THREE.Group();
+  root.add(
+    new THREE.Mesh(new THREE.PlaneGeometry(), source),
+    new THREE.Mesh(new THREE.PlaneGeometry(), ordinary),
+  );
+  const display = new TextureDisplay();
+  display.apply(root, 8);
+  const isolated = source.map!;
+  assert.notEqual(isolated, shared);
+  assert.equal(isolated.source, shared.source);
+  for (const smooth of [false, true]) {
+    display.smooth = smooth;
+    for (const synthesized of [false, true]) {
+      display.synthesized.value = synthesized;
+      display.apply(root, 8);
+      assert.equal(source.map, isolated);
+      assert.equal(isolated.magFilter, THREE.NearestFilter);
+      assert.equal(isolated.minFilter, THREE.NearestFilter);
+      assert.equal(isolated.generateMipmaps, false);
+      assert.equal(isolated.anisotropy, 1);
+      assert.equal(shared.magFilter, smooth ? THREE.LinearFilter : THREE.NearestFilter);
+      assert.equal(shared.generateMipmaps, smooth);
+      assert.equal(ordinary.map, shared);
+      assert.deepEqual(pixels, new Uint8Array([49, 32, 8, 255, 74, 48, 16, 0]));
+      assert.equal(source.opacity, 1);
+      assert.equal(source.transparent, false);
+      assert.equal(source.alphaTest, 0);
+    }
+  }
+});
+
+test("inactive opaque source frames are configured before selection and only cloned once", () => {
+  const shared = new THREE.Texture();
+  const first = opaqueSourceAtlas(shared);
+  const next = opaqueSourceAtlas(shared);
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(), first);
+  retainDisplayMaterialVariants(mesh, [first, next]);
+  const display = new TextureDisplay();
+  display.apply(mesh);
+  const firstMap = first.map!;
+  const nextMap = next.map!;
+  assert.notEqual(firstMap, shared);
+  assert.notEqual(nextMap, shared);
+  assert.notEqual(firstMap, nextMap);
+  mesh.material = next;
+  display.apply(mesh);
+  for (const [material, texture] of [
+    [first, firstMap],
+    [next, nextMap],
+  ] as const) {
+    assert.equal(material.map, texture);
+    assert.equal(texture.magFilter, THREE.NearestFilter);
+    assert.equal(texture.minFilter, THREE.NearestFilter);
+    assert.equal(texture.generateMipmaps, false);
+  }
+});
+
+test("opaque nearest sampling rejects ambiguous ownership or physical transparency", () => {
+  const alterations = [
+    (m: THREE.MeshBasicMaterial) => {
+      delete m.userData.source_ownership_alpha;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.userData.source_ownership_fill = "neutral";
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.transparent = true;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.opacity = 0.5;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.alphaTest = 0.5;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.alphaHash = true;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.alphaToCoverage = true;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.alphaMap = new THREE.Texture();
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.premultipliedAlpha = true;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.blending = THREE.AdditiveBlending;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.map!.premultiplyAlpha = true;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.map = null;
+    },
+  ];
+  for (const alter of alterations) {
+    const material = opaqueSourceAtlas(new THREE.Texture());
+    alter(material);
+    assert.throws(
+      () => new TextureDisplay().apply(new THREE.Mesh(new THREE.PlaneGeometry(), material)),
+      /Required opaque RGB sampling/,
+    );
+  }
+  const lit = new THREE.MeshStandardMaterial({ map: new THREE.Texture() });
+  lit.userData = opaqueSourceAtlas(new THREE.Texture()).userData;
+  assert.throws(
+    () => new TextureDisplay().apply(new THREE.Mesh(new THREE.PlaneGeometry(), lit)),
+    /Required opaque RGB sampling/,
+  );
+  const configured = opaqueSourceAtlas(new THREE.Texture());
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(), configured);
+  const display = new TextureDisplay();
+  display.apply(mesh);
+  configured.opacity = 0.5;
+  assert.throws(() => display.apply(mesh), /Required opaque RGB sampling/);
 });

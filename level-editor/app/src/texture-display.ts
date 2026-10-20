@@ -147,6 +147,39 @@ export class TextureDisplay {
           );
         this.material(material);
         if (
+          material.userData.export_rgb_sampling === "nearest-required" &&
+          material.userData.export_complementary_binary_ownership !== true
+        ) {
+          if (
+            !(material instanceof THREE.MeshBasicMaterial) ||
+            material.userData.source_ownership_fill !== "synthesized" ||
+            material.userData.source_ownership_alpha !==
+              "one=observed,zero=inferred;material remains opaque" ||
+            material.userData.foliage_physical_opacity ||
+            material.opacity !== 1 ||
+            material.transparent ||
+            material.alphaTest !== 0 ||
+            material.alphaHash ||
+            material.alphaToCoverage ||
+            material.alphaMap ||
+            material.premultipliedAlpha ||
+            material.blending !== THREE.NormalBlending ||
+            !(material.map instanceof THREE.Texture) ||
+            material.map.premultiplyAlpha
+          )
+            throw new Error(
+              "Required opaque RGB sampling needs an unlit synthesized atlas with ownership alpha and opaque coverage",
+            );
+          // Small face islands cannot share mip levels: averaging mixes both
+          // unrelated source colors and their discrete ownership. Isolate the
+          // sampler so other materials using the same image still follow UI settings.
+          if (!this.samplingConfigured.has(material)) {
+            material.map = material.map.clone();
+            this.nearestRequired.add(material.map);
+            this.samplingConfigured.add(material);
+          }
+        }
+        if (
           material.userData.export_complementary_binary_ownership === true &&
           !this.samplingConfigured.has(material)
         ) {
