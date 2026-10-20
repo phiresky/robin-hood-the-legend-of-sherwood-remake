@@ -11,8 +11,19 @@ The full-scene candidate fixes three landing failures with no regressions among
 1,296 unchanged normal-click probes (1,245 pass). Movement and jump connections
 are unchanged. The published-library compile matches the tested candidate exactly,
 and 288/288 supported-floor clicks pass across copied, rotated and elevated
-assemblies. Rotated endpoint/selection failures remain; this is not full parity.
+assemblies. Rotated selection failures remain; this is not full parity.
 See [receiving ridge evidence](map-compilation-evidence.md#published-golden-house-receiving-ridge).
+
+The subsequent published one-unit takeoff inset fixes the four rotated endpoint
+failures (160/160 direct jumps, 288/288 unchanged interior clicks). Combat startup
+still fails 20/160 probes; full-scene click results have no regressions.
+The local catalog's stale embedded gameplay was also repaired: all 1,287 entries
+now match their pinned descriptors. Index validation now checks that relationship.
+All ten scenes reconstruct the same scene/gameplay data through the editor's
+index reader and the descriptor-file reader; York and Lincoln exports also
+match byte-for-byte through those two paths.
+See [catalog integrity](map-compilation-evidence.md#embedded-catalog-integrity) and
+[takeoff evidence](map-compilation-evidence.md#published-golden-house-jump-endpoint-inset).
 
 An earlier full-scene sweep and corrected Wychford retry export all ten saved scenes and
 load them through native geometry construction. Their 71 state transitions pass

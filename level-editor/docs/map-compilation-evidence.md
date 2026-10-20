@@ -4,6 +4,82 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Embedded catalog integrity
+
+The local publication step updated descriptor hashes without refreshing the
+catalog's embedded editor data. The browser reads this embedded data, while
+the earlier headless checks read descriptor files. The audit found two stale
+gameplay payloads (Lincoln north-hall stair and York golden timber house) and
+30 other editor payloads differing from the canonical descriptor projection.
+The latter mostly retained reconstruction fields excluded from the compact
+editor projection.
+
+`refinement/refresh_index_editor.py --repair` rebuilt the 32 affected payloads
+from their already pinned descriptors, validating those entries and their model
+derivatives. It does not adopt unpublished descriptor edits or change other
+catalog entries. The subsequent audit covers all 1,287 entries with zero
+descriptor-pin or embedded-editor discrepancies.
+Reports: `index-editor-refresh.json` and `index-editor-audit-after-refresh.json`.
+Catalog SHA-256:
+`7c6030b0df60db1b3b38eaa670d8788df39924e059e1478bbe06493b4e36c140`.
+
+`validate_asset_index` now rejects stale embedded editor data even when the
+descriptor hash matches. All 52 focused index/publication tests pass.
+The old hash-only local publication script is retired. Cache repair takes the
+shared publication lock and rejects concurrent index changes.
+`check-saved-map-exports.mjs --indexed-library` now loads scenes through the
+editor's actual catalog reader. Completed batch `saved-map-exports-LLKRxi`
+produces byte-identical York and Lincoln descriptors compared with the verified
+descriptor-file exports. York SHA-256 is
+`fe17e4f7dbfa0c3f4425be9618670cda580d837cf7dd53f5f014e15cdd400487`;
+Lincoln is `96138dc759cd5d3948f327d82c1ba721d4feefd7dbbd3520a8b0dadf249d6cde`.
+All ten saved scenes additionally reconstruct identical expanded documents and
+gameplay definitions through the two readers. This verifies catalog-driven map
+data construction, not a fresh browser image bake.
+
+Full-library derivative validation separately reports that
+`croisement03-group-033` has a lossy receipt not bound to its current model.
+The scoped catalog repair did not rewrite that model or derivative and is not
+a passing full-library publication preflight.
+
+## Published golden-house jump endpoint inset
+
+`refinement/stage-york-golden-jump-inset.mjs` stages an asset-local inset of
+`jump-pair-42-side-0` toward the receiving face interior. It preserves the
+existing offset from the face's height plane and changes no movement surface.
+Runtime landing uses the source line's distance and direction from the paired
+line's B endpoint; equalizing unequal spans without further checks would
+change both travel directions.
+
+The one-unit candidate `york-golden-jump-inset-xXdgOF`, compiled into
+`connected-jump-placements-BpmiYv`, passes 160/160 direct native jumps across
+two copies at four rotations and two heights, up from 156/160. Trace review
+finds zero static-solid contacts among 1,332 recorded airborne anchors.
+This checks anchors, not whole sprites or rendered frames.
+
+`golden-inset-same-clicks-87pqwzqf` preserves all 288 prior supported-floor
+start/goal clicks and passes all of them. Its fixture preparation verifies
+unchanged motion and landing zones, unchanged pair identities and endpoint
+movement bounded to three native units.
+Combat jumps improve from 136/160 to 140/160 with zero pass-to-fail regressions.
+The remaining 20 fail during grounded combat startup at 180°, before flight.
+A six-unit inset (`york-golden-jump-inset-XEWxOj`,
+`connected-jump-placements-NsWL7j`) has the same 20 failures and is not adopted.
+
+Full-scene export `saved-map-exports-NdPkzK` retains the same 1,245/1,296 passing
+supported-floor probes in `golden-inset-full-clicks-reoz9k1g`, with no regressions.
+Ordinary offset clicks remain 715/720, with all five failures on the previously
+known line 57. Only jump pair 24 and warning output change; one departure-support
+warning is removed and none are added.
+
+The one-unit correction is published, descriptor SHA-256
+`2fc15130e26ab92cf44c60074f38148f0b277a2675fd2d8b696c53937ec622dd`.
+Fresh descriptor-file export `saved-map-exports-V8wixE` is byte-identical to the
+tested candidate, SHA-256
+`fe17e4f7dbfa0c3f4425be9618670cda580d837cf7dd53f5f014e15cdd400487`.
+The embedded editor payload is refreshed as recorded above. The combat run-up
+problem remains outstanding.
+
 ## Published golden-house receiving ridge
 
 The receiver-volume candidate is published in

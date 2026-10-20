@@ -69,7 +69,7 @@ def lossy_problems(root, index, *, files=None):
 
 
 def validate_asset_index(root, index, *, files=None):
-    """Reject malformed catalogs and stale, missing, or corrupt lossy assets."""
+    """Reject stale descriptor projections as well as invalid model derivatives."""
     index = _document(index)
     if not isinstance(index, dict) or not isinstance(index.get('assets'), list):
         raise ValueError('Asset index must contain an assets array')
@@ -85,6 +85,17 @@ def validate_asset_index(root, index, *, files=None):
                 _relative(entry[key])
         if 'lossy_model' in entry and 'model' not in entry:
             raise ValueError('Lossy asset requires a source model: ' + entry['id'])
+        if not isinstance(entry.get('descriptor'), str):
+            raise ValueError('Asset index entry requires a descriptor: ' + entry['id'])
+        descriptor_name = _relative(entry['descriptor'])
+        descriptor_path = (files or {}).get(descriptor_name, Path(root) / descriptor_name)
+        if descriptor_path is None or not Path(descriptor_path).is_file():
+            raise ValueError('Asset index descriptor is missing: ' + entry['id'])
+        raw = Path(descriptor_path).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != entry.get('descriptor_sha256'):
+            raise ValueError('Asset index descriptor hash is stale: ' + entry['id'])
+        if entry.get('editor') != editor_descriptor(json.loads(raw)):
+            raise ValueError('Asset index editor data is stale: ' + entry['id'])
     problems = lossy_problems(root, index, files=files)
     if problems:
         raise ValueError('Asset index has non-current lossy assets:\n' + '\n'.join(problems))

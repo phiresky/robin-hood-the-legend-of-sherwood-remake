@@ -4,18 +4,23 @@ import { readStoredMap, pinnedDescriptors } from "../pipeline/src/stored-map.ts"
 import { compileMap } from "../app/src/map-compile.ts";
 import { savedMapBakeBounds } from "../app/tests/saved-map-bounds.mjs";
 import { savedMapWallCalibration } from "../app/tests/saved-map-wall-calibration.mjs";
+import { readIndexedMap } from "./read-indexed-map.mjs";
 
 // Compile the actual saved scenes, including authored terrain and spline walls.
 // Descriptors exercise native geometry; this does not replace a browser ZIP bake.
 const arguments_ = process.argv.slice(2);
 const mapOnly = arguments_.includes("--map-only");
 const tracePassages = arguments_.includes("--trace-passages");
+const indexedLibrary = arguments_.includes("--indexed-library");
 const selectedMaps = arguments_
   .filter((argument) => argument.startsWith("--map="))
   .map((argument) => argument.slice(6));
 const stages = arguments_.filter(
   (argument) =>
-    !argument.startsWith("--map=") && argument !== "--map-only" && argument !== "--trace-passages",
+    !argument.startsWith("--map=") &&
+    argument !== "--map-only" &&
+    argument !== "--trace-passages" &&
+    argument !== "--indexed-library",
 );
 assert.ok(stages.length <= 1, "Provide at most one gameplay stage");
 const [stage] = stages;
@@ -35,6 +40,7 @@ const report = (complete) =>
     JSON.stringify({
       scope: "static-geometry-only-not-gameplay-parity",
       mapOnly,
+      indexedLibrary,
       ...(selectedMaps.length ? { selectedMaps } : {}),
       ...(stage ? { gameplayStage: stage } : {}),
       complete,
@@ -62,16 +68,18 @@ for (const file of files) {
     phaseStart = performance.now();
   };
   try {
-    const document = await readStoredMap(`library/scenes/${file}`, "library");
+    const indexed = indexedLibrary
+      ? await readIndexedMap(`library/scenes/${file}`, "library")
+      : undefined;
+    const document =
+      indexed?.document ?? (await readStoredMap(`library/scenes/${file}`, "library"));
     if (mapOnly) {
       delete document.mission;
       delete document.population;
     }
-    const assets = await pinnedDescriptors(
-      "library",
-      document.assetSources ?? [],
-      document.sceneAssets,
-    );
+    const assets =
+      indexed?.assets ??
+      (await pinnedDescriptors("library", document.assetSources ?? [], document.sceneAssets));
     for (const edit of edits) {
       const asset = assets.get(edit.asset);
       if (asset) asset.gameplay = edit.gameplay;

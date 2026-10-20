@@ -6,7 +6,7 @@ import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
-from asset_index import generate_asset_index, write_asset_index
+from asset_index import generate_asset_index, write_asset_index, validate_asset_index
 
 
 class AssetIndexTest(unittest.TestCase):
@@ -44,6 +44,22 @@ class AssetIndexTest(unittest.TestCase):
         self.assertEqual(index['assets'][0]['descriptor_sha256'],
                          hashlib.sha256((self.asset/'asset.json').read_bytes()).hexdigest())
         self.assertEqual((self.root/'index.json').read_bytes(), self.previous)
+
+    def test_matching_descriptor_hash_does_not_allow_stale_embedded_gameplay(self):
+        index = json.loads(self.previous)
+        raw = json.dumps({**self.descriptor, 'gameplay': {'version': 1, 'surfaces': []}}).encode()
+        (self.asset/'asset.json').write_bytes(raw)
+        index['assets'][0]['descriptor_sha256'] = hashlib.sha256(raw).hexdigest()
+        with self.assertRaisesRegex(ValueError, 'editor data is stale: house'):
+            validate_asset_index(self.root, index)
+        fresh = write_asset_index(self.root)
+        self.assertEqual(fresh['assets'][0]['editor']['gameplay'], {'version': 1, 'surfaces': []})
+
+    def test_index_validation_binds_editor_data_to_descriptor_bytes(self):
+        index = json.loads(self.previous)
+        index['assets'][0]['descriptor_sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'descriptor hash is stale: house'):
+            validate_asset_index(self.root, index)
 
     def test_editor_projection_excludes_reconstruction_evidence(self):
         descriptor = {**self.descriptor, 'version': 1, 'kind': 'projection-mapped-asset',
