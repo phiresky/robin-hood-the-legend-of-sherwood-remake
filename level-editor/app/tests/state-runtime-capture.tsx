@@ -20,6 +20,7 @@ type Config = {
   expected_frames: number[];
   expected_phases?: string[];
   visual_only?: boolean;
+  live_bridge?: boolean;
   focus: {
     native_bounds: [number, number, number, number];
     origin: [number, number];
@@ -60,6 +61,16 @@ async function main() {
     config.scope === "approved-asset-recorded-integration-diagnostic"
       ? "Approved asset recorded-caller diagnostic (whole map unproven)"
       : "Unapproved candidate integration diagnostic";
+  let allowedLiveSequence = 0;
+  const originalFetch = window.fetch.bind(window);
+  if (config.live_bridge)
+    window.fetch = async (input, init) => {
+      const match =
+        typeof input === "string" ? /^\/runtime-observations\/packet\/(\d+)$/.exec(input) : null;
+      if (match)
+        await until(() => Number(match[1]) <= allowedLiveSequence || !!init?.signal?.aborted);
+      return originalFetch(input, init);
+    };
   const resources = new Map<string, File>();
   async function pinned(pin: Pin) {
     const r = await fetch(pin.url);
@@ -194,7 +205,13 @@ async function main() {
     return hash(internals.stateDelivery.native.pixels().data.slice().buffer);
   }
   result.textContent = "RUNNING: real initial capture import";
-  await load();
+  if (config.live_bridge) {
+    button("Connect observation bridge").click();
+    await until(() => {
+      assert(!errors.length, errors.join("\n"));
+      return batches.length === 1;
+    });
+  } else await load();
   const initial = await pixels();
   assert(button("Play").disabled && button("Reset").disabled, "Manual playback remains enabled");
   assert(
@@ -297,9 +314,15 @@ async function main() {
   const pixelHashes: string[] = [];
   const seenPhases = new Set<string>();
   for (let i = 0; i < config.expected_frames.length; i++) {
-    button("Next recorded snapshot").click();
-    await until(() => batches.length === i + 1);
+    if (config.live_bridge) allowedLiveSequence = i;
+    else button("Next recorded snapshot").click();
+    await until(() => {
+      assert(!errors.length, errors.join("\n"));
+      return batches.length === i + 1;
+    });
     const batch = batches[i]!;
+    if (config.live_bridge && i === 0)
+      result.textContent = `LIVE_BRIDGE_CONNECTED engine${batch.simulation_tick}`;
     assert(batch.simulation_tick === config.expected_frames[i], "Wrong source clock");
     const sample = batch.samples[0]!;
     assert(sample.kind === "patch", "Expected bound patch sample");
@@ -350,6 +373,7 @@ async function main() {
       __recordedCallerReport: {
         scope: config.scope,
         visual_only: true,
+        live_bridge: !!config.live_bridge,
         frames: batches.map((b) => b.simulation_tick),
         screenshot_scopes: imageScopes,
         native_source_bounds: config.focus.native_bounds,
@@ -358,8 +382,10 @@ async function main() {
         whole_map_proof: false,
       },
     });
-    result.textContent =
-      "PASS: recorded transition visual packet; prior behavioral acceptance is separate";
+    allowedLiveSequence = config.expected_frames.length;
+    result.textContent = config.live_bridge
+      ? "PASS: live observation bridge visual packet; no full-map or free-running-hook claim"
+      : "PASS: recorded transition visual packet; prior behavioral acceptance is separate";
     return;
   }
   button("Reload state").click();

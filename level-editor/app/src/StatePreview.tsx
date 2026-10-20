@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createSignal, onCleanup } from "solid-js";
+import { LiveStateCaptureSource } from "./state-runtime-live-source.ts";
 import { RecordedStateCaptureSource } from "./state-runtime-capture-source.ts";
 import type { Level3D } from "@rle/shared";
 import type { MissionStateSource } from "./mission-state-layer.ts";
@@ -50,7 +51,12 @@ export default function StatePreview(props: {
   const [captureStatus, setCaptureStatus] = createSignal("");
   const [captureAuthority, setCaptureAuthority] = createSignal("");
   let capture: RecordedStateCaptureSource | null = null;
+  let live: LiveStateCaptureSource | null = null;
+  let liveTimer: ReturnType<typeof setTimeout> | undefined;
   function retireCapture() {
+    clearTimeout(liveTimer);
+    live?.invalidate();
+    live = null;
     capture?.invalidate();
     capture = null;
     setRecorded(false);
@@ -77,6 +83,50 @@ export default function StatePreview(props: {
       props.onError(String(error));
     } finally {
       if (source === capture) setCaptureBusy(false);
+    }
+  }
+  async function connectLive() {
+    const entry = entries().find((e) => e.id === selected()),
+      root = props.library?.();
+    if (!entry || !root) return;
+    const context = generation,
+      pendingRequest = request + 1;
+    await choose(entry, root, context);
+    if (context !== generation || pendingRequest !== request || !contract()) return;
+    const source = new LiveStateCaptureSource(contract()!, (batch) => {
+      if (live !== source || !props.active) throw new Error("Live observation preview retired");
+      props.viewport.sampleDeliveredSourceState(batch);
+    });
+    live = source;
+    setRecorded(true);
+    setCaptureBusy(true);
+    const poll = async () => {
+      try {
+        const batch = await source.next();
+        if (live !== source) return;
+        if (batch) setCaptureStatus(`Live producer engine frame ${batch.simulation_tick}.`);
+        if (source.closed) {
+          setCaptureStatus("Observation producer closed; reload to reconnect.");
+          return;
+        }
+        liveTimer = setTimeout(() => void poll(), batch ? 0 : 100);
+      } catch (error) {
+        if (live !== source) return;
+        setCaptureStatus(`Observation stopped; reload to reconnect. ${String(error)}`);
+        props.onError(String(error));
+      }
+    };
+    try {
+      await source.connect();
+      if (live !== source) return;
+      setCaptureAuthority(`Bound observation session. ${source.authority!.limitations.join(" ")}`);
+      setCaptureBusy(false);
+      void poll();
+    } catch (error) {
+      if (live !== source) return;
+      setCaptureBusy(false);
+      setCaptureStatus(`Observation connection failed; reload to reconnect. ${String(error)}`);
+      props.onError(String(error));
     }
   }
   async function importCapture(files: File[]) {
@@ -472,6 +522,13 @@ export default function StatePreview(props: {
         </Show>
         <Show when={contract() || loopContract() || patchContract()}>
           <Show when={contract()}>
+            <button
+              type="button"
+              disabled={captureBusy() || recorded()}
+              onClick={() => void connectLive()}
+            >
+              Connect observation bridge
+            </button>
             <label>
               Recorded runtime capture
               <input

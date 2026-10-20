@@ -2438,6 +2438,22 @@ test("surface rules construct jump edges and landing zones without recovered jum
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /invalid surface jump rules/);
 });
 
+test("surface-generated receiving zones preserve an authored long-jump departure apron", () => {
+  const { document, assets } = surfaceJumpCompilerFixture();
+  for (const asset of assets.values())
+    for (const surface of asset.gameplay?.surfaces ?? [])
+      if (surface.jump) {
+        surface.jump.inset = 17;
+        surface.jump.maxGap = 100;
+      }
+  const compiled = compileAssetGameplay(document, assets, bounds);
+  assert.equal(compiled.jump_line_pairs!.length, 1);
+  assert.doesNotMatch(
+    (compiled.warnings ?? []).join("\n"),
+    /takeoff animation lacks receiving coverage/,
+  );
+});
+
 test("surface climb rules export helper requirements and warn when a neighbour is removed", () => {
   const { document, assets, hut, upper } = surfaceJumpCompilerFixture();
   for (const asset of [hut, upper]) {

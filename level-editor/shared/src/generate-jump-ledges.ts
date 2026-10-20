@@ -10,6 +10,7 @@ import { NAVIGATION_HALF_DIAGONAL as half } from "./navigation-footprint.ts";
 export interface JumpLandingBand {
   plane: HeightPlane;
   depth: number;
+  departureDepth?: number;
   helperNeeded?: boolean;
 }
 
@@ -65,13 +66,20 @@ export function generateJumpLedges(
     const normalClearance = half[0] * Math.abs(inward[0]) + half[1] * Math.abs(inward[1]);
     const alongClearance = (half[0] * Math.abs(dx) + half[1] * Math.abs(dy)) / length + 1;
     const inset = Math.max(rules.inset, normalClearance + 1);
+    // Retain available grounded startup support without moving authored takeoffs
+    // beyond their matching limits. The departure audit reports insufficient depth.
+    const departureDepth =
+      (rules.long ?? true) && Math.max(planeHeight(plane, a), planeHeight(plane, b)) > 0
+        ? Math.min(16, inset - 1)
+        : 0;
+    const forwardClearance = Math.max(normalClearance, departureDepth);
     const at = (t: number, depth: number): Point => [
       a[0] + dx * t + inward[0] * depth,
       a[1] + dy * t + inward[1] * depth,
     ];
     const strip = [
-      at(0, inset - normalClearance),
-      at(1, inset - normalClearance),
+      at(0, inset - forwardClearance),
+      at(1, inset - forwardClearance),
       at(1, inset + Math.max(rules.landingDepth, normalClearance)),
       at(0, inset + Math.max(rules.landingDepth, normalClearance)),
     ];
@@ -99,7 +107,12 @@ export function generateJumpLedges(
           surfaceInset: inset,
           edge: { zone, a: toWorld(at(start, inset)), b: toWorld(at(low, inset)) },
         });
-        landings.set(zone, { plane, depth: rules.landingDepth, helperNeeded: rules.helperNeeded });
+        landings.set(zone, {
+          plane,
+          depth: rules.landingDepth,
+          departureDepth,
+          helperNeeded: rules.helperNeeded,
+        });
       }
       start = Math.max(start, high);
     }
@@ -117,6 +130,10 @@ export function jumpLandingBand(id: string, edge: JumpEdge, band: JumpLandingBan
     dy = b[1] - a[1],
     length = Math.hypot(dx, dy);
   const offset: Point = [(dy / length) * band.depth, (-dx / length) * band.depth];
+  const forward: Point = [
+    (-dy / length) * (band.departureDepth ?? 0),
+    (dx / length) * (band.departureDepth ?? 0),
+  ];
   const anchor: Point = [(a[0] + b[0] + offset[0]) / 2, (a[1] + b[1] + offset[1]) / 2];
   const z = planeHeight(band.plane, anchor);
   return {
@@ -124,8 +141,8 @@ export function jumpLandingBand(id: string, edge: JumpEdge, band: JumpLandingBan
     helper: band.helperNeeded ?? false,
     anchor: [anchor[0], anchor[1] + z, z] as Vec3,
     polygon: [
-      a,
-      b,
+      [a[0] + forward[0], a[1] + forward[1]],
+      [b[0] + forward[0], b[1] + forward[1]],
       [b[0] + offset[0], b[1] + offset[1]],
       [a[0] + offset[0], a[1] + offset[1]],
     ] as Point[],

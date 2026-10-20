@@ -19,10 +19,17 @@ const chrome = spawn(
     "--use-angle=swiftshader",
     "--remote-debugging-port=0",
     `--user-data-dir=${profile}`,
-    `${process.argv[2] ?? "http://localhost:5181"}/tests/${process.env.TEST_PAGE ?? "lifecycle.html"}${process.env.TEST_QUERY ?? ""}`,
+    process.env.TEST_BROWSER_STARTUP_ONLY === "1"
+      ? "data:text/html,<pre id=result>PASS browser startup and CDP</pre>"
+      : `${process.argv[2] ?? "http://localhost:5181"}/tests/${process.env.TEST_PAGE ?? "lifecycle.html"}${process.env.TEST_QUERY ?? ""}`,
   ],
   { stdio: ["ignore", "ignore", "pipe"] },
 );
+// Retain bounded diagnostics even when startup aborts before a CDP endpoint exists.
+let chromeStderr = "";
+chrome.stderr.on("data", (chunk) => {
+  chromeStderr = (chromeStderr + String(chunk)).slice(-65536);
+});
 let closed = false;
 const childClosed = new Promise((resolve) =>
   chrome.once("close", () => {
@@ -172,6 +179,7 @@ try {
   console.log(outcome);
 } catch (error) {
   console.error(error.stack ?? error);
+  console.error(`Chromium stderr (last 64KiB):\n${chromeStderr || "<empty>"}`);
   process.exitCode = 1;
 } finally {
   socket?.close();

@@ -141,6 +141,11 @@ fail, while 160/160 upright launches and the reference's 720 click routes pass.
 The centered roof candidate also has three side/rotation combinations where no
 anchor translation can fit the current edge's full departure strip on its
 receiver. Repair requires revisiting the edge geometry or receiving arrangement.
+Generated elevated jump bands now retain available floor in front of takeoff,
+bounded by the authored inset. A sufficiently inset surface-only export passes
+10/10 combat launches; the rotated roof ZIP regression passes 120/120 click
+routes. Shallow insets still warn. See
+[generated departure bands](map-compilation-evidence.md#generated-jump-departure-receiving-bands).
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

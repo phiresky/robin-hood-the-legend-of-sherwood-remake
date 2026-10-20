@@ -1,5 +1,15 @@
 # Post-port Features
 
+- **Source-bound observation bridge.** The editor can consume an ordered local
+  observation feed through its existing state clock adapter. Set
+  `EDITOR_RUNTIME_OBSERVATIONS` to an explicitly prepared producer spool before
+  starting the editor server, then connect from State Preview. The bridge serves
+  only pinned session resources and numbered packets; it cannot forward game
+  commands. Session replacement, missing frames, changed source identity and
+  payload corruption require reload. The producer must append every engine frame
+  and publish its head atomically. This adds a delivery connection, not a native
+  free-running frame producer or whole-map behavior validation.
+
 - **Recorded state capture inspection.** The editor's state preview can import
   source-qualified, hash-pinned runtime snapshots and advance their observed
   patch and target clocks explicitly. Reloading retires pending file reads;

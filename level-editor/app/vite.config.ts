@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import solid from "@solidjs/vite-plugin";
+import { observationBridgePlugin } from "./runtime-observation-bridge.mjs";
 import { fileURLToPath } from "node:url";
 import { createReadStream } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
@@ -87,7 +88,11 @@ function serveLibrary() {
 export default defineConfig({
   // Solid 2 RC's JSX compiler emits $$click, but @solidjs/web rc.9 looks for _$$click.
   // Use direct listeners until the compiler and runtime agree on delegated event keys.
-  plugins: [solid({ solid: { delegateEvents: false } }), serveLibrary()],
+  plugins: [
+    solid({ solid: { delegateEvents: false } }),
+    serveLibrary(),
+    observationBridgePlugin(process.env.EDITOR_RUNTIME_OBSERVATIONS),
+  ],
   publicDir: false,
   server: { port: 5180, fs: { allow: [fileURLToPath(new URL("../../", import.meta.url))] } },
   build: { target: "esnext", copyPublicDir: false },

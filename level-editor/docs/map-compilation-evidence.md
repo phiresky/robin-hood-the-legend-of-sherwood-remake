@@ -1052,6 +1052,27 @@ departure-support audit. All pass. A rectangular fixture also verifies a wide
 receiver admits fifteen units and a five-unit receiver rejects them with a
 computed maximum of five. No asset or runtime data was changed by this audit.
 
+### Generated jump departure receiving bands
+
+Generated elevated long-jump landing zones now include available receiving
+space in front of the takeoff edge, up to sixteen units and bounded by the
+existing inset minus its one-unit boundary margin. Ledge generation checks that
+whole band against the physical surface and its holes. Takeoff positions,
+authored gap/rise/drop limits, and landing anchors remain unchanged; shallow
+insets still produce departure-support warnings instead of silently gaining
+floor or exceeding matching limits. Ground and non-forced bands are unchanged.
+
+The 185 affected generation/compiler tests pass, followed by the added compiler
+integration regression. Lint and formatting pass for the generator and its
+tests. A surface-only fixture with inset 17 and maxGap 100 exports one paired
+connection without a departure-coverage warning:
+`generated-departure-support-QMD8nk` passes all ten native combat launches under
+the receiver-loss guard. `prepared-roof-placements-jaDk6f` verifies eight
+rotated/elevated ZIP exports, editor reopen and recompilation equality; its
+native click audit passes 120/120 traversals. The intentionally too-narrow
+90-degree layout has no jump connections, as before. These checks do not resolve
+the independently authored York sloped-pair combat failures.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall

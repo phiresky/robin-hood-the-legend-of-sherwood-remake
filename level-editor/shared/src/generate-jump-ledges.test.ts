@@ -9,6 +9,7 @@ import { heightPlane } from "./gameplay-plane.ts";
 import { createJumpClearance } from "./jump-clearance.ts";
 import { assembleJumpSegments } from "./assemble-jump-segments.ts";
 import type { Vec3 } from "./scene.ts";
+import { createJumpDepartureSupportAudit } from "./audit-jump-departure-support.ts";
 
 const polygon: Point[] = [
   [0, 0],
@@ -61,6 +62,40 @@ test("surface ledges face outward, with receiving bands entirely inside the surf
   }
   assert.deepEqual(generated.segments[1]!.edge.a, [93, 116, 20]);
   assert.deepEqual(generated.segments[1]!.edge.b, [93, 24, 20]);
+});
+
+test("generated elevated long-jump bands retain grounded startup in front of the edge", () => {
+  const generated = generateJumpLedges("roof", polygon, [], [0, 0, 20], { ...rules, inset: 16 });
+  for (const segment of generated.segments) {
+    const zone = jumpLandingBand(segment.id, segment.edge, generated.landings.get(segment.id)!);
+    const line = {
+      point_a: [segment.edge.a[0], segment.edge.a[1] - 20, 20] as Vec3,
+      point_b: [segment.edge.b[0], segment.edge.b[1] - 20, 20] as Vec3,
+      jump_zone_index: 0,
+    };
+    const receiver: SightObstacle = {
+      projection_area: [0, 1],
+      points: zone.polygon.map(([x, y]) => ({ x, y: y + 20, z_top: 20, z_bottom: 20 })),
+      opaque: false,
+      solid: false,
+      mouse: true,
+      show_shadow_polygon: false,
+      default_material: 0,
+      material_indices: [],
+    };
+    const audit = createJumpDepartureSupportAudit(
+      [receiver],
+      [
+        {
+          sector: 0,
+          layer: 1,
+          helper_needed: false,
+          polygon: { points: zone.polygon },
+        },
+      ],
+    );
+    assert.deepEqual(audit({ line1: line, line2: line, jump_long: true }), []);
+  }
 });
 
 test("narrow ledges use the graph's native footprint and keep a rounding margin", () => {
