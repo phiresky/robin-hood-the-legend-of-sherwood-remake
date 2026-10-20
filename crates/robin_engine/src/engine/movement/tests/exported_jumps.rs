@@ -1213,6 +1213,26 @@ fn dispatch_jump(
         let (_, distances) =
             capture_motion_distances(|| engine.t_tick_actor_owner_envelopes(&assets));
         let element = engine.ent(owner).element_data();
+        // Departure animation still uses grounded movement until flight begins.
+        // Eventual arrival must not hide a fall through an unsupported roof edge.
+        if !flew
+            && element.posture() != Posture::Flying
+            && matches!(
+                element.sprite.last_action,
+                OrderType::TransitionWaitingUprightJumpingLong
+                    | OrderType::TransitionWaitingSwordJumpingLongSword
+            )
+            && receiver.is_some()
+            && source.z_a > 0.
+            && source.z_b > 0.
+            && element.sprite.position_iface.get_obstacle().is_none()
+        {
+            return Err(format!(
+                "elevated jump departure lost receiver before flight: position={:?}, action={:?}, line={selected_jump_line}",
+                element.position(),
+                element.sprite.last_action,
+            ));
+        }
         if approach
             && !flew
             && element.posture() != Posture::Flying

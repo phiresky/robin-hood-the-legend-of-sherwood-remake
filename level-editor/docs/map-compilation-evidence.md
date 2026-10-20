@@ -1010,6 +1010,15 @@ sloped receivers, and ground/non-forced handling. The 195-test focused suite
 and the additional compiler integration test pass; lint and app typechecking
 pass.
 
+The native dispatch audit now rejects receiver loss during grounded long-jump
+startup, including combat startup, before accepting eventual arrival. Fresh
+copies preserve the earlier trajectory evidence: `departure-guard-w9tm2ax_`
+rejects 80/160 combat launches, all with `elevated jump departure lost receiver
+before flight`, while all 160 upright launches pass. The full York reference
+copy `departure-guard-jv_gxhb_` retains 720/720 successful click routes under the
+same guard. This is test-only validation; production movement is unchanged.
+Cargo test compilation and workspace formatting checks pass.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall

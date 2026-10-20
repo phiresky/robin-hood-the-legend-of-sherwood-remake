@@ -136,6 +136,8 @@ the whole departure strip and retains the connection for review. The latest
 full York candidate passes all 18 supported-click probes for the pair but still
 has seven failures in the broader 720-case offset audit; combat departure remains
 unresolved. See [departure support](map-compilation-evidence.md#export-time-receiving-support-during-departure).
+The native audit now rejects those ground drops: 80/160 candidate combat launches
+fail, while 160/160 upright launches and the reference's 720 click routes pass.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.
