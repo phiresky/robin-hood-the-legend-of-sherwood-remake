@@ -33,7 +33,7 @@ def render_review(path, center, scale):
     bpy.ops.render.render(write_still=True)
     probes = []
     rotation = camera.matrix_world.to_quaternion()
-    for x, y in [(300, 140), (320, 137), (320, 145), (340, 145)]:
+    for x, y in [(320, 125), (320, 134), (300, 140), (320, 137), (320, 145), (340, 145)]:
         origin = camera.location + rotation @ Vector(((x / 640 - 0.5) * scale,
                                                       (0.5 - y / 640) * scale, 0))
         hit, position, normal, face, obj, matrix = scene.ray_cast(
@@ -86,10 +86,46 @@ def replace_triangles(obj, triangles, material):
             del obj[key]
 
 
+def fit_floor_uv_to_textured_cap(triangles, material):
+    """Fit the floor chart inside its existing painted disk, preserving one affine map."""
+    images = [n.image for n in material.node_tree.nodes if n.type == 'TEX_IMAGE' and n.image]
+    assert len(images) == 1
+    image = images[0]
+    width, height = image.size
+    pixels = list(image.pixels)
+    uvs = [uv for triangle in triangles for uv in triangle['uv']]
+    low = Vector((min(uv.x for uv in uvs), min(uv.y for uv in uvs)))
+    high = Vector((max(uv.x for uv in uvs), max(uv.y for uv in uvs)))
+    center = (low + high) * 0.5
+    samples = [t['uv'][0] * (a / 16) + t['uv'][1] * (b / 16)
+               + t['uv'][2] * (1 - (a + b) / 16)
+               for t in triangles for a in range(17) for b in range(17 - a)]
+
+    def unpainted(uv):
+        x, y = int(uv.x * width), int(uv.y * height)
+        assert 0 <= x < width and 0 <= y < height
+        rgb = pixels[(y * width + x) * 4: (y * width + x) * 4 + 3]
+        return max(rgb) - min(rgb) < 0.005 and any(
+            abs(rgb[0] - value / 255) < 0.005 for value in (41, 74))
+
+    before = sum(unpainted(uv) for uv in samples)
+    scale = 1.0
+    while any(unpainted(center + (uv - center) * scale) for uv in samples):
+        scale -= 0.01
+        assert scale >= 0.5, 'Cap chart cannot fit a sufficiently large painted region'
+    for triangle in triangles:
+        triangle['uv'] = [center + (uv - center) * scale for uv in triangle['uv']]
+    return {'center': list(center), 'scale': scale, 'samples': len(samples),
+            'unpaintedBefore': before, 'unpaintedAfter': 0,
+            'neutralPaddingRgb': [41, 74],
+            'scope': 'single-affine-floor-UV-remap-existing-atlas-pixels-unchanged'}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--library', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--fit-floor-uv', action='store_true')
     args = parser.parse_args(sys.argv[sys.argv.index('--') + 1:])
     scene = json.loads((args.library / 'scenes/lincoln.rhlos-map.json').read_bytes())
     source = next(r for r in scene['assetSources'] if r['id'] == 'lincoln-keep-annex-round-turret')
@@ -118,6 +154,7 @@ def main():
     cap = [t for t in records if all(abs(p.z * math.cos(angle) - 486) < 0.001 for p in t['positions'])]
     assert cap and len(cap) < len(records)
     retained = [t for t in records if t not in cap]
+    floor_uv = fit_floor_uv_to_textured_cap(cap, material) if args.fit_floor_uv else None
     points = next(p for p in descriptor['parts'] if p['node'] == 'building-228')['obstacle_local_game']['points']
     height = points[0]['z_top']
     assert all(abs(p['z_top'] - height) < 1e-6 for p in points)
@@ -135,7 +172,8 @@ def main():
         'source': source, 'outputSha256': hashlib.sha256(output.read_bytes()).hexdigest(),
         'retainedWallTriangles': len(retained), 'loweredCapTriangles': len(cap),
         'beforeCapHeight': 486, 'afterCapHeight': height,
-        'appearance': 'Existing wall/battlement positions, corner normals, UVs and material retained; cap UVs retained exactly on the lowered floor.',
+        'floorUv': floor_uv,
+        'appearance': 'Wall/battlement positions, corner normals, UVs and material retained; floor UV changes recorded separately. Atlas pixels unchanged.',
     }, indent=2) + '\n')
 
 

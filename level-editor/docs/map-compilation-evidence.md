@@ -4,6 +4,28 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Turret floor UV repair removes the lower gray band (2026-10-20)
+
+The cap repair tool now offers `--fit-floor-uv`. It uniformly contracts the
+floor's UV chart into the painted disk already present in its atlas, leaving
+texture pixels and geometry unchanged. Candidate `annex-turret-mesh-review-14`
+uses scale 0.79 about UV center (0.1533203125, 0.0968342721); 7,038 barycentric
+samples avoid the measured neutral padding values after the change. These are
+sample counts, not area coverage or a guarantee against filtered edge pixels.
+The candidate model SHA-256 is
+`8267748abd1fa1485b6368d0bcd9df7a6a368e2a97b0a3506acafab32eb4762e`.
+Its `geometry-invariance.json` verifies identical expanded wall attributes,
+floor positions/normals and embedded atlas hashes against candidate 11.
+
+Visual review confirms the larger lower gray band disappears. The narrower
+upper band remains. Additional ray probes in `annex-turret-mesh-review-15`
+distinguish the two: pixel (320,125) hits wall node `building-206`, face 645;
+pixel (320,134) hits the repaired floor `building-228`, face 37. Thus the earlier
+floor-only diagnosis covered the lower band, not the entire visible defect.
+The wall strip still needs a bounded texture repair before publication. Neither
+candidate is installed, and this UV adjustment does not establish NPC traversal
+or rendered actor contact.
+
 ## Annex gate survives moved assemblies and rejects separated support (2026-10-20)
 
 The neighboring-asset verifier now supports ordinary passages as well as building

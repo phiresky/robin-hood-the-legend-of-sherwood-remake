@@ -76,6 +76,10 @@ clicks across copied, rotated and raised assemblies. Separating the turret
 rejects all 16 unsupported passages. Browser/model publication and rendered
 contact remain pending; see the
 [moved-assembly evidence](map-compilation-evidence.md#annex-gate-survives-moved-assemblies-and-rejects-separated-support-2026-10-20).
+A staged floor UV adjustment now removes the larger lower gray band without
+changing the walking geometry or atlas pixels. A separate upper wall band remains;
+the model is still unpublished. See the
+[UV repair review](map-compilation-evidence.md#turret-floor-uv-repair-removes-the-lower-gray-band-2026-10-20).
 See the
 [rotated lighting evidence](map-compilation-evidence.md#multi-height-terrace-lighting-survives-asset-rotation-2026-10-20),
 [light-selector repair](map-compilation-evidence.md#terrace-light-selectors-restored-to-physical-floors-2026-10-20),
