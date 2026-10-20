@@ -49,7 +49,9 @@ a walking surface. An unpublished terrace-floor candidate preserves the door's
 owner and height, passes 16 moved/copied/elevated native trips, and improves
 full York to 92/95 raw doorway trips; the remaining three are authored locks.
 All 130 stairs pass and the four existing climb failures remain. Access from
-neighboring terrain, visual verification and publication are still pending.
+height-matched editor terrain passes 16 native round trips, and lowering that
+terrain by two units rejects all 16. A bounded low-edge correction for flat
+ground is under review; visual verification and publication remain pending.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

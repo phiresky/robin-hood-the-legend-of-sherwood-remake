@@ -7,6 +7,9 @@ import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 import { partMatrix } from "../shared/src/level3d.ts";
 import { sceneToGame } from "../shared/src/geometry.ts";
 
+const flags = process.argv.slice(2);
+assert.ok(flags.every((flag) => flag === "--ground-contact"));
+const groundContact = flags.includes("--ground-contact");
 const document = await readStoredMap("library/scenes/york.rhlos-map.json", "library");
 const assets = await pinnedDescriptors("library", document.assetSources, document.sceneAssets);
 const id = "york-south-town-raised-terrace";
@@ -26,6 +29,24 @@ const residual = Math.max(
 );
 assert.ok(residual < 0.002, "Only normalize subpixel receiving-plane quantization");
 const polygon = vertices.map(([x, y]) => [x, y]);
+let contactCorrection = 0;
+if (groundContact) {
+  assert.ok(shape.points.every((point) => point.z_bottom === 0));
+  assert.ok(vertices[0][2] < 0.25 && vertices[1][2] < 0.25);
+  assert.ok(vertices.slice(2).every((point) => point[2] > 1));
+  const gradientSquared = plane[0] ** 2 + plane[1] ** 2;
+  assert.ok(gradientSquared > 1e-6);
+  // Extend just the low edge onto the same plane's ground intersection.
+  // This is a reviewed asset boundary correction, not a compiler tolerance.
+  for (const index of [0, 1]) {
+    const point = polygon[index],
+      z = planeHeight(plane, point);
+    const delta = [plane[0], plane[1]].map((value) => (-value * z) / gradientSquared);
+    contactCorrection = Math.max(contactCorrection, Math.hypot(...delta));
+    polygon[index] = point.map((value, axis) => value + delta[axis]);
+  }
+  assert.ok(contactCorrection < 1, "Ground contact must remain within one map unit");
+}
 const height = polygon.map((point) => planeHeight(plane, point));
 assert.equal(shape.material_indices.length, 0);
 gameplay.surfaces = [
@@ -54,6 +75,29 @@ gameplay.projectionReceivers = [];
 assert.equal(gameplay.movementSolids, undefined);
 assert.equal(gameplay.movementClearances, undefined);
 gameplay.movementSolids = [part.node];
+if (groundContact) {
+  const volumeId = `${part.node}-ground-contact-solid`;
+  assert.ok(!gameplay.volumes?.some((volume) => volume.id === volumeId));
+  gameplay.volumes ??= [];
+  gameplay.volumes.push({
+    id: volumeId,
+    node: part.node,
+    shape: {
+      solid: true,
+      opaque: false,
+      mouse: false,
+      show_shadow_polygon: false,
+      default_material: shape.default_material,
+      points: polygon.map(([x, y], index) => ({
+        x,
+        y,
+        z_bottom: 0,
+        z_top: Math.max(0, height[index]),
+      })),
+    },
+  });
+  gameplay.movementSolids = [volumeId];
+}
 gameplay.movementClearances = [
   {
     id: `${part.node}-support-clearance`,
@@ -83,6 +127,8 @@ await fs.writeFile(
     scope: "unpublished-physical-terrace-candidate-not-parity-proof",
     plane,
     residual,
+    groundContact,
+    contactCorrection,
     unchangedEntranceOwner: "york-south-wall-lane-square-stone-tower",
   }),
 );
@@ -126,17 +172,34 @@ assert.ok(
   ) < 1e-6,
   "Entrance must lie on the authored terrace plane",
 );
-await fs.writeFile(
-  `${output}/terrace-tower.json`,
-  JSON.stringify({
-    map: "york",
-    assets: [tower.id, id],
-    size: [5000, 4000],
-    copyXs: [1200.25, 3600.25],
-    assemblyY: 2300.75,
-    terrainHeight: 0,
-    tracePassages: true,
-    entrances: [{ asset: tower.id, door: door.id, sourceLocal, sourceHeight }],
-  }),
-);
+const fixture = {
+  map: "york",
+  assets: [tower.id, id],
+  size: [5000, 4000],
+  copyXs: [1200.25, 3600.25],
+  assemblyY: 2300.75,
+  terrainHeight: 0,
+  tracePassages: true,
+  entrances: [{ asset: tower.id, door: door.id, sourceLocal, sourceHeight }],
+};
+await fs.writeFile(`${output}/terrace-tower.json`, JSON.stringify(fixture));
+if (groundContact) {
+  const [a, b] = polygon;
+  const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const outward = [(b[1] - a[1]) / length, (a[0] - b[0]) / length];
+  const sourceLocal = [0, 1].map(
+    (axis) =>
+      (a[axis] + b[axis]) / 2 + outward[axis] * 32 + terraceOrigin[axis] - towerOrigin[axis],
+  );
+  fixture.entrances = [
+    {
+      asset: tower.id,
+      door: door.id,
+      sourceLocal,
+      sourceHeight: terraceOrigin[2] - towerOrigin[2],
+      sourceOnTerrain: true,
+    },
+  ];
+  await fs.writeFile(`${output}/flat-ground.json`, JSON.stringify(fixture));
+}
 console.log(output);

@@ -478,6 +478,27 @@ ground, so these doorway-start-on-slope checks do not prove access from flat
 terrain. Ground connections and browser/native archive verification remain
 required before publication.
 
+`check-terrace-terrain-approaches.mjs` adds actual editor terrain cells beside
+the low socket, with their common edge matching the terrace's physical heights.
+`terrace-terrain-approaches-L7sgUi` passes all 16 native trips from that terrain,
+across the terrace and into the doorway, then back. Lowering the strip by two
+units (`terrace-terrain-approaches-U1rq0K`) stalls all 16 entries as expected;
+the compiler does not connect the separated surfaces.
+
+The optional `--ground-contact` candidate extends only the two low vertices
+along the unchanged slope plane until they reach ground. The maximum horizontal
+correction is 0.8843894318288632 map units. Its separate movement volume uses
+the same corrected footprint; rendered part geometry and door anchors remain
+unchanged. Correcting only the walking boundary left the original ground
+collision edge mismatched, so both definitions must agree.
+Stage `york-south-town-floor-UXqE6r`, tested in
+`selected-neighbor-placements-6FgPcO`, passes all eight elevated flat-ground
+approaches. The eight zero-height approaches encounter an overly strict native
+test precondition: zero-height ground legitimately has no explicit receiving
+obstacle. A test-only correction is being validated; production movement and
+compiler receiver emission remain unchanged. Full-scene and visual checks of
+this bounded contact correction remain pending.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall

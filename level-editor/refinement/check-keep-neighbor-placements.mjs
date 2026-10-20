@@ -63,6 +63,9 @@ if (fixture) {
     assert.ok(fixture.assets.includes(entrance.asset) && typeof entrance.door === "string");
     assert.ok(entrance.sourceLocal?.length === 2 && entrance.sourceLocal.every(Number.isFinite));
     assert.ok(entrance.sourceHeight === undefined || Number.isFinite(entrance.sourceHeight));
+    assert.ok(
+      entrance.sourceOnTerrain === undefined || typeof entrance.sourceOnTerrain === "boolean",
+    );
   }
 }
 const ids = fixture?.assets ?? [
@@ -389,7 +392,21 @@ for (const height of [0, 40])
                   altitude,
                 ];
           let sourceLayer = door.layer_out;
-          if (authoredApproach?.sourceHeight !== undefined) {
+          if (authoredApproach?.sourceOnTerrain) {
+            assert.ok(Math.abs(source[2] - fixture.terrainHeight - height) < 1e-6);
+            const point = [source[0], source[1] - source[2]];
+            assert.ok(
+              compiled.descriptor.asset_geometry.motion_data.layers[0].some(
+                (area) =>
+                  pointInGameplayPolygon(point, area.polygon.points, true) &&
+                  !area.obstacles.some((obstacle) =>
+                    pointInGameplayPolygon(point, obstacle.polygon.points, true),
+                  ),
+              ),
+              "Authored ground approach must lie on the fixture's ground navigation layer",
+            );
+            sourceLayer = 0;
+          } else if (authoredApproach?.sourceHeight !== undefined) {
             const layers = new Set(
               compiled.descriptor.asset_geometry.sight_obstacles.flatMap((shape) => {
                 if (!shape.projection_area) return [];
