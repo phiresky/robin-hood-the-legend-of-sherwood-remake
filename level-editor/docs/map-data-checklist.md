@@ -165,13 +165,24 @@ The published south city east gate repair brings the current York result to
 Its 16 moved click trips, 32 doorway trips, browser round-trip and native archive
 checks pass; all nine installed file hashes are verified. Eleven cross-asset
 geometry blockages and two lock-only denials remain. Castle entrance ownership
-repairs are now published with explicit editor room links. The current full-scene
-result is **84/95** without regressions; full-map hall/keep travel and 384 moved
+repairs are now published with explicit editor room links. That full-scene
+result reaches **84/95** without regressions; full-map hall/keep travel and 384 moved
 three-asset room connection/isolation checks pass. Browser export/reopen, native
 ZIP loading, 24 archived connection checks and four archived click trips pass;
 all 21 installation hashes are verified. Some rotated normal-click probes still
 select upper surfaces over ground. Nine geometry blockages and two lock-only
 denials remain; these checks do not certify the buildings' other gameplay features.
+
+The cathedral, precinct east gate and west gallery house now own their complete
+entrance rooms instead of inheriting them from terrain. All five affected asset
+definitions are published, with 36 installation file hashes verified. Isolated
+and terrain-supported moved click checks, authored lock-state snapshots, browser
+export/reopen and native ZIP checks pass. Current York coverage is **86/95
+immediately traversable entrances**, or **89/95 correct authored lock-state
+outcomes** in both initial and unlocked snapshots. The same six geometry
+blockages remain; the three authored locks are verified, not export failures.
+Mission triggers and broader gameplay/rendering parity remain separate work.
+See the [detached-room evidence](map-compilation-evidence.md#york-detached-room-ownership-review-2026-10-20).
 
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
 The published Derby ownership correction moves three tower entrances out of

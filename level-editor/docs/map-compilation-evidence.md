@@ -22,7 +22,35 @@ Assembled precinct/gallery fixtures `selected-neighbor-placements-osRJEH` and
 `selected-neighbor-placements-KfpGGC` each pass 16 normal click trips on their
 actual terrain. Precinct snapshots `authored-door-states-bXyUB8` pass all 32
 initial and 32 after-patch checks, preserving the cathedral's unlocked entrance.
-Full-scene regression, browser/archive checks and publication remain pending.
+Full export `saved-map-exports-ZoMLXQ` constructs natively with unchanged
+170 areas, 1,227 sight obstacles, 254 doors, 72 jump pairs, 281,260 grid blocks
+and 342 elevation boundaries. `saved-map-entrances-3AuGmm` improves 84/95 to
+86/95 without regressions, fixing endpoints [1414, 217] and [993, 1130]. The
+gate remains correctly locked. Full-map snapshots `authored-door-states-RbofR4`
+pass 89/95 in both initial and after-patch states: all three lock rules behave
+correctly, while the same six geometric corridors fail in both snapshots.
+Those six outside endpoints are [1097, 1672], [1178, 1219], [1242, 1198],
+[1440, 2223], [1804, 192] and [2729, 1488].
+
+Precinct browser fixture `draft-scene-render-2IiZda` exports/reopens matching
+gameplay, color and depth at 5000×4000. Its 62,018,576-byte ZIP has SHA-256
+`d72af396b42bb01f1522df44a6aef851011caf52fd90388df98270823ed3857b`.
+Native archive loading passes with 57 sight obstacles, four door projections
+and 21,172 grid blocks. `exact-map-archive-c0sleq30` passes both normal cathedral
+click trips; `authored-door-states-DdAz11` passes all four initial and four
+after-patch checks. Publication `york-precinct-ownership-publication-installed`
+installs its three definitions and scene pins, with all 21 file hashes verified.
+
+Gallery browser fixture `draft-scene-render-eBXd0L` exports/reopens matching
+gameplay, color and depth at 8400×6200. Its 133,386,877-byte ZIP has SHA-256
+`c3a5524dc1dc04074e8c0b21f930766c99cf9f93b60033bd286180604faffc52`.
+Native archive loading passes with 11 sight obstacles, two door projections
+and 53,328 grid blocks. Exact archive `exact-map-archive-1qye3bk2` passes both
+normal click trips. `york-gallery-ownership-publication-installed` publishes
+both definitions and scene pins; all 15 installed file hashes are verified.
+Together, the two publication batches install all five asset edits. The current
+library has 86/95 immediately traversable entrances and 89/95 correct authored
+lock-state outcomes, with the same six geometric failures still outstanding.
 
 ## York doorway structure audit and timber-house repair (2026-10-20)
 

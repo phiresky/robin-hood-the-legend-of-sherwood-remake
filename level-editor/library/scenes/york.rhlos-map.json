@@ -206,7 +206,7 @@
       "model": "3d-assets/york/york-cathedral-nave-and-aisles/model.glb",
       "model_sha256": "804e6798af0da1d621d4b3b7ffd7a861ddc005e7d3566d686567d3e05cf08992",
       "descriptor": "3d-assets/york/york-cathedral-nave-and-aisles/asset.json",
-      "descriptor_sha256": "f180a84d6f388d53173043a81978ae38ee44825a85c3c66b996308b27f70a4f4",
+      "descriptor_sha256": "ca1d057ad2cfea2eb2e8fc75761f24486cd3c3c13d0eb4359470527ab069aaf2",
       "id": "york-cathedral-nave-and-aisles"
     },
     {
@@ -220,7 +220,7 @@
       "model": "3d-assets/york/york-cathedral-precinct-raised-terrain/model.glb",
       "model_sha256": "b566e3352d9e7d5cdc63e54af74334528c1ae35cbfb9c42e78642a98c02a3afb",
       "descriptor": "3d-assets/york/york-cathedral-precinct-raised-terrain/asset.json",
-      "descriptor_sha256": "a62d9360be38f5a02dab74858d476daaff377466c21bb98e7bae59269120ca8c",
+      "descriptor_sha256": "19e13c6588a71de4c5cd60553b6806142f14cc91210613cab22cbb0ebc09b8a9",
       "id": "york-cathedral-precinct-raised-terrain"
     },
     {
@@ -885,7 +885,7 @@
       "model": "3d-assets/york/york-precinct-east-gate-boundary-wall/model.glb",
       "model_sha256": "966d30693f625a6cff158e1368c1870cb0bed41144f711e19e5d9b72e66f6969",
       "descriptor": "3d-assets/york/york-precinct-east-gate-boundary-wall/asset.json",
-      "descriptor_sha256": "d639192845ce6b50c27930d28cfd8dab414eb25934020248d2a9df2791a78553",
+      "descriptor_sha256": "cc26d483aeadc1a460f476bad7f6051b419281d50598616f26944ded92c321b7",
       "id": "york-precinct-east-gate-boundary-wall"
     },
     {
@@ -1543,7 +1543,7 @@
       "model": "3d-assets/york/york-west-bridge-street-east-gallery-house/model.glb",
       "model_sha256": "e96e94e362b81259b0d6d734b638c14b5314510eedc43877fc7c880dca8acea4",
       "descriptor": "3d-assets/york/york-west-bridge-street-east-gallery-house/asset.json",
-      "descriptor_sha256": "109cbc68d69ddc39072f6592726c50b589fe19b4cc91041147f2137f8d52c78d",
+      "descriptor_sha256": "0978282d63069f1b69c86094a07d86ba5a24a12433a86a9adb519c8eea918f24",
       "id": "york-west-bridge-street-east-gallery-house"
     },
     {
@@ -1690,7 +1690,7 @@
       "model": "3d-assets/york/york-west-town-raised-terrain/model.glb",
       "model_sha256": "7f57b26d29a173d91eccf1793db58304331ca32b4276f95d72ed1f78c7945d02",
       "descriptor": "3d-assets/york/york-west-town-raised-terrain/asset.json",
-      "descriptor_sha256": "327da75adde2b11221a83f240cf0b7bcbed216fb1abfa8d29a349c790f50f0ed",
+      "descriptor_sha256": "7777158cb6104926e8a9eee1d4f383a8b177bb6069d1bf2991fc1dce8a966a04",
       "id": "york-west-town-raised-terrain"
     },
     {
