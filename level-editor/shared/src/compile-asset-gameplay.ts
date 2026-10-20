@@ -2233,7 +2233,8 @@ function compileAssetGameplayAttempt(
         ));
     let joinedBlockedCoverage: MultiPolygon | undefined;
     const recoverJoinedBlocker = (points: Point[]): Point[] | undefined => {
-      if (!physicalLanding || pieces.length < 2) return undefined;
+      if (!physicalLanding || pieces.length === 0) return undefined;
+      if (pieces.length === 1 && !pieces[0]!.preciseBlockers?.length) return undefined;
       if (!joinedBlockedCoverage) {
         joinedBlockedCoverage = recoverJoinedCoverage(pieces, frame);
       }

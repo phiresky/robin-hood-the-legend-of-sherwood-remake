@@ -12,6 +12,7 @@ import {
 } from "./precise-movement-contours.ts";
 import { restoreObstacleBoundary } from "./restore-receiving-boundary.ts";
 import { quantizeGeneratedMotionPolygon } from "./motion-quantization.ts";
+import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
 
 const fixture: { points: Point[]; pieces: NavigationPiece[] } = JSON.parse(
   readFileSync(new URL("../test-fixtures/joined-landing-obstacle.json", import.meta.url), "utf8"),
@@ -24,6 +25,27 @@ const frame: Polygon = [
     [0, 4000],
   ],
 ];
+
+test("partitioned ground retains its precise seam when its grid obstacle changes shape", () => {
+  const sample: { points: Point[]; pieces: NavigationPiece[] } = JSON.parse(
+    readFileSync(
+      new URL("../test-fixtures/partitioned-ground-obstacle.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const before = structuredClone(sample);
+  const coverage = joinedBlockedCoverage(sample.pieces, frame);
+  const restored = restoreObstacleBoundary(sample.points, coverage);
+  assert.ok(restored);
+  assert.notDeepEqual(restored, sample.points);
+  assert.ok(
+    restored.some((point) => point.some((coordinate) => coordinate !== Math.round(coordinate))),
+  );
+  const rounded = quantizeGeneratedMotionPolygon([restored], Math.round, "Ground contact", []);
+  assert.ok(rounded);
+  assert.deepEqual(fixedPolygonBoolean("xor", rounded, [[sample.points]]), []);
+  assert.deepEqual(sample, before);
+});
 
 test("dense triangulated floors retain their fractional perimeter and interior gap", () => {
   const pieces: NavigationPiece[] = [];

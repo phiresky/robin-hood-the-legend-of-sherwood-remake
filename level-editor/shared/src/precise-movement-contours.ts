@@ -3,7 +3,7 @@ import type { Point } from "./level.ts";
 import type { NavigationPiece } from "./assemble-navigation-regions.ts";
 import { normalizeRoundedMotionRing, simplifyMotionRing } from "./motion-quantization.ts";
 import { fixedPolygonBoolean } from "./fixed-polygon-boolean.ts";
-import { restoreReceivingBoundary } from "./restore-receiving-boundary.ts";
+import { restoreReceivingBoundary, restoreObstacleBoundary } from "./restore-receiving-boundary.ts";
 
 /** Limit coincident edges entering the fixed-point sweep at once. Terrain
  * triangulation can otherwise make a single region's union prohibitively slow.
@@ -77,11 +77,22 @@ export function joinedReceivingBoundary(
 function joinedFloorCoverage(pieces: NavigationPiece[]): MultiPolygon {
   const floors = pieces.flatMap((piece) => {
     const exactHoles = indexPreciseBlockers(piece.preciseBlockers ?? []);
+    // Partitioning can change the grid outline without changing the blocked
+    // coverage. Recover its edges before using it to subtract walkable space.
     const holes = piece.blockers.map((hole) => {
       const matches = (exactHoles.get(motionBoundsKey(hole)) ?? []).filter(
         ({ rounded }) => clipping.xor([rounded], [hole]).length === 0,
       );
-      return [matches.length === 1 ? matches[0]!.exact : hole];
+      return [
+        matches.length === 1
+          ? matches[0]!.exact
+          : matches.length === 0
+            ? (restoreObstacleBoundary(
+                hole,
+                (piece.preciseBlockers ?? []).map((ring) => [ring]),
+              ) ?? hole)
+            : hole,
+      ];
     });
     return fixedPolygonBoolean("difference", [piece.receivingPolygon ?? piece.polygon], holes);
   });

@@ -311,7 +311,7 @@
       "model": "3d-assets/york/york-central-south-red-timber-house/model.glb",
       "model_sha256": "2cb7b0e64d26cccb095d9fecaec0dd193054b6361cf753d7fd0b7d409976a3a7",
       "descriptor": "3d-assets/york/york-central-south-red-timber-house/asset.json",
-      "descriptor_sha256": "b9f741b4ca73ff487a28eb95bb2817cfde40bf0d9f23169c53c7ebc02195cce4",
+      "descriptor_sha256": "de95915223532123eb48d3f1fb1964703128d7a4fe1ab34b3252abaff723c5ff",
       "id": "york-central-south-red-timber-house"
     },
     {
@@ -1690,7 +1690,7 @@
       "model": "3d-assets/york/york-west-town-raised-terrain/model.glb",
       "model_sha256": "7f57b26d29a173d91eccf1793db58304331ca32b4276f95d72ed1f78c7945d02",
       "descriptor": "3d-assets/york/york-west-town-raised-terrain/asset.json",
-      "descriptor_sha256": "7777158cb6104926e8a9eee1d4f383a8b177bb6069d1bf2991fc1dce8a966a04",
+      "descriptor_sha256": "b77b29d939214346bcc3ea80c8e8d9f41fcd1b3bf7f95500fe340156c7384af1",
       "id": "york-west-town-raised-terrain"
     },
     {

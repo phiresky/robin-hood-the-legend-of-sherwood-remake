@@ -163,6 +163,36 @@ Full snapshot export `saved-map-exports-MeiB0e` was started for broader verifica
 Browser verification separately continues against the committed compiler.
 Neither pending check is counted as complete or as publication evidence.
 
+### Red-house ramp published with precise ground recovery
+
+The precision repair is integrated into the main compiler. All 177 focused
+compiler/contour tests pass, along with lint and formatting. Moved red-house
+fixture `selected-neighbor-placements-4fQmUH` retains all 16 native ground-click
+trips; the narrow-house fixture `selected-neighbor-placements-wBByi8` passes
+all 16 as well. Full snapshot export `saved-map-exports-MeiB0e` passes all 130
+stair routes. Door audit `saved-map-entrances-pz1TcK` remains 88/95 with exactly
+the same seven failures as `saved-map-entrances-jkBuhE`.
+
+Browser snapshot `draft-scene-render-UslJut` completes export/reopen verification:
+3136×2318, 46,527,609 archive bytes, SHA-256
+`b1bab2c7a9407aa9ec017ca284c1022bc2bc175ad61ab836dda198bc0b5aba02`.
+Reopened gameplay, rendered color and depth match. Its exact ZIP loads in the
+native engine without a base datadir: 1,230 sight obstacles, 28 masks, 257 door
+projections and 289,296 fast-grid blocks. Exact archive audit
+`exact-map-archive-pc4i7zvh` reproduces 88/95 doorway trips.
+This archive predates the ground precision repair, whose additional moved
+traversal checks are recorded separately above.
+
+`york-red-house-ramp-publication-installed` installs the red-house and west-town
+terrain definitions and updates their saved-scene pins. All 15 installed hashes
+match its report. Raw models and derivatives are unchanged. Gatehouse candidates
+are not included. Only the two reviewed descriptor pins are staged in Git;
+unrelated York edits remain outside this change.
+
+Fresh installed export `saved-map-exports-TQxppu` has been started; its result is
+not yet counted. The existing four climb failures, remaining doorway geometry,
+gatehouse placement failures and other map categories remain open.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
