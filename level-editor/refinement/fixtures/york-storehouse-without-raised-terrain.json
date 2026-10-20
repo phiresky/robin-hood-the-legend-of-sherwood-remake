@@ -1,0 +1,16 @@
+{
+  "map": "york",
+  "assets": ["york-riverside-stone-storehouse", "york-west-market-frontage-gabled-house"],
+  "size": [8400, 6200],
+  "copyXs": [2200.25, 6200.25],
+  "assemblyY": 3100.75,
+  "terrainHeight": 0,
+  "missingEntrances": true,
+  "entrances": [
+    {
+      "asset": "york-riverside-stone-storehouse",
+      "door": "interior-0/door-0",
+      "sourceLocal": [35, 65.74289191670663]
+    }
+  ]
+}

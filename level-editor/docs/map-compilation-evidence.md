@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## York raised-terrain walking surface candidate (2026-10-20)
+
+The storehouse's remaining receiver mismatch is between the exported zero-height
+ground receiver and the raised terrain receiver at 90.00101 units. The raised
+terrain asset currently has no walking surface; its projection receiver uses
+`navigationHeight: 0`. Mesh probe `placed-point-support-AfJSuz` finds visible
+terrain at 89.902182 beneath the storehouse outside endpoint at 90.00101.
+
+`stage-york-raised-terrain.mjs` stages the retained top footprint as a walking
+surface, retaining its projection volume and all five existing material regions.
+Stage `york-raised-terrain-G3mHMs` changes only that asset's gameplay metadata.
+`selected-neighbor-placements-o1USav` passes 16 native storehouse normal click
+round trips across two copies, four rotations and two elevations.
+`saved-map-entrances-uVsiVF` passes all 32 emitted doorway round trips, including
+the terrain asset's existing interior. Negative fixture
+`selected-neighbor-placements-4x0v4P` rejects all 16 storehouse entrances without
+the raised terrain. Full York export `saved-map-exports-KAPikl` rejects the
+single projection volume because neighboring obstacles split its floor into
+several receiving areas. Revised stage `york-raised-terrain-CKwI9s` generates
+receivers per area using the same five authored material regions, retaining the
+existing collision volume. Moved fixture `selected-neighbor-placements-j8Ty81`
+retains all 16 normal click trips; `saved-map-entrances-O5fiVi` retains all 32
+doorway round trips. Its full export `saved-map-exports-XtyXMw` and browser
+fixture `draft-scene-render-DaUsmb` are under verification.
+This candidate is unpublished; assembled regressions, broader neighboring joins
+and browser archive verification remain open.
+
 ## York raised-lane surface restores reusable house approaches (2026-10-20)
 
 Fresh installed export `saved-map-exports-pQPqQJ` constructs natively with 164

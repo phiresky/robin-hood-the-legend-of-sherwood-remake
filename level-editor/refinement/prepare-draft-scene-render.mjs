@@ -86,7 +86,9 @@ for (const reference of document.assetSources) {
   else await fs.link(path.resolve("library", reference.model), path.join(output, reference.model));
   descriptors.set(descriptor.id, descriptor);
   const publicationFields = {};
-  if (catalog) {
+  // Only edited assets enter the publication subset; other scene assets are
+  // already pinned above and remain unchanged in the installed library.
+  if (catalog && edit) {
     const current = catalog.assets.find((entry) => entry.id === descriptor.id);
     assert.ok(current, `Missing library catalog entry: ${descriptor.id}`);
     assert.equal(current.descriptor_sha256, hash(bytes));

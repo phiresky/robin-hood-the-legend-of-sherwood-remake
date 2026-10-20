@@ -1,0 +1,16 @@
+{
+  "map": "york",
+  "assets": ["york-west-town-raised-terrain", "york-riverside-stone-storehouse"],
+  "size": [8400, 6200],
+  "copyXs": [2200.25, 6200.25],
+  "assemblyY": 3100.75,
+  "terrainHeight": 0,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "york-riverside-stone-storehouse",
+      "door": "interior-0/door-0",
+      "sourceLocal": [35, 65.74289191670663]
+    }
+  ]
+}

@@ -137,6 +137,12 @@ file hashes match the verified publication report. Remaining York failures are
 45 blocked routes and one storehouse receiver mismatch. See the
 [raised-lane evidence](map-compilation-evidence.md#york-raised-lane-surface-restores-reusable-house-approaches-2026-10-20).
 
+The remaining storehouse mismatch has a staged raised-terrain floor repair.
+It retains the terrain's material regions and passes 16 moved normal click
+trips, 32 emitted doorway round trips and 16 missing-terrain rejections.
+Full-scene and browser verification remain pending; this candidate is unpublished.
+See the [raised-terrain evidence](map-compilation-evidence.md#york-raised-terrain-walking-surface-candidate-2026-10-20).
+
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
 The published Derby ownership correction moves three tower entrances out of
 the main-hall definition and links the split room in the editor. It preserves
