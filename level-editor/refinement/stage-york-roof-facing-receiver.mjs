@@ -6,14 +6,21 @@ import { heightPlane, planeHeight } from "../shared/src/gameplay-plane.ts";
 import { pointInGameplayPolygon } from "../shared/src/navigation-anchor.ts";
 import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
-const [source, rearSurface = "building-331-walk-0", redSlideArgument = "0", spanArgument = "5"] =
-  process.argv.slice(2);
+const [
+  source,
+  rearSurface = "building-331-walk-0",
+  redSlideArgument = "0",
+  spanArgument = "5",
+  interiorFractionArgument = "0",
+] = process.argv.slice(2);
 assert.ok(source);
 assert.ok(["building-330-walk-0", "building-331-walk-0"].includes(rearSurface));
 const redSlide = Number(redSlideArgument);
 assert.ok(Number.isFinite(redSlide) && Math.abs(redSlide) <= 30);
 const span = Number(spanArgument);
 assert.ok(Number.isFinite(span) && span >= 1 && span <= 20);
+const interiorFraction = Number(interiorFractionArgument);
+assert.ok(Number.isFinite(interiorFraction) && interiorFraction >= 0 && interiorFraction <= 1);
 const edits = JSON.parse(await fs.readFile(`${source}/edits.json`));
 const scene = JSON.parse(await fs.readFile(`${source}/scene.json`));
 const sides = [];
@@ -78,6 +85,14 @@ for (const [asset, surfaceId, segmentId] of [
     center = center.map((value, axis) => value + (redSlide * ridge[axis]) / length);
     assert.ok(pointInGameplayPolygon(center, surface.polygon, true));
   }
+  if (interiorFraction) {
+    const centroid = [0, 1].map(
+      (axis) =>
+        surface.polygon.reduce((sum, point) => sum + point[axis], 0) / surface.polygon.length,
+    );
+    center = center.map((value, axis) => value + interiorFraction * (centroid[axis] - value));
+    assert.ok(pointInGameplayPolygon(center, surface.polygon, true));
+  }
   zone.polygon = surface.polygon.map((point, index) => [...point, surface.height[index]]);
   zone.anchor = [...center, planeHeight(plane, center)];
   zone.node = surface.node;
@@ -125,6 +140,7 @@ await fs.writeFile(
     source,
     redSlide,
     span,
+    interiorFraction,
     published: false,
     scope: "alternate-receiving-slope-requires-placement-flight-and-mesh-review",
     sides: sides.map(({ edit, surface, before, segment, zone }) => ({

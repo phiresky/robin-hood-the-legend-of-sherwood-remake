@@ -1019,6 +1019,21 @@ copy `departure-guard-jv_gxhb_` retains 720/720 successful click routes under th
 same guard. This is test-only validation; production movement is unchanged.
 Cargo test compilation and workspace formatting checks pass.
 
+Moving both takeoff centers toward their receiving-slope centroids does not
+resolve the departure defect. The stage helper now accepts an optional
+`interiorFraction` in `[0,1]` and records it in its review manifest; zero preserves
+the previous placement. Fraction 0.5 creates `york-roof-facing-receiver-x5QHkF`
+and export `connected-jump-placements-LYjbxY`: 60/160 combat launches lose their
+receiver before flight. Fraction 1 creates `york-roof-facing-receiver-hJto4X`
+and export `connected-jump-placements-bFiPm4`: 80/160 fail for the same reason.
+Both use alternate rear slope 330, ridge slide -12, and span 5. Neither is
+published or accepted as a repair. In the centered export, the zero-degree rear
+zone spans about 19.68 projected units along its takeoff normal; the 180-degree
+red zone spans about 17.15. Their centered forward margins are only about 10.15
+and 8.75 units, respectively, short of the fifteen-unit departure. This motivates
+checking feasible departure strips across placements rather than assuming a
+surface centroid is a safe launch anchor.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
