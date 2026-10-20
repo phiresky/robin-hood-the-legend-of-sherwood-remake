@@ -73,7 +73,7 @@
       "model": "3d-assets/york/york-castle-courtyard-raised-terrain/model.glb",
       "model_sha256": "565ae1d668a96962fab2cc0b7eee1dadff0e10be4b42196c132d52d52fd5820c",
       "descriptor": "3d-assets/york/york-castle-courtyard-raised-terrain/asset.json",
-      "descriptor_sha256": "42dc5cd7e449b20ca36dbcf20be140ed1039dc351009ef6442ce10942037d153",
+      "descriptor_sha256": "c4785277b401ee2b7a0aede8a4a62719ad00cc95998eff8c37b786008773221b",
       "id": "york-castle-courtyard-raised-terrain"
     },
     {
@@ -486,7 +486,7 @@
       "model": "3d-assets/york/york-east-water-gate-north-bastion/model.glb",
       "model_sha256": "1533c75f797c6214b59ddacb8f9d8860541e04617fec3431236fd304836107c6",
       "descriptor": "3d-assets/york/york-east-water-gate-north-bastion/asset.json",
-      "descriptor_sha256": "a9eb53d0ed8a9e87b752d82e7d082258a53142160fe139dfbdbafca4ed44f9d1",
+      "descriptor_sha256": "02a69eb7d16832028eac4d91111e02461c74004bfc8ff74f66780301fb0a32ab",
       "id": "york-east-water-gate-north-bastion"
     },
     {
@@ -5680,8 +5680,8 @@
     {
       "id": "interior-link-1",
       "from": {
-        "placement": "york-castle-courtyard-raised-terrain",
-        "asset": "york-castle-courtyard-raised-terrain",
+        "placement": "york-east-water-gate-north-bastion",
+        "asset": "york-east-water-gate-north-bastion",
         "interior": "interior-2"
       },
       "to": {
@@ -5693,8 +5693,8 @@
     {
       "id": "interior-link-2",
       "from": {
-        "placement": "york-castle-courtyard-raised-terrain",
-        "asset": "york-castle-courtyard-raised-terrain",
+        "placement": "york-east-water-gate-north-bastion",
+        "asset": "york-east-water-gate-north-bastion",
         "interior": "interior-2"
       },
       "to": {

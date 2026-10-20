@@ -20,17 +20,21 @@ for (const edit of JSON.parse(await fs.readFile(`${stage}/edits.json`))) {
   assert.equal(ref?.model_sha256, edit.modelSha256);
   assets.get(edit.asset).gameplay = edit.gameplay;
 }
-const members = [...assets.values()].map((asset) => {
+const members = [...assets.values()].flatMap((asset) => {
   const room = asset.gameplay.interiors.find((room) => room.id === roomId);
-  assert.ok(room?.doors.length > 0, "Each selected asset needs the requested room");
-  return base.groups
-    .filter((group) =>
-      base.objects.some(
-        (part) => part.group === group.id && part.node === `asset:${asset.id}:${room.node}`,
-      ),
-    )
-    .map((group) => ({ group, asset, room }));
+  if (!room) return []; // Supporting terrain and exterior structures have no room link.
+  assert.ok(room.doors.length > 0, "A selected room must have an entrance");
+  return [
+    base.groups
+      .filter((group) =>
+        base.objects.some(
+          (part) => part.group === group.id && part.node === `asset:${asset.id}:${room.node}`,
+        ),
+      )
+      .map((group) => ({ group, asset, room })),
+  ];
 });
+assert.ok(members.length >= 2, "Room-link fixtures require at least two room owners");
 assert.ok(members[0].length > 0);
 for (const row of members) assert.equal(row.length, members[0].length);
 const endpoint = ({ group, asset, room }) => ({

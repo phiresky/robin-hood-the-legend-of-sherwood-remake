@@ -318,7 +318,7 @@ keep. The detached-room authoring helper correctly rejects transferring this
 room without a reviewed link migration. No ownership or link change was
 published as part of the gatehouse ramp repair.
 
-### Water-gate room ownership staged; physical collision review remains
+### Water-gate room ownership and physical collision publication
 
 `stage-york-water-gate-room.mjs` authors a candidate transfer of the courtyard's
 single `interior-2` entrance into `york-east-water-gate-north-bastion`. The thin
@@ -391,6 +391,39 @@ connection list, preserving IDs and opposite endpoints. All seven publication
 tests pass, and the actual two staged migrations validate against the current
 scene without writing library files. Browser round-trip and final archive
 verification still precede installation.
+
+The subsequent castle-assembly fixture includes the hall, keep, bastion and
+separate courtyard terrain. The hall and keep entrances require that raised
+support; omitting it correctly omits their unbound doors. The assembly uses
+6000×3200 bounds and separated copies so the 90-degree case remains in bounds.
+Stage `york-water-gate-room-UiClc8` has the same reviewed gameplay as `gIdLqp`;
+`selected-neighbor-placements-woqpND` and
+`linked-building-placements-7MuIX2` cover four rotations and two elevations.
+All 480 native checks pass: 96 linked-room crossings and 384 disconnected/copy
+isolation checks. Supporting terrain participates in geometry but is not made
+a room owner.
+
+Browser fixture `draft-scene-render-coQrnz/york-bastion-review.zip` passes export,
+reopen and rebake with equal gameplay and rendered color/depth:
+3136×2318, 47,108,161 bytes, SHA-256
+`1decfe901f978bfe6e07a875646db3561e542d7ed6480bf7dc7d38e841c5a853`.
+The exact ZIP loads without a base datadir, including the editor document and
+color/depth/minimap. Native construction reports 1235 sight obstacles, 28 masks,
+257 door projections and 289296 grid blocks. Exact archive audit
+`exact-map-archive-6gbw9j4i` retains 91/95 raw doorway trips with the same four
+failures as the staged export, and all 130 stair routes pass.
+
+Publication preparation `reviewed-publication-stage-3tcbejww` and reports
+`york-bastion-publication-{dry,installed}` install the two gameplay definitions,
+their descriptor pins and the two reviewed room-link endpoints. All 15 installed
+file hashes match the applied report; source models, lossy models and previews
+are unchanged. The courtyard descriptor changes from
+`42dc5cd7e449b20ca36dbcf20be140ed1039dc351009ef6442ce10942037d153` to
+`c4785277b401ee2b7a0aede8a4a62719ad00cc95998eff8c37b786008773221b`;
+the bastion descriptor changes from
+`a9eb53d0ed8a9e87b752d82e7d082258a53142160fe139dfbdbafca4ed44f9d1` to
+`02a69eb7d16832028eac4d91111e02461c74004bfc8ff74f66780301fb0a32ab`.
+This publishes the reviewed repair, not a claim of complete map parity.
 
 ## York tower/gatehouse room ownership (2026-10-20)
 

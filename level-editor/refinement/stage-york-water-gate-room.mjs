@@ -164,14 +164,23 @@ for (const { name, neighbors, distance } of [
     neighbors: ["york-southeast-riverside-raised-terrace"],
     distance: 96,
   },
+  {
+    name: "bastion-castle-links",
+    neighbors: [
+      "york-castle-great-hall",
+      "york-castle-main-keep",
+      "york-castle-courtyard-raised-terrain",
+    ],
+    distance: 96,
+  },
 ])
   await fs.writeFile(
     `${output}/${name}.json`,
     JSON.stringify({
       map: "york",
       assets: [target.id, ...neighbors],
-      size: [3200, 3200],
-      copyXs: [800.25, 2400.25],
+      size: name === "bastion-castle-links" ? [6000, 3200] : [3200, 3200],
+      copyXs: name === "bastion-castle-links" ? [1400.25, 4200.25] : [800.25, 2400.25],
       assemblyY: 1800.75,
       terrainHeight: oldDoor.outside[2] + from[2],
       tracePassages: true,

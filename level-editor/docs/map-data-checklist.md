@@ -29,17 +29,20 @@ improves to 90/95 raw doorway trips (93/95 when authored locks are respected),
 retains all 130 stairs, and has the same four failed climb routes as the baseline.
 These changes run during export and add no runtime solver.
 
-The remaining water-gate entrance has a staged ownership transfer from terrain
-to its bastion, preserving the two editor room links. A physical-body candidate
-and export-time doorway clipping now pass all 16 paired native round trips from
+The water-gate entrance ownership transfer from terrain to its bastion is now
+published, preserving the two editor room links. Physical-body metadata
+and export-time doorway clipping pass all 16 paired native round trips from
 visible ground targets across copies, rotations and elevations. Exterior walls
 still block the doorway in compiler regression checks. The nearer target remains
 occluded by the terrace in eight orientations, although all 16 entries succeed.
 Full-scene native checks improve raw doorway trips to 91/95, retain 130/130
 stairs and the same four climb failures. Native roof checks pass 32 walks;
 16 ground-body probes remain blocked while nearby ground walks pass.
-The publication helper now validates the exact two endpoint migrations.
-The draft remains unpublished pending browser round-trip and final archive checks.
+Moved castle assemblies pass 96 linked-room crossings and 384 disconnected/copy
+isolation checks. Browser export/reopen preserves gameplay and color/depth, and
+the exact ZIP loads without a base datadir, retaining 91/95 doorway trips and
+130/130 stairs. The publication helper validates the exact endpoint migrations
+against both the prior scene and the verified editor archive.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.
