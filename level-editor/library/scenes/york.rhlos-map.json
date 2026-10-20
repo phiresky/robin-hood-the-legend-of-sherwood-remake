@@ -997,7 +997,7 @@
       "model": "3d-assets/york/york-precinct-stone-causeway/model.glb",
       "model_sha256": "ae64290bb5936fc65edcd25584eb8bf0e77b6531feab84a420c141f73cdfffd1",
       "descriptor": "3d-assets/york/york-precinct-stone-causeway/asset.json",
-      "descriptor_sha256": "d6098e7c20c535cc6cfbc3d058beeeff11463a8ede88329aa82dcfd38a362584",
+      "descriptor_sha256": "ecff12a4bf721915fc4cd47c91298278cf3fce28b300880b9c04ae61c2128f98",
       "id": "york-precinct-stone-causeway"
     },
     {
@@ -1592,21 +1592,21 @@
       "model": "3d-assets/york/york-west-market-frontage-dormer-house/model.glb",
       "model_sha256": "46113b26f0881004c9058ddf356948905186b26b7ce04bce07b5e36685e79714",
       "descriptor": "3d-assets/york/york-west-market-frontage-dormer-house/asset.json",
-      "descriptor_sha256": "9af2ffb840221addf76857a60f2949834073283840c9d8622403ead67fa97c68",
+      "descriptor_sha256": "46e364213be8496c5412e890e30a9f74dfcc5a3344cb65bdc411a50a69ea252d",
       "id": "york-west-market-frontage-dormer-house"
     },
     {
       "model": "3d-assets/york/york-west-market-frontage-gabled-house/model.glb",
       "model_sha256": "1ec3524fff711089288aa7d11d75ad003005d3c410185e8ae8f1593191957072",
       "descriptor": "3d-assets/york/york-west-market-frontage-gabled-house/asset.json",
-      "descriptor_sha256": "06971849d612c5842a9cc262143d1d701cb10cc0949f6a5f0577fdc17eb68c14",
+      "descriptor_sha256": "6004909ea798e7c370a4204cb7b32f7ab27a12fc6f4b75d1eb3e370ae293201c",
       "id": "york-west-market-frontage-gabled-house"
     },
     {
       "model": "3d-assets/york/york-west-market-frontage-north-end-house/model.glb",
       "model_sha256": "b4f7cfe9e2b44b7272c8443c5c7191c4e55cc075ec83b35b755ddbe3e5ec34e3",
       "descriptor": "3d-assets/york/york-west-market-frontage-north-end-house/asset.json",
-      "descriptor_sha256": "edd10fa337831b7e9277d7f50faabfbb99b854b2fdca5e23b85e5adf9b6604fe",
+      "descriptor_sha256": "58fbdaab136197e77ae43a9f72d1ede8626825d5a3812afbf41ef602d29af72e",
       "id": "york-west-market-frontage-north-end-house"
     },
     {
@@ -1620,7 +1620,7 @@
       "model": "3d-assets/york/york-west-market-frontage-red-roof-house/model.glb",
       "model_sha256": "f6cc1587c823aad5b464267813d95e0450b1996067d0117b40c61b43e6ee608e",
       "descriptor": "3d-assets/york/york-west-market-frontage-red-roof-house/asset.json",
-      "descriptor_sha256": "2e281669a11e58d1e20ae056d74d168da6c1a9fecc1c6946e9cc3562f617657d",
+      "descriptor_sha256": "401fb5a8bee880bfd20abe01bf74f9e60fabbbd1d438e666651ed98f77c3ef3e",
       "id": "york-west-market-frontage-red-roof-house"
     },
     {
@@ -1683,7 +1683,7 @@
       "model": "3d-assets/york/york-west-town-raised-lane/model.glb",
       "model_sha256": "cf8a3ce0d45a2f87de4e6b70fb4db58651fc15191b37134d980050ec4b4f39a4",
       "descriptor": "3d-assets/york/york-west-town-raised-lane/asset.json",
-      "descriptor_sha256": "c4810e1c65c8e94f006129f37c445d7723e63e49b080223dad5109e89dfccf96",
+      "descriptor_sha256": "a71822cfcd77d5e359e20802a958ecefe4eac63dea61d396c989b1f476832ba7",
       "id": "york-west-town-raised-lane"
     },
     {
@@ -1760,7 +1760,7 @@
       "id": "york-light-region-18",
       "descriptor": "3d-assets/york-light-region-18/asset.json",
       "model": "3d-assets/york-light-region-18/model.glb",
-      "descriptor_sha256": "488b37dd3a6ef8caf3ad44c00c4c76d222cfb4ee728e19b1fdd43ef4980b04d9",
+      "descriptor_sha256": "7ad2e04eb5e6b7d526a683563889f7f1e2c0089e04462fe4f36ebf9db0d01c4b",
       "model_sha256": "e91b9dd6abb4e5eecc0d407076d0430209bf7d4d26e9b6bcdbd3332b66b25f9f"
     },
     {

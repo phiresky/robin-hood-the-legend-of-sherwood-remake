@@ -78,8 +78,34 @@ change is needed. `selected-neighbor-placements-bU2suI` completes all eight
 placements, with 16 lane lighting checks, 112 causeway passage bindings and
 32/32 native normal entrance clicks. `saved-map-entrances-WbAbx5` additionally
 passes all 64 doorway round trips, including the other two frontage houses.
-This expanded candidate still needs full-scene and browser verification before
-publication; passage binding alone does not certify actor traversal.
+Passage binding alone does not certify actor traversal.
+
+The seven-asset anchor stage's full export `saved-map-exports-WBzPQ5` restores
+all 254 doors and 72 jump pairs and constructs natively. Entrance audit
+`saved-map-entrances-mY5poH` passes 49/95, improving doors 87, 88 and 90 versus
+the installed baseline with no regressions. The remaining 46 failures comprise
+45 blocked routes and the storehouse receiver mismatch.
+
+The subsequent split-light candidate's browser fixture `draft-scene-render-8U8fOp`
+passes export/reopen with matching gameplay, color and depth. Its 25,393,333-byte
+ZIP has SHA-256 `0d10c44e958a3946b514765e1676b9afa71f8d1683a9bc0aa8dc3e05a406b408`.
+It loads natively without base data (61 sight obstacles, 36 door projections,
+27,216 fast-grid blocks); `exact-map-archive-sm8a_icb` passes all four archived
+normal entrance clicks. Publication dry run
+`york-raised-lane-seven-publication-dry-run` passes. Exact full-scene export
+`saved-map-exports-Umso1d` completes with native construction passing and every
+`asset_geometry` field identical to the preceding anchor-only full export,
+including all 39 light sectors. `saved-map-entrances-ftDvPh` retains identical
+49/95 doorway outcomes. The all-entrances test remains nonzero because the
+46 pre-existing failures are still present; this is incremental improvement,
+not full parity.
+
+Publication `york-raised-lane-seven-publication-installed` installs all seven
+definitions and updates York scene pins. All 41 installed file hashes match
+the report. Models and their derivatives are unchanged; the empty light frame
+passes the same strict geometry/resource check used by library publication.
+The authoring/review tools and fixture are committed in `b2a09191a`. No engine
+runtime code changed.
 
 ## Soldier and civilian gate round trips verified (2026-10-20)
 

@@ -127,8 +127,14 @@ landing and a light receiver whose anchors also need the plane correction.
 The expanded seven-asset stage also separates the light footprints onto their
 receiving floors so they follow rotation. All eight placement fixtures now pass
 lighting coverage and 112 causeway passage bindings; native checks pass 64/64
-direct doorway trips and 32/32 normal click trips. Full-scene and browser checks
-for this expanded candidate remain pending; it is unpublished. See the
+direct doorway trips and 32/32 normal click trips. The anchor repair restores
+all 254 doors and 72 jump pairs in the full scene, retaining 49/95 entrance trips
+with no regressions. The split-light candidate also passes browser export/reopen,
+native archive loading and archived click checks. Its exact full-scene export
+retains identical gameplay data and 49/95 entrance results. All seven repaired
+definitions and York scene pins are installed in the main library; 41 installed
+file hashes match the verified publication report. Remaining York failures are
+45 blocked routes and one storehouse receiver mismatch. See the
 [raised-lane evidence](map-compilation-evidence.md#york-raised-lane-surface-restores-reusable-house-approaches-2026-10-20).
 
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
