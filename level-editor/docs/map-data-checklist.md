@@ -138,6 +138,9 @@ has seven failures in the broader 720-case offset audit; combat departure remain
 unresolved. See [departure support](map-compilation-evidence.md#export-time-receiving-support-during-departure).
 The native audit now rejects those ground drops: 80/160 candidate combat launches
 fail, while 160/160 upright launches and the reference's 720 click routes pass.
+The centered roof candidate also has three side/rotation combinations where no
+anchor translation can fit the current edge's full departure strip on its
+receiver. Repair requires revisiting the edge geometry or receiving arrangement.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

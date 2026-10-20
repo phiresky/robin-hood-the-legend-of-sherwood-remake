@@ -1034,6 +1034,24 @@ and 8.75 units, respectively, short of the fifteen-unit departure. This motivate
 checking feasible departure strips across placements rather than assuming a
 surface centroid is a safe launch anchor.
 
+`check-jump-departure-regions.mjs` now measures that constraint directly on
+exported descriptors. For each convex receiver it intersects translations that
+keep all four strip corners inside the face; convexity makes this sufficient
+for the whole strip. The report records descriptor hashes and explicitly excludes
+height, approach, flight, rounding, and cross-placement proof. Nonconvex faces
+are counted as unverified, and multi-face unions may admit additional solutions.
+For the centered `connected-jump-placements-bFiPm4` candidate, each relevant
+topology has exactly one convex face. Three of eight distinct side/rotation
+combinations have no supported translation of the fifteen-unit strip: the
+zero-degree rear side supports at most about 7.305 units, the 90-degree red side
+4.731, and the 180-degree red side 7.800. These bounds hold for the current
+edge vector and receiver; moving the anchor alone cannot repair them.
+The twenty nonempty regions across copies/elevations were independently checked
+by translating the source edge to an interior point and running the compiler's
+departure-support audit. All pass. A rectangular fixture also verifies a wide
+receiver admits fifteen units and a five-unit receiver rejects them with a
+computed maximum of five. No asset or runtime data was changed by this audit.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
