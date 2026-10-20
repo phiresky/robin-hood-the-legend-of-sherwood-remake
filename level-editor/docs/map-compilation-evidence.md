@@ -49,6 +49,19 @@ from 1,245 to 1,263 passes: all 18 affected failures fixed, zero regressions.
 The remaining 33 failures are outside this seam repair. This is diagnostic
 descriptor evidence, not yet a fresh compiler export or published ZIP.
 
+Fresh indexed-library compile `saved-map-exports-lc8MNY` now reproduces the
+entire diagnostic descriptor exactly. This run enabled `preparePreciseFloor`
+at the floor-serialization call in an isolated Node loader, preserving source
+files used by the active browser batch. The loader records the compiler source
+SHA-256 before/after its exact, single-call replacement:
+`198b8f5c854de1b03d11d9897be414df2bacd4daddecce1442a940af85eeb2a0` →
+`f6511c6df4ffb7001dfd73613741a18462a3c1d9c83ff8d061456c4d74b50dbf`.
+All 193 targeted compiler/navigation tests pass under this replacement.
+A separate end-to-end regression reproduces the blocked corridor without the
+replacement and passes with it. The other nine current scenes are being
+compiled in `saved-map-exports-BZhLwR`. Production integration and a fresh ZIP
+with the cleanup remain pending.
+
 The guarded `preparePreciseFloor` wrapper additionally requires that cleaned
 geometry serialize back to the same prepared integer boundary; otherwise it
 retains the original precision contour. A grid-threshold regression test covers

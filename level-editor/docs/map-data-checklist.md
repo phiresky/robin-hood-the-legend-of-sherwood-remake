@@ -28,6 +28,13 @@ match byte-for-byte through those two paths.
 See [catalog integrity](map-compilation-evidence.md#embedded-catalog-integrity) and
 [takeoff evidence](map-compilation-evidence.md#published-golden-house-jump-endpoint-inset).
 
+A tested compiler candidate removes a numerical slit in York's market-house
+roof contour. It fixes 18 further failures with zero regressions across the
+same 1,296 click probes; ordinary/hidden selection together pass 1,293.
+A fresh indexed-library compile exactly reproduces the tested descriptor.
+Production integration and browser ZIP verification are pending; see
+[roof seam investigation](map-compilation-evidence.md#market-house-roof-seam-investigation).
+
 An earlier full-scene sweep and corrected Wychford retry export all ten saved scenes and
 load them through native geometry construction. Their 71 state transitions pass
 apply/reset checks; 180 lighting contours pass three ambience settings.
