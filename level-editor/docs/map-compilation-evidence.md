@@ -189,9 +189,43 @@ match its report. Raw models and derivatives are unchanged. Gatehouse candidates
 are not included. Only the two reviewed descriptor pins are staged in Git;
 unrelated York edits remain outside this change.
 
-Fresh installed export `saved-map-exports-TQxppu` has been started; its result is
-not yet counted. The existing four climb failures, remaining doorway geometry,
-gatehouse placement failures and other map categories remain open.
+Fresh installed export `saved-map-exports-TQxppu` completes in 119 seconds.
+Its native doorway audit `saved-map-entrances-VOxjIo` confirms 88/95 trips;
+all 130 native stair routes pass. The existing four climb failures, remaining
+doorway geometry, gatehouse placement failures and other map categories remain open.
+
+Gatehouse-only stage `york-entrance-ramps-DjZkP4` reuses the now-published terrain
+join setting without staging an unchanged terrain descriptor. Placement fixture
+`selected-neighbor-placements-RsT0se` still stops at 180°: door 1 has no walkable
+receiving area at either copy's outside anchor. The fixture is incomplete and
+does not constitute a passed native traversal sweep. Gatehouse ramps remain
+unpublished.
+
+### Clipped ramp components and amplified clipping noise
+
+The gatehouse trace exposes two related export issues. A tiny disconnected
+clipping remnant disables slope-clearance preparation for the whole floor.
+Also, converting a clipped outline to world coordinates on a nearly edge-on
+plane amplifies clipping-grid noise into false concave corners. Its conservative
+clearance then excludes a doorway whose physical footprint fits the ramp.
+
+The compiler now prepares simple components separately and simplifies the
+receiving contour within two clipping-grid units before conversion and receiver
+partitioning. Holed components retain obstacle preparation. The captured
+`clipped-gatehouse-ramp.json` regression fails against the preceding compiler
+and passes with the repair, both with and without the detached fragment.
+All 208 focused compiler, clearance, partition, passage and precise-contour tests pass.
+
+Main-compiler fixture `selected-neighbor-placements-GKhOLm` completes all eight
+copied/rotated/raised exports with both doors bound. Native ground-click checks
+pass 16/32 trips: 0° and 37° pass at both heights; 90° and 180° still stall on the
+ground. This improves on the earlier 4/32 candidate but is not publication
+evidence. Red-house fixture `selected-neighbor-placements-h9mEiU` and narrow-house
+fixture `selected-neighbor-placements-mGfvN6` each retain all 16 native trips.
+The gatehouse definitions remain unpublished; no runtime code changes are involved.
+Fresh installed export `saved-map-exports-ENYL4z` completes in 127 seconds.
+Audit `saved-map-entrances-ZAaXsr` retains 88/95 trips with the exact same seven
+failure records as `saved-map-entrances-VOxjIo`; all 130 native stair routes pass.
 
 ## York tower/gatehouse room ownership (2026-10-20)
 

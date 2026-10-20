@@ -18,6 +18,13 @@ Browser export/reopen matches gameplay and rendered color/depth; its exact ZIP
 loads without a base datadir. Bridge gatehouse failures and broader parity gaps
 remain. See the publication evidence below; these results do not establish full parity.
 
+Gatehouse ramp compilation now prepares disconnected floor pieces independently
+and removes clipping-grid noise before projecting their clearance. All tested
+door bindings survive rotation; native ground-click trips improve to 16/32.
+The 90° and 180° approaches still stall on the ground, so the gatehouse metadata
+remains unpublished. The red-house and narrow-house placement checks retain
+16/16 each. These changes run during export and add no runtime solver.
+
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.
 This fixes sixteen moved Lincoln keep entrance cases and an existing island-floor

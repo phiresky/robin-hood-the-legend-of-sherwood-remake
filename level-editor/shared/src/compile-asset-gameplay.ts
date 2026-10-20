@@ -1780,9 +1780,16 @@ function compileAssetGameplayAttempt(
     }
     // A sloping floor can project to less than one pixel. Prepare its supported
     // walking clearance before normalization can erase the receiving surface.
-    // Holed or disconnected regions retain the existing obstacle preparation.
-    if (!lift && merged.length === 1 && merged[0]!.length === 1) {
-      const receivingPolygon = merged[0]![0]!;
+    // Prepare disconnected components independently; holes retain obstacle preparation.
+    const unprepared: MultiPolygon = [];
+    for (const region of merged) {
+      if (lift || region.length !== 1) {
+        unprepared.push(region);
+        continue;
+      }
+      // Remove clipping-grid noise before a nearly edge-on plane amplifies it
+      // into false concave corners in world space or receiver partitioning.
+      const receivingPolygon = simplifyMotionRing(region[0]!, 2 / 1048576);
       const worldBoundary = receivingPolygon.map((p): Point => [
         p[0],
         p[1] + planeHeight(plane, p),
@@ -1812,7 +1819,9 @@ function compileAssetGameplayAttempt(
         });
         continue;
       }
+      unprepared.push(region);
     }
+    merged = unprepared;
     const normalized = walls.descriptors.length
       ? normalizeGeneratedMotion(merged, `Movement layer ${layer}`, warnings)
       : merged.flatMap((region) =>

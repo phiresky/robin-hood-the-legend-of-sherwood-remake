@@ -54,6 +54,7 @@ import { parseLevel3D, parseProjectionAssetDescriptor } from "./validation.ts";
 import nearEdgeOnStair from "../test-fixtures/near-edge-on-placed-stair.json" with { type: "json" };
 import rotatedTerrainBridge from "../test-fixtures/rotated-terrain-bridge-seam.json" with { type: "json" };
 import completeRoofJumps from "../test-fixtures/complete-roof-jumps.json" with { type: "json" };
+import clippedGatehouseRamp from "../test-fixtures/clipped-gatehouse-ramp.json" with { type: "json" };
 import { roofJumpPlacement } from "../test-fixtures/roof-jump-placements.ts";
 
 test("doorway structure references are local, explicit, and limited to virtual interiors", () => {
@@ -2940,6 +2941,50 @@ test("a narrow sloping landing retains its prepared movement contour separately 
     "full-size destinations must survive static contour construction",
   );
   assert.ok(compiled.sight_obstacles.some((obstacle) => obstacle.projection_area));
+});
+
+test("clipped ramp components retain supported doorway clearance despite subpixel fragments", () => {
+  for (const includeFragment of [false, true]) {
+    const { document, assets, hut } = assetCompilerFixture();
+    hut.gameplay!.collision = "none";
+    hut.gameplay!.doors = [];
+    document.objects = document.objects.filter((object) => object.group);
+    document.objects[0]!.transform = { ...IDENTITY_TRANSFORM };
+    const [a, b, c] = clippedGatehouseRamp.plane;
+    const regions = includeFragment
+      ? clippedGatehouseRamp.regions
+      : clippedGatehouseRamp.regions.slice(1);
+    hut.gameplay!.surfaces = regions.map((region, index): AssetWalkableSurface => {
+      const points = region[0]!;
+      const heights = points.map(([x, y]) => a! * x! + b! * y! + c!);
+      return {
+        id: `ramp-${index}`,
+        node: "building-999",
+        navigationRegion: "ramp",
+        preserveMovementPrecision: true,
+        polygon: points.map(([x, y], i) => [x!, y! + heights[i]!]),
+        height: heights,
+      };
+    });
+    const compiled = compileAssetGameplay(document, assets, [0, 0, 3000, 2000]);
+    const [x, y, z] = clippedGatehouseRamp.anchor;
+    assert.ok(
+      compiled.motion_data.layers
+        .flat()
+        .some((area) =>
+          [-6, 6].every((dx) =>
+            [-3, 3].every((dy) =>
+              pointInGameplayPolygon(
+                [Math.round(x!) + dx, Math.round(y! - z!) + dy],
+                area.precise_polygon ?? area.polygon.points,
+                true,
+              ),
+            ),
+          ),
+        ),
+      `The supported doorway must fit a native actor (fragment=${includeFragment})`,
+    );
+  }
 });
 
 test("unconnectable overlapping receivers retain separate native sectors", () => {

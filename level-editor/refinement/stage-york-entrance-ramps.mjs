@@ -187,16 +187,17 @@ for (const { asset: id, ramps } of reviewed) {
 const terrain = assets.get("york-west-town-raised-terrain");
 const gameplay = structuredClone(terrain.gameplay);
 assert.equal(gameplay.surfaces.length, 1);
-assert.equal(gameplay.surfaces[0].acceptsNavigationJoins, undefined);
+assert.ok([undefined, true].includes(gameplay.surfaces[0].acceptsNavigationJoins));
 gameplay.surfaces[0].acceptsNavigationJoins = true;
 validateAssetGameplay(gameplay, terrain);
 const ref = document.assetSources.find((entry) => entry.id === terrain.id);
-changed.push({
-  asset: terrain.id,
-  descriptorSha256: ref.descriptor_sha256,
-  modelSha256: ref.model_sha256,
-  gameplay,
-});
+if (terrain.gameplay.surfaces[0].acceptsNavigationJoins !== true)
+  changed.push({
+    asset: terrain.id,
+    descriptorSha256: ref.descriptor_sha256,
+    modelSha256: ref.model_sha256,
+    gameplay,
+  });
 const output = await fs.mkdtemp("work/needs-review/map-compile/york-entrance-ramps-");
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(changed));
 await fs.writeFile(
