@@ -85,6 +85,14 @@ installation was found and corrected. Fresh full York retains 40/40 climb routes
 Its descriptor matches the previously verified export. All sixteen missing-landing
 controls still reject unsupported connections.
 
+Normal player climb clicks now pass all 40 current York routes and all 32 moved
+wall routes; the hidden-selection audit also passes these cases. A fresh broader
+jump regression is open: current York fails five of 720 offset-click probes,
+all before takeoff on the red/rear timber-house connection. The earlier passing
+descriptor still passes on the same test binary. An isolated moved/copy fixture
+fails 92/160 offset clicks; changed receiving-floor partitions need investigation.
+See [current climb and jump evidence](map-compilation-evidence.md#normal-climb-clicks-and-current-jump-regression).
+
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.
 This fixes sixteen moved Lincoln keep entrance cases and an existing island-floor

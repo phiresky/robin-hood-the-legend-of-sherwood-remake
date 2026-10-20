@@ -1470,6 +1470,36 @@ fn exported_climbs_support_complete_actor_routes() {
 }
 
 #[test]
+#[ignore = "requires ROBIN_ASSET_MAP_DIAGNOSTICS and ROBIN_CLIMB_RHS"]
+fn exported_climbs_resolve_player_clicks_and_complete_routes() {
+    let sprite = complete_climb_sprite();
+    audit_exported_lift_routes(
+        &[
+            crate::sector::LiftType::Ladder,
+            crate::sector::LiftType::Wall,
+        ],
+        Some(&sprite),
+        "actor-climb-player-click-report.json",
+        StairDispatch::PlayerClick,
+    );
+}
+
+#[test]
+#[ignore = "requires ROBIN_ASSET_MAP_DIAGNOSTICS and ROBIN_CLIMB_RHS"]
+fn exported_climbs_resolve_hidden_landings_and_complete_routes() {
+    let sprite = complete_climb_sprite();
+    audit_exported_lift_routes(
+        &[
+            crate::sector::LiftType::Ladder,
+            crate::sector::LiftType::Wall,
+        ],
+        Some(&sprite),
+        "actor-climb-hidden-selection-report.json",
+        StairDispatch::PlayerHiddenSelection,
+    );
+}
+
+#[test]
 #[ignore = "requires ROBIN_CLIMB_RHS"]
 fn placed_climbs_support_complete_actor_routes() {
     let sprite = complete_climb_sprite();

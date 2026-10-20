@@ -654,6 +654,38 @@ previous exact-ZIP gameplay verification. Typechecking and formatting pass.
 This repair adds no engine changes or per-tick work. Rendered actor review and
 broader feature coverage remain separate outstanding checks.
 
+### Normal climb clicks and current jump regression
+
+The native climb audit now supports ordinary player dispatch and hidden-floor
+selection, using the existing actor-sized landing selection and complete sprite
+movement checks. `saved-map-exports-kOnKJD` passes all 40 routes in each mode;
+`selected-neighbor-placements-VCsvbM` passes all 32 moved wall routes in each
+mode. Ordinary selection already passes every case; hidden selection is not
+needed to rescue these fixtures. No runtime or compiler behavior changes.
+
+The broader ordinary jump audit on the same fresh York descriptor fails five
+of 720 probes, all line 57 at fractions 0.05, 0.25, 0.5, 0.75 and 0.95. The actor
+stalls before takeoff. The remaining results are 704 completed traversals and
+eleven expected occlusion checks. Re-running `saved-map-exports-Etu7BT` on the
+same current test binary passes all 720, establishing an exported-data regression.
+Its earlier all-green result must not be used for the current descriptor.
+
+The affected asset connection is `jump-pair-45`, between
+`york-central-south-red-timber-house` and
+`york-central-south-rear-timber-house`. Fresh isolated reproduction:
+
+```sh
+node refinement/check-connected-jump-placements.mjs york jump-pair-45 york-central-south-red-timber-house,york-central-south-rear-timber-house
+```
+
+`connected-jump-placements-RBrOO4` fails 92/160 offset-click probes across two
+copies, four rotations and two elevations. Full-map jump endpoints are unchanged,
+but their receiving regions changed: source zone 22 now binds the precise
+single roof face on layer 122, whereas the passing export used a larger joined
+roof region on layer 86. Destination zone 21 also changed receiving region.
+These differences identify the next investigation; they do not yet prove which
+change causes the blocked approach. No endpoint or floor correction is published.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
