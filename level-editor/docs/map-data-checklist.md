@@ -92,6 +92,12 @@ all before takeoff on the red/rear timber-house connection. The earlier passing
 descriptor still passes on the same test binary. An isolated moved/copy fixture
 fails 92/160 offset clicks; changed receiving-floor partitions need investigation.
 See [current climb and jump evidence](map-compilation-evidence.md#normal-climb-clicks-and-current-jump-regression).
+An unpublished six-unit takeoff inset along the existing roof plane restores
+all 720 full-York jump checks, changing only that jump pair in the exported
+geometry. It improves the isolated placement result from 68/160 to 96/160;
+surface-following selection regions improve it to 100/160. The 180-degree
+receiver failures and flight/visual review remain open, so the library is
+unchanged. See [takeoff candidate evidence](map-compilation-evidence.md#red-roof-takeoff-footprint-candidate).
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

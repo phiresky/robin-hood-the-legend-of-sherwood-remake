@@ -686,6 +686,44 @@ roof region on layer 86. Destination zone 21 also changed receiving region.
 These differences identify the next investigation; they do not yet prove which
 change causes the blocked approach. No endpoint or floor correction is published.
 
+### Red-roof takeoff footprint candidate
+
+At line 57's midpoint `[1165,1417.5]`, the current precise source floor excludes
+the `[1159,1414.5]` corner of the actor's 6-by-3 half-diagonal. All four corners
+were inside the older combined floor. The opposite edge's four corners remain
+inside both versions. This explains the failed approach without a runtime change.
+
+`stage-york-central-roof-seams.mjs` tests a different hypothesis by aligning
+the two roofs' subpixel ridges (less than 0.3 units). Candidate
+`york-central-roof-seams-GQjPq7` and placement export
+`connected-jump-placements-22idRT` retain all 92 baseline failures; it is not
+the repair and remains unpublished.
+
+`stage-york-red-roof-jump-inset.mjs` moves only the red-house takeoff inward,
+following its existing surface plane and preserving the neighboring asset.
+Three-unit candidate `york-red-roof-inset-5cZhRS` passes 92/160 offset probes
+in `connected-jump-placements-DrkcFZ`. Six-unit candidate
+`york-red-roof-inset-Qs8z2v` passes 96/160 in
+`connected-jump-placements-Dv68vC`; eight units gives the same count. Remaining
+failures at six units are 24 overlay-selection misses and 40 missing-receiver
+or unauthorized-start cases at 180 degrees, rather than takeoff stalls.
+
+Full-scene six-unit stage `york-red-roof-inset-aDjokS` compiles to
+`staged-map-export-ybcjiv`. Its entire asset geometry is unchanged from
+`saved-map-exports-kOnKJD` except jump pair 28. The native ordinary jump audit
+passes all 720 probes (709 traversals and eleven expected occlusion checks).
+This restores the full-map regression but does not establish moved-asset parity.
+
+The optional `--surface-zone` variant follows the red house's actual receiving
+surface without changing the already-supported zone anchor. That alone retains
+96/160. Combining it with the rear house's surface selection zone
+(`jump-zone-surface-83onok`) produces `york-roof-inset-zones-6R3K1l` and
+`connected-jump-placements-sXuauq`, passing 100/160. The 180-degree receiver
+problem remains. Interior-probe generation on the six-unit/red-zone variants
+also reports unavailable 180-degree starts/goals rather than silently dropping
+them. All candidates remain unpublished pending moved receiver, flight-contact,
+mesh and archive review.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
