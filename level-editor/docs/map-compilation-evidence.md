@@ -67,6 +67,34 @@ verification fails the result. Native loading and visual inspection remain
 separate checks. Syntax, lint and formatting checks pass. The first eight-map
 batch is in `work/needs-review/map-compile/browser-exports-jEFlao`; its manifest
 is authoritative for pending/passed/failed browser results, not a parity claim.
+That batch was stopped after discovering the scenery-resource fixture omission
+described below; its Croisement03 browser pass is not a native-load pass.
+
+## Browser round trips include pinned scenery resources
+
+The initial Croisement03 archive in `browser-exports-jEFlao` fails native loading:
+the descriptor refers to `Treecr03`, but its sprite manifest is absent from the
+ZIP. The asset already supplies 15 pinned resources. The browser fixture had
+skipped `collectSceneryResources`, which the actual editor export already calls.
+This is a verification-path defect, not evidence of a missing asset definition.
+
+The fixture now follows the editor export path, verifies packaged scenery bytes
+against their collected hashes, and repeats collection after reopening before
+comparing descriptors, warnings and resource hashes. This also covers bank
+aliases and best-effort resource omissions consistently with the editor.
+Targeted lint and formatting pass. The corrected eight-map batch is
+`work/needs-review/map-compile/browser-exports-hZZrJv`; native loading remains
+a separate requirement for each completed archive.
+
+The corrected Croisement03 browser round trip passes in 65.868 seconds. Its
+13,978,304-byte ZIP has SHA-256
+`5077acf8a093cd2ca37a10d12f130188e4aa8b2c4ab1b88efeb8c70453466d1c`.
+The existing native archive test passes on this exact ZIP in 1.10 seconds,
+including one placed scenery effect playing all 14 packaged frames without a
+base datadir. The map loads 1408×960 color/depth, minimap, embedded scene, 1,547
+sight obstacles, three masks, 15 door projections and 5,016 grid blocks.
+Its nine controls have zero appearance regions, so this remains short of visual
+state parity and complete gameplay verification.
 
 ## York entrance-ramp reproduction
 

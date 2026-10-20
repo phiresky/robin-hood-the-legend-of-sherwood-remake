@@ -2,7 +2,8 @@ import { openHttpLibrary } from "../src/http-library.ts";
 import { prepareMapCandidate } from "../src/map-candidate.ts";
 import { EditorViewport } from "../src/editor-viewport.ts";
 import { MapExportWorker } from "../src/map-export-client.ts";
-import { readPinnedAssetDescriptors } from "../src/projection-library.ts";
+import { libraryFile, readPinnedAssetDescriptors } from "../src/projection-library.ts";
+import { collectSceneryResources, type SceneryResources } from "../src/scenery-resources.ts";
 import { serializeStoredMap } from "@rle/shared";
 import { unzipSync, strFromU8 } from "fflate";
 import { decode } from "fast-png";
@@ -27,6 +28,14 @@ async function appearanceHashes(regions: readonly BakedAppearanceRegion[]) {
     result.push({ bounds: region.bounds, patches: region.patches, states });
   }
   return result;
+}
+
+async function sceneryHashes(resources: SceneryResources) {
+  return Promise.all(
+    Object.entries(resources)
+      .sort(([a], [b]) => a.localeCompare(b, "en"))
+      .map(async ([path, bytes]) => [path, await imageHash(bytes)] as const),
+  );
 }
 
 interface StoredAppearanceManifest {
@@ -95,6 +104,11 @@ try {
   }
   if (heartbeats < 2) throw new Error("Bake did not yield to browser input and progress updates");
   const { compiled, pixels, appearance } = baked;
+  const readResource = async (path: string) =>
+    new Uint8Array(await (await libraryFile(library.handle, path)).arrayBuffer());
+  const scenery = await collectSceneryResources(compiled, assets, readResource, (done, total) => {
+    result.textContent = `RUNNING reading scenery sprites ${done}/${total}`;
+  });
   if (mapOnly) {
     check(compiled.descriptor.spawn_points?.length === 0, "Map-only export contains PC spawns");
     check(compiled.descriptor.soldiers === undefined, "Map-only export contains soldiers");
@@ -104,6 +118,7 @@ try {
     ? await Promise.all([imageHash(pixels.color), imageHash(pixels.depth)])
     : undefined;
   const originalAppearances = roundtrip ? await appearanceHashes(appearance) : [];
+  const originalScenery = roundtrip ? await sceneryHashes(scenery) : [];
   if (parameters.has("independent-appearances")) {
     const expected = Number(parameters.get("independent-appearances"));
     check(roundtrip && Number.isSafeInteger(expected) && expected > 0, "Invalid appearance check");
@@ -118,10 +133,14 @@ try {
     }
   }
   result.textContent = "RUNNING encoding images and packaging ZIP";
-  const archive = await worker.package(compiled, pixels, appearance);
+  const archive = await worker.package(compiled, pixels, appearance, scenery);
   (window as unknown as { __bakeZip: Uint8Array }).__bakeZip = archive;
   if (roundtrip) {
     const files = unzipSync(archive);
+    for (const [path, hash] of originalScenery) {
+      check(files[path] !== undefined, `ZIP omitted scenery resource ${path}`);
+      check((await imageHash(files[path]!)) === hash, `ZIP changed scenery resource ${path}`);
+    }
     const readJson = (path: string) => {
       const bytes = files[path];
       if (!bytes) throw new Error(`ZIP omitted ${path}`);
@@ -236,6 +255,18 @@ try {
       },
       (bounds, calibratedAssets) =>
         exportWorker.compile(candidate.document, bounds, calibratedAssets!),
+    );
+    const rebakedScenery = await collectSceneryResources(
+      rebaked.compiled,
+      assets,
+      readResource,
+      (done, total) => {
+        result.textContent = `RUNNING round trip: reading scenery sprites ${done}/${total}`;
+      },
+    );
+    check(
+      JSON.stringify(await sceneryHashes(rebakedScenery)) === JSON.stringify(originalScenery),
+      "Reopened map changed scenery resources",
     );
     check(
       JSON.stringify(rebaked.compiled.descriptor) === JSON.stringify(compiled.descriptor),
