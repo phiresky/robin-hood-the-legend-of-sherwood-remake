@@ -33,6 +33,20 @@ from 1,245 to 1,263 passes: all 18 affected failures fixed, zero regressions.
 The remaining 33 failures are outside this seam repair. This is diagnostic
 descriptor evidence, not yet a fresh compiler export or published ZIP.
 
+The guarded `preparePreciseFloor` wrapper additionally requires that cleaned
+geometry serialize back to the same prepared integer boundary; otherwise it
+retains the original precision contour. A grid-threshold regression test covers
+this fallback. `check-motion-spike-cleanup.mjs` scans exported descriptors and
+rebuilds their navigation graphs only when floor contours change.
+Batch `motion-spike-cleanup-PGe7YD` covers the recorded Derby, Lincoln,
+Nottingham, Sherwood and current York descriptors. Batch
+`motion-spike-cleanup-PigLNe` covers the other five maps extracted from their
+recorded browser archives (`archived-motion-contours-nbvshsfr/sources.json`
+records archive paths and descriptor hashes). Across these ten snapshots only
+the identified York floor changes. Its complete output exactly matches the
+targeted candidate that passed 1,263/1,296 unchanged native clicks.
+These scans do not upgrade older snapshots to current full-compiler evidence.
+
 The movement contour for York sector 307 contains a near-zero-width inward slit:
 two vertices near `[177.57867,1355.26965]` enclose a spike reaching
 `[228.41462,1414.66054]`. Character clearance separates the far roof end from the
