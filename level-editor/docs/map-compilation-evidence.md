@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Turret walking outline clipped to repaired mesh (2026-10-20)
+
+The annex staging tool accepts a pinned staged-model library and intersects the
+retained receiver footprint with the repaired floor's actual triangles. This
+reduces its area from 3,148.883642 to 2,861.404370 square game units without
+splitting the floor or introducing holes. An independent barycentric height
+check passes all 713 two-unit-grid samples in the revised outline. This removes
+the unsupported edges found in the preceding review; sampled support is not
+full standing-box or rendered-contact proof.
+
+Coverage-checked stage `annex-turret-floor-tqEX5p` has exactly the same gameplay
+as compiled stage `annex-turret-floor-ynNtOq`. Export `saved-map-exports-9N0pbG`
+constructs natively with 124 areas, 620 sight obstacles, 88 doors, ten jump pairs,
+87,400 grid blocks and 204 elevation boundaries. All 35 entrance trips pass in
+`saved-map-entrances-762D4k`. The annex gate remains present, and the applied-state
+round trip and both player clicks pass in `passage-control-audit-KNYVad`.
+Initial/reset PC trips still succeed, so the audit's blanket blocked-state
+expectation still fails; it is not a green control-parity result.
+
+The staged outline explicitly records the repaired model hash and must be paired
+with that model. The installed library is unchanged. Exposed inner-band texture,
+moved assemblies, actor-specific permissions and rendered actor contact remain
+open. Formatting and lint pass.
+
 ## Turret cap repair candidate and visual review (2026-10-20)
 
 `blender/repair_annex_turret_floor.py` stages a pinned-model repair without changing
