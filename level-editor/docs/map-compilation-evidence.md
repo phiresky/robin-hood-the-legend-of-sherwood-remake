@@ -131,6 +131,22 @@ Browser job for `draft-scene-render-UslJut` reached rendering, but its process
 handle is now missing and no browser evidence or ZIP exists. Verification is
 incomplete and must be rerun; no asset publication has occurred.
 
+### Narrow-house ground seam isolated
+
+`york-entrance-ramps-exM1pD/narrow-passage.json` records the zero-rotation
+ground/ramp seam from `selected-neighbor-placements-0wAhPG`. It has 18 candidate
+crossings using integer contours, zero when checking both precise contours,
+zero with only the precise ramp, and 18 with only the precise ground.
+The ground obstacle has no recovered precision boundary.
+
+Intersecting the exported solid volumes with the ground-height plane and using
+the existing obstacle-boundary restoration recovers two ground contours and
+produces 20 collision-checked candidates with both precision representations.
+`narrow-ground-restoration.json` retains the original/recovered contours and
+their blocked coverage. This is diagnostic evidence, not a compiled/native
+success: the compiler must still retain that coverage at joined ordinary
+floor contacts and the moved/native fixtures must be rerun.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
