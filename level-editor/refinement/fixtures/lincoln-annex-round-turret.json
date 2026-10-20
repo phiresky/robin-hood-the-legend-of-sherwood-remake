@@ -1,0 +1,11 @@
+{
+  "map": "lincoln",
+  "assets": ["lincoln-keep-annex", "lincoln-keep-annex-round-turret"],
+  "size": [3200, 3200],
+  "copyXs": [650.25, 2250.25],
+  "assemblyY": 1800.75,
+  "terrainHeight": 0,
+  "tracePassages": true,
+  "entrances": [],
+  "passages": [{ "asset": "lincoln-keep-annex", "id": "passage-1/door-0" }]
+}

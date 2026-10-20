@@ -68,9 +68,14 @@ traversal. It remains unpublished pending the other checks above; see the
 Ray probes now locate the gray band on the floor itself; ineffective wall UV
 experiments were discarded. The gate audit now distinguishes PC access from
 NPC locks instead of assuming every inactive gate blocks PCs. Annex and installed
-terrace initial/applied/reset native audits pass. Full NPC traversal,
-moved assemblies and the visual repair remain open; see the
+terrace initial/applied/reset native audits pass. Full NPC traversal and the
+visual repair remain open; see the
 [floor and permission audit](map-compilation-evidence.md#turret-floor-texture-diagnosis-and-gate-audit-correction-2026-10-20).
+The staged annex/turret now also passes 48 native gate/state checks and 96 player
+clicks across copied, rotated and raised assemblies. Separating the turret
+rejects all 16 unsupported passages. Browser/model publication and rendered
+contact remain pending; see the
+[moved-assembly evidence](map-compilation-evidence.md#annex-gate-survives-moved-assemblies-and-rejects-separated-support-2026-10-20).
 See the
 [rotated lighting evidence](map-compilation-evidence.md#multi-height-terrace-lighting-survives-asset-rotation-2026-10-20),
 [light-selector repair](map-compilation-evidence.md#terrace-light-selectors-restored-to-physical-floors-2026-10-20),

@@ -33,7 +33,15 @@ if (fixture) {
     fixture.missingEntrances === undefined || typeof fixture.missingEntrances === "boolean",
   );
   assert.ok(Array.isArray(fixture.entrances));
-  assert.ok(fixture.entrances.length || fixture.lifts?.length);
+  assert.ok(fixture.entrances.length || fixture.lifts?.length || fixture.passages?.length);
+  if (fixture.passages) {
+    assert.ok(Array.isArray(fixture.passages));
+    assert.ok(
+      fixture.missingPassages === undefined || typeof fixture.missingPassages === "boolean",
+    );
+    for (const passage of fixture.passages)
+      assert.ok(fixture.assets.includes(passage.asset) && typeof passage.id === "string");
+  }
   if (fixture.lifts) {
     assert.ok(Array.isArray(fixture.lifts));
     for (const lift of fixture.lifts)
@@ -160,7 +168,11 @@ for (const height of [0, 40])
           document,
           asset,
           references.find((ref) => ref.id === asset.id),
-          [x + c * dx - (s * dy) / sinElevation, assemblyY + s * dx * sinElevation + c * dy, height],
+          [
+            x + c * dx - (s * dy) / sinElevation,
+            assemblyY + s * dx * sinElevation + c * dy,
+            height,
+          ],
         );
         document = inserted.document;
         const group = document.groups.find((group) => group.id === inserted.selection.id);
@@ -206,6 +218,7 @@ for (const height of [0, 40])
       building_pairs: [],
       ...(fixture?.lightReceivers ? { light_receivers: [] } : {}),
       ...(fixture?.lifts ? { checked_lifts: 0 } : {}),
+      ...(fixture?.passages ? { checked_passages: [] } : {}),
       ...(fixture?.missingEntrances ? { rejected_entrances: 0 } : {}),
     };
     results.push(row);
@@ -302,6 +315,25 @@ for (const height of [0, 40])
         );
         row.checked_lifts++;
       }
+      for (const selected of fixture?.passages?.filter((entry) => entry.asset === asset.id) ?? []) {
+        const definition = asset.gameplay.doors.find((door) => door.id === selected.id);
+        assert.ok(definition, `Missing authored passage ${asset.id}/${selected.id}`);
+        const [x, y, z] = transform(definition.node, definition.middle);
+        const matches = (compiled.descriptor.asset_geometry.doors ?? []).filter(
+          (door) => door.point_mid[0] === Math.round(x) && door.point_mid[1] === Math.round(y - z),
+        );
+        assert.equal(
+          matches.length,
+          fixture.missingPassages ? 0 : 1,
+          `Passage ${asset.id}/${selected.id} must ${fixture.missingPassages ? "remain unavailable" : "bind"} in ${file}`,
+        );
+        row.checked_passages.push({
+          asset: asset.id,
+          group: group.id,
+          id: selected.id,
+          door: matches[0],
+        });
+      }
       for (const room of asset.gameplay.interiors ?? []) {
         const selected = room.doors.filter(
           (door) =>
@@ -371,6 +403,7 @@ for (const height of [0, 40])
         fixture.entrances.length * 2,
       );
     if (fixture?.lifts) assert.equal(row.checked_lifts, fixture.lifts.length * 2);
+    if (fixture?.passages) assert.equal(row.checked_passages.length, fixture.passages.length * 2);
     if (fixture?.lightReceivers)
       assert.equal(
         row.light_receivers.length,

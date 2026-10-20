@@ -4,6 +4,29 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Annex gate survives moved assemblies and rejects separated support (2026-10-20)
+
+The neighboring-asset verifier now supports ordinary passages as well as building
+entrances and lifts. Fixture `lincoln-annex-round-turret.json` places two separate
+annex/turret assemblies at rotations 0, 37, 90 and 180 degrees and elevations 0
+and 40, above terrain at height zero plus the elevation offset. It uses staged
+gameplay `annex-turret-floor-tqEX5p`; the library remains unchanged.
+
+Export `selected-neighbor-placements-5h8zKr` retains all 16 expected gates across
+eight scenes. Native `passage-control-audit-AjiS69` passes all 48 gate/state
+combinations, including round trips, route search, 96 player clicks, and authored
+PC/NPC lock flags before activation, after activation and after reset.
+
+Negative fixture `lincoln-annex-separated-round-turret.json` moves only the turret
+400 units away. Export `selected-neighbor-placements-f7y8Ts` rejects all 16
+unsupported passages across the same rotations, elevations and copies. It does
+not bind them to a different annex floor or the other copy's turret.
+
+These are gameplay compilation and native movement checks, not rendered actor
+contact or a browser ZIP check of the repaired model. Floor texture repair, full
+NPC traversal and paired model/gameplay publication remain open. Formatting and
+lint pass; no runtime implementation changed.
+
 ## Turret floor texture diagnosis and gate audit correction (2026-10-20)
 
 Review-camera ray probes now identify the actual triangle under each sampled
