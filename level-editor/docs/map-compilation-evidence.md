@@ -26,9 +26,15 @@ with identical pass/fail classifications. The remaining rotated selection
 failures therefore predate this candidate. The separate hidden-overlay test
 exercises zero traversals and is not passing coverage.
 
-Full-scene compilation is staged in `saved-map-exports-76SS0C`; replay of the
-same previously failing supported-floor clicks remains required before
-publication. The asset library has not been changed by this experiment.
+Full-scene compilation `saved-map-exports-76SS0C` completes in 301.7 seconds.
+Replay `golden-ridge-same-probes-9ya0hxxc` preserves the three previously failing
+line-49 starts and goal, with an assertion that the exported jump pair is
+unchanged. All three still fail: the goal now selects ordinary sector 222,
+layer 31, rather than the jump overlay, even with hidden-floor selection.
+Closing the ridge alone therefore does not establish a working connection.
+The candidate remains unpublished; the next investigation is receiving-sector
+selection at the same goal. The asset library has not been changed by this
+experiment.
 
 ## Wychford map-only browser round trip
 
