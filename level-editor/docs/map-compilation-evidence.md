@@ -1112,6 +1112,23 @@ This supplies unequal-height traversal coverage for a layout whose projected
 edges remain eligible at all four tested rotations; it does not claim that
 arbitrary height differences or narrow sloped roofs are solved.
 
+### Native fixture refresh after departure changes
+
+The cross-asset, geometric, inactive, obstructed, movement-blocked,
+changing-approach, level-contour, complete-roof and rotated-roof descriptors now
+match current compiler output. Differences include the corrected cross-asset
+endpoint order, explicit departure warnings, receiver partitioning and generated
+forward receiving bands. Their editor comparisons pass. Native checks for
+geometric launch direction/solid clearance, changing approach availability, and
+roof overlay/skill selection pass after rebuilding with these fixtures.
+The native state test requires the established 32 MiB test-thread stack.
+The current roof ZIP batch `prepared-roof-placements-jaDk6f` also passes
+120/120 combat launches under the grounded-departure guard.
+
+The wider map-export suite is not yet green: additional sword/courtyard/detached
+jump fixtures and lift/light/state fixture comparisons still differ. Those must
+be inspected and verified independently; this refresh does not waive them.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall

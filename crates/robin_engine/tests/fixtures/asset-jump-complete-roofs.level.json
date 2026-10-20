@@ -34,6 +34,8 @@
       "Jump copy/york-bridge-square-central-timber-house/jump-pair-48-side-0: no matching edge after placement; connection is unavailable.",
       "Jump york-bridge-square-central-timber-house/york-bridge-square-central-timber-house/jump-pair-47-side-0: no matching edge after placement; connection is unavailable.",
       "Jump york-bridge-square-central-timber-house/york-bridge-square-central-timber-house/jump-pair-48-side-0: no matching edge after placement; connection is unavailable.",
+      "Jump copy/york-bridge-square-central-timber-house/building-117-walk-0/ledge-3-0/to/york-bridge-square-central-timber-house/york-bridge-square-central-timber-house/building-117-walk-0/ledge-3-0: direction 1 elevated takeoff animation lacks receiving coverage within its fifteen-unit departure strip; connection retained for review.",
+      "Jump copy/york-bridge-square-central-timber-house/building-117-walk-0/ledge-3-0/to/york-bridge-square-central-timber-house/york-bridge-square-central-timber-house/building-117-walk-0/ledge-3-0: direction 2 elevated takeoff animation lacks receiving coverage within its fifteen-unit departure strip; connection retained for review.",
       "Door york-bridge-square-central-timber-house/york-bridge-square-central-timber-house/interior-0/door-0: omitted because york-bridge-square-central-timber-house/york-bridge-square-central-timber-house/interior-0/door-0 outside must resolve to exactly one unblocked walkable surface (found 0); world point [598,924.7377876350388,100.09876065757678], projected [598,825]; containing areas (0, showing up to 8) [].",
       "Door copy/york-bridge-square-central-timber-house/interior-0/door-0: omitted because copy/york-bridge-square-central-timber-house/interior-0/door-0 outside must resolve to exactly one unblocked walkable surface (found 0); world point [515.1274218029957,939.61563943971,100.09876065757678], projected [515,840]; containing areas (0, showing up to 8) []."
     ],
@@ -63,6 +65,24 @@
                 ]
               ]
             },
+            "precise_polygon": [
+              [
+                448.12742180299574,
+                660.3813604700065
+              ],
+              [
+                509.12742180299574,
+                681.6856759288646
+              ],
+              [
+                579.1274218029957,
+                733.2410942316787
+              ],
+              [
+                519.1274218029957,
+                712.328223567351
+              ]
+            ],
             "skeleton_segments": [],
             "flags": 0,
             "obstacles": []
@@ -92,6 +112,24 @@
                 ]
               ]
             },
+            "precise_polygon": [
+              [
+                534,
+                643.639026977462
+              ],
+              [
+                594,
+                570.639026977462
+              ],
+              [
+                665,
+                621.639026977462
+              ],
+              [
+                604,
+                695.6390269774621
+              ]
+            ],
             "skeleton_segments": [],
             "flags": 0,
             "obstacles": []
@@ -114,12 +152,12 @@
               695
             ],
             [
-              511,
-              692
+              514,
+              687
             ],
             [
-              534,
-              708
+              537,
+              703
             ]
           ]
         },
@@ -139,12 +177,12 @@
               658
             ],
             [
-              569,
-              661
+              566,
+              666
             ],
             [
-              546,
-              645
+              543,
+              650
             ]
           ]
         },
@@ -533,28 +571,28 @@
         ],
         "points": [
           {
-            "x": 509,
-            "y": 926.3406800577311,
-            "z_bottom": 244.3406800577311,
-            "z_top": 244.3406800577311
+            "x": 509.12742137908936,
+            "y": 925.2000377127642,
+            "z_bottom": 243.51436209173153,
+            "z_top": 243.51436209173153
           },
           {
-            "x": 579,
-            "y": 976.4380088663511,
-            "z_bottom": 243.43800886635108,
-            "z_top": 243.43800886635108
+            "x": 579.1274213790894,
+            "y": 976.9777488772529,
+            "z_bottom": 243.7366542880195,
+            "z_top": 243.7366542880195
           },
           {
-            "x": 519,
-            "y": 1002.2179696482478,
-            "z_bottom": 290.21796964824784,
-            "z_top": 290.21796964824784
+            "x": 519.1274213790894,
+            "y": 1003.0213114380238,
+            "z_bottom": 290.69308820956917,
+            "z_top": 290.69308820956917
           },
           {
-            "x": 448,
-            "y": 950.5837760104504,
-            "z_bottom": 290.5837760104504,
-            "z_top": 290.5837760104504
+            "x": 448.12742137908936,
+            "y": 951.5478796561091,
+            "z_bottom": 291.166519602093,
+            "z_top": 291.166519602093
           }
         ],
         "projection_area": [
@@ -589,27 +627,27 @@
         "points": [
           {
             "x": 665,
-            "y": 913.0217670910117,
-            "z_bottom": 291.0217670910117,
-            "z_top": 291.0217670910117
+            "y": 912.8055465900703,
+            "z_bottom": 291.1665199482246,
+            "z_top": 291.1665199482246
           },
           {
             "x": 604,
-            "y": 939.3696093615827,
-            "z_bottom": 243.36960936158263,
-            "z_top": 243.36960936158263
+            "y": 939.1533888606413,
+            "z_bottom": 243.51436221879558,
+            "z_top": 243.51436221879558
           },
           {
             "x": 534,
-            "y": 887.5919002101755,
-            "z_bottom": 243.59190021017548,
-            "z_top": 243.59190021017548
+            "y": 887.3756797092342,
+            "z_bottom": 243.73665306738843,
+            "z_top": 243.73665306738843
           },
           {
             "x": 594,
-            "y": 861.5483355423394,
-            "z_bottom": 290.5483355423394,
-            "z_top": 290.5483355423394
+            "y": 861.3321150413981,
+            "z_bottom": 290.6930883995523,
+            "z_top": 290.6930883995523
           }
         ],
         "projection_area": [

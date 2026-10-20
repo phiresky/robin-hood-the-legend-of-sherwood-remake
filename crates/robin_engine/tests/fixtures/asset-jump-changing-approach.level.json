@@ -23,7 +23,9 @@
   "volumes": [],
   "asset_geometry": {
     "warnings": [
-      "Jump hut-a/hut/west/ledge-1-0: obstacles obstruct the flight or walking approach; 2 usable span(s) retained."
+      "Jump hut-a/hut/west/ledge-1-0: obstacles obstruct the flight or walking approach; 2 usable span(s) retained.",
+      "Jump hut-a/hut/west/ledge-1-0/to/jump-upper/jump-upper/east/ledge-3-0/span-0: direction 2 elevated takeoff animation lacks receiving coverage within its fifteen-unit departure strip; connection retained for review.",
+      "Jump hut-a/hut/west/ledge-1-0/to/jump-upper/jump-upper/east/ledge-3-0/span-1: direction 2 elevated takeoff animation lacks receiving coverage within its fifteen-unit departure strip; connection retained for review."
     ],
     "motion_data": {
       "layers": [
@@ -174,11 +176,11 @@
               396
             ],
             [
-              418,
+              412,
               396
             ],
             [
-              418,
+              412,
               359
             ]
           ]
@@ -224,11 +226,11 @@
               341
             ],
             [
-              418,
+              412,
               341
             ],
             [
-              418,
+              412,
               314
             ]
           ]
@@ -361,6 +363,23 @@
         "material_indices": []
       },
       {
+        "projection_plane": [
+          [
+            411,
+            410,
+            100
+          ],
+          [
+            501,
+            410,
+            100
+          ],
+          [
+            411,
+            510,
+            100
+          ]
+        ],
         "points": [
           {
             "x": 411,
@@ -396,24 +415,7 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": [],
-        "projection_plane": [
-          [
-            411,
-            410,
-            100
-          ],
-          [
-            501,
-            410,
-            100
-          ],
-          [
-            411,
-            510,
-            100
-          ]
-        ]
+        "material_indices": []
       }
     ],
     "doors": []

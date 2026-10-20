@@ -22,6 +22,10 @@
   ],
   "volumes": [],
   "asset_geometry": {
+    "warnings": [
+      "Jump hut-a/hut/west/ledge-1-0/to/jump-upper/jump-upper/east/ledge-3-0: direction 1 elevated takeoff animation lacks receiving coverage within its fifteen-unit departure strip; connection retained for review.",
+      "Jump hut-a/hut/west/ledge-1-0/to/jump-upper/jump-upper/east/ledge-3-0: direction 2 elevated takeoff animation lacks receiving coverage within its fifteen-unit departure strip; connection retained for review."
+    ],
     "motion_data": {
       "layers": [
         [
@@ -123,11 +127,11 @@
               314
             ],
             [
-              384,
+              390,
               314
             ],
             [
-              384,
+              390,
               350
             ]
           ]
@@ -148,11 +152,11 @@
               350
             ],
             [
-              419,
+              413,
               350
             ],
             [
-              419,
+              413,
               314
             ]
           ]
@@ -230,6 +234,23 @@
         "material_indices": []
       },
       {
+        "projection_plane": [
+          [
+            300,
+            255,
+            0
+          ],
+          [
+            392,
+            301,
+            46
+          ],
+          [
+            300,
+            399,
+            0
+          ]
+        ],
         "points": [
           {
             "x": 300,
@@ -265,26 +286,26 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": [],
-        "projection_plane": [
-          [
-            300,
-            255,
-            0
-          ],
-          [
-            392,
-            301,
-            46
-          ],
-          [
-            300,
-            399,
-            0
-          ]
-        ]
+        "material_indices": []
       },
       {
+        "projection_plane": [
+          [
+            411,
+            365,
+            100
+          ],
+          [
+            503,
+            411,
+            146
+          ],
+          [
+            411,
+            509,
+            100
+          ]
+        ],
         "points": [
           {
             "x": 411,
@@ -320,24 +341,7 @@
         "mouse": true,
         "show_shadow_polygon": false,
         "default_material": 0,
-        "material_indices": [],
-        "projection_plane": [
-          [
-            411,
-            365,
-            100
-          ],
-          [
-            503,
-            411,
-            146
-          ],
-          [
-            411,
-            509,
-            100
-          ]
-        ]
+        "material_indices": []
       }
     ],
     "doors": []
