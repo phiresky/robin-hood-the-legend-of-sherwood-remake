@@ -45,7 +45,7 @@ the exact ZIP loads without a base datadir, retaining 91/95 doorway trips and
 against both the prior scene and the verified editor archive.
 The fresh installed York export equals the tested staged descriptor.
 The south-lane entrance matches its terrace's physical slope, which was missing
-a walking surface. An unpublished terrace-floor candidate preserves the door's
+a walking surface. The published terrace-floor repair preserves the door's
 owner and height, passes 16 moved/copied/elevated native trips, and improves
 full York to 92/95 raw doorway trips; the remaining three are authored locks.
 All 130 stairs pass and the four existing climb failures remain. Access from
@@ -53,8 +53,16 @@ height-matched editor terrain passes 16 native round trips, and lowering that
 terrain by two units rejects all 16. A bounded low-edge correction also passes
 all 16 flat-ground approaches. Full York passes 95/95 doorway expectations in
 both authored door-state snapshots, including intended lock denials; this does
-not prove mission-trigger execution. Browser verification and publication remain
-pending.
+not prove mission-trigger execution. Browser export/reopen preserves gameplay
+and color/depth; the exact ZIP loads without base map data and retains 92/95
+raw doorway trips and 130/130 stairs.
+The scaffolded-house climb now passes all 32 isolated copied/rotated/elevated
+native routes after correcting export-time precision selection to use the
+full climbing footprint. Its earlier rounded boundary supported walking but
+not climbing. Full York improves to 38/40 climb routes, retains all 130 stairs,
+and passes 95/95 doorway expectations in both authored lock-state snapshots.
+The remaining two failures are the northern riverside wall climb in both
+directions. Engine movement is unchanged.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.

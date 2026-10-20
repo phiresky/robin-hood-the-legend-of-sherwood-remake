@@ -504,8 +504,40 @@ Full candidate `staged-map-export-2gSgUU` and entrance audit
 The same four climb failures remain. `authored-door-states-NTK8JU` passes all
 95 doorway expectations in both its `initial` and `after` snapshots, including
 intended lock denials. These snapshots test authored permissions, not execution
-of mission triggers. Browser fixture `draft-scene-render-2m6zfz` is under
-export/reopen verification; the terrace candidate is still unpublished.
+of mission triggers. Browser fixture `draft-scene-render-2m6zfz` passes
+export/reopen with matching gameplay and rendered color/depth. The archive is
+47,014,104 bytes, SHA-256
+`dd63d677146dfee35bb5db67a4e0697a1d63cf8ceba6c2aa1b50468b79c1af1c`.
+It constructs a native map without base map data. Exact archive audit
+`exact-map-archive-vc8fuef7` retains 92/95 raw doorway trips (only the three
+authored locks reject) and all 130 stair routes.
+`york-south-town-publication-installed` publishes the reviewed asset and York
+descriptor pin; models and rendered geometry remain unchanged.
+All nine installed file hashes match the publication receipt. Fresh installed
+export `saved-map-exports-A8WlrC` equals the reviewed staged descriptor exactly.
+
+### Remaining scaffold climb placement failures
+
+Fixture `york-scaffolded-corner-house-climb.json` isolates the scaffolded house's
+`building-133-lift`. Unmodified stage `york-climb-review-yxDRc7` and export
+`selected-neighbor-placements-E1nC10` reproduce 24 failed directed climbs out of
+32 across two copies, two elevations and four rotations. The eight routes at
+37 degrees pass; the routes at 0, 90 and 180 degrees stall. All lift bindings
+exist. This narrows the next investigation to exported approach/flight geometry;
+it does not yet establish a cause or justify a runtime change.
+
+The exporter was selecting subpixel clearance using the smaller walking
+footprint even for ladders/walls. On the narrow scaffold flight, the rounded
+boundary retained walking centers but no full-box climbing centers. Selecting
+precision with the applicable footprint fixes all 32 native routes in
+`selected-neighbor-placements-D24lCb`, with no asset or runtime edits.
+The regression suite passes 199 tests, including a narrow physical floor whose
+rounded climbing corridor disappears. Full export `saved-map-exports-oIBwLa`
+passes 38/40 native climb routes and all 130 stairs. The remaining failures are
+both directions of `building-286-lift` on the northern riverside wall stair.
+`authored-door-states-kTYGdL` passes all 95 doorway expectations in each of its
+two snapshots. These checks use compiled descriptors; a fresh browser ZIP bake
+of the climbing precision change has not yet been verified.
 
 ## York tower/gatehouse room ownership (2026-10-20)
 

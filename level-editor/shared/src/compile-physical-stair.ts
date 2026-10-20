@@ -77,10 +77,12 @@ export function compilePhysicalStairArea(input: PhysicalStairAreaInput): {
       ? projectStairClearance(navigation.boundary, floor.plane, false, clearanceOptions)
       : undefined;
   // Keep established endpoints when integer clearance remains usable. Recover
-  // subpixel precision only when rounding removes the walking center region.
+  // subpixel precision when rounding removes the applicable actor center region.
+  const clearanceHalf: Readonly<Point> = input.prepareClimbingClearance
+    ? half
+    : [half[0] - 0.99, half[1] - 0.99];
   const preciseClearance =
-    roundedClearance &&
-    stairCenterRegion(roundedClearance, [half[0] - 0.99, half[1] - 0.99]).length < 3
+    roundedClearance && stairCenterRegion(roundedClearance, clearanceHalf).length < 3
       ? projectStairClearance(navigation.boundary, floor.plane, true, clearanceOptions)
       : undefined;
   const clearanceBoundary = preciseClearance ?? roundedClearance;

@@ -1,0 +1,12 @@
+{
+  "map": "york",
+  "assets": ["york-bridge-square-scaffolded-corner-house"],
+  "terrainHeight": 0,
+  "entrances": [],
+  "lifts": [
+    {
+      "asset": "york-bridge-square-scaffolded-corner-house",
+      "id": "building-133-lift"
+    }
+  ]
+}

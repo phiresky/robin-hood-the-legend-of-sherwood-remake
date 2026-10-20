@@ -11,6 +11,27 @@ import { compilePhysicalTransitionObstacles } from "./compile-movement-transitio
 import { compilePhysicalStairRegion } from "./compile-physical-stair-region.ts";
 import type { Point } from "./level.ts";
 import type { Vec3 } from "./scene.ts";
+import { stairCenterRegion } from "./stair-center-region.ts";
+
+test("narrow climbing floors preserve clearance for the full actor footprint", () => {
+  const polygon: Point[] = [
+    [-12.626580735601184, 35.3142687355885],
+    [8.956926475368576, 24.12365401250729],
+    [19.963923793888203, 32.08539270729782],
+    [5, 38.82094707205497],
+    [-2.6642694079201346, 42.52035022101726],
+  ];
+  const height = (x: number, y: number) =>
+    1.4033427768490114 * x - 1.940102630075999 * y + 148.33149593121186;
+  const { area } = compilePhysicalStairArea({
+    prepareClimbingClearance: true,
+    surfaces: [{ polygon: polygon.map(([x, y]): Vec3 => [x, y, height(x, y)]), holes: [] }],
+    obstacles: [],
+    doors: [],
+  });
+  assert.ok(area.precise_polygon, "integer rounding removes the full-box climbing corridor");
+  assert.ok(stairCenterRegion(area.precise_polygon, [6, 3]).length >= 3);
+});
 
 const rectangle = (x0: number, y0: number, x1: number, y1: number): Vec3[] => [
   [x0, y0, y0 - 200],
