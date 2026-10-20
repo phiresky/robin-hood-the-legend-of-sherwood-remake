@@ -1,0 +1,25 @@
+{
+  "map": "york",
+  "assets": [
+    "york-west-town-raised-lane",
+    "york-west-market-frontage-gabled-house",
+    "york-west-market-frontage-dormer-house"
+  ],
+  "size": [4000, 3200],
+  "copyXs": [1000.25, 2800.25],
+  "assemblyY": 1800.75,
+  "terrainHeight": 90.00101,
+  "tracePassages": true,
+  "entrances": [
+    {
+      "asset": "york-west-market-frontage-gabled-house",
+      "door": "interior-0/door-0",
+      "sourceLocal": [73, 78.73016518510309]
+    },
+    {
+      "asset": "york-west-market-frontage-dormer-house",
+      "door": "interior-0/door-0",
+      "sourceLocal": [58, 47.32070456982375]
+    }
+  ]
+}

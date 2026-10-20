@@ -4,6 +4,39 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## York raised-lane surface restores reusable house approaches (2026-10-20)
+
+Fresh installed export `saved-map-exports-pQPqQJ` constructs natively with 164
+areas, 1,221 sight obstacles, 254 doors, 72 jump pairs and 277,242 fast-grid blocks.
+Entrance audit `saved-map-entrances-0jYHSY` confirms 46/95 passing, with the same
+pass/fail outcomes as the preceding York audit: 46 blocked routes and three
+receiver mismatches. The receiver failures belong to the riverside stone
+storehouse and the two west-market frontage houses.
+
+The raised-lane asset's `building-088` had a visible sloped receiver but no
+walking surface, and its receiver anchor pointed to height zero. Independent
+mesh probes `placed-point-support-4vPhOL` and `placed-point-support-U7YV3I` find
+the lane under the two house endpoints at 105.782381 and 118.905021, within 0.022
+units of their authored heights. `stage-york-raised-lane.mjs` restores a local
+walking surface from the retained footprint and removes the erroneous receiver
+anchor. Height normalization to one plane is bounded below 0.001 units; model
+bytes and house definitions are unchanged. No level-data lookup or runtime
+solver is involved.
+
+Stage `york-raised-lane-PoiaH7` lets all 32 entrances bind in copied/rotated/raised
+fixture `selected-neighbor-placements-MBeRwK`; native doorway round trips pass
+32/32 in `saved-map-entrances-PUO6Os`. Removing the lane rejects all 32 unsupported
+entrances in `selected-neighbor-placements-hgnDhS`. Normal click checks pass
+only 8/32: the other 24 return clicks select a different sector. Those remain
+unresolved, rather than being counted as successful clicks.
+
+Full staged York export `saved-map-exports-JkjMrl` constructs with 166 areas,
+1,223 sight obstacles, 254 doors, 72 jump pairs and 279,251 fast-grid blocks.
+Audit `saved-map-entrances-p24uz4` improves to 49/95: doors 87, 88 and 90 now pass,
+with no regressions. One receiver mismatch remains at door 57; 45 routes remain
+blocked. Browser export/reopen, broader neighboring-floor support and rendered
+contact still need review before publication. The installed library is unchanged.
+
 ## Soldier and civilian gate round trips verified (2026-10-20)
 
 The native passage-control audit now creates actual soldier and civilian entity

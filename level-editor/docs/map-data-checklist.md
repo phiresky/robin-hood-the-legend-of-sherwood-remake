@@ -114,6 +114,14 @@ The east and west courtyard lodges now pass in the assembled scene as well as
 32 copied/rotated/elevated entrance trips. Their browser ZIP reopens identically,
 loads without base data, and passes all four archived terrain-start entrance trips.
 
+A fresh York audit confirms the installed 46/95 result. A staged restoration of
+the west-town raised lane's missing local walking surface improves the full scene
+to 49/95 with no regressions, fixing two receiver mismatches and another blocked
+route. It passes 32 moved doorway round trips; removing the lane rejects all 32
+unsupported entrances. Normal return-click selection still fails in 24/32 cases,
+and the candidate is unpublished. See the
+[raised-lane evidence](map-compilation-evidence.md#york-raised-lane-surface-restores-reusable-house-approaches-2026-10-20).
+
 Fresh Derby, Lincoln, Nottingham and Sherwood exports all construct natively.
 The published Derby ownership correction moves three tower entrances out of
 the main-hall definition and links the split room in the editor. It preserves
