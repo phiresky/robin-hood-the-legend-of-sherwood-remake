@@ -28,11 +28,11 @@ match byte-for-byte through those two paths.
 See [catalog integrity](map-compilation-evidence.md#embedded-catalog-integrity) and
 [takeoff evidence](map-compilation-evidence.md#published-golden-house-jump-endpoint-inset).
 
-A tested compiler candidate removes a numerical slit in York's market-house
+The compiler now removes a numerical slit in York's market-house
 roof contour. It fixes 18 further failures with zero regressions across the
 same 1,296 click probes; ordinary/hidden selection together pass 1,293.
 A fresh indexed-library compile exactly reproduces the tested descriptor.
-Production integration and browser ZIP verification are pending; see
+Browser ZIP verification of this cleanup is pending; see
 [roof seam investigation](map-compilation-evidence.md#market-house-roof-seam-investigation).
 
 An earlier full-scene sweep and corrected Wychford retry export all ten saved scenes and
@@ -58,6 +58,9 @@ These archives are not all built with the latest compiler or asset corrections.
 York has now passed a fresh browser round trip and exact-archive native loading
 with the published golden-house repairs; see
 [fresh York archive](map-compilation-evidence.md#fresh-york-browser-archive-after-published-roof-repairs).
+Croisement03 also passes a fresh browser round trip and native loading with its
+regenerated tinted derivative. Lincoln's fresh retry is running after the prior
+attempt reached the runner's time limit during its second appearance bake.
 Lincoln uses the frozen `c24c55429` browser build, so its ZIP does not verify
 the subsequent climb-entry footprint correction. See
 [Lincoln browser round trip](map-compilation-evidence.md#lincoln-map-only-browser-round-trip).

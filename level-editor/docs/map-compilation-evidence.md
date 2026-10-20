@@ -31,15 +31,25 @@ The exact archive passes native construction without a base datadir, including
 color, depth, minimap and embedded editor scene loading. This covers the
 published golden-house receiver and takeoff repairs; the market-house seam
 experiment below is unpublished and absent from this archive.
-Lincoln and Croisement03 checks in this batch are still pending.
+Croisement03 also passes its fresh browser round trip and exact-archive native
+loading, including all 14 frames of its packaged scenery effect. ZIP SHA-256:
+`52a94a5181643988f15f1669344251a7aca9ac32ef7ada39293099bbdcc6fa90`.
+It loads at 1408×960 with 1,547 sight obstacles, three masks, 15 door projections
+and 5,016 grid blocks. This includes the regenerated tinted derivative.
+
+Lincoln's run terminated at its 30-minute runner limit during the second bake,
+at appearance 76/116. It had continued reporting progress and did not report a
+rebake mismatch. Retry `browser-exports-mxaNMa` runs serially against frozen
+snapshot `browser-build-qLQTog` on port 5184 with a one-hour limit.
 
 ## Market-house roof seam investigation
 
 The targeted `removeMotionSpikes` candidate removes only backtracking spikes
 whose endpoints are within 0.0001 units, retaining all surrounding vertices.
 Three unit tests cover the real roof contour, cyclic order/winding, traversable
-clearance, unchanged real gaps and fractional corners. It is not yet wired into
-the compiler: the active browser batch must finish against its current code.
+clearance, unchanged real gaps and fractional corners. It is now connected to
+the compiler's precise floor serialization, before graph preparation. Precision
+obstacle contours continue through their existing serialization path.
 
 Diagnostic `market-seam-targeted-3Zzj2c` applies this cleanup to the affected
 contour and rebuilds the native graph at export time. All 36 ordinary-click probes
@@ -59,8 +69,10 @@ SHA-256 before/after its exact, single-call replacement:
 All 193 targeted compiler/navigation tests pass under this replacement.
 A separate end-to-end regression reproduces the blocked corridor without the
 replacement and passes with it. The other nine current scenes are being
-compiled in `saved-map-exports-BZhLwR`. Production integration and a fresh ZIP
-with the cleanup remain pending.
+compiled in `saved-map-exports-BZhLwR`. Production integration is complete;
+a fresh ZIP with the cleanup remains pending. The normal production imports
+pass all 194 targeted compiler/navigation tests, application typechecking,
+targeted lint and formatting. Engine code is unchanged.
 
 The guarded `preparePreciseFloor` wrapper additionally requires that cleaned
 geometry serialize back to the same prepared integer boundary; otherwise it

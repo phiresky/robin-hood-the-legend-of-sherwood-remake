@@ -24,6 +24,7 @@ import { subtractMovementCollision } from "./subtract-movement-collision.ts";
 import { unionMovementSurfaces } from "./union-movement-surfaces.ts";
 import { alignNavigationBoundaries } from "./align-navigation-boundaries.ts";
 import { serializePreciseMotionRing } from "./serialize-precise-motion-ring.ts";
+import { preparePreciseFloor } from "./prepare-precise-floor.ts";
 import {
   assembleNavigationRegions,
   DisconnectedLiftRegion,
@@ -2288,7 +2289,7 @@ function compileAssetGameplayAttempt(
           : undefined;
     const preciseBoundary =
       recoveredBoundary && fixedPolygonBoolean("xor", [recoveredBoundary], [[boundary]]).length > 0
-        ? serializePreciseMotionRing(recoveredBoundary, boundary)
+        ? preparePreciseFloor(recoveredBoundary, boundary)
         : undefined;
     options.onProgress?.(
       `Constructing receiving obstacles (${receivingRegion}/${navigationRegions.length})`,
