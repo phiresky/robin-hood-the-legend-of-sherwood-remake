@@ -4,6 +4,30 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Soldier and civilian gate round trips verified (2026-10-20)
+
+The native passage-control audit now creates actual soldier and civilian entity
+variants for rights-swapping controls. It executes prepared outward/return gate
+sequences with complete movement animations, checks receiving surfaces after
+crossing, and requires a visit to the opposite sector before accepting arrival.
+Initial/reset locks reject those actors before dispatch. Soldier fixtures have
+an explicit Lacklandist camp. All changes are test-only.
+
+Installed Lincoln audit `passage-control-audit-YfDo96` passes six NPC checks:
+two open round trips and four locked rejections. Moved assemblies in
+`passage-control-audit-AjiS69` pass 96 NPC checks: 32 open round trips and 64
+rejections across two copies, four rotations and two elevations. Exact browser
+archive audit `passage-control-audit-KCSTFN` passes twelve NPC checks, including
+four complete round trips. Existing PC/control checks remain green, including
+the terrace regression `passage-control-audit-yJABcE` (which has no rights-swap
+NPC probes). The regular compiled-navigation suite passes 37 tests; 57 tests
+requiring separate fixtures are ignored.
+
+These tests use NPC authorization and movement entities with the existing shared
+complete-sprite test fixture. They do not claim soldier-specific sprite appearance,
+normal AI route discovery or rendered actor-contact verification. Those remain
+separate checks; map-only exports still contain no NPC mission placements.
+
 ## Annex and turret repair published with current derivatives (2026-10-20)
 
 Publication `turret-publication-installed` installs both reviewed asset definitions,

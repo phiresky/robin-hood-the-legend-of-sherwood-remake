@@ -884,6 +884,24 @@ fn walking_pc(
     layer: u16,
     sector: crate::position_interface::SectorHandle,
 ) -> crate::element::EntityId {
+    walking_test_actor(
+        engine,
+        assets,
+        source,
+        layer,
+        sector,
+        crate::element::ElementKind::ActorPc,
+    )
+}
+
+fn walking_test_actor(
+    engine: &mut EngineInner,
+    assets: &mut LevelAssets,
+    source: MapPoint,
+    layer: u16,
+    sector: crate::position_interface::SectorHandle,
+    kind: crate::element::ElementKind,
+) -> crate::element::EntityId {
     let action = OrderType::WalkingUpright;
     let script = crate::sprite_script::SpriteScript {
         action_id: action as u16,
@@ -915,7 +933,33 @@ fn walking_pc(
         source,
     );
     pc.actor.action_state = ActionState::Moving;
-    let owner = engine.add_test_entity(Entity::Pc(pc));
+    pc.element.kind = kind;
+    let entity = match kind {
+        crate::element::ElementKind::ActorPc => Entity::Pc(pc),
+        crate::element::ElementKind::ActorSoldier => {
+            Entity::Soldier(crate::element::ActorSoldier {
+                element: pc.element,
+                actor: pc.actor,
+                human: pc.human,
+                npc: Default::default(),
+                soldier: crate::element::SoldierData {
+                    cached_camp: crate::element::Camp::Lacklandists,
+                    ..Default::default()
+                },
+            })
+        }
+        crate::element::ElementKind::ActorCivilian => {
+            Entity::Civilian(crate::element::ActorCivilian {
+                element: pc.element,
+                actor: pc.actor,
+                human: pc.human,
+                npc: Default::default(),
+                civilian: Default::default(),
+            })
+        }
+        _ => panic!("unsupported walking test actor {kind:?}"),
+    };
+    let owner = engine.add_test_entity(entity);
     crate::engine::complete_test_runtime_fixture(engine, assets);
     owner
 }

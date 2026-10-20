@@ -174,11 +174,29 @@ fn exported_ordinary_passage_controls_support_actor_round_trips() {
                     } else {
                         Vec::new()
                     };
+                    let npc_round_trips: Vec<_> = if rights.is_null() {
+                        Vec::new()
+                    } else {
+                        [
+                            ("soldier", "locked_npc_villain", StairDispatch::SoldierPrepared),
+                            ("civilian", "locked_npc_civilian", StairDispatch::CivilianPrepared),
+                        ].into_iter().map(|(kind, lock, dispatch)| {
+                            let expected = !rights[lock].as_bool().unwrap();
+                            let outcome = walk_exported_lift_route(
+                                engine.clone(), assets.clone(), index, index, Some(&sprite), dispatch,
+                                |_, _, _| {},
+                            );
+                            serde_json::json!({"actor": kind, "expected_round_trip": expected,
+                                "passed": outcome == Ok(expected), "outcome": outcome})
+                        }).collect()
+                    };
                     results.push(serde_json::json!({
                         "file": file, "door": index, "state": state,
                         "expected_round_trip": expected,
                         "passed": outcome == Ok(expected) && gate_search.iter().all(|result| result["passed"] == true)
-                            && player_clicks.iter().all(|result| result["passed"] == true),
+                            && player_clicks.iter().all(|result| result["passed"] == true)
+                            && npc_round_trips.iter().all(|result| result["passed"] == true),
+                        "npc_round_trips": npc_round_trips,
                         "player_clicks": player_clicks,
                         "gate_search": gate_search,
                         "outcome": outcome,

@@ -57,7 +57,11 @@ initial/applied/reset checks pass. The reusable pair also passes 48 moved
 state checks and 96 player clicks; separating the turret rejects all 16 unsupported
 passages. A browser ZIP of two rotated, raised copies reopens with matching
 gameplay/color/depth, loads without a base datadir and passes native gate checks.
-Full NPC traversal, rendered actor contact and broader map coverage remain open.
+Soldier and civilian prepared round trips now pass on the installed scene,
+moved assemblies and exact browser ZIP: 114 NPC permission/traversal checks in
+total. Normal AI route discovery, rendered actor contact and broader map coverage
+remain open. See the
+[NPC gate audit](map-compilation-evidence.md#soldier-and-civilian-gate-round-trips-verified-2026-10-20).
 See the [installed turret repair](map-compilation-evidence.md#annex-and-turret-repair-published-with-current-derivatives-2026-10-20),
 [moved-assembly evidence](map-compilation-evidence.md#annex-gate-survives-moved-assemblies-and-rejects-separated-support-2026-10-20)
 and [paired archive evidence](map-compilation-evidence.md#repaired-annexturret-browser-zip-verified-natively-2026-10-20).

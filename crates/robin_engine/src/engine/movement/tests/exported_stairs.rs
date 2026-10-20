@@ -986,6 +986,8 @@ fn walk_exported_lift_with_tick(
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 enum StairDispatch {
     Prepared,
+    SoldierPrepared,
+    CivilianPrepared,
     GateSearch,
     PlayerClick,
     PlayerHiddenSelection,
@@ -1091,7 +1093,7 @@ fn walk_exported_lift_route(
         .with_arena_index(leave.sector_out_index.unwrap());
     // Ordinary movement between two doors on one landing does not need to
     // enter the stair. Prepared dispatch still exercises that explicit detour.
-    let requires_crossing = dispatch == StairDispatch::Prepared
+    let requires_crossing = matches!(dispatch, StairDispatch::Prepared | StairDispatch::SoldierPrepared | StairDispatch::CivilianPrepared)
         || source_sector != destination_sector
         || enter.layer_out != leave.layer_out;
     let lift_sector = enter.sector_in_index.unwrap();
@@ -1103,15 +1105,22 @@ fn walk_exported_lift_route(
         Some(crate::sector::LiftType::Ladder | crate::sector::LiftType::Wall)
     );
     assert_eq!(Some(lift_sector), leave.sector_in_index);
-    let owner = walking_pc(
+    let owner = walking_test_actor(
         &mut engine,
         &mut assets,
         enter.point_out,
         enter.layer_out,
         source_sector,
+        match dispatch {
+            StairDispatch::SoldierPrepared => crate::element::ElementKind::ActorSoldier,
+            StairDispatch::CivilianPrepared => crate::element::ElementKind::ActorCivilian,
+            _ => crate::element::ElementKind::ActorPc,
+        },
     );
     if let Some(sprite) = sprite {
-        engine.ent_mut(owner).pc_data_mut().unwrap().has_climb = true;
+        if let Some(pc) = engine.ent_mut(owner).pc_data_mut() {
+            pc.has_climb = true;
+        }
         let element = engine.ent_mut(owner).element_data_mut();
         let position = element.sprite.position_iface.clone();
         element.sprite = sprite.clone();
