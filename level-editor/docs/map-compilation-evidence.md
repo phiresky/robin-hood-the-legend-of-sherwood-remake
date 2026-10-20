@@ -424,6 +424,33 @@ the bastion descriptor changes from
 `a9eb53d0ed8a9e87b752d82e7d082258a53142160fe139dfbdbafca4ed44f9d1` to
 `02a69eb7d16832028eac4d91111e02461c74004bfc8ff74f66780301fb0a32ab`.
 This publishes the reviewed repair, not a claim of complete map parity.
+Fresh installed export `saved-map-exports-Uifhs9` completes in 133 seconds and
+its entire parsed level descriptor equals `staged-map-export-nWG57Y`.
+
+### South-lane room authoring investigation
+
+The remaining unlocked doorway at `[1440,2223]` belongs to
+`york-south-wall-lane-square-stone-tower` in the published metadata. Its
+authored outside height is 73.30152710209164, while the exported receiving
+surface is ground height zero. Ground-projected inside and middle anchors
+lie inside the combined `building-421`/`building-422` house footprint;
+the outside anchor lies outside it.
+
+`stage-york-south-lane-room.mjs` stages a transfer to the separate
+`york-south-gate-lane-rear-timber-house`, using its ground-blocker height as
+the local ground datum. It preserves assembled projected anchors, click
+polygon and door rules, explicitly selects the receiving house's physical
+solids, and leaves unrelated gameplay unchanged. No editor room links need
+migration. This is an unpublished authoring candidate, not proof that the
+neighboring geometry is correct.
+
+Stage `york-south-lane-room-OkkcAf` passes all 16 standalone native ground-click
+trips in `selected-neighbor-placements-ePiysf`, across copies, rotations and
+elevations. The paired fixture `selected-neighbor-placements-f490Ku` fails
+all 16: the remaining contributor is the separate terrace's
+`building-090-ground-blocker-254-0-0`. The new physical house definition
+does not exempt that exterior obstruction. Full-scene comparison and terrace
+geometry review remain pending; no candidate definitions are published.
 
 ## York tower/gatehouse room ownership (2026-10-20)
 

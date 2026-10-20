@@ -43,6 +43,10 @@ isolation checks. Browser export/reopen preserves gameplay and color/depth, and
 the exact ZIP loads without a base datadir, retaining 91/95 doorway trips and
 130/130 stairs. The publication helper validates the exact endpoint migrations
 against both the prior scene and the verified editor archive.
+The fresh installed York export equals the tested staged descriptor.
+The remaining south-lane entrance has an unpublished ground-height/house
+ownership candidate: 16/16 standalone native trips pass, but its neighboring
+terrace still blocks all 16 paired trips. That obstruction remains unresolved.
 
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.
