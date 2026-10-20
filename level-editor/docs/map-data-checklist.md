@@ -6,6 +6,16 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
+The latest map-only sweep exports nine of ten saved scenes and loads those nine
+through native geometry construction. Their 68 state transitions pass apply/reset
+checks; 177 lighting contours pass three ambience settings. Wychford exposed a
+receiver-plane identity error during navigation partitioning. Its compiler fix
+and focused regression pass; full-scene retry is pending. This is not full
+gameplay or baked-ZIP parity.
+Eligible changing sectors in seven maps additionally pass 918 independent-state
+and 312 combined-state sampled routes against live collision connectivity.
+See [fresh scene sweep](map-compilation-evidence.md#fresh-map-only-scene-sweep).
+
 The York red-house ramp and terrain connection metadata are now **published**.
 The reviewed export passes 88/95 full-scene doorway trips, recovering one entrance without
 regressing the installed baseline. All 130 stair routes pass; four of 40 climb

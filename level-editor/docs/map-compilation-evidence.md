@@ -1150,6 +1150,32 @@ overlapping multi-plane loop with a finite receiving probe, and verifies binding
 without dropping the receiver. The 185 partition/compiler tests pass, followed
 by that additional integration case; lint passes. Full Wychford recompilation
 is still required before declaring its export fixed.
+The retry `saved-map-exports-nTMy7G` passes receiving binding and reaches jump/
+door construction, confirming the original fatal lookup is gone. It then
+retries in best-effort mode because the placed church-side tower's lower stair
+endpoint is at height 134.101 while available terrain is about 88.325. The
+unsupported traversal is explicitly omitted; this is a separate placement gap,
+and the full export has not yet completed.
+
+### Fresh map-only scene sweep
+
+`saved-map-exports-yTaekO` finishes with nine successful descriptors:
+Croisement01/02/03, Derby, Leicester, Lincoln, Nottingham, Sherwood and York.
+Wychford fails on the plane-identity lookup above; the original batch remains
+marked incomplete. `saved-map-native-subset-p3zwoi2i` explicitly excludes that
+failure and records hashes of the nine unchanged descriptors. All nine pass
+native static geometry construction. Across them, all 68 recovered state
+transitions apply and reset successfully, and 177 lighting contours retain their
+layers and ambience behavior under each of three tested settings. The three
+Croisement exports contain zero light contours and therefore contribute no
+lighting coverage. These exports have empty PC spawn lists and no soldiers;
+they are map-only geometry checks, not baked ZIP or full gameplay certification.
+Independent-state collision/graph sampling passes 918 routes, and the combined
+all-applied/reset audit passes another 312. Those route probes cover eligible
+changing ordinary sectors in Croisement01/02/03, Derby, Lincoln, Nottingham and
+York; Leicester and Sherwood contribute no probes to these two audits. Both
+reports remain alongside the hashed subset descriptors. This is sampled
+connectivity evidence, not complete actor traversal or mission execution.
 
 ## York tower/gatehouse room ownership (2026-10-20)
 
