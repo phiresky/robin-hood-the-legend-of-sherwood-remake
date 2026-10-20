@@ -8,8 +8,19 @@ import { validateAssetGameplay } from "../shared/src/asset-gameplay.ts";
 
 const [scenePath, editsPath, name, mode] = process.argv.slice(2);
 assert.ok(scenePath && editsPath && name, "Supply scene.json edits.json fixture-name");
-assert.ok(mode === undefined || mode === "--publication", "Unknown preparation mode");
-const catalog = mode ? JSON.parse(await fs.readFile("library/3d-assets/index.json")) : undefined;
+assert.ok(
+  mode === undefined || mode === "--publication" || mode.startsWith("--model-overrides="),
+  "Unknown preparation mode",
+);
+const catalog =
+  mode === "--publication"
+    ? JSON.parse(await fs.readFile("library/3d-assets/index.json"))
+    : undefined;
+const overrides = mode?.startsWith("--model-overrides=")
+  ? JSON.parse(await fs.readFile(mode.slice("--model-overrides=".length)))
+  : [];
+assert.ok(Array.isArray(overrides));
+assert.equal(new Set(overrides.map((entry) => entry.asset)).size, overrides.length);
 assert.match(name, /^[a-z0-9-]+$/);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const relative = (value) => {
@@ -35,6 +46,16 @@ for (const reference of document.assetSources) {
   assert.equal(descriptor.id, reference.id);
   assert.ok(reference.model.endsWith(".glb"), "Fixture requires bundled GLB models");
   const edit = edits.find((row) => row.asset === reference.id);
+  const replacement = overrides.find((entry) => entry.asset === reference.id);
+  let replacementBytes;
+  if (replacement) {
+    assert.ok(edit, "A replaced model requires paired gameplay metadata");
+    assert.equal(replacement.sourceSha256, hash(model), "Replacement source model changed");
+    replacementBytes = await fs.readFile(replacement.path);
+    assert.equal(hash(replacementBytes), replacement.sha256, "Reviewed replacement changed");
+    assert.equal(replacementBytes.subarray(0, 4).toString(), "glTF", "Replacement must be GLB");
+    reference.model_sha256 = replacement.sha256;
+  }
   if (edit) {
     assert.equal(hash(bytes), edit.descriptorSha256);
     assert.equal(hash(model), edit.modelSha256);
@@ -60,7 +81,8 @@ for (const reference of document.assetSources) {
   assert.ok(reference.model.startsWith("3d-assets/"));
   await fs.mkdir(path.dirname(path.join(output, reference.descriptor)), { recursive: true });
   await fs.writeFile(path.join(output, reference.descriptor), updated);
-  await fs.link(path.resolve("library", reference.model), path.join(output, reference.model));
+  if (replacementBytes) await fs.writeFile(path.join(output, reference.model), replacementBytes);
+  else await fs.link(path.resolve("library", reference.model), path.join(output, reference.model));
   descriptors.set(descriptor.id, descriptor);
   const publicationFields = {};
   if (catalog) {
@@ -99,6 +121,8 @@ for (const reference of document.assetSources) {
   });
 }
 for (const edit of edits) assert.ok(descriptors.has(edit.asset), "Unused gameplay edit");
+for (const replacement of overrides)
+  assert.ok(descriptors.has(replacement.asset), "Unused model replacement");
 await fs.writeFile(
   `${output}/3d-assets/index.json`,
   JSON.stringify({ version: 1, assets: entries }),
@@ -115,6 +139,7 @@ await fs.writeFile(
     scope: "draft-scene-render-preparation-not-gameplay-proof",
     scenePath,
     editsPath,
+    modelOverrides: overrides,
     assets: document.assetSources,
   }),
 );

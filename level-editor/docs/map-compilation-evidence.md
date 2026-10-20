@@ -4,6 +4,34 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Repaired annex/turret browser ZIP verified natively (2026-10-20)
+
+The draft-scene packager accepts an explicit `--model-overrides=MANIFEST` for
+review-only fixtures. Each replacement requires paired gameplay edits, the exact
+installed source model hash and the exact replacement hash. These fixtures do not
+copy stale publication derivatives or modify the library.
+
+Fixture `draft-scene-render-gdwBbO` contains two annex/turret assemblies rotated
+37 degrees and raised 40 units, using model
+`b2499e11908186a53f401bba801a6f740786b84f04baaaa6dd43fa45290eb454` and staged
+gameplay `annex-turret-floor-xuccNq`. The actual browser export and reopen pass:
+gameplay and rendered color/depth match after loading the embedded editor scene
+and models. Archive `lincoln-annex-turret.zip` is 28,244,276 bytes, SHA-256
+`be6b013d1fdf58a6efb3df2fa4ce76ca513e774401a7fcad2264ca20e81589ab`.
+
+The native archive loader passes without a base datadir: 3200×3200, 43 sight
+obstacles, two door projections, 13,500 fast-grid blocks, and two appearance
+regions for two controls, with color/depth/minimap and editor scene loaded.
+Exact archive extraction `exact-map-archive-jvgab_6q` verifies no mission content.
+Control audit `passage-control-audit-KCSTFN` passes all six gate/state combinations
+and twelve player clicks using those exact level bytes, including PC/NPC lock
+flags and reset behavior. Actor sprites for this movement test are supplied by
+the test harness; they are not baked into the map-only archive.
+
+Formatting and lint pass. Full NPC traversal, rendered actor contact, refreshed
+derivatives and installed-library publication remain pending. The archive check
+is not proof of every map or every annex feature.
+
 ## Turret wall texture repaired and paired with its floor definition (2026-10-20)
 
 `repair_annex_turret_floor.py --fit-floor-uv --fit-inner-wall-uv --review-all-sides`
