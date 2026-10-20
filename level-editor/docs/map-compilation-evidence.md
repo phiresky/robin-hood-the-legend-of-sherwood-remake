@@ -227,6 +227,29 @@ Fresh installed export `saved-map-exports-ENYL4z` completes in 127 seconds.
 Audit `saved-map-entrances-ZAaXsr` retains 88/95 trips with the exact same seven
 failure records as `saved-map-entrances-VOxjIo`; all 130 native stair routes pass.
 
+### Gatehouse folded-contact diagnosis
+
+The remaining 90°/180° cases stall before leaving the ground sector.
+`york-entrance-ramps-DjZkP4/partition-trace.log` captures the partition plan:
+at each of those rotations, two proposed seams produce zero usable passages.
+This distinguishes a missing exported crossing from an actor failing to follow
+an already usable crossing.
+
+Two isolated compiler experiments are insufficient. Subtracting each floor's
+exclusions before combining world support retains 16/32 native ground-click
+trips in `selected-neighbor-placements-GjiFyK`. Searching additional tangential
+endpoint offsets also retains 16/32 in `selected-neighbor-placements-tYXcvE`.
+Neither experiment is integrated or published.
+
+The crossing trace reports missing supported ramp endpoints and failed obstacle
+or world-support sweeps. Integer seam coordinates also reconstruct unequal
+heights on the two floors: on the 180° ramp, `[808,1676]` evaluates to height
+77.115661 while the shared physical edge and ground are at 90.001010;
+`[814,1680]` evaluates to 99.900165. Export preparation must distinguish the
+physical seam from its integer projected handoff while retaining native endpoint
+and swept-collision checks. The evidence does not yet prove that correcting
+that distinction alone resolves all remaining approaches.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
