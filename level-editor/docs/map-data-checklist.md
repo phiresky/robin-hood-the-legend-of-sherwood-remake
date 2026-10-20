@@ -6,6 +6,13 @@ records must be reproduced. Export reads only the editor document and asset-loca
 definitions. One-time extraction may restore missing definitions into assets.
 Connections and runtime indices are rebuilt after placement, rotation and copying.
 
+The latest York entrance-ramp candidate remains **unpublished**. Asset-local
+floor promotion and endpoint normalization make all reviewed doors bind in moved
+placements, but native traversal exposes missing seam passages and overlapping
+receivers. Its full-scene doorway audit passes 88/95, including two recovered
+entrances and one regression; this does not supersede the installed results.
+See the [ramp reproduction](map-compilation-evidence.md#york-entrance-ramp-reproduction).
+
 Independent floors inside another region's collision exclusion now receive
 separate export-prepared layers, ordered so normal clicks reach the floor.
 This fixes sixteen moved Lincoln keep entrance cases and an existing island-floor

@@ -62,6 +62,7 @@ if (fixture) {
   for (const entrance of fixture.entrances) {
     assert.ok(fixture.assets.includes(entrance.asset) && typeof entrance.door === "string");
     assert.ok(entrance.sourceLocal?.length === 2 && entrance.sourceLocal.every(Number.isFinite));
+    assert.ok(entrance.sourceHeight === undefined || Number.isFinite(entrance.sourceHeight));
   }
 }
 const ids = fixture?.assets ?? [
@@ -371,11 +372,15 @@ for (const height of [0, 40])
             "Separate group pivots must preserve the authored neighboring assembly",
           );
           const altitude = outside[2];
-          const authoredSource = fixture?.entrances.find(
+          const authoredApproach = fixture?.entrances.find(
             (entrance) => entrance.asset === asset.id && entrance.door === definition.id,
-          )?.sourceLocal;
+          );
+          const authoredSource = authoredApproach?.sourceLocal;
           const source = authoredSource
-            ? transform(definition.node, [...authoredSource, definition.outside[2]])
+            ? transform(definition.node, [
+                ...authoredSource,
+                authoredApproach.sourceHeight ?? definition.outside[2],
+              ])
             : asset.id === "lincoln-keep" && definition.id === "interior-2/door-0"
               ? transform(definition.node, [70, 5, definition.outside[2]])
               : [
@@ -383,11 +388,38 @@ for (const height of [0, 40])
                   door.point_out[1] + (dy / length) * 32 + altitude,
                   altitude,
                 ];
+          let sourceLayer = door.layer_out;
+          if (authoredApproach?.sourceHeight !== undefined) {
+            const layers = new Set(
+              compiled.descriptor.asset_geometry.sight_obstacles.flatMap((shape) => {
+                if (!shape.projection_area) return [];
+                const vertices = shape.points.map((point) => [point.x, point.y, point.z_top]);
+                if (
+                  !pointInGameplayPolygon(
+                    source.slice(0, 2),
+                    vertices.map(([x, y]) => [x, y]),
+                    true,
+                  )
+                )
+                  return [];
+                const plane = heightPlane(vertices.slice(0, 3));
+                return Math.abs(planeHeight(plane, source) - source[2]) < 1e-4
+                  ? [shape.projection_area[1]]
+                  : [];
+              }),
+            );
+            assert.equal(
+              layers.size,
+              1,
+              "Ground approach needs one receiving layer at its authored height",
+            );
+            sourceLayer = [...layers][0];
+          }
           row.building_approaches.push({
             point_out: door.point_out,
             layer: door.layer_out,
             sector: door.sector_out,
-            source_layer: door.layer_out,
+            source_layer: sourceLayer,
             source_world: source,
           });
           return door.point_out;

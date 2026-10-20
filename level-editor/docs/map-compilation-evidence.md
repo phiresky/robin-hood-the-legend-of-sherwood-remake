@@ -4,6 +4,44 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## York entrance-ramp reproduction
+
+`stage-york-entrance-ramps.mjs` prepares an unpublished candidate for the red
+timber house (part 327), bridge gatehouse (171/177) and their raised terrain.
+It converts existing ramp receivers into local walkable floors with bottom-edge
+contacts, selects physical body volumes, and clears only the asset's own authored
+floor tops. Door outside points are normalized onto the floor by less than 0.001
+units, retaining their projected positions; the source part frames must match.
+Door rules and inside/middle anchors are retained. No runtime changes are involved.
+
+Stage `york-entrance-ramps-9L9fmp` uses the same gameplay as `X8LQR6` but starts
+ground probes beyond each ramp's bottom edge. The placement helper accepts an
+explicit local source height and finds its receiving layer from the compiled
+geometry, rather than assuming it shares the door's layer. It rejects absent or
+ambiguous height bindings. In these fixtures all resolved ground layers are zero.
+
+The eight placements combine rotations 0/37/90/180 degrees, elevations 0/40 and
+two independent copies. All 16 house and 32 gatehouse door bindings succeed.
+Native ground-click round trips pass only 4/16 house cases and 4/32 gatehouse
+cases (`selected-neighbor-placements-dv1Zvn` and `3gM6dJ`). The failures include
+blocked starting positions, missing connecting passages and receiver mismatches.
+These are reproducible failures, not successful parity coverage.
+
+Full-scene export `saved-map-exports-9GzSWD`, audited through
+`saved-map-entrances-mB1atu`, passes 88/95 doorway-start sprite round trips.
+Compared with the installed 87/95 result, the red-house and second bridge
+entrances recover, but entrance `[578,1105]` regresses with a receiver mismatch.
+The first bridge entrance also has a receiver mismatch. Three expected authored
+locks remain counted as failures in this unmodified-lock audit. No lock-aware
+success count is claimed for this candidate.
+
+The next export-side issue is floor partitioning and seam preparation: rotated
+ramps can share projected coverage with lower ground, and the proposed split
+does not always yield usable character-sized passages. Retaining the joined
+region then leaves ambiguous receiving heights. Resolve that preparation and
+repeat moved/full-scene checks before browser verification or publication.
+The main library remains unchanged by this candidate.
+
 ## York tower/gatehouse room ownership (2026-10-20)
 
 Stage `york-gatehouse-room-FXXYrt` moves door `interior-0/door-2` from the tall
