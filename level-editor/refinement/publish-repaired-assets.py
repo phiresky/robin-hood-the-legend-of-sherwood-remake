@@ -175,6 +175,9 @@ def publish(library, stage, gameplay_stage, fixture, output, apply=False, archiv
         assert len(names) == 1
         document = json.loads(zipped.read(names[0]))
     assert not document.get('mission')
+    if connection_review:
+        assert document.get('interiorConnections', []) == connection_review['interiorConnections'], \
+            'Archive room connections differ from reviewed publication'
     references = {ref['id']: ref for ref in document['assetSources']}
     root = library / '3d-assets'
     with LibraryLock(root):

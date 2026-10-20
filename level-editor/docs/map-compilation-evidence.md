@@ -377,6 +377,11 @@ exports. All 32 native sprite routes pass. `bastion-body-collision-jqr1_x5t`
 checks each entrance's inside coordinate against the outdoor fast-find layer:
 all 16 remain blocked by the physical body, while 32 directed walks on nearby
 ground pass. These probes cover copies, four rotations and two elevations.
+The same body test without the neighboring terrace
+(`bastion-standalone-body-6ey1mpby`) also passes all 16 blocked-point checks
+and 32 ground walks, so the terrace is not masking missing bastion collision.
+Full-scene `bastion-room-links-jt257lb7` passes all six directed native room
+crossings among `[2809,820]`, `[2634,783]` and `[2729,1488]`.
 
 The publisher now accepts explicit endpoint migrations in addition to appended
 links. It checks the scene hash, exact prior links and endpoint, both reviewed
