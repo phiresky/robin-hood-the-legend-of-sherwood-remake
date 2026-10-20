@@ -6,10 +6,16 @@ import { compileMap } from "../app/src/map-compile.ts";
 import { createTerrainGrid } from "../shared/src/authored-terrain.ts";
 
 const [staged, mode] = process.argv.slice(2);
-assert.ok(staged, "Provide a staged edits directory");
+assert.ok(staged, "Provide a staged edits directory or --asset=ID");
 assert.ok(mode === undefined || mode === "--published", "Unknown verification mode");
-const edits = JSON.parse(await fs.readFile(`${staged}/edits.json`, "utf8"));
-const review = JSON.parse(await fs.readFile(`${staged}/review.json`, "utf8"));
+const publishedAsset = staged.startsWith("--asset=") ? staged.slice(8) : undefined;
+assert.ok(publishedAsset === undefined || publishedAsset.length > 0, "Provide an asset ID");
+const edits = publishedAsset
+  ? [{ asset: publishedAsset }]
+  : JSON.parse(await fs.readFile(`${staged}/edits.json`, "utf8"));
+const review = publishedAsset
+  ? { changes: [] }
+  : JSON.parse(await fs.readFile(`${staged}/review.json`, "utf8"));
 const externalDoors = review.changes
   .filter((change) => change.landing === "external placement receiver")
   .map((change) => change.door);
@@ -17,11 +23,16 @@ assert.equal(edits.length, 1, "This fixture places one complete asset independen
 const edit = edits[0];
 const index = JSON.parse(await fs.readFile("library/3d-assets/index.json", "utf8")).assets;
 const entry = index.find((entry) => entry.id === edit.asset);
+assert.ok(entry, `Unknown published asset: ${edit.asset}`);
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const bytes = await fs.readFile(`library/3d-assets/${entry.descriptor}`);
 assert.equal(hash(bytes), entry.descriptor_sha256);
 const descriptor = JSON.parse(bytes);
-if (mode === "--published") assert.deepEqual(descriptor.gameplay, edit.gameplay);
+if (publishedAsset) {
+  assert.ok(descriptor.gameplay?.lifts?.length, "Published asset has no authored lifts");
+  edit.descriptorSha256 = entry.descriptor_sha256;
+  edit.gameplay = descriptor.gameplay;
+} else if (mode === "--published") assert.deepEqual(descriptor.gameplay, edit.gameplay);
 else {
   assert.equal(entry.descriptor_sha256, edit.descriptorSha256);
   descriptor.gameplay = edit.gameplay;
@@ -102,7 +113,14 @@ for (const height of [0, 40])
   }
 await fs.writeFile(
   `${output}/diagnostics.json`,
-  JSON.stringify({ scope: "static-geometry-only-not-gameplay-parity", complete: true, results }),
+  JSON.stringify({
+    scope: "static-geometry-only-not-gameplay-parity",
+    ...(publishedAsset
+      ? { publishedAsset, descriptorSha256: entry.descriptor_sha256, externalGapChecks: false }
+      : {}),
+    complete: true,
+    results,
+  }),
 );
 await fs.writeFile(`${output}/edits.json`, JSON.stringify(edits));
 await fs.writeFile(`${output}/external-gap-checks.json`, JSON.stringify(gaps));

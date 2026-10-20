@@ -221,6 +221,47 @@ its map results cannot establish the new envelope behavior. The native placement
 and complete Derby checks above use fresh compiler output. Rendered actor
 integration and broader asset/state coverage remain incomplete.
 
+## Broader published climb checks
+
+`saved-map-exports-eqSwjs` freshly compiles Lincoln, Nottingham, Sherwood and
+York with the supported-entry correction. Native player-click climb checks pass
+all eight Lincoln routes, four available Sherwood routes and all 40 York routes.
+Nottingham has no climb routes in this check. Six Sherwood routes are forbidden
+by prepared passage requirements and are not counted as successful traversals.
+
+The placement checker now accepts `--asset=ID` to read the current published
+descriptor directly, verify its library hash and compile four rotations at two
+elevations. This mode explicitly records that it does not perform authoring-stage
+external-gap checks. The existing staged and `--published` modes remain available.
+Targeted lint and formatting pass.
+
+The Lincoln courtyard shed (`local-stair-placements-wonWyU`) and Sherwood west
+treehouse (`local-stair-placements-0emdxE`) each pass 16/16 native routes.
+`published-climb-sweep-nrtpah0w` adds another 16/16 for each of the Lincoln east
+curtain middle, Lincoln inner gatehouse, Sherwood central oak platform and York
+scaffolded corner house: 96/96 moved routes across these six published assets.
+The inputs for the first two are retained in `published-climb-inputs-gpbjr_wa`.
+
+Six other standalone asset checks reject missing raised neighbours: Lincoln
+keep annex, York stone gable house, east riverside northern wall stair, precinct
+southwest wall ramp, ivy-covered square tower and west-town raised lane.
+These are incomplete standalone fixtures, not proof that their assembled
+connections are broken. The available full-scene climb routes above pass;
+these isolated tests need assembled neighbours.
+
+Sherwood's ladder oak is a separate unresolved issue. All eight placements compile
+three entrances, but two upper entrances have empty passage-state permissions.
+Consequently all 48 directed routes are skipped as forbidden; zero successful
+routes is correctly a failed audit. `local-stair-placements-Ewqp69/blocked-lift-legs.json`
+locates both obstructions in the same permanent obstacle on the upper landing's
+outside approach. The normal collision callback did not cover this later
+passage-state phase; the per-obstacle analysis records the exact legs and contour.
+The diagnostic `ladder-oak-passage-diagnostic-bn45mti5` removes only those empty
+permissions, leaving movement geometry untouched: 40/48 routes pass, with eight
+90-degree failures remaining. This bypass is not a production correction or a
+clearance proof and is not published. Both approach geometry and the rotated
+routes still need resolution.
+
 ## York entrance-ramp reproduction
 
 `stage-york-entrance-ramps.mjs` prepares an unpublished candidate for the red

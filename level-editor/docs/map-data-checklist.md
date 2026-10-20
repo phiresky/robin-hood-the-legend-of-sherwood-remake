@@ -40,6 +40,11 @@ passes all 32 moved postern climbs at four rotations and two elevations.
 Static/changing barriers retain their existing boundaries. Its verified browser
 ZIP predates these climb fixes. See
 [rotated climb footprints](map-compilation-evidence.md#supported-climb-entry-footprints-after-rotation).
+Broader current checks pass all eight Lincoln and 40 York climb routes, plus
+96 moved routes across six more published assets. Sherwood's ladder oak remains
+blocked at its upper approaches; its six full-scene routes are forbidden and
+are not counted as passes. See
+[published climb checks](map-compilation-evidence.md#broader-published-climb-checks).
 
 The York red-house ramp and terrain connection metadata are now **published**.
 The reviewed export passes 88/95 full-scene doorway trips, recovering one entrance without
