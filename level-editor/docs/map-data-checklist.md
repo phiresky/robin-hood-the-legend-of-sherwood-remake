@@ -38,8 +38,8 @@ also exposed an unsupported keep-annex gate endpoint. Export now validates
 gates like ordinary passages: strict mode rejects unsupported endpoints;
 best-effort mode warns and omits that gate. The fresh full-scene export loads,
 passes all 35 entrance trips and passes the terrace's closed/open/reset checks.
-The omitted annex gate still needs its physical approach repaired; this is not
-full parity. The two obsolete lighting anchors are now corrected in a subsequent
+The annex gate was initially omitted; its subsequent published repair is described
+below. This is not full parity. The two obsolete lighting anchors are now corrected in a subsequent
 stage; emitted lighting is unchanged because other selectors covered the same
 layers. Splitting its contours by receiving height now preserves all seven
 selectors after rotation: 112 moved receiver probes and native ambience checks
@@ -47,49 +47,20 @@ pass. The complete scene passes browser export/reopen verification and native
 ZIP loading. Its archived descriptor passes all 35 entrance trips, sixteen stair
 routes, eight climbs and terrace gate closed/open/reset checks. All 32 reviewed
 definitions are now published; the fresh installed export has identical asset
-geometry and passes all 35 entrance trips. The annex gate and broader review
-remain open. See the
+geometry and passes all 35 entrance trips. Broader review remains open. See the
 [full archive and publication evidence](map-compilation-evidence.md#full-lincoln-archive-verified-for-publication-2026-10-20).
-The annex gate's missing receiver is now isolated to the separate round turret,
-whose floor surface was discarded during recovery. An unpublished restoration
-retains the gate and all 35 entrance trips, but the turret's visible slab/cap
-heights conflict with that floor. Mesh reconciliation and actor-specific gate
-permission tests remain necessary; see the
-[annex receiver diagnosis](map-compilation-evidence.md#annex-gate-discarded-turret-receiver-isolated-2026-10-20).
-A staged cap-only model repair now supports the gate endpoint within 0.0001 game
-units while preserving the exterior, but exposes an untextured inner band and
-supports only 715/785 sampled receiver-footprint points. It remains unpublished
-pending footprint and visual repairs; see the
-[turret model review](map-compilation-evidence.md#turret-cap-repair-candidate-and-visual-review-2026-10-20).
-Clipping the staged receiver to that mesh now passes all 713 sampled floor points,
-retains the gate and all 35 entrance trips, and preserves applied-state gate
-traversal. It remains unpublished pending the other checks above; see the
-[clipped-outline evidence](map-compilation-evidence.md#turret-walking-outline-clipped-to-repaired-mesh-2026-10-20).
-Ray probes now locate the gray band on the floor itself; ineffective wall UV
-experiments were discarded. The gate audit now distinguishes PC access from
-NPC locks instead of assuming every inactive gate blocks PCs. Annex and installed
-terrace initial/applied/reset native audits pass. Full NPC traversal and the
-visual repair remain open; see the
-[floor and permission audit](map-compilation-evidence.md#turret-floor-texture-diagnosis-and-gate-audit-correction-2026-10-20).
-The staged annex/turret now also passes 48 native gate/state checks and 96 player
-clicks across copied, rotated and raised assemblies. Separating the turret
-rejects all 16 unsupported passages. Browser/model publication and rendered
-contact remain pending; see the
-[moved-assembly evidence](map-compilation-evidence.md#annex-gate-survives-moved-assemblies-and-rejects-separated-support-2026-10-20).
-A staged floor UV adjustment now removes the larger lower gray band without
-changing the walking geometry or atlas pixels. A separate upper wall band remains;
-the model is still unpublished. See the
-[UV repair review](map-compilation-evidence.md#turret-floor-uv-repair-removes-the-lower-gray-band-2026-10-20).
-The subsequent bounded inner-wall UV repair removes the remaining band in all
-four reviewed asset views. The paired textured model still passes 713/713 floor
-samples and preserves the previously tested gameplay definition. Paired-model
-browser verification and publication remain pending; see the
-[textured candidate evidence](map-compilation-evidence.md#turret-wall-texture-repaired-and-paired-with-its-floor-definition-2026-10-20).
-The paired model now passes actual browser ZIP export/reopen and native archive
-loading without a base datadir. The archive's two copied gates also pass six
-state checks and twelve player clicks. Full NPC traversal, rendered actor contact
-and publication remain pending; see the
-[paired archive evidence](map-compilation-evidence.md#repaired-annexturret-browser-zip-verified-natively-2026-10-20).
+The annex gate repair is now published in the main library with the corrected
+round-turret floor, clipped receiver, bounded UV repairs and refreshed derivatives.
+The fresh installed Lincoln export constructs 124 areas, 620 sight obstacles,
+88 doors and ten jump pairs; all 35 entrance round trips and the annex gate's
+initial/applied/reset checks pass. The reusable pair also passes 48 moved
+state checks and 96 player clicks; separating the turret rejects all 16 unsupported
+passages. A browser ZIP of two rotated, raised copies reopens with matching
+gameplay/color/depth, loads without a base datadir and passes native gate checks.
+Full NPC traversal, rendered actor contact and broader map coverage remain open.
+See the [installed turret repair](map-compilation-evidence.md#annex-and-turret-repair-published-with-current-derivatives-2026-10-20),
+[moved-assembly evidence](map-compilation-evidence.md#annex-gate-survives-moved-assemblies-and-rejects-separated-support-2026-10-20)
+and [paired archive evidence](map-compilation-evidence.md#repaired-annexturret-browser-zip-verified-natively-2026-10-20).
 See the
 [rotated lighting evidence](map-compilation-evidence.md#multi-height-terrace-lighting-survives-asset-rotation-2026-10-20),
 [light-selector repair](map-compilation-evidence.md#terrace-light-selectors-restored-to-physical-floors-2026-10-20),

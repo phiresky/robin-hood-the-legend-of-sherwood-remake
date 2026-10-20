@@ -4,6 +4,33 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Annex and turret repair published with current derivatives (2026-10-20)
+
+Publication `turret-publication-installed` installs both reviewed asset definitions,
+the repaired turret model, refreshed lossy/preview models and Lincoln scene pins.
+All 14 installed file hashes match its report. The annex model and derivatives
+remain byte-identical; its gameplay binds the gate and control to the actual
+neighboring turret endpoint. The turret model is
+`b2499e11908186a53f401bba801a6f740786b84f04baaaa6dd43fa45290eb454`.
+
+Derivative stage `turret-derivative-stage-smnjpljz` generated the 136,464-byte
+lossy GLB from the 920,272-byte model and a 12,540-byte preview. Its eight-view
+comparison was reviewed; mean color difference is 3.35 and maximum per-view
+95th-percentile difference is 11. Receipts bind the exact sources and outputs.
+Publication used the verified archive bytes from `draft-scene-render-gdwBbO`,
+copied unchanged into `turret-publication-fixture-rxp1qegy` alongside the final
+derivatives. The guarded dry run passed before installation.
+
+Fresh installed export `saved-map-exports-swOhkS` constructs natively with 124
+areas, 620 sight obstacles, 88 doors, ten jump pairs, 87,400 fast-grid blocks and
+204 elevation boundaries. Entrance audit `saved-map-entrances-3735uR` passes all
+35 round trips; `passage-control-audit-YfDo96` passes the annex gate's three
+states, PC round trips/clicks and actor-specific lock flags. The gate is no longer
+omitted from installed-library exports. Full NPC traversal, rendered actor
+contact and broader parity remain open. Historical draft notes are retained as
+required by the publisher; this installation report supersedes their unpublished
+status. No runtime implementation changed.
+
 ## Repaired annex/turret browser ZIP verified natively (2026-10-20)
 
 The draft-scene packager accepts an explicit `--model-overrides=MANIFEST` for

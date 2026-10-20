@@ -404,9 +404,9 @@
     },
     {
       "model": "3d-assets/lincoln/lincoln-keep-annex-round-turret/model.glb",
-      "model_sha256": "76783e4d9e6a220b7b7376dfe69246d305940201660358afb70514e5eac26fe3",
+      "model_sha256": "b2499e11908186a53f401bba801a6f740786b84f04baaaa6dd43fa45290eb454",
       "descriptor": "3d-assets/lincoln/lincoln-keep-annex-round-turret/asset.json",
-      "descriptor_sha256": "76ed55f9ee529d1f649bba8d2e87eb91093b05af79b500068ee068253bf06aa0",
+      "descriptor_sha256": "28a44db03904e71a7b2c708f2bf8948be4578844ff2132fd06ac6934344d9ae2",
       "id": "lincoln-keep-annex-round-turret"
     },
     {
@@ -420,7 +420,7 @@
       "model": "3d-assets/lincoln/lincoln-keep-annex/model.glb",
       "model_sha256": "1b7f7ad238dc69412315cbc01986e6d1727a75c6fde7ae5326ec6e003872d3bb",
       "descriptor": "3d-assets/lincoln/lincoln-keep-annex/asset.json",
-      "descriptor_sha256": "491ed0909aabff7d2d0a15a765062515340353bb9dc0adf6cb0fb232acaa1e38",
+      "descriptor_sha256": "d40b272f26b706d8fc826952b0a73dfb33357bf028a3a6b3b53b1a178f62ab57",
       "id": "lincoln-keep-annex"
     },
     {
