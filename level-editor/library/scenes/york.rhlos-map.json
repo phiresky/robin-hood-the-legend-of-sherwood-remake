@@ -73,7 +73,7 @@
       "model": "3d-assets/york/york-castle-courtyard-raised-terrain/model.glb",
       "model_sha256": "565ae1d668a96962fab2cc0b7eee1dadff0e10be4b42196c132d52d52fd5820c",
       "descriptor": "3d-assets/york/york-castle-courtyard-raised-terrain/asset.json",
-      "descriptor_sha256": "0a32990bb71fc61c7293940e676c167c619150cd28b92328e5d70f6d0fb14458",
+      "descriptor_sha256": "42dc5cd7e449b20ca36dbcf20be140ed1039dc351009ef6442ce10942037d153",
       "id": "york-castle-courtyard-raised-terrain"
     },
     {
@@ -108,14 +108,14 @@
       "model": "3d-assets/york/york-castle-great-hall/model.glb",
       "model_sha256": "1d628848e1c9b3708aa3e2855a6b342a86396bbe0bf4081e5c5920a0e03bd5fc",
       "descriptor": "3d-assets/york/york-castle-great-hall/asset.json",
-      "descriptor_sha256": "01a71c6f2836a2c47d9e661950d4dc0ddb6d08f218664bf55a3893bb3e11f494",
+      "descriptor_sha256": "5e7739767b2afde041bbcb6d5df0d483c12cd4ff35a54765f7db6b4a21ea7943",
       "id": "york-castle-great-hall"
     },
     {
       "model": "3d-assets/york/york-castle-main-keep/model.glb",
       "model_sha256": "f96cd72b9e87bfbf41e4aece9fc7b8cd8708ca696737d2f2e42b228f812dce76",
       "descriptor": "3d-assets/york/york-castle-main-keep/asset.json",
-      "descriptor_sha256": "54ee9d02186d58e3e0fcc672feea669ee54509da640220a0e323ce78840d6012",
+      "descriptor_sha256": "f01f9b098552996c8797ee9533b014318787bbe29cd1d50cbc1b335557c2a507",
       "id": "york-castle-main-keep"
     },
     {
@@ -5674,6 +5674,34 @@
       "assets": [
         "york-market-timber-house-striped-awning-remainder"
       ]
+    }
+  ],
+  "interiorConnections": [
+    {
+      "id": "interior-link-1",
+      "from": {
+        "placement": "york-castle-courtyard-raised-terrain",
+        "asset": "york-castle-courtyard-raised-terrain",
+        "interior": "interior-2"
+      },
+      "to": {
+        "placement": "york-castle-great-hall",
+        "asset": "york-castle-great-hall",
+        "interior": "interior-2"
+      }
+    },
+    {
+      "id": "interior-link-2",
+      "from": {
+        "placement": "york-castle-courtyard-raised-terrain",
+        "asset": "york-castle-courtyard-raised-terrain",
+        "interior": "interior-2"
+      },
+      "to": {
+        "placement": "york-castle-main-keep",
+        "asset": "york-castle-main-keep",
+        "interior": "interior-2"
+      }
     }
   ]
 }

@@ -97,6 +97,45 @@ retains both near and exposed probes. These isolated fixtures do not validate
 all upper passages, state controls or shared-room connectivity. Full assembled
 regression, browser verification and publication remain open for this candidate.
 
+Refreshed castle stage `york-castle-door-ownership-1AXtXR` includes the published
+east gate. Full export `staged-map-export-lXT5Rh` constructs with unchanged
+170 areas, 1,227 sight obstacles, 254 doors, 72 jump pairs, 281,260 grid blocks
+and 342 elevation boundaries. Audit `saved-map-entrances-nSJsCQ` improves 82/95
+to 84/95 with no regressions, matching entrances by endpoint/layer/sector rather
+than their reordered indices. The repaired endpoints are [2809, 820] and
+[2634, 783]. Both directions of full-map room traversal pass in
+`york-castle-full-room-8g1ym0tu`.
+
+The reusable `check-linked-building-placements.mjs` checks connected and
+disconnected copies at all eight rotation/elevation variants. Two-asset audit
+`linked-building-placements-uOM4tK` passes 128 native checks. Three-asset audit
+`linked-building-placements-avpfx3` includes the courtyard and passes 384 checks,
+including transitive room travel and isolation between separate copies.
+These checks cover actor crossings when linked and sector isolation otherwise.
+The original distant keep approach lies outside the finite courtyard in fixture
+`selected-neighbor-placements-dgnNAi`; only 12/32 click trips pass there. Near
+approaches in `selected-neighbor-placements-4WqgCu` improve this to 20/32. The
+remaining 90/180-degree failures select projected upper surfaces rather than
+the intended ground on return. Keep that click-visibility limitation separate
+from the successful doorway and shared-room traversal checks.
+
+Browser publication preparation found a missing great-hall lossy derivative.
+It is generated in staged snapshot `draft-scene-render-EAS9Xl`, retaining the
+raw model; its derivative refresh and structural checks pass. The 5000×4000
+browser export/reopen matches gameplay, color and depth. Its 45,416,384-byte ZIP
+has SHA-256 `9426d5711539bdc4e6d73317d61db610662ffcff1c104d336c144ef834cbf8b4`.
+Native loading without base data passes with 75 sight obstacles, eight door
+projections and 31,758 grid blocks. Exact archive `exact-map-archive-2ngw849l`
+passes all 24 linked-room/isolation checks. `archive-ground-clicks-1mvn_vai`
+uses the near 37-degree/40-height approach points after asserting identical
+motion layers and matching outside doorway bindings; all four archived normal
+click round trips pass. Publication dry run
+`york-castle-ownership-publication-dry-run` validates the three definitions and
+the original scene's two explicit links together.
+Installation `york-castle-ownership-publication-installed` publishes the three
+asset definitions, great-hall derivatives and scene links; all 21 installed file
+hashes match its report. Current installed York entrance coverage is 84/95.
+
 ## York raised-terrain walking surface candidate (2026-10-20)
 
 The storehouse's remaining receiver mismatch is between the exported zero-height

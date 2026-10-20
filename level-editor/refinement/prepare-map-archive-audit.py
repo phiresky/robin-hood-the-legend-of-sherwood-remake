@@ -41,6 +41,8 @@ def prepare(archive, approaches=None, approach_file=None):
             assert original['asset_geometry'][key] == level['asset_geometry'][key], \
                 f'Archive {key} differs from the placement audit'
         result['building_approaches'] = probes
+        if matches[0].get('building_pairs'):
+            result['building_pairs'] = matches[0]['building_pairs']
         result['approach_source'] = str(source / approach_file)
     output = Path(tempfile.mkdtemp(prefix='exact-map-archive-', dir=archive.parent.parent))
     (output / 'archive.level.json').write_bytes(level_bytes)

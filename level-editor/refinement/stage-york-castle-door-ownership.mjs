@@ -163,4 +163,19 @@ exposed.entrances[0].sourceLocal = direction.map(
   (value, axis) => keepDoor.outside[axis] + (value * 124) / length,
 );
 await fs.writeFile(`${output}/keep-exposed-ground.json`, JSON.stringify(exposed));
+const pair = structuredClone(
+  fixtures.find((fixture) => fixture.assets[0] === "york-castle-great-hall"),
+);
+assert.equal(pair.terrainHeight, exposed.terrainHeight);
+pair.assets.push(...exposed.assets);
+pair.entrances.push(...exposed.entrances);
+await fs.writeFile(`${output}/castle-pair.json`, JSON.stringify(pair));
+const assembly = structuredClone(pair);
+// The exposed keep probe is outside the finite courtyard; retain its near probe here.
+assembly.entrances = fixtures.flatMap((fixture) => structuredClone(fixture.entrances));
+assembly.assets.unshift(terrain.id);
+assembly.terrainHeight = 0;
+assembly.size = [5000, 4000];
+assembly.copyXs = [1250.25, 3750.25];
+await fs.writeFile(`${output}/castle-courtyard-assembly.json`, JSON.stringify(assembly));
 console.log(output);
