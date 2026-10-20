@@ -27,6 +27,47 @@ Targeted lint and formatting checks pass for the browser fixture. This evidence
 does not establish visual correctness, actor traversal, state-driven appearance
 coverage or fresh rendered round trips for the other nine maps.
 
+Additional checks of this exact archive:
+
+- `croisement01-native/` contains its unchanged descriptor, descriptor hash and
+  native reports. All 130 direct upright jump samples and 130 player-click
+  samples pass across its 26 directed jump lines.
+- The unrestricted sword-dispatch check passes 120/130 samples. The ten failures
+  are lines 2/3, a non-forced pair spanning roughly 97 height units: it does not
+  run the long sword-flight animation required by this particular assertion.
+  This result is retained rather than represented as an all-jumps combat pass.
+- `croisement01-long-jumps/` explicitly selects the 18 forced-long directed
+  lines and lists the eight excluded lines. All 90 sword-dispatch samples pass,
+  including the grounded-departure check. These are sampled native movement
+  checks, not rendered actor-occlusion checks.
+- Visual inspection of the extracted `croisement01-color.png` shows conspicuous
+  texture seams and stretched surfaces on trees, plus hard faceted transitions
+  on foreground rocks. Deterministic baking preserves these asset defects; it
+  does not demonstrate visual parity. The archive retains 261 compiler warnings.
+
+## Croisement02 map-only browser round trip
+
+On 2026-10-20, the same browser fixture passes Croisement02 with
+`?map=croisement02&roundtrip=1&map-only=1`: gameplay, warnings, color and depth
+match after ZIP reopening and rebaking. Artifact:
+`work/needs-review/map-compile/browser-map-only-NAJUH8/croisement02.zip`,
+139,995,307 bytes, SHA-256
+`e57c95ea48bd8c2fda5ec49788532290c64f790c43d627d749f663f1d693d989`.
+The same existing native archive test binary loads it without a base datadir in
+4.14 seconds: 2177×1500 color/depth, minimap, embedded scene, 5,169 sight
+obstacles, 53 masks, five door projections and 6,860 grid blocks. There are zero
+appearance regions for nine controls; this does not certify visual state parity.
+
+`refinement/check-saved-map-browser-exports.mjs` now runs these real map-only
+browser checks sequentially, retaining per-map logs, ZIP hashes, scene hashes,
+elapsed times and a continuously updated manifest. It requires a running editor
+server, defaults to all saved scenes, and supports repeated `--map=NAME` plus
+`--url=URL`. `CHROME` selects the browser executable. A changed scene during
+verification fails the result. Native loading and visual inspection remain
+separate checks. Syntax, lint and formatting checks pass. The first eight-map
+batch is in `work/needs-review/map-compile/browser-exports-jEFlao`; its manifest
+is authoritative for pending/passed/failed browser results, not a parity claim.
+
 ## York entrance-ramp reproduction
 
 `stage-york-entrance-ramps.mjs` prepares an unpublished candidate for the red
