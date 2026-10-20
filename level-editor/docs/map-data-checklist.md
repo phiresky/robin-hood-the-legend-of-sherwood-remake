@@ -48,6 +48,9 @@ rebaking, not actor traversal or visual correctness. See
 The five-map frozen batch is complete; Wychford also passes native loading.
 See [Wychford archive verification](map-compilation-evidence.md#wychford-map-only-browser-round-trip).
 These archives are not all built with the latest compiler or asset corrections.
+York has now passed a fresh browser round trip and exact-archive native loading
+with the published golden-house repairs; see
+[fresh York archive](map-compilation-evidence.md#fresh-york-browser-archive-after-published-roof-repairs).
 Lincoln uses the frozen `c24c55429` browser build, so its ZIP does not verify
 the subsequent climb-entry footprint correction. See
 [Lincoln browser round trip](map-compilation-evidence.md#lincoln-map-only-browser-round-trip).

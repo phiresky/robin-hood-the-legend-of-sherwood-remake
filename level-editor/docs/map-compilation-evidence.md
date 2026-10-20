@@ -4,6 +4,49 @@ This document retains detailed checks, local artifacts and historical measuremen
 Use the [map-data checklist](map-data-checklist.md) for the concise current status.
 Older counts and limitations below may be superseded by later entries.
 
+## Fresh York browser archive after published roof repairs
+
+Batch `browser-exports-C2HFPf` uses the current editor at localhost port 5183.
+York passes map-only ZIP export, editor reopening and rebaking: gameplay and
+rendered color/depth match. The 46,731,139-byte archive is 3136×2318 with 1,237
+sight obstacles. ZIP SHA-256:
+`0e0a2c8b7fa6a682350980ce8df81a4e337efdaa2ac9dc626f4534ca77081399`.
+The exact archive passes native construction without a base datadir, including
+color, depth, minimap and embedded editor scene loading. This covers the
+published golden-house receiver and takeoff repairs; the market-house seam
+experiment below is unpublished and absent from this archive.
+Lincoln and Croisement03 checks in this batch are still pending.
+
+## Market-house roof seam investigation
+
+The movement contour for York sector 307 contains a near-zero-width inward slit:
+two vertices near `[177.57867,1355.26965]` enclose a spike reaching
+`[228.41462,1414.66054]`. Character clearance separates the far roof end from the
+jump approach. This is the region involved in the 18 hidden-click failures on
+lines 128–131.
+
+`stage-york-market-roof-seam.mjs` stages an unpublished asset-local experiment:
+align the two shared vertices of surfaces 514 and 516 in
+`york-southwest-market-north-house`. The largest change is 0.00001136 units.
+Stage `york-market-roof-seam-qERe6G` passes schema validation, but full export
+`saved-map-exports-k7SAwF` still contains the slit. Replaying the same 18 probes in
+`replayed-jump-clicks-5SG5y2` still fails all 18. Do not publish this candidate as
+a repair.
+
+Moved assemblies `connected-jump-placements-is3EEM` pass 160 direct jumps but fail
+20/160 sword traversals. Unchanged assets in
+`connected-jump-placements-LZaOLx` also fail 20/160 sword traversals.
+Candidate supported-floor probes `interior-jump-clicks-X5jOYU` pass 252/288;
+the same coordinates replayed against unchanged assets in
+`market-seam-baseline-clicks-lwzaiem9` also pass 252/288.
+
+A diagnostic edit of only the final precise movement contour, using a 0.0001-unit
+collinearity tolerance, removes the slit. In `replayed-jump-clicks-wMkAs9`,
+four of the 18 original hidden-click failures then pass; fourteen remain.
+This diagnostic did not rebuild the navigation graph and is not a compiler fix.
+Next investigation belongs in precise contour reconstruction and graph
+preparation, rather than runtime movement.
+
 ## Automatic jump takeoff inset experiment
 
 `check-roof-jump-placements.mjs --inset=N` provides a diagnostic override without
