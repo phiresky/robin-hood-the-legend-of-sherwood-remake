@@ -49,6 +49,21 @@ The exact archive passes native construction without a base datadir: 2944×2176,
 regions for 11 controls, with color, depth, minimap and embedded scene loaded.
 This snapshot predates the floor seam cleanup.
 
+## York browser archive with floor seam cleanup
+
+Frozen snapshot `browser-build-OEV7ea` (port 5186, HEAD `05e12314a`) records a
+5,612-byte `source.patch` of uncommitted editor viewport/scenery edits present
+in the working tree. Batch `browser-exports-MfzqXA` passes York map-only export,
+reopen and rebake in 1,119,687 ms. Scene SHA-256
+`49846e54dd34ef57216c539d14c6d91e7d88d6b0f77f65e345afd1ad9f6e6760`, ZIP SHA-256
+`39abef9cd6f6ece385f1210cc55447a2e7b0f81d4783cbd2e53bcaf50a3218d6`.
+The exact archive passes native construction without a base datadir: 3136×2318,
+1,237 sight obstacles, 28 masks, 257 door projections, 291,305 grid blocks,
+0 appearance regions for 6 controls. Its archived `asset_geometry` is
+deep-equal to `saved-map-exports-lc8MNY`, so the native click, climb and stair
+results recorded for that descriptor apply to this archive's gameplay data.
+Visual correctness and the red/rear takeoff failures are not covered.
+
 ## Nine-scene static sweep after floor seam cleanup
 
 `saved-map-exports-BZhLwR` compiles the nine non-York scenes from the indexed

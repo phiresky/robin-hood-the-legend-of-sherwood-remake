@@ -32,7 +32,8 @@ The compiler now removes a numerical slit in York's market-house
 roof contour. It fixes 18 further failures with zero regressions across the
 same 1,296 click probes; ordinary/hidden selection together pass 1,293.
 A fresh indexed-library compile exactly reproduces the tested descriptor.
-Browser ZIP verification of this cleanup is pending; see
+A fresh York browser export/reopen/rebake includes the cleanup; its exact
+archive loads natively and its asset geometry equals that tested descriptor. See
 [roof seam investigation](map-compilation-evidence.md#market-house-roof-seam-investigation).
 A static compile of the other nine scenes with the cleanup changes no further
 floor contour. Seven match their previously recorded descriptors exactly;
