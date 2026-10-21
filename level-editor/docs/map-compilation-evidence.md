@@ -101,9 +101,17 @@ elevations 0/40) passes 16/16 climb and 16/16 stair routes; the first,
 midpoint-containment variant still blocked the 37/90/180-degree exits
 (`local-stair-placements-NRzyt2`). The `physical-ladder-fractional-seam`
 compile fixture is regenerated; only its blocked state and warning disappear.
-Two map-navigation fixture tests (terrain-bound physical receivers and
-independent walkway copies) fail on graph bytes both with and without this
-change and remain to be investigated.
+Two map-navigation fixture tests had failed since earlier compiler changes
+without fixture refreshes: the terrain receiver since `fae5161c8` (overlapping
+floor loop passages; graph grows from 152 to 2,000 bytes) and the copied
+walkways since `097d2a82f` (receiver projection planes). Both native fixtures
+are regenerated; all 72 `asset_map_compilation` tests and all 4,387
+`robin_engine` library tests pass on them. Four rotated stair/lift library
+tests had failed since `asset-lift.level.json` gained a precise landing
+obstacle in `5fb9860f6`: their projected-geometry rotation helper rounded the
+grid contour without the precise one. The helper now drops that contour, as it
+already drops world-space lift metadata; placed editor exports cover precise
+landing collision.
 
 Croisement02's difference has no native traversal or visual verification. Wychford still
 omits its church-side tower lift (exterior landing 134.1 above ground 88.3),

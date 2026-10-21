@@ -83,6 +83,9 @@ fn transformed_lift_fixture(
             for point in &mut obstacle.polygon.points {
                 transform(point);
             }
+            // Rounded rotations cannot keep an exact contour's grid footprint.
+            // Precise landing collision is covered by placed editor exports.
+            obstacle.precise_polygon.clear();
         }
     }
     for obstacle in &mut geometry.sight_obstacles {
