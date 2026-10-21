@@ -39,8 +39,37 @@ and 5,016 grid blocks. This includes the regenerated tinted derivative.
 
 Lincoln's run terminated at its 30-minute runner limit during the second bake,
 at appearance 76/116. It had continued reporting progress and did not report a
-rebake mismatch. Retry `browser-exports-mxaNMa` runs serially against frozen
-snapshot `browser-build-qLQTog` on port 5184 with a one-hour limit.
+rebake mismatch. Retry `browser-exports-mxaNMa` ran serially against frozen
+snapshot `browser-build-qLQTog` on port 5184 with a one-hour limit and passes
+export, reopen and rebake in 1,338,636 ms. Scene SHA-256
+`13e8205f323b43db6e6bf2798d338a9868c9d397e3549ea0d34f3ca1880793d9`, ZIP SHA-256
+`7cdb5f20cbe27e08b73f4d5c758b2a8d975cab5ff56c4cb1ae1563a14d3f5d76`.
+The exact archive passes native construction without a base datadir: 2944×2176,
+620 sight obstacles, 88 door projections, 94,392 grid blocks and 38 appearance
+regions for 11 controls, with color, depth, minimap and embedded scene loaded.
+This snapshot predates the floor seam cleanup.
+
+## Nine-scene static sweep after floor seam cleanup
+
+`saved-map-exports-BZhLwR` compiles the nine non-York scenes from the indexed
+library with the floor seam cleanup (map-only, complete). Wychford takes about
+1,029 s; the others take 4–137 s. Rescanning these descriptors with
+`check-motion-spike-cleanup.mjs` (`motion-spike-cleanup-WhGgx8`) changes zero
+contours. Compared with the snapshots scanned in `motion-spike-cleanup-PGe7YD`
+and `motion-spike-cleanup-PigLNe`, Wychford, Croisement01, Croisement03, Derby,
+Lincoln, Nottingham and Sherwood are identical. Two differ:
+
+- Leicester lift 2 door 0 no longer compiles as permanently blocked; its middle
+  approach point moves from `[1925,922]` to `[1921,924]`. Door 1 of that lift
+  remains unavailable. The older snapshot came from archive
+  `browser-exports-j6Syyl`, built before several climb/footprint compiler commits.
+- Croisement02 mask 20 has a different outline and box, consistent with the
+  scene/asset edits present in the working tree at compile time.
+
+Neither difference has native traversal or visual verification. Wychford still
+omits its church-side tower lift (exterior landing 134.1 above ground 88.3),
+21 doors and five jumps, and reports 28 masks without a receiving layer.
+This is static geometry evidence only.
 
 ## Market-house roof seam investigation
 
@@ -1530,6 +1559,12 @@ the two roofs' subpixel ridges (less than 0.3 units). Candidate
 `york-central-roof-seams-GQjPq7` and placement export
 `connected-jump-placements-22idRT` retain all 92 baseline failures; it is not
 the repair and remains unpublished.
+With the floor seam cleanup integrated, stage `york-central-roof-seams-o8e87x`
+(`connected-jump-placements-vN7oPv`) and the unchanged baseline
+(`connected-jump-placements-ndD6m5`) both pass 68/160 native click probes on
+identical inputs: zero fixes, zero regressions. Failures remain 20 takeoff
+stalls at 0 degrees, 40 missing-receiver or unauthorized-start cases at
+180 degrees, 20 receiver misses at 37/90 degrees and 12 overlay-selection misses.
 
 `stage-york-red-roof-jump-inset.mjs` moves only the red-house takeoff inward,
 following its existing surface plane and preserving the neighboring asset.

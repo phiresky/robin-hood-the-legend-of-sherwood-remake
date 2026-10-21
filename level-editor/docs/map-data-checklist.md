@@ -34,6 +34,11 @@ same 1,296 click probes; ordinary/hidden selection together pass 1,293.
 A fresh indexed-library compile exactly reproduces the tested descriptor.
 Browser ZIP verification of this cleanup is pending; see
 [roof seam investigation](map-compilation-evidence.md#market-house-roof-seam-investigation).
+A static compile of the other nine scenes with the cleanup changes no further
+floor contour. Seven match their previously recorded descriptors exactly;
+Leicester's lift 2 door 0 is now available and Croisement02 mask 20 changed.
+Neither change is gameplay-verified. See
+[nine-scene sweep](map-compilation-evidence.md#nine-scene-static-sweep-after-floor-seam-cleanup).
 
 An earlier full-scene sweep and corrected Wychford retry export all ten saved scenes and
 load them through native geometry construction. Their 71 state transitions pass
@@ -59,10 +64,10 @@ York has now passed a fresh browser round trip and exact-archive native loading
 with the published golden-house repairs; see
 [fresh York archive](map-compilation-evidence.md#fresh-york-browser-archive-after-published-roof-repairs).
 Croisement03 also passes a fresh browser round trip and native loading with its
-regenerated tinted derivative. Lincoln's fresh retry is running after the prior
-attempt reached the runner's time limit during its second appearance bake.
+regenerated tinted derivative. Lincoln's serial retry passes export, reopen and
+rebake, and its exact archive loads natively without a base datadir.
 Lincoln uses the frozen `c24c55429` browser build, so its ZIP does not verify
-the subsequent climb-entry footprint correction. See
+the subsequent climb-entry footprint correction or floor seam cleanup. See
 [Lincoln browser round trip](map-compilation-evidence.md#lincoln-map-only-browser-round-trip).
 Lincoln's north-hall stair now has a corrected asset-local upper seam: all 18
 full-scene stair routes and 32 moved assembly routes pass, with 16 missing/raised
@@ -197,6 +202,9 @@ geometry. It improves the isolated placement result from 68/160 to 96/160;
 surface-following selection regions improve it to 100/160. The 180-degree
 receiver failures and flight/visual review remain open, so the library is
 unchanged. See [takeoff candidate evidence](map-compilation-evidence.md#red-roof-takeoff-footprint-candidate).
+Re-testing the subpixel ridge-alignment candidate with the floor seam cleanup
+still passes exactly the baseline's 68/160 placement probes, with identical
+failures; it remains rejected.
 Correcting the audit to use native precise contours and actual receiver samples
 finds usable points at every rotation. A common-tangent span candidate then fixes
 the eight reproduced landing failures with no regressions on identical inputs.
