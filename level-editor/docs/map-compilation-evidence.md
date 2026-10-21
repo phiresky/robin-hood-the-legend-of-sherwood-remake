@@ -81,7 +81,31 @@ Lincoln, Nottingham and Sherwood are identical. Two differ:
 - Croisement02 mask 20 has a different outline and box, consistent with the
   scene/asset edits present in the working tree at compile time.
 
-Neither difference has native traversal or visual verification. Wychford still
+Native audit of `BZhLwR` Leicester checks 20 climb routes with zero failures
+but two "forbidden" routes: both directions of lift 2, the east-moat tower
+ladder that passed 22/22 on 2026-10-06. Its high exit (door type 4) keeps its
+authored midpoint against the parapet it climbs over, so the lift passage-state
+corridor from that midpoint always hit the permanent solid and produced an
+empty allowed-state list. The original passage is an animation between the
+authored points without a collision test at the midpoint.
+`compileLiftPassageStates` now omits, for high ladder exits only, permanent
+obstacles that the actor footprint touches at the midpoint. Switchable
+obstacles and other permanent solids still apply; low ladder handoffs keep the
+two-sided check. Across all ten current descriptors only this exit is affected.
+Fresh Leicester compiles `saved-map-exports-ZEVkbP` (first variant) and
+`saved-map-exports-k0mVTh` (final, identical output) pass 22/22 climb routes
+with player clicks, hidden selection and complete animation, and 16/16 stair
+routes in both selection modes, with zero forbidden routes.
+Placement fixture `local-stair-placements-FNodwD` (0/37/90/180 degrees,
+elevations 0/40) passes 16/16 climb and 16/16 stair routes; the first,
+midpoint-containment variant still blocked the 37/90/180-degree exits
+(`local-stair-placements-NRzyt2`). The `physical-ladder-fractional-seam`
+compile fixture is regenerated; only its blocked state and warning disappear.
+Two map-navigation fixture tests (terrain-bound physical receivers and
+independent walkway copies) fail on graph bytes both with and without this
+change and remain to be investigated.
+
+Croisement02's difference has no native traversal or visual verification. Wychford still
 omits its church-side tower lift (exterior landing 134.1 above ground 88.3),
 21 doors and five jumps, and reports 28 masks without a receiving layer.
 This is static geometry evidence only.

@@ -16,12 +16,17 @@ export interface PassageStateRequirement {
  * This prepares data only; callers must bind it to native gate authorization.
  */
 function passageAreas(geometry: CompiledAssetGeometry, changingOnly = false) {
-  const areas = new Map<string, { area: number; allowed: (a: Point, b: Point) => number[] }>();
+  type Area = CompiledAssetGeometry["motion_data"]["layers"][number][number];
+  const areas = new Map<
+    string,
+    { area: number; entry: Area; allowed: (a: Point, b: Point) => number[] }
+  >();
   let sector = 0;
   geometry.motion_data.layers.forEach((entries, layer) => {
     entries.forEach((entry, area) => {
       areas.set(`${sector}/${layer}`, {
         area,
+        entry,
         allowed: prepareCorridorStates(
           changingOnly
             ? entry.obstacles.filter((obstacle) => obstacle.state_id !== 0)
@@ -90,8 +95,28 @@ export function compileLiftPassageStates(
       const result: PassageStateRequirement[] = [];
       for (const side of ["in", "out"] as const) {
         const layer = door[`layer_${side}`];
-        const entry = areas.get(`${door[`sector_${side}`]}/${layer}`);
+        let entry = areas.get(`${door[`sector_${side}`]}/${layer}`);
         if (!entry) throw new Error(`Lift ${liftIndex} door ${doorIndex}: missing ${side} area`);
+        // A high ladder exit keeps its authored midpoint on the structure being
+        // climbed; its clamber animation starts against that permanent solid.
+        // Other permanent solids and every switchable obstacle still apply.
+        // TODO: a foreign permanent solid touching the midpoint is also exempted;
+        // separating it would need per-asset obstacle ownership here.
+        if (lift.lift_type === 2 && door.door_type !== 5) {
+          const obstacles = entry.entry.obstacles;
+          const climbed = obstacles.filter(
+            (obstacle) =>
+              obstacle.state_id === 0 &&
+              prepareCorridorStates([obstacle])(door.point_mid, door.point_mid).length === 0,
+          );
+          if (climbed.length)
+            entry = {
+              ...entry,
+              allowed: prepareCorridorStates(
+                obstacles.filter((obstacle) => !climbed.includes(obstacle)),
+              ),
+            };
+        }
         let point = door[`point_${side}`];
         const middle = door.point_mid;
         if (side === "in" && lift.lift_type === 3 && [4, 6].includes(door.door_type)) {

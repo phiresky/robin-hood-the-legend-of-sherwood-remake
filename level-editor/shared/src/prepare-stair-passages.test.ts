@@ -107,3 +107,29 @@ test("walls, high ladders and switchable barriers retain their authored handoff"
       assert.deepEqual(compileLiftPassageStates(geometry)[0]![0]![0]!.allowed_states, [2]);
   }
 });
+
+test("high ladder exits climb over their own solid but keep other barriers", () => {
+  for (const kind of ["climbed", "edge", "foreign", "switchable"] as const) {
+    const { geometry, door, lift, landing } = fixture();
+    lift.lift_type = 2;
+    door.door_type = 4;
+    // The authored clamber starts inside the parapet it climbs over; after
+    // rotation and rounding it may instead lie just outside its edge.
+    landing.obstacles[0]!.polygon.points = rectangle(40, kind === "edge" ? 51 : 46, 60, 70);
+    if (kind === "foreign")
+      landing.obstacles.push({ state_id: 0, polygon: { points: rectangle(45, 38, 55, 43) } });
+    if (kind === "switchable")
+      landing.obstacles.push({ state_id: 1, polygon: { points: rectangle(45, 38, 55, 43) } });
+    door.sector_in = 1 + landing.obstacles.length;
+    const states = compileLiftPassageStates(geometry)[0]![0]!;
+    if (kind === "climbed" || kind === "edge") assert.deepEqual(states, []);
+    else
+      assert.deepEqual(
+        states.map((requirement) => requirement.allowed_states),
+        [kind === "foreign" ? [] : [2]],
+      );
+    // Low ladder handoffs keep the ordinary two-sided permanent check.
+    door.door_type = 5;
+    assert.deepEqual(compileLiftPassageStates(geometry)[0]![0]![0]!.allowed_states, []);
+  }
+});

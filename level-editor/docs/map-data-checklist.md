@@ -37,8 +37,12 @@ archive loads natively and its asset geometry equals that tested descriptor. See
 [roof seam investigation](map-compilation-evidence.md#market-house-roof-seam-investigation).
 A static compile of the other nine scenes with the cleanup changes no further
 floor contour. Seven match their previously recorded descriptors exactly;
-Leicester's lift 2 door 0 is now available and Croisement02 mask 20 changed.
-Neither change is gameplay-verified. See
+Croisement02 mask 20 changed (not yet reviewed). Leicester's only ladder had
+been compiled as unavailable since lift passage states were introduced: its
+high exit starts against the parapet it climbs over. The compiler now exempts
+only that climbed solid; Leicester again passes 22/22 climb and 16/16 stair
+routes, and the moved/rotated/elevated tower passes 16/16 of each. Route audits
+count blocked passages as "forbidden", not failed; check that count. See
 [nine-scene sweep](map-compilation-evidence.md#nine-scene-static-sweep-after-floor-seam-cleanup).
 
 An earlier full-scene sweep and corrected Wychford retry export all ten saved scenes and
