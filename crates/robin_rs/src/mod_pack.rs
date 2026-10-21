@@ -564,8 +564,9 @@ fn archive_directory(archive: &mut zip::ZipArchive<fs::File>) -> Result<ArchiveD
         let entry = archive
             .by_index_raw(i)
             .map_err(|e| format!("entry {i}: {e}"))?;
-        if !entry.is_dir() && !entry.name().is_empty() {
-            let name = entry.name().replace('\\', "/");
+        let raw_name = entry.name().map_err(|e| format!("entry {i} name: {e}"))?;
+        if !entry.is_dir() && !raw_name.is_empty() {
+            let name = raw_name.replace('\\', "/");
             directory
                 .indices
                 .entry(name.to_ascii_lowercase())

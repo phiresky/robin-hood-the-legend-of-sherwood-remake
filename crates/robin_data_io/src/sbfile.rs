@@ -507,7 +507,8 @@ fn collect_zip_entry_names<R: Read + Seek>(
         let entry = archive
             .by_index_raw(index)
             .map_err(|_| SbFileError::BadArchive)?;
-        entry_names.push(entry.name().replace('\\', "/"));
+        let name = entry.name().map_err(|_| SbFileError::BadArchive)?;
+        entry_names.push(name.replace('\\', "/"));
     }
     Ok(entry_names)
 }

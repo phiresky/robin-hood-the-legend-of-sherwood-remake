@@ -524,7 +524,10 @@ pub(super) fn select_direct_rhm_entry(
             .by_index_raw(index)
             .map_err(|error| format!("read direct custom-mission entry {index}: {error}"))?;
         if !entry.is_dir() {
-            entries.push(entry.name().replace('\\', "/"));
+            let name = entry
+                .name()
+                .map_err(|error| format!("decode direct custom-mission entry {index}: {error}"))?;
+            entries.push(name.replace('\\', "/"));
         }
     }
     if let Some(selected) = selected_entry {

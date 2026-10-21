@@ -91,7 +91,7 @@ avif-parse = "2.1.0"
 # (default features) is ON: the Cranelift dev profiles can't compile its
 # AVX512 intrinsics, so the workspace Cargo.toml builds the jxl crates with
 # the LLVM backend there (same treatment as crc32fast).
-jxl = "0.7.1"
+jxl = "0.8.0"
 # Pure-Rust AV1 decoder (the memorysafety port of dav1d) for AVIF assets on
 # native desktop/Android and in the converter's quality gates. NATIVE ONLY:
 # the web build uses the browser's AVIF decoder. `asm` is off so no

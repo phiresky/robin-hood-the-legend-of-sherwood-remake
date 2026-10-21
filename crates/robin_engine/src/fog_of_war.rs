@@ -178,7 +178,7 @@ impl FogRegion {
             .flat_map(|p| std::iter::once(p.exterior()).chain(p.interiors().iter()))
             .map(|ring| ring.0.iter().map(|p| point(p.x, p.y)).collect())
             .collect();
-        let mut overlay = Overlay::with_contours(&subject, &clip);
+        let mut overlay = Overlay::from_subj_and_clip(&subject, &clip);
         overlay.options.ogc = true;
         self.polygons = overlay
             .overlay(OverlayRule::Union, FillRule::EvenOdd)

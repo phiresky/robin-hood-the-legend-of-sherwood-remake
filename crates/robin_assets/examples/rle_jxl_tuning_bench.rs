@@ -43,17 +43,17 @@ fn fnv(bytes: &[u8]) -> u64 {
 /// Decode to interleaved u8 with the image's own channel count (3 or 4).
 fn decode_jxl(bytes: &[u8]) -> Result<(usize, usize, usize, Vec<u8>)> {
     use jxl::api::{
-        JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
-        JxlPixelFormat, ProcessingResult, states,
+        Event, JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+        JxlPixelFormat,
     };
+    use robin_assets::picture::jxl_process_expect;
     let mut input: &[u8] = bytes;
-    let dec = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
-    let mut dec = match dec.process(&mut input, None) {
-        Ok(ProcessingResult::Complete { result }) => result,
-        other => bail!("jxl header: {:?}", other.err()),
-    };
-    let (w, h) = dec.basic_info().size;
-    let has_alpha = !dec.basic_info().extra_channels.is_empty();
+    let mut dec = JxlDecoder::new(JxlDecoderOptions::default());
+    jxl_process_expect(&mut dec, &mut input, None, None, Event::BasicInfo, "header")?;
+    let info = dec.basic_info().context("jxl: no basic info")?;
+    let (w, h) = info.size;
+    let extra_channels = info.extra_channels.len();
+    let has_alpha = extra_channels != 0;
     let channels = if has_alpha { 4 } else { 3 };
     dec.set_pixel_format(JxlPixelFormat {
         color_type: if has_alpha {
@@ -62,23 +62,29 @@ fn decode_jxl(bytes: &[u8]) -> Result<(usize, usize, usize, Vec<u8>)> {
             JxlColorType::Rgb
         },
         color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
-        extra_channel_format: if has_alpha {
-            vec![None; dec.basic_info().extra_channels.len()]
-        } else {
-            vec![]
-        },
+        extra_channel_format: vec![None; extra_channels],
     })
     .map_err(|e| anyhow::anyhow!("pixel format: {e:?}"))?;
-    let dec = match dec.process(&mut input, None) {
-        Ok(ProcessingResult::Complete { result }) => result,
-        other => bail!("jxl frame header: {:?}", other.err()),
-    };
+    jxl_process_expect(
+        &mut dec,
+        &mut input,
+        None,
+        None,
+        Event::FrameHeader,
+        "frame header",
+    )?;
     let mut pixels = vec![0u8; w * h * channels];
     let mut bufs = vec![JxlOutputBuffer::new(&mut pixels, h, w * channels)];
-    match dec.process(&mut input, &mut bufs, None) {
-        Ok(ProcessingResult::Complete { .. }) => {}
-        other => bail!("jxl frame: {:?}", other.err()),
-    }
+    jxl_process_expect(
+        &mut dec,
+        &mut input,
+        Some(&mut bufs),
+        None,
+        Event::FrameComplete {
+            has_more_frames: false,
+        },
+        "frame",
+    )?;
     drop(bufs);
     Ok((w, h, channels, pixels))
 }

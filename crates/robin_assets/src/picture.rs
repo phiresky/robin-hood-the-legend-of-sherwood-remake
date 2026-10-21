@@ -222,6 +222,29 @@ pub(crate) fn rayon_jxl_runner(parallel: bool) -> Option<RayonJxlRunner> {
     parallel.then_some(RayonJxlRunner)
 }
 
+/// One stage of a whole-blob JPEG XL decode: run the decoder until it stops
+/// and require it to stop at `expected`. Callers hand over the entire file up
+/// front, so `NeedMoreInput` means the blob is truncated, and any other event
+/// (e.g. a second frame) means the file is not the still image we expect.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn jxl_process_expect(
+    decoder: &mut jxl::api::JxlDecoder,
+    input: &mut &[u8],
+    buffers: Option<&mut [jxl::api::JxlOutputBuffer<'_>]>,
+    runner: Option<&mut (dyn jxl::api::JxlParallelRunner + '_)>,
+    expected: jxl::api::Event,
+    stage: &str,
+) -> Result<()> {
+    match decoder.process(input, buffers, runner) {
+        Ok(event) if event == expected => Ok(()),
+        Ok(jxl::api::Event::NeedMoreInput { .. }) => {
+            bail!("jxl: decoder requested more input while {stage}, but it has the whole blob")
+        }
+        Ok(event) => bail!("jxl: unexpected decoder event {event:?} while {stage}"),
+        Err(e) => bail!("jxl: decoder error while {stage}: {e:?}"),
+    }
+}
+
 /// Web builds have no JPEG XL decoder; name the asset instead of failing
 /// deep inside a missing codec.
 #[cfg(target_arch = "wasm32")]
@@ -483,18 +506,21 @@ impl Picture {
     /// count, without decoding frame pixels.
     #[cfg(not(target_arch = "wasm32"))]
     fn jxl_header(bytes: &[u8]) -> Result<JxlHeader> {
-        use jxl::api::{JxlDecoder, JxlDecoderOptions, ProcessingResult, states};
+        use jxl::api::{Event, JxlDecoder, JxlDecoderOptions};
 
         let mut input = bytes;
-        let dec = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
-        let dec_with_image = match dec.process(&mut input, None) {
-            Ok(ProcessingResult::Complete { result }) => result,
-            Ok(ProcessingResult::NeedsMoreInput { .. }) => {
-                bail!("jxl: decoder requested more input but we provided the whole blob")
-            }
-            Err(e) => bail!("jxl: decoder error reading image info: {e:?}"),
-        };
-        let info = dec_with_image.basic_info();
+        let mut dec = JxlDecoder::new(JxlDecoderOptions::default());
+        jxl_process_expect(
+            &mut dec,
+            &mut input,
+            None,
+            None,
+            Event::BasicInfo,
+            "reading image info",
+        )?;
+        let info = dec
+            .basic_info()
+            .context("jxl: decoder reported BasicInfo without basic info")?;
         let (w, h) = info.size;
         Ok(JxlHeader {
             width: u16::try_from(w).context("jxl picture width exceeds u16")?,
@@ -719,29 +745,31 @@ impl Picture {
     #[cfg(not(target_arch = "wasm32"))]
     fn load_jxl_rgb565_impl(bytes: &[u8], parallel: bool) -> Result<Self> {
         use jxl::api::{
-            JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
-            JxlPixelFormat, ProcessingResult, states,
+            Event, JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+            JxlPixelFormat,
         };
 
         let mut input: &[u8] = bytes;
-        let dec = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
-
-        let mut dec_with_image = match dec.process(&mut input, None) {
-            Ok(ProcessingResult::Complete { result }) => result,
-            Ok(ProcessingResult::NeedsMoreInput { .. }) => {
-                bail!("jxl: decoder requested more input but we provided the whole blob")
-            }
-            Err(e) => bail!("jxl: decoder error reading image info: {e:?}"),
-        };
-
-        let (w, h) = dec_with_image.basic_info().size;
+        let mut dec = JxlDecoder::new(JxlDecoderOptions::default());
+        jxl_process_expect(
+            &mut dec,
+            &mut input,
+            None,
+            None,
+            Event::BasicInfo,
+            "reading image info",
+        )?;
+        let info = dec
+            .basic_info()
+            .context("jxl: decoder reported BasicInfo without basic info")?;
+        let (w, h) = info.size;
+        let extras = info.extra_channels.len();
         let (width, height, pitch) = Self::jxl_rgb565_layout(w, h)?;
 
         // Maps are 3-channel by construction (see `transcode_sixteen_to_jxl`
         // in the converter — it feeds cjxl an RGB-only PNG). Anything with
         // extra channels is unexpected; bail loudly so it's noticed rather
         // than silently corrupting the pixel layout.
-        let extras = dec_with_image.basic_info().extra_channels.len();
         if extras != 0 {
             bail!(
                 "jxl: terrain bitmap has {} extra channels (expected 0 for RGB-only); \
@@ -749,22 +777,22 @@ impl Picture {
                 extras
             );
         }
-        dec_with_image
-            .set_pixel_format(JxlPixelFormat {
-                color_type: JxlColorType::Rgb,
-                color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
-                extra_channel_format: Vec::new(),
-            })
-            .map_err(|error| anyhow::anyhow!("jxl: invalid output pixel format: {error:?}"))?;
+        dec.set_pixel_format(JxlPixelFormat {
+            color_type: JxlColorType::Rgb,
+            color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
+            extra_channel_format: Vec::new(),
+        })
+        .map_err(|error| anyhow::anyhow!("jxl: invalid output pixel format: {error:?}"))?;
 
-        // Advance from WithImageInfo → WithFrameInfo (no buffers yet).
-        let dec_with_frame = match dec_with_image.process(&mut input, None) {
-            Ok(ProcessingResult::Complete { result }) => result,
-            Ok(ProcessingResult::NeedsMoreInput { .. }) => {
-                bail!("jxl: decoder requested more input reading frame header")
-            }
-            Err(e) => bail!("jxl: decoder error reading frame info: {e:?}"),
-        };
+        // Parse the frame header before supplying output buffers.
+        jxl_process_expect(
+            &mut dec,
+            &mut input,
+            None,
+            None,
+            Event::FrameHeader,
+            "reading frame header",
+        )?;
 
         let stride = w * 3;
         let byte_length = stride
@@ -776,13 +804,16 @@ impl Picture {
         let runner_ref = runner
             .as_mut()
             .map(|r| r as &mut dyn jxl::api::JxlParallelRunner);
-        match dec_with_frame.process(&mut input, &mut output_bufs, runner_ref) {
-            Ok(ProcessingResult::Complete { .. }) => {}
-            Ok(ProcessingResult::NeedsMoreInput { .. }) => {
-                bail!("jxl: decoder requested more input while finishing frame")
-            }
-            Err(e) => bail!("jxl: decoder error processing frame: {e:?}"),
-        };
+        jxl_process_expect(
+            &mut dec,
+            &mut input,
+            Some(&mut output_bufs),
+            runner_ref,
+            Event::FrameComplete {
+                has_more_frames: false,
+            },
+            "decoding frame",
+        )?;
         drop(output_bufs);
 
         // Collapse RGB888 → RGB565. Chunked writes into a preallocated
@@ -828,43 +859,46 @@ impl Picture {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load_jxl_rgba565_keyed(bytes: &[u8]) -> Result<Self> {
         use jxl::api::{
-            JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
-            JxlPixelFormat, ProcessingResult, states,
+            Event, JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+            JxlPixelFormat,
         };
 
         let mut input: &[u8] = bytes;
-        let dec = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
-
-        let mut dec_with_image = match dec.process(&mut input, None) {
-            Ok(ProcessingResult::Complete { result }) => result,
-            Ok(ProcessingResult::NeedsMoreInput { .. }) => {
-                bail!("jxl: decoder requested more input but we provided the whole blob")
-            }
-            Err(e) => bail!("jxl: decoder error reading image info: {e:?}"),
-        };
-
-        let (w, h) = dec_with_image.basic_info().size;
+        let mut dec = JxlDecoder::new(JxlDecoderOptions::default());
+        jxl_process_expect(
+            &mut dec,
+            &mut input,
+            None,
+            None,
+            Event::BasicInfo,
+            "reading image info",
+        )?;
+        let info = dec
+            .basic_info()
+            .context("jxl: decoder reported BasicInfo without basic info")?;
+        let (w, h) = info.size;
+        let has_alpha = !info.extra_channels.is_empty();
         let (width, height, pitch) = Self::jxl_rgb565_layout(w, h)?;
-        if dec_with_image.basic_info().extra_channels.is_empty() {
+        if !has_alpha {
             bail!("jxl: keyed interface picture has no alpha channel");
         }
-        dec_with_image
-            .set_pixel_format(JxlPixelFormat {
-                color_type: JxlColorType::Rgba,
-                color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
-                // Alpha is included in RGBA output, so don't request a separate
-                // extra-channel buffer.
-                extra_channel_format: vec![None],
-            })
-            .map_err(|error| anyhow::anyhow!("jxl: invalid output pixel format: {error:?}"))?;
+        dec.set_pixel_format(JxlPixelFormat {
+            color_type: JxlColorType::Rgba,
+            color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
+            // Alpha is included in RGBA output, so don't request a separate
+            // extra-channel buffer.
+            extra_channel_format: vec![None],
+        })
+        .map_err(|error| anyhow::anyhow!("jxl: invalid output pixel format: {error:?}"))?;
 
-        let dec_with_frame = match dec_with_image.process(&mut input, None) {
-            Ok(ProcessingResult::Complete { result }) => result,
-            Ok(ProcessingResult::NeedsMoreInput { .. }) => {
-                bail!("jxl: decoder requested more input reading frame header")
-            }
-            Err(e) => bail!("jxl: decoder error reading frame info: {e:?}"),
-        };
+        jxl_process_expect(
+            &mut dec,
+            &mut input,
+            None,
+            None,
+            Event::FrameHeader,
+            "reading frame header",
+        )?;
 
         let stride = w * 4;
         let byte_length = stride
@@ -872,13 +906,16 @@ impl Picture {
             .context("jxl RGBA buffer size overflow")?;
         let mut rgba = vec![0u8; byte_length];
         let mut output_bufs = vec![JxlOutputBuffer::new(&mut rgba, h, stride)];
-        match dec_with_frame.process(&mut input, &mut output_bufs, None) {
-            Ok(ProcessingResult::Complete { .. }) => {}
-            Ok(ProcessingResult::NeedsMoreInput { .. }) => {
-                bail!("jxl: decoder requested more input while finishing frame")
-            }
-            Err(e) => bail!("jxl: decoder error processing frame: {e:?}"),
-        };
+        jxl_process_expect(
+            &mut dec,
+            &mut input,
+            Some(&mut output_bufs),
+            None,
+            Event::FrameComplete {
+                has_more_frames: false,
+            },
+            "decoding frame",
+        )?;
         drop(output_bufs);
 
         // Alpha carries the pixel CLASS, not opacity; the class bands and the

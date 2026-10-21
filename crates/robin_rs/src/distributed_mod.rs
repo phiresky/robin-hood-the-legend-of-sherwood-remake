@@ -624,16 +624,23 @@ fn validate_zip(
         if entry.is_dir() {
             continue;
         }
+        let name = entry
+            .name()
+            .map_err(|error| DistributedModError::Archive {
+                archive: archive_label,
+                message: format!("decode entry {index} name: {error}"),
+            })?
+            .into_owned();
         if entry
             .unix_mode()
             .is_some_and(|mode| mode & 0o170000 == 0o120000)
         {
             return Err(DistributedModError::Archive {
                 archive: archive_label,
-                message: format!("entry `{}` is a symbolic link", entry.name()),
+                message: format!("entry `{name}` is a symbolic link"),
             });
         }
-        let path = canonical_archive_path(entry.name())?;
+        let path = canonical_archive_path(&name)?;
         if entry.size() > DISTRIBUTED_MOD_ENTRY_BYTE_LIMIT {
             return Err(DistributedModError::Archive {
                 archive: archive_label,

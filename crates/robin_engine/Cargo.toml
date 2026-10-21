@@ -43,7 +43,7 @@ num_enum = "0.7"
 strum = "0.28.0"
 strum_macros = "0.28.0"
 geo = { workspace = true, features = ["serde"] }
-i_overlay = "8.1.1"
+i_overlay = "9.1.0"
 robin_util.workspace = true
 robin_data_io.workspace = true
 robin_state_hash_derive.workspace = true

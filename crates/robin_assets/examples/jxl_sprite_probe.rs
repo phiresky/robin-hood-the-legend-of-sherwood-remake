@@ -247,45 +247,52 @@ mod probe {
     /// decoder the runtime uses for terrain maps.
     fn decode_jxl_rgba(bytes: &[u8]) -> Result<(usize, usize, Vec<u8>)> {
         use jxl::api::{
-            JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
-            JxlPixelFormat, ProcessingResult, states,
+            Event, JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
+            JxlPixelFormat,
         };
+        use robin_assets::picture::jxl_process_expect;
         let mut input: &[u8] = bytes;
-        let dec = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
-        let mut dec_with_image = match dec.process(&mut input, None) {
-            Ok(ProcessingResult::Complete { result }) => result,
-            Ok(ProcessingResult::NeedsMoreInput { .. }) => bail!("jxl: truncated header"),
-            Err(e) => bail!("jxl: header error: {e:?}"),
-        };
-        let (w, h) = dec_with_image.basic_info().size;
+        let mut dec = JxlDecoder::new(JxlDecoderOptions::default());
+        jxl_process_expect(&mut dec, &mut input, None, None, Event::BasicInfo, "header")?;
+        let info = dec
+            .basic_info()
+            .ok_or_else(|| anyhow::anyhow!("jxl: no basic info"))?;
+        let (w, h) = info.size;
         // Fully-opaque sources (pak pictures) may come back without an alpha
         // extra channel — cjxl drops a constant-255 alpha.
-        let has_alpha = !dec_with_image.basic_info().extra_channels.is_empty();
-        dec_with_image
-            .set_pixel_format(JxlPixelFormat {
-                color_type: if has_alpha {
-                    JxlColorType::Rgba
-                } else {
-                    JxlColorType::Rgb
-                },
-                color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
-                extra_channel_format: if has_alpha { vec![None] } else { vec![] },
-            })
-            .map_err(|error| anyhow::anyhow!("jxl: invalid output pixel format: {error:?}"))?;
-        let dec_with_frame = match dec_with_image.process(&mut input, None) {
-            Ok(ProcessingResult::Complete { result }) => result,
-            Ok(ProcessingResult::NeedsMoreInput { .. }) => bail!("jxl: truncated frame header"),
-            Err(e) => bail!("jxl: frame header error: {e:?}"),
-        };
+        let has_alpha = !info.extra_channels.is_empty();
+        dec.set_pixel_format(JxlPixelFormat {
+            color_type: if has_alpha {
+                JxlColorType::Rgba
+            } else {
+                JxlColorType::Rgb
+            },
+            color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
+            extra_channel_format: if has_alpha { vec![None] } else { vec![] },
+        })
+        .map_err(|error| anyhow::anyhow!("jxl: invalid output pixel format: {error:?}"))?;
+        jxl_process_expect(
+            &mut dec,
+            &mut input,
+            None,
+            None,
+            Event::FrameHeader,
+            "frame header",
+        )?;
         let ch = if has_alpha { 4 } else { 3 };
         let stride = w * ch;
         let mut pixels = vec![0u8; stride * h];
         let mut bufs = vec![JxlOutputBuffer::new(&mut pixels, h, stride)];
-        match dec_with_frame.process(&mut input, &mut bufs, None) {
-            Ok(ProcessingResult::Complete { .. }) => {}
-            Ok(ProcessingResult::NeedsMoreInput { .. }) => bail!("jxl: truncated frame"),
-            Err(e) => bail!("jxl: frame error: {e:?}"),
-        }
+        jxl_process_expect(
+            &mut dec,
+            &mut input,
+            Some(&mut bufs),
+            None,
+            Event::FrameComplete {
+                has_more_frames: false,
+            },
+            "frame",
+        )?;
         drop(bufs);
         let rgba = if has_alpha {
             pixels

@@ -230,18 +230,25 @@ pub(crate) fn decode_jxl_rgba8_parallel(bytes: &[u8]) -> Result<(usize, usize, V
 
 #[cfg(not(target_arch = "wasm32"))]
 fn decode_jxl_rgba8_impl(bytes: &[u8], parallel: bool) -> Result<(usize, usize, Vec<u8>)> {
+    use crate::picture::jxl_process_expect;
     use jxl::api::{
-        JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions, JxlOutputBuffer,
-        JxlPixelFormat, ProcessingResult, states,
+        Event, ExtraChannel, JxlColorType, JxlDataFormat, JxlDecoder, JxlDecoderOptions,
+        JxlOutputBuffer, JxlPixelFormat,
     };
     let mut input: &[u8] = bytes;
-    let dec = JxlDecoder::<states::Initialized>::new(JxlDecoderOptions::default());
-    let mut dec_with_image = match dec.process(&mut input, None) {
-        Ok(ProcessingResult::Complete { result }) => result,
-        Ok(ProcessingResult::NeedsMoreInput { .. }) => bail!("jxl: truncated header"),
-        Err(e) => bail!("jxl: header error: {e:?}"),
-    };
-    let (w, h) = dec_with_image.basic_info().size;
+    let mut dec = JxlDecoder::new(JxlDecoderOptions::default());
+    jxl_process_expect(
+        &mut dec,
+        &mut input,
+        None,
+        None,
+        Event::BasicInfo,
+        "reading sprite header",
+    )?;
+    let info = dec
+        .basic_info()
+        .context("jxl: decoder reported BasicInfo without basic info")?;
+    let (w, h) = info.size;
     if w == 0 || h == 0 {
         bail!("jxl: zero-sized image");
     }
@@ -250,8 +257,8 @@ fn decode_jxl_rgba8_impl(bytes: &[u8], parallel: bool) -> Result<(usize, usize, 
     let output_bytes = pixel_count
         .checked_mul(4)
         .ok_or_else(|| anyhow!("JXL sprite atlas byte count overflow"))?;
-    match dec_with_image.basic_info().extra_channels.first() {
-        Some(channel) if channel.ec_type == jxl::headers::extra_channels::ExtraChannel::Alpha => {
+    match info.extra_channels.first() {
+        Some(channel) if channel.ec_type == ExtraChannel::Alpha => {
             if channel.alpha_associated {
                 bail!(
                     "jxl: sprite image carries premultiplied (associated) alpha; the class \
@@ -261,18 +268,20 @@ fn decode_jxl_rgba8_impl(bytes: &[u8], parallel: bool) -> Result<(usize, usize, 
         }
         _ => bail!("jxl: sprite image has no alpha channel to carry pixel classes"),
     }
-    dec_with_image
-        .set_pixel_format(JxlPixelFormat {
-            color_type: JxlColorType::Rgba,
-            color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
-            extra_channel_format: vec![None],
-        })
-        .map_err(|error| anyhow::anyhow!("jxl: invalid output pixel format: {error:?}"))?;
-    let dec_with_frame = match dec_with_image.process(&mut input, None) {
-        Ok(ProcessingResult::Complete { result }) => result,
-        Ok(ProcessingResult::NeedsMoreInput { .. }) => bail!("jxl: truncated frame header"),
-        Err(e) => bail!("jxl: frame header error: {e:?}"),
-    };
+    dec.set_pixel_format(JxlPixelFormat {
+        color_type: JxlColorType::Rgba,
+        color_data_format: Some(JxlDataFormat::U8 { bit_depth: 8 }),
+        extra_channel_format: vec![None],
+    })
+    .map_err(|error| anyhow::anyhow!("jxl: invalid output pixel format: {error:?}"))?;
+    jxl_process_expect(
+        &mut dec,
+        &mut input,
+        None,
+        None,
+        Event::FrameHeader,
+        "reading sprite frame header",
+    )?;
     let stride = w * 4;
     let mut pixels = vec![0u8; output_bytes];
     let mut bufs = vec![JxlOutputBuffer::new(&mut pixels, h, stride)];
@@ -280,11 +289,16 @@ fn decode_jxl_rgba8_impl(bytes: &[u8], parallel: bool) -> Result<(usize, usize, 
     let runner_ref = runner
         .as_mut()
         .map(|runner| runner as &mut dyn jxl::api::JxlParallelRunner);
-    match dec_with_frame.process(&mut input, &mut bufs, runner_ref) {
-        Ok(ProcessingResult::Complete { .. }) => {}
-        Ok(ProcessingResult::NeedsMoreInput { .. }) => bail!("jxl: truncated frame"),
-        Err(e) => bail!("jxl: frame error: {e:?}"),
-    }
+    jxl_process_expect(
+        &mut dec,
+        &mut input,
+        Some(&mut bufs),
+        runner_ref,
+        Event::FrameComplete {
+            has_more_frames: false,
+        },
+        "decoding sprite frame",
+    )?;
     drop(bufs);
     Ok((w, h, pixels))
 }
