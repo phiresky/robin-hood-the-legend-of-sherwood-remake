@@ -22,7 +22,7 @@ touch "$fixture/Cargo.lock" "$work/main/tmp/ssh_deploy_config"
 printf 'CLOUDFLARE_ACCOUNT_ID=fake\nCLOUDFLARE_ZONE_ID=fake\nCLOUDFLARE_API_TOKEN=fake\n' >"$work/main/.env"
 toolchain=$HOME/.local/share/robin_hood/deployment-toolchain
 staging=$HOME/.local/share/robin_hood/deployment-staging
-mkdir -p "$toolchain/wasm-bindgen-0.2.128/bin" "$staging/prior/runtime-dist" \
+mkdir -p "$toolchain/wasm-bindgen-0.2.129/bin" "$staging/prior/runtime-dist" \
     "$staging/prior/datadir-dist" "$staging/prior/public-dist"
 # The prior stage predates datadir-release.json: it carries only the removed
 # release authority and deployment receipt, like release-48005f9bb945.
@@ -43,7 +43,7 @@ fake() {
     } >"$path"
     chmod +x "$path"
 }
-fake "$toolchain/wasm-bindgen-0.2.128/bin/wasm-bindgen" </dev/null
+fake "$toolchain/wasm-bindgen-0.2.129/bin/wasm-bindgen" </dev/null
 # Datadir rebuilds require opusenc on libopus 1.6.1 and the lossless music WAV
 # directory; the real loader and mapping checks live in convert_datadir.
 mkdir -p "$toolchain/opus-tools-0.2/bin" "$work/main/datadirs/music-rhmods-lossless"
@@ -219,7 +219,7 @@ stage=$staging/release-111111111111
 [[ -f $stage/datadir-release.json ]] || fail 'migration did not write datadir-release.json'
 [[ $(jq -cS . "$stage/datadir-release.json") == "$(jq -cS . <<<"$expected_release")" ]] ||
     fail "derived datadir-release.json differs: $(cat "$stage/datadir-release.json")"
-called "node wasm-www/scripts/stage-runtime-addition.mjs --root $stage/runtime-addition --bindgen $toolchain/wasm-bindgen-0.2.128/bin/wasm-bindgen --datadir-release $stage/datadir-release.json"
+called "node wasm-www/scripts/stage-runtime-addition.mjs --root $stage/runtime-addition --bindgen $toolchain/wasm-bindgen-0.2.129/bin/wasm-bindgen --datadir-release $stage/datadir-release.json"
 called "node wasm-www/scripts/assemble-runtime-corpus.mjs --update $staging/prior/runtime-dist $stage/runtime-addition $stage/runtime-dist"
 rm -rf "$stage"
 

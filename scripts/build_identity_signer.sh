@@ -11,8 +11,8 @@ if [[ "$wasm_bindgen" != /* || ! -f "$wasm_bindgen" || -L "$wasm_bindgen" || ! -
     echo "wasm-bindgen must be an absolute regular executable: $wasm_bindgen" >&2
     exit 2
 fi
-if [[ "$($wasm_bindgen --version)" != 'wasm-bindgen 0.2.128' ]]; then
-    echo "identity signer requires the exact accepted wasm-bindgen 0.2.128 CLI" >&2
+if [[ "$($wasm_bindgen --version)" != 'wasm-bindgen 0.2.129' ]]; then
+    echo "identity signer requires the exact accepted wasm-bindgen 0.2.129 CLI" >&2
     exit 1
 fi
 
