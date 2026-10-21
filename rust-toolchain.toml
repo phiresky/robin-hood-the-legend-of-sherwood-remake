@@ -1,5 +1,5 @@
 [toolchain]
-channel = "nightly-2026-08-25"
+channel = "nightly-2026-10-21"
 # rust-src backs the `-Zbuild-std` wasm-release publishes (see the README
 # wasm section); rustfmt and cranelift serve formatting and the dev/test
 # codegen backend. The wasm target is pinned so neither local builds nor CI
