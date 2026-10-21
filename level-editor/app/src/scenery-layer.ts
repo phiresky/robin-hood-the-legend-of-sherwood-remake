@@ -1,3 +1,6 @@
+import { placedScenerySourceCandidates, resolveScenerySourceCorrespondence } from './scenery-source-correspondence.ts';
+import type { NativeStatePresentationContract } from '../../shared/src/native-state-presentation.ts';
+import type { ProtoLevel } from '../../shared/src/level.ts';
 import { ScenerySourceClocks } from "./scenery-source-clocks.ts";
 import * as THREE from "three";
 import { gameToScene, partMatrix, sceneToGame, type Level3D } from "@rle/shared";
@@ -27,6 +30,9 @@ export class SceneryLayer {
   private effects = new Map<string, Effect>();
   private resources = new Map<string, Promise<Frames>>();
   private sourceKey = "";
+  private descriptorLoad: Promise<void> = Promise.resolve();
+  private sourceClockEpoch = 0;
+  private sourceIdentities = new Map<string, string>();
   private epoch = 0;
   private changed: () => void;
   private warning: (message: string) => void;
@@ -50,7 +56,7 @@ export class SceneryLayer {
   }
   clear() {
     this.epoch++;
-    this.sourceClocks.clear();
+    this.clearSourceClocks();
     for (const effect of this.effects.values()) this.remove(effect);
     this.effects.clear();
     for (const resource of this.resources.values())
@@ -76,7 +82,7 @@ export class SceneryLayer {
     if (key !== this.sourceKey) {
       this.sourceKey = key;
       const epoch = ++this.epoch;
-      void readPinnedAssetDescriptors(library, document.assetSources ?? []).then(
+      this.descriptorLoad = readPinnedAssetDescriptors(library, document.assetSources ?? []).then(
         (descriptors) => {
           if (epoch !== this.epoch) return;
           this.descriptors = descriptors;
@@ -217,13 +223,55 @@ export class SceneryLayer {
     this.update(performance.now());
     this.changed();
   }
+  clearSourceClocks() {
+    this.sourceClockEpoch++;
+    this.sourceIdentities.clear();
+    this.sourceClocks.clear();
+  }
+  async bindNativeSourceClocks(native: NativeStatePresentationContract, level: ProtoLevel) {
+    this.clearSourceClocks();
+    const epoch = this.sourceClockEpoch;
+    await this.descriptorLoad;
+    const document = this.document, library = this.library;
+    if (epoch !== this.sourceClockEpoch) return false;
+    if (!document || !library) {
+      if (this.effects.size) throw new Error('Scenery source clocks have no displayed library document');
+      return true;
+    }
+    const resolved = await resolveScenerySourceCorrespondence(
+      document, this.descriptors, native, level,
+      async path => new Uint8Array(await (await libraryFile(library, path)).arrayBuffer()),
+    );
+    await Promise.all(resolved.bindings.map(binding => {
+      const effect = this.effects.get(binding.effectId);
+      const resource = effect && this.resources.get(effect.key);
+      if (!resource) throw new Error('Matched scenery source resource is not available');
+      return resource;
+    }));
+    if (epoch !== this.sourceClockEpoch || !this.document || library !== this.library) return false;
+    const current = new Map(placedScenerySourceCandidates(this.document, this.descriptors).map(row => [row.effectId, row.identity]));
+    for (const [id, identity] of resolved.identities)
+      if (current.get(id) !== identity) throw new Error('Scenery placement changed during source clock admission');
+    this.sourceIdentities = resolved.identities;
+    this.sourceClocks.bind(resolved.bindings);
+    return true;
+  }
   update(now: number) {
+    let currentIdentities: Map<string, string> | undefined;
+    let identityError: unknown;
+    try {
+      if (this.sourceIdentities.size && this.document)
+        currentIdentities = new Map(placedScenerySourceCandidates(this.document, this.descriptors).map(row => [row.effectId, row.identity]));
+    } catch (error) { identityError = error; }
     for (const [id, effect] of this.effects) {
       effect.place?.();
       if (!effect.frames) continue;
       const frames = effect.frames.frames;
       let external: number | undefined;
       try {
+        if (this.sourceIdentities.has(id) && identityError) throw identityError;
+        if (this.sourceIdentities.has(id) && currentIdentities?.get(id) !== this.sourceIdentities.get(id))
+          throw new Error('Bound scenery placement or descriptor changed');
         external = this.sourceClocks.frame(id, effect.descriptorSha256, frames.length);
         effect.clockError = undefined;
       } catch (error) {

@@ -1283,6 +1283,7 @@ export class EditorViewport {
             binding,
           })),
         );
+      if (!(await this.scenery.bindNativeSourceClocks(frozen.native, resolvedSource.level)) || !current()) return false;
       this.loopStaticReplacements = frozen.static_replacements;
       this.refreshTextureDisplay();
       this.syncDeliveredStaticPlacements();
@@ -1390,7 +1391,7 @@ export class EditorViewport {
     this.setStatePresentationMode("physical");
     if (this.loopClocks.ready) this.missionStates.clear();
     this.loopClocks.clear();
-    this.scenery.sourceClocks.clear();
+    this.scenery.clearSourceClocks();
     this.loopFocus = undefined;
     this.loopCoverVisibility = [];
     this.loopSequence = 0;
