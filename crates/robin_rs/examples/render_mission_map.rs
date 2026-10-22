@@ -109,9 +109,12 @@ fn run() -> anyhow::Result<i32> {
         OsString::from("--mission"),
         OsString::from(&args.mission),
         OsString::from("--no-sound"),
-        OsString::from("--http-server=0"),
         OsString::from("--rollback-check=false"),
     ];
+    // The HTTP server option only exists in builds with the `script-rpc` feature.
+    if cfg!(feature = "script-rpc") {
+        launcher_args.push(OsString::from("--http-server=0"));
+    }
     if let Some(proto) = args.proto {
         launcher_args.push(OsString::from("--proto"));
         launcher_args.push(OsString::from(proto));
