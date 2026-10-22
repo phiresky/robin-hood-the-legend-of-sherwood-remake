@@ -164,6 +164,20 @@ software WebGL bake can rely on; only `sherwood-central-oak` exceeded it
 (2048×11705 → 1433×8192) and it is regenerated
 (`lossy-sherwood-central-oak-cap-20261022`).
 
+### Cutaway buildings in the game as played
+
+The painted Leicester and Nottingham backgrounds show several buildings as
+open cutaways, while the exports bake them closed. Rendering the original
+missions' opening frames with the engine (`render_mission_map`, software
+Vulkan via lavapipe) shows the game draws those roofs and walls over the
+background at mission start: the Leicester moat and gate towers (H04_Lei_VL)
+and the Nottingham chapel and round tower (S01_Not_VL) appear closed, matching
+the exports. Against the daytime opening frames the exports' mean difference is
+18.4 (Leicester) and 19.5 (Nottingham), below their differences from the bare
+backgrounds (20.0 and 20.2). Nottingham's tower flag is an animated sprite and
+is not part of the baked background. Night/fog missions (S02_Lei_MP,
+H02_Not_EC) differ by their lighting variants and are not compared.
+
 ## Unconnectable overlapping floors stay in one sector
 
 Since `933f4402d`, a navigation region whose overlapping parts could not be
