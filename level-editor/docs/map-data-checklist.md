@@ -215,8 +215,11 @@ jump line misses entirely; export now omits such pairs with a warning instead of
 exporting a flight that lands at ground height. The remaining 52/120 failures
 are takeoffs from the rear-roof line, which sits in the acute top corner of its
 parallelogram floor where the 6×3 actor footprint cannot stand; no inset of up
-to ten units along its normal fits at 0 or 90 degrees. The asset-local jump edge
-needs moving out of that corner. See
+to ten units along its normal fits at 0 or 90 degrees. Moving the red-roof edge
+two units inward along its plane, with surface-following selection regions on
+both houses, passes all 120 moved probes with normal or hidden selection and
+720/720 full-York clicks, with no regressions; it adds small flight contacts
+and is not yet published. See
 [omitted unsupported jumps](map-compilation-evidence.md#jumps-entirely-off-their-receiving-surface).
 Correcting the audit to use native precise contours and actual receiver samples
 finds usable points at every rotation. A common-tangent span candidate then fixes

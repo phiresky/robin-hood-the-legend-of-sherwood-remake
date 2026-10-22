@@ -72,6 +72,42 @@ actor footprint fits nowhere along that line at 0 degrees and only partly at
 the line normal finds a fit only at 37 degrees (five units). The edge must move
 out of the roof corner in asset-local metadata; no export-time inset is added.
 
+A face touched by the line must also be able to hold the native 12×6 movement
+box: with a red-roof inset of 3–4 units the 180-degree line grazed the 11-unit
+sliver and was retained, failing all 40 probes. The rule now also omits such
+lines; the ten current maps remain unchanged.
+
+### Red-roof inset with surface selection regions (unpublished)
+
+Each candidate combines `stage-york-red-roof-jump-inset.mjs N --surface-zone`
+with the rear-house surface zone `jump-zone-surface-f9fLWO`
+(`building-331-walk-0`), exported with the current compiler. The 180-degree
+pairs are omitted in every variant, leaving 120 offset probes:
+
+| Inset | Placements | Normal | Normal or hidden | Sword | Sword contacts (max) |
+| --- | --- | --- | --- | --- | --- |
+| baseline | `LwDGyt` | 68 | — | 120 | 124 (5.00) |
+| 1 | `5iKTfJ` | 96 | 112 | 120 | 128 (5.95) |
+| 2 | `3RMRXk` | 100 | 120 | 120 | 140 (8.46) |
+| 3 | `tKWdMZ` | 100 | 120 | 120 | 148 (9.81) |
+| 4 | `bFgk5g` | 100 | 120 | 120 | 160 (12.26) |
+| 6 | `wJlUNy` | 100 | 120 | 120 | 192 (14.58) |
+
+The 20 normal-only failures click points where the dormer receiver overlaps the
+main roof; hidden-floor selection completes all 20. For the six-unit stage
+(`connected-jump-placements-T7NKp6`), identical-input comparisons against the
+baseline show zero regressions with 32 click, 44 approach and 20 endpoint-click
+fixes; landing and sword reports are unchanged. Merged normal/hidden upright
+traces for the two-unit stage (`upright-mode-traces-3RMRXk`) contain 76 contacts
+among 2,000 airborne samples, maximum 3.19 units; the baseline's passing upright
+flights (`upright-mode-traces-LwDGyt`) contain 28 among 1,120, maximum 2.72.
+Full York with the two-unit stage (`staged-map-export-Iy9GQj`) and the six-unit
+stage (`staged-map-export-6CWoNR`) each pass 720/720 offset clicks against
+715/720 for the fresh baseline `saved-map-exports-mGz3v1` (five fixes, no
+regressions); sword results are identical (625/720, failures on other lines).
+The two-unit stage is the smallest inset reaching 120/120, but it adds small
+upright contacts and raises the maximum sword penetration; it is not published.
+
 ## Editor test suite memory and stale fixtures
 
 Node's `assert.deepEqual` diff of a mismatching multi-megabyte descriptor grew
@@ -123,6 +159,13 @@ Lincoln, Nottingham and Sherwood are identical. Two differ:
   `browser-exports-j6Syyl`, built before several climb/footprint compiler commits.
 - Croisement02 mask 20 has a different outline and box, consistent with the
   scene/asset edits present in the working tree at compile time.
+
+Wychford recompiled with the terrain and wall-walkway fallback
+(`saved-map-exports-3UYFq5`) has 26 layers and 119 areas instead of 32/245; the
+61 removed ordinary doors were generated passages between terrain fragments,
+while all 4 lift doors, 24 building doors and authored-door omission warnings
+are unchanged. Native construction and collision-connected route sampling pass
+(96 routes).
 
 Native audit of `BZhLwR` Leicester checks 20 climb routes with zero failures
 but two "forbidden" routes: both directions of lift 2, the east-moat tower
