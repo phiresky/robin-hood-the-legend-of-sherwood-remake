@@ -3128,7 +3128,7 @@ test("clipped ramp components retain supported doorway clearance despite subpixe
   }
 });
 
-test("unconnectable overlapping receivers retain separate native sectors", () => {
+test("unconnectable overlapping receivers stay in one native sector like the original", () => {
   const { document, assets, hut } = assetCompilerFixture();
   hut.gameplay!.collision = "none";
   hut.gameplay!.doors = [];
@@ -3147,19 +3147,14 @@ test("unconnectable overlapping receivers retain separate native sectors", () =>
   document.objects = document.objects.filter((object) => object.group);
   const before = structuredClone(hut.gameplay);
   const compiled = compileAssetGameplay(document, assets, [0, 0, 3000, 2000]);
-  assert.equal(compiled.motion_data.layers.flat().length, 2);
+  // The original keeps overlapping receivers at different heights in one
+  // sector; both floors remain receivers of that sector.
+  assert.equal(compiled.motion_data.layers.flat().length, 1);
   const receivers = compiled.sight_obstacles.filter((obstacle) => obstacle.projection_area);
   assert.equal(receivers.length, 2);
-  assert.equal(new Set(receivers.map((receiver) => receiver.projection_area![0])).size, 2);
+  assert.equal(new Set(receivers.map((receiver) => receiver.projection_area![0])).size, 1);
   assert.equal(compiled.doors.length, 0, "No passage may bridge unmatched heights");
-  assert.ok(
-    compiled.warnings?.some((warning) => warning.includes("disconnected floors remain separate")),
-  );
-  assert.ok(
-    !compiled.warnings?.some((warning) =>
-      warning.includes("receiving floors overlap at different heights"),
-    ),
-  );
+  assert.ok(compiled.warnings?.some((warning) => warning.includes("one sector is retained")));
   assert.deepEqual(hut.gameplay, before);
 });
 

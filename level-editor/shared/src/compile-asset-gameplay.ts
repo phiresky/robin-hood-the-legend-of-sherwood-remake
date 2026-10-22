@@ -2058,32 +2058,17 @@ function compileAssetGameplayAttempt(
           reached.add(passage.to);
         }
     }
-    // Editor terrain and wall-spline walkways are each one continuous generated
-    // surface; their overlaps are folds at steep banks or rising curves, not
-    // separate floors. Splitting them at an unavailable seam discards holes
-    // and disconnects the surface, so keep one sector and let layer ordering
-    // report the overlap.
-    // TODO: export folded faces as collision and connect rising overlaps.
-    if (
-      reached.size !== planned.regions.length &&
-      region.pieces.every(
-        (piece) =>
-          piece.navigationRegion?.startsWith("authored-terrain/") ||
-          piece.navigationRegion?.startsWith("wall-spline-"),
-      )
-    ) {
+    // One navigation region is one native sector, as in the original maps,
+    // which keep overlapping receivers at different heights in a single
+    // sector. Partition only when matching-height seams reconnect every part;
+    // otherwise splitting disconnects floors (and loses terrain holes), so keep
+    // the region whole and let layer ordering report the overlap.
+    if (reached.size !== planned.regions.length) {
       warnings.push(
-        `Navigation ${region.pieces[0]!.navigationRegion}: continuous generated surface overlaps itself without character-sized seams between its parts; one sector is retained.`,
+        `Navigation ${region.pieces[0]?.navigationRegion ?? "unnamed"}: overlapping receiving floors have no character-sized seams between all parts; one sector is retained.`,
       );
       return [region];
     }
-    // An unavailable seam must not merge different receiving heights back into
-    // one sector. Retain each valid floor and every usable connection; report
-    // the disconnected components for authoring repair.
-    if (reached.size !== planned.regions.length)
-      warnings.push(
-        `Navigation ${region.pieces[0]?.navigationRegion ?? "unnamed"}: partitioned receiving floors have no character-sized connection between all components; disconnected floors remain separate.`,
-      );
     partitionPassages.push(...usable);
     return planned.regions;
   });

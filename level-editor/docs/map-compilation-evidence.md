@@ -117,6 +117,31 @@ deep-equal to the tested `staged-map-export-Iy9GQj`. The publication manifest
 and prior descriptors are in `york-red-inset2-rear-zone-yZsAMi`. Flight clearance
 for sword jumps on this connection remains open.
 
+## Unconnectable overlapping floors stay in one sector
+
+Since `933f4402d`, a navigation region whose overlapping parts could not be
+reconnected was exported as separate, disconnected sectors. The original maps
+keep such overlaps in one sector: at Nottingham's upper green house the
+original has receiving faces at 140.4 and 155.5 both bound to sector 139/8,
+and the York doorways at `[578,1105]` and `[1242,1198]` have two overlapping
+receivers in one sector. Asset extraction already records this membership as
+one navigation region. Export now partitions a region only when matching-height
+seams reconnect every part and otherwise keeps it whole, for asset floors,
+terrain and wall walkways alike.
+
+Compared with the split versions on identical inputs: York
+(`saved-map-exports-natj65` against `XbXNbL`) keeps 720/720 jump clicks,
+40/40 climbs and unchanged stair results; sword jumps go from 715 to 709 (lines
+55/57 now leave the ledge before flight, where the original also has no
+elevated receiver) and doorway round trips from 92 to 90/95 (doors 81 and 92
+choose between the two overlapping doorway receivers, as in the original).
+Derby, Lincoln and Nottingham (`saved-map-exports-P6hqSN` against `BZhLwR`)
+keep all climbs and stairs, gain five jump clicks (Nottingham line 75) with no
+regressions, and lose two sword probes on Nottingham line 29, whose drop point
+also has no receiver in the original. All split-floor warnings disappear.
+The editor suite passes 197/198 files (`workspace.test.ts` fails only on the
+working-tree Croisement02 scene).
+
 ## Browser round trips on the current compiler (2026-10-22)
 
 Frozen snapshot `browser-build-2jcp4Q` (port 5187) is built from a clean HEAD
