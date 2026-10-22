@@ -117,6 +117,34 @@ deep-equal to the tested `staged-map-export-Iy9GQj`. The publication manifest
 and prior descriptors are in `york-red-inset2-rear-zone-yZsAMi`. Flight clearance
 for sword jumps on this connection remains open.
 
+## Visual review against original backgrounds
+
+Exported `map.png` backgrounds from the current round trips were compared with
+the original `Day/*.map` backgrounds (decoded with the engine's picture loader).
+Croisement01/03, Derby, Lincoln and York match closely (mean per-pixel RGB
+difference 9–15); Leicester and Nottingham match in layout and differ mainly in
+re-rendered trees and in buildings the originals paint as cutaways, which the
+exports bake with roofs closed (in-game appearance states switch those).
+
+Sherwood's middle third was a flat `(196,179,149)` slab: the sRGB colour of the
+draft "Unfinished volume preview" material. The lossy derivative of
+`sherwood-preparation-table-canopy` put the quantization transform on every
+mesh node, but its three support poles are children of the canopy mesh node,
+so they were scaled twice (about 19,500×). The quantizer now gives nested mesh
+nodes no second transform (and keeps float positions when a transformed node
+lies between two mesh nodes). Only that canopy and
+`derby-lower-west-canvas-shelter` were affected across 1,293 assets; both
+derivatives are regenerated (`lossy-nested-mesh-dequantization-20261022`) and
+the library validates. Re-exported Sherwood and Derby (`browser-exports-u2ULnJ`)
+pass round trip and native loading; Sherwood's mean difference drops from 56.7
+to 23.6 and the central oak and tree house render. The draft canopy remains
+untextured and a wedge artifact remains on the river bluff.
+
+The derivative pipeline also caps texture sides at 8192 pixels, the limit the
+software WebGL bake can rely on; only `sherwood-central-oak` exceeded it
+(2048×11705 → 1433×8192) and it is regenerated
+(`lossy-sherwood-central-oak-cap-20261022`).
+
 ## Unconnectable overlapping floors stay in one sector
 
 Since `933f4402d`, a navigation region whose overlapping parts could not be

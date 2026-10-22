@@ -472,6 +472,23 @@ class LossyAssetsTest(unittest.TestCase):
         np.testing.assert_allclose(positions * node['scale'] + node['translation'],
                                    lossy_assets.accessor_array(doc, buffers, 0), atol=1 / 65535)
 
+    def test_nested_mesh_nodes_inherit_one_dequantization_transform(self):
+        doc, buffers, _ = lossy_assets.read_glb(self.root / 'derby/house/model.glb')
+        # A child mesh node (e.g. a support pole under its canopy) must not be scaled twice.
+        doc['nodes'].append({'name': 'child', 'mesh': 0})
+        doc['nodes'][0]['children'] = [len(doc['nodes']) - 1]
+        output = self.root / 'nested.glb'
+        lossy_assets.write_lossy(doc, buffers, None, b'', output,
+                                 normal_bits=8, reencoded={0: b'fake avif'})
+        written, _, _ = lossy_assets.read_glb(output)
+        self.assertIn('scale', written['nodes'][0])
+        self.assertNotIn('scale', written['nodes'][-1])
+        self.assertNotIn('translation', written['nodes'][-1])
+        # A transformed node between two mesh nodes would not commute with the grid.
+        doc['nodes'].append({'name': 'offset', 'translation': [1, 2, 3], 'children': [len(doc['nodes']) - 1]})
+        doc['nodes'][0]['children'] = [len(doc['nodes']) - 1]
+        self.assertFalse(lossy_assets.Quantizer(doc, buffers, 8).quantize_positions)
+
     def test_previews_follow_the_lossy_model_and_rebuild_when_it_changes(self):
         self.refresh(previews=True)
         entry = json.loads((self.root / 'index.json').read_text())['assets'][0]

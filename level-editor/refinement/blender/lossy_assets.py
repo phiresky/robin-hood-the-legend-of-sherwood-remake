@@ -89,6 +89,10 @@ BACKGROUND = 128  # comparison background gray (0-255) under transparent render 
 
 # --- shared bake/measurement helpers ------------------------------------------------------------
 
+# Largest texture side the WebGL map bake and editor can rely on.
+MAX_TEXTURE_SIDE = 8192
+
+
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -875,10 +879,28 @@ class Quantizer:
                 if not triangle_precision_safe(positions, rounded, indices):
                     # One common policy preserves shared boundaries between meshes.
                     self.quantize_positions = False
+        transformed = lambda node: any(k in node for k in ('matrix', 'translation', 'rotation', 'scale'))
         for node in doc['nodes']:
             if 'mesh' in node:
-                require(not any(k in node for k in ('matrix', 'translation', 'rotation', 'scale')),
+                require(not transformed(node),
                         f'Quantization needs untransformed mesh nodes: {node.get("name")}')
+        # The dequantization transform goes on mesh nodes. A mesh node below another
+        # mesh node inherits it, so it must not receive it again; a transformed node
+        # between them would not commute with it, so positions then stay float.
+        parents = {child: index for index, node in enumerate(doc['nodes']) for child in node.get('children', [])}
+        self.inherits_dequantization = set()
+        for index, node in enumerate(doc['nodes']):
+            if 'mesh' not in node:
+                continue
+            path, ancestor = [], parents.get(index)
+            while ancestor is not None and 'mesh' not in doc['nodes'][ancestor]:
+                path.append(ancestor)
+                ancestor = parents.get(ancestor)
+            if ancestor is None:
+                continue
+            if any(transformed(doc['nodes'][between]) for between in path):
+                self.quantize_positions = False
+            self.inherits_dequantization.add(index)
 
     def convert(self, name, array, template, triangles=None):
         if template.get('componentType') != 5126 or template.get('normalized'):
@@ -904,8 +926,8 @@ class Quantizer:
         return array, template
 
     def apply_nodes(self, out):
-        for node in out['nodes']:
-            if 'mesh' in node and self.quantize_positions:
+        for index, node in enumerate(out['nodes']):
+            if 'mesh' in node and self.quantize_positions and index not in self.inherits_dequantization:
                 node['translation'] = self.offset.tolist()
                 node['scale'] = [self.scale] * 3
         for key in ('extensionsUsed', 'extensionsRequired'):
@@ -1188,7 +1210,7 @@ def derive_pbr(asset_id, model_path, lossy_path, args, work, doc, binary, source
                      material.get('pbrMetallicRoughness', {}).get('metallicRoughnessTexture')):
             if info:
                 data_images.add(avif_source(doc['textures'][info['index']]))
-    encoded = {}
+    encoded, resized = {}, {}
     for index, image in enumerate(doc.get('images', [])):
         if 'uri' in image:
             require(not image['uri'].startswith('data:'), 'Data URI images are not supported')
@@ -1199,7 +1221,17 @@ def derive_pbr(asset_id, model_path, lossy_path, args, work, doc, binary, source
             payload = binary[view.get('buffer', 0)][start:start + view['byteLength']]
         png, avif = work / f'pbr-{index}.png', work / f'pbr-{index}.avif'
         with Image.open(io.BytesIO(payload)) as source:
-            source.convert('RGBA' if 'A' in source.getbands() else 'RGB').save(png)
+            converted = source.convert('RGBA' if 'A' in source.getbands() else 'RGB')
+            # WebGL renderers (including the software one used for map bakes)
+            # reject textures beyond their maximum size and draw the material
+            # untextured. UVs are normalized, so scaling keeps the mapping.
+            if max(converted.size) > MAX_TEXTURE_SIDE:
+                scale = MAX_TEXTURE_SIDE / max(converted.size)
+                converted = converted.resize(
+                    (max(1, round(converted.width * scale)), max(1, round(converted.height * scale))),
+                    Image.LANCZOS)
+                resized[index] = [source.width, source.height, converted.width, converted.height]
+            converted.save(png)
         quality = max(90, args.quality) if index in data_images else args.quality
         command = ['avifenc', '-q', str(quality), '--qalpha', '100', '-s', str(args.speed), '-j', '2']
         if index in data_images:
@@ -1211,7 +1243,8 @@ def derive_pbr(asset_id, model_path, lossy_path, args, work, doc, binary, source
                                reencoded=encoded)
     report = {'asset_id': asset_id, 'mode': 'PBR texture re-encode',
               'source_sha256': sha(model_path), 'lossy_sha256': sha(lossy_path),
-              'bytes': {'source_glb': len(source_bytes), 'lossy_glb': len(data)}, 'normals': normals}
+              'bytes': {'source_glb': len(source_bytes), 'lossy_glb': len(data)}, 'normals': normals,
+              **({'resized_images': resized} if resized else {})}
     receipt = {'source': report['source_sha256'], 'output': report['lossy_sha256'],
                'settings': settings(args), 'tools': tool_versions()}
     Path(str(lossy_path) + '.receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
@@ -1345,6 +1378,12 @@ def derive(asset_id, model_path, lossy_path, args, work):
             source = Image.open(image.filepath_raw)
             if index in source_crops:
                 source = source.crop(source_crops[index]['box'])
+            # UVs address the (cropped) image in normalized units, so scaling an
+            # oversized image down to the renderer limit keeps the mapping.
+            if max(source.size) > MAX_TEXTURE_SIDE:
+                scale = MAX_TEXTURE_SIDE / max(source.size)
+                source = source.resize((max(1, round(source.width * scale)), max(1, round(source.height * scale))),
+                                       Image.LANCZOS)
             keep_alpha = index in alpha_images and 'A' in source.getbands()
             key = (sha(Path(image.filepath_raw)), keep_alpha, tuple(source_crops.get(index, {}).get('box', [])))
             if key not in encoded_images:
