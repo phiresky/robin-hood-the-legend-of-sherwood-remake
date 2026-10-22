@@ -1382,7 +1382,10 @@ fn dispatch_jump(
                     engine.ent(carrier).element_data().position_map(),
                 )?;
             }
-            if let Some(opponent) = opponent {
+            // Only the long jump has a sword flight. Vertical jumps start from
+            // upright, crouched or carried postures, so combat ends first; the
+            // vertical flight itself was verified above.
+            if let Some(opponent) = opponent.filter(|_| !vertical) {
                 let actor = engine.ent(owner);
                 if !sword_flew
                     || actor.actor_data().unwrap().action_state
