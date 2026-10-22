@@ -1,7 +1,12 @@
 import type { JumpLine, JumpLinePair, JumpZone, Point, SightObstacle } from "./level.ts";
 import { pointInGameplayPolygon } from "./navigation-anchor.ts";
+import { NAVIGATION_HALF_DIAGONAL } from "./navigation-footprint.ts";
 
 const cross = (a: Point, b: Point) => a[0] * b[1] - a[1] * b[0];
+const area = (face: Point[]) =>
+  Math.abs(face.reduce((sum, p, i) => sum + cross(p, face[(i + 1) % face.length]!), 0)) / 2;
+// The native actor's movement box; a receiver smaller than it cannot hold an actor.
+const FOOTPRINT_AREA = 4 * NAVIGATION_HALF_DIAGONAL[0] * NAVIGATION_HALF_DIAGONAL[1];
 
 function segmentTouches(a: Point, b: Point, face: Point[]): boolean {
   if (pointInGameplayPolygon(a, face, true) || pointInGameplayPolygon(b, face, true)) return true;
@@ -20,9 +25,10 @@ function segmentTouches(a: Point, b: Point, face: Point[]): boolean {
 
 /**
  * Omit jump pairs with an elevated line lying entirely off the receiving faces
- * of its own surface. Such a line supports neither takeoff nor landing after placement,
- * for example a roof rotated until its projection is edge-on. Partially
- * covered lines remain for the separate coverage audits.
+ * of its own surface, or touching only faces too small to hold the actor's
+ * movement box. Such a line supports neither takeoff nor landing after
+ * placement, for example on a roof rotated until its projection is edge-on.
+ * Partially covered lines remain for the separate coverage audits.
  */
 export function omitUnsupportedJumps(
   pairs: { pair: JumpLinePair; sourceIndex: number }[],
@@ -49,7 +55,8 @@ export function omitUnsupportedJumps(
     if (!receivers) return true;
     const a: Point = [line.point_a[0], line.point_a[1]];
     const b: Point = [line.point_b[0], line.point_b[1]];
-    return receivers.some((face) => segmentTouches(a, b, face));
+    const touched = receivers.filter((face) => segmentTouches(a, b, face));
+    return touched.reduce((sum, face) => sum + area(face), 0) >= FOOTPRINT_AREA;
   };
   const kept = pairs.filter(({ pair, sourceIndex }) => {
     const missing = [
@@ -58,7 +65,7 @@ export function omitUnsupportedJumps(
     ].filter((side) => side !== undefined);
     if (!missing.length) return true;
     warnings.push(
-      `Jump ${label(sourceIndex)}: line ${missing.join(" and ")} lies entirely outside its receiving surface after placement; connection omitted. Adjust the placement or the asset-local jump edge.`,
+      `Jump ${label(sourceIndex)}: line ${missing.join(" and ")} has no receiving surface able to hold an actor after placement; connection omitted. Adjust the placement or the asset-local jump edge.`,
     );
     return false;
   });

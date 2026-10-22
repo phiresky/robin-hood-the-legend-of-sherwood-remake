@@ -55,7 +55,31 @@ test("jumps with an elevated line entirely off its receiving surface are omitted
   assert.deepEqual(lost.zones, [zones[1], zones[2]]);
   assert.equal(lost.pairs[0]!.pair.line1.jump_zone_index, 1);
   assert.equal(lost.pairs[0]!.pair.line2.jump_zone_index, 0);
-  assert.match(lost.warnings[0]!, /^Jump pair-0: line 2 lies entirely outside/);
+  assert.match(
+    lost.warnings[0]!,
+    /^Jump pair-0: line 2 has no receiving surface able to hold an actor/,
+  );
+
+  // A sliver touched by the line still cannot hold the 12×6 actor footprint.
+  const sliver = omitUnsupportedJumps(
+    [{ pair: pair(100), sourceIndex: 0 }],
+    zones,
+    [
+      receiver(10, square(0, 0), 10),
+      receiver(
+        20,
+        [
+          [100, 4],
+          [120, 4],
+          [120, 6],
+          [100, 6],
+        ],
+        10,
+      ),
+    ],
+    String,
+  );
+  assert.equal(sliver.pairs.length, 0);
 
   // A partially covered line is left to the coverage audits.
   const partial = omitUnsupportedJumps([{ pair: pair(110), sourceIndex: 0 }], zones, sight, String);
