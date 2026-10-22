@@ -117,6 +117,30 @@ deep-equal to the tested `staged-map-export-Iy9GQj`. The publication manifest
 and prior descriptors are in `york-red-inset2-rear-zone-yZsAMi`. Flight clearance
 for sword jumps on this connection remains open.
 
+## Browser round trips on the current compiler (2026-10-22)
+
+Frozen snapshot `browser-build-2jcp4Q` (port 5187) is built from a clean HEAD
+with no editor source patch. Batch `browser-exports-3JizPs` passes map-only
+export, reopen and rebake for seven maps, and every exact archive passes native
+construction without a base datadir:
+
+| Map | Browser time | Native load | ZIP SHA-256 |
+| --- | --- | --- | --- |
+| Leicester | 345 s | 3136×1984, 446 sight obstacles, 105 door projections | `eff20fa1…` |
+| Sherwood | 46 s | 1920×1088, 130 sight obstacles, 15 door projections | `e87bdc84…` |
+| Derby | 51 s | 1920×2752, 341 sight obstacles, 70 door projections | `7ecc53f8…` |
+| Croisement01 | 133 s | 1408×960, 3,790 sight obstacles, 16 door projections | `b9ca9b92…` |
+| Croisement02 | 199 s | 2177×1500, 5,169 sight obstacles, 53 masks | `403079f4…` |
+| Nottingham | 178 s | 2304×3520, 668 sight obstacles, 173 door projections | `2344b0d5…` |
+| Wychford | 1,109 s | 3600×2400, 15,414 sight obstacles, 31 door projections | `6b2f882a…` |
+
+Full hashes are in the batch's `diagnostics.json`. Leicester's archived
+`asset_geometry` is deep-equal to `saved-map-exports-k0mVTh` (22/22 climbs,
+16/16 stairs, ladder fix) and Wychford's to `saved-map-exports-3UYFq5`
+(native construction and 96 sampled routes). Croisement02 uses the working-tree
+scene, whose `size` is currently `null`, so its bounds are derived.
+This verifies packaging, rebaking and native loading, not visual correctness.
+
 ## Cross-map jump audit classification
 
 The sword audit required combat to survive every jump. Only the long jump has
