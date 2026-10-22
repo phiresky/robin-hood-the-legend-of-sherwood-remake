@@ -29,6 +29,8 @@ for (const entry of manifest.results) {
     point_out: door.point_out,
     sector: door.sector_out,
     layer: door.layer_out,
+    // Authored PC locks must keep refusing the route.
+    expected_authorized: !door.locked_pc,
   }));
   await fs.writeFile(path.join(output, entry.file), bytes);
   results.push({ map: entry.map, file: entry.file, building_approaches });

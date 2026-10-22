@@ -135,6 +135,11 @@ Compared with the split versions on identical inputs: York
 55/57 now leave the ledge before flight, where the original also has no
 elevated receiver) and doorway round trips from 92 to 90/95 (doors 81 and 92
 choose between the two overlapping doorway receivers, as in the original).
+The three other doorway failures were locked entrances: York doors at
+`[1677,212]`, `[887,280]` and `[918,2067]` are PC-locked and not unlockable in
+both the original and the export, so refusing the route is correct. Entrance
+probes now carry `expected_authorized: !locked_pc`; `saved-map-entrances-QLBZvN`
+passes 93/95, leaving only the two overlapping-receiver doorways.
 Derby, Lincoln and Nottingham (`saved-map-exports-P6hqSN` against `BZhLwR`)
 keep all climbs and stairs, gain five jump clicks (Nottingham line 75) with no
 regressions, and lose two sword probes on Nottingham line 29, whose drop point
