@@ -49,6 +49,49 @@ The exact archive passes native construction without a base datadir: 2944×2176,
 regions for 11 controls, with color, depth, minimap and embedded scene loaded.
 This snapshot predates the floor seam cleanup.
 
+## Jumps entirely off their receiving surface
+
+In `connected-jump-placements-ndD6m5` the red roof's receiving face at 180
+degrees has 11.1 square units of projected area (160×97 bounding box); the
+jump line has 0–1% coverage in both directions. All 40 probes at 180 degrees
+failed with missing receivers or starts. `omitUnsupportedJumps` now omits a
+pair after receiver partitioning when an elevated line touches none of its own
+surface's receiving faces, compacts the zones and warns. Lines whose surface
+has no receiving faces, ground lines and partially covered lines are unchanged.
+All 174 jump pairs in the ten current descriptors have complete coverage and
+are unaffected. Fresh export `connected-jump-placements-LwDGyt` omits both
+pairs at 180 degrees and is otherwise identical at 0 degrees; native clicks on
+the remaining 120 probes pass 68, matching the baseline exactly.
+
+The remaining failures all start from the rear-roof line (z ≈ 295). Its floor
+(sector 13) is the parallelogram `[507.9,698.7]–[622.9,628.8]–[668.3,705.7]–
+[553.3,775.6]` and the line lies about eight units from its acute apex. A 6×3
+actor footprint fits nowhere along that line at 0 degrees and only partly at
+37/90 degrees, matching the failure distribution; the actor stops short with
+`midpoint_reachable=false`. A diagnostic inward shift of up to ten units along
+the line normal finds a fit only at 37 degrees (five units). The edge must move
+out of the roof corner in asset-local metadata; no export-time inset is added.
+
+## Editor test suite memory and stale fixtures
+
+Node's `assert.deepEqual` diff of a mismatching multi-megabyte descriptor grew
+past 60 GB and repeatedly killed the whole test run. Descriptor/fixture
+comparisons now use `assertSameData` (strict equality via `isDeepStrictEqual`,
+at most twenty differing paths). The full suite (198 files) runs per file under
+an RSS guard and peaks at about 0.5 GB.
+
+The stale grid-terrain fixture exposed a regression from `933f4402d`: a
+heightfield folding at its steep river bank was split into disconnected floors,
+losing the river holes and failing the native hill/river/ford test. A rising
+curved wall walkway failed the same way. Editor terrain and wall-spline surfaces
+now keep one sector when their partition cannot reconnect; authored asset floors
+keep separate sectors as that commit intended. The regenerated fixture passes
+all 72 `asset_map_compilation` tests. Two compiler tests were stale: off-floor
+mask anchors now bind through projected coverage (`cb9a72bfd`), and best-effort
+exports warn for displaced light receivers (`2d14ae331`). 197/198 test files
+pass; `workspace.test.ts` fails only because the working-tree Croisement02 scene
+currently has `"size": null`.
+
 ## York browser archive with floor seam cleanup
 
 Frozen snapshot `browser-build-OEV7ea` (port 5186, HEAD `05e12314a`) records a

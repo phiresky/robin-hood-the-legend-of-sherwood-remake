@@ -210,6 +210,14 @@ unchanged. See [takeoff candidate evidence](map-compilation-evidence.md#red-roof
 Re-testing the subpixel ridge-alignment candidate with the floor seam cleanup
 still passes exactly the baseline's 68/160 placement probes, with identical
 failures; it remains rejected.
+At 180 degrees the red roof's receiver projects to an 11-unit sliver that the
+jump line misses entirely; export now omits such pairs with a warning instead of
+exporting a flight that lands at ground height. The remaining 52/120 failures
+are takeoffs from the rear-roof line, which sits in the acute top corner of its
+parallelogram floor where the 6×3 actor footprint cannot stand; no inset of up
+to ten units along its normal fits at 0 or 90 degrees. The asset-local jump edge
+needs moving out of that corner. See
+[omitted unsupported jumps](map-compilation-evidence.md#jumps-entirely-off-their-receiving-surface).
 Correcting the audit to use native precise contours and actual receiver samples
 finds usable points at every rotation. A common-tangent span candidate then fixes
 the eight reproduced landing failures with no regressions on identical inputs.
