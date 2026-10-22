@@ -13,7 +13,7 @@
     {
       "id": "sherwood-terrain",
       "model": "3d-assets/sherwood/sherwood-terrain/model.glb",
-      "model_sha256": "2e8d91a5f74be21147708a1454f967d095d0745dacbca61cd4e534b3cc69d230",
+      "model_sha256": "354a2d4dd6b688c7806fa0cb1a97e39393611f650b306a3ddb78501c287b5aa8",
       "descriptor": "3d-assets/sherwood/sherwood-terrain/asset.json",
       "descriptor_sha256": "9ee7e3c35f6a04aa4129567b7ed9568dcb74ed9dfa3c72b5ddba72626cbe3ea1",
       "role": "ground",
@@ -355,9 +355,9 @@
     {
       "id": "sherwood-river-bluff",
       "model": "3d-assets/sherwood/sherwood-river-bluff/model.glb",
-      "model_sha256": "64f4d948436c00ffe1484f5bd4d807481fa4f21f85bcbb9e0ed85a432b7b4c73",
+      "model_sha256": "ee4c9161da8ca46afa84c49bf49dacdd34be6034314cb61ed05e8c10e4f2dfb1",
       "descriptor": "3d-assets/sherwood/sherwood-river-bluff/asset.json",
-      "descriptor_sha256": "aa7d1ae4391b07a22677a2b812f2f252a36c0c18a25d6c849af6eff4aa1e8d63",
+      "descriptor_sha256": "09ef6b2f33e8066a9b1c298bab2168fe79fcf34668757577a2f204556427f445",
       "resources": []
     },
     {
@@ -667,9 +667,9 @@
     {
       "id": "sherwood-preparation-table-canopy",
       "descriptor": "3d-assets/sherwood-preparation-table-canopy/asset.json",
-      "descriptor_sha256": "f046ca16bb33b8d3d085c0f36df5b2e58b8b70de7b315a30b0deac8dce4f1635",
+      "descriptor_sha256": "2b736623554f9498f654cd6627f18da5525802fd995e4c5d8dd34d2e209cf719",
       "model": "3d-assets/sherwood-preparation-table-canopy/model-with-frame-metadata.glb",
-      "model_sha256": "745e1fffd50d01244a90e2fbbcf1d367a8bdc9803dd39881ab5caf9e8fbb5207"
+      "model_sha256": "58a1b502b2ae0e5f12f4c9fb47a6d10023c3790975ce5dab1dcb4cf54adf76f3"
     },
     {
       "id": "sherwood-ambient-1214-127",

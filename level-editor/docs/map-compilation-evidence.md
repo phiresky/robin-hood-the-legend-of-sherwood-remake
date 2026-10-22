@@ -137,8 +137,27 @@ lies between two mesh nodes). Only that canopy and
 derivatives are regenerated (`lossy-nested-mesh-dequantization-20261022`) and
 the library validates. Re-exported Sherwood and Derby (`browser-exports-u2ULnJ`)
 pass round trip and native loading; Sherwood's mean difference drops from 56.7
-to 23.6 and the central oak and tree house render. The draft canopy remains
-untextured and a wedge artifact remains on the river bluff.
+to 23.6 and the central oak and tree house render. Two Sherwood art defects were then repaired with source-projected assets
+(one-time extraction from the original Day map):
+
+- `sherwood-river-bluff` showed smeared inferred texture: nearly half its texels
+  (109,237 of 225,114) had been hidden in the source behind an unmodelled bush and
+  were filled by synthesis. It is rebuilt as a prism over source obstacle 111
+  (the 12-vertex footprint and its per-vertex heights 0–84, walls to the ground),
+  with every vertex sampling the Day map through the map camera
+  (`work/needs-review/sherwood-river-bluff-rebuild-20261022/build.py`). Its bounds
+  match the previous model. A 24,305-pixel patch of `sherwood-terrain` where the
+  terrain's inpainting was exposed beside the bluff now carries the source pixels
+  again (geometry unchanged; terrain UVs are the map projection).
+- `sherwood-preparation-table-canopy` was an untextured draft volume. Its existing
+  geometry now samples the Day map through the map camera, so the thatch matches;
+  its `appearance-incomplete` tag is removed.
+
+Derivatives are regenerated, the library validates (1,293 assets) and only the
+Sherwood scene pins change. Browser export `browser-exports-Yusr7J` passes round
+trip and native loading; the bluff region's mean difference falls from 23 to 8.6
+(1.4% strong pixels) and the whole map from 23.6 to 22.9, the remainder being
+re-rendered trees.
 
 The derivative pipeline also caps texture sides at 8192 pixels, the limit the
 software WebGL bake can rely on; only `sherwood-central-oak` exceeded it
