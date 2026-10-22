@@ -2057,17 +2057,22 @@ function compileAssetGameplayAttempt(
           reached.add(passage.to);
         }
     }
-    // Editor terrain is one continuous heightfield; its overlaps are folds at
-    // steep banks, not separate floors. Splitting it at an unavailable seam
-    // discards river holes and disconnects the banks, so keep one sector and
-    // let layer ordering report the overlap.
-    // TODO: export folded terrain faces as collision instead of overlap.
+    // Editor terrain and wall-spline walkways are each one continuous generated
+    // surface; their overlaps are folds at steep banks or rising curves, not
+    // separate floors. Splitting them at an unavailable seam discards holes
+    // and disconnects the surface, so keep one sector and let layer ordering
+    // report the overlap.
+    // TODO: export folded faces as collision and connect rising overlaps.
     if (
       reached.size !== planned.regions.length &&
-      region.pieces.every((piece) => piece.navigationRegion?.startsWith("authored-terrain/"))
+      region.pieces.every(
+        (piece) =>
+          piece.navigationRegion?.startsWith("authored-terrain/") ||
+          piece.navigationRegion?.startsWith("wall-spline-"),
+      )
     ) {
       warnings.push(
-        `Navigation ${region.pieces[0]!.navigationRegion}: folded terrain overlaps itself without character-sized seams between its parts; one sector is retained.`,
+        `Navigation ${region.pieces[0]!.navigationRegion}: continuous generated surface overlaps itself without character-sized seams between its parts; one sector is retained.`,
       );
       return [region];
     }

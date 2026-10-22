@@ -266,9 +266,14 @@ test("best effort keeps valid light receivers and warns for disconnected points 
     1,
   );
   light.receivers = [[200, 20, 0]];
-  assert.throws(
-    () => compileAssetGameplay(document, assets, bounds, { bestEffort: true }),
-    /outside the light contour/,
+  assert.throws(() => compileAssetGameplay(document, assets, bounds), /outside the light contour/);
+  // Best effort keeps the export usable and reports the displaced receiver.
+  assert.ok(
+    compileAssetGameplay(document, assets, bounds, { bestEffort: true }).warnings!.some(
+      (message) =>
+        message.startsWith("Light receiver omitted:") &&
+        message.includes("outside the light contour"),
+    ),
   );
 });
 

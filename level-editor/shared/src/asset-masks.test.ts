@@ -14,8 +14,12 @@ test("mask ground contact points survive an unsupported origin and reject wrong 
   gameplay.movementTransitions = [];
   const mask = gameplay.masks![0]!;
   const baseline = compileAssetGameplay(document, assets, bounds).masks;
+  // An origin beyond the floor binds through projected coverage at its height.
   mask.anchor = [150, 150, 0];
+  assert.deepEqual(compileAssetGameplay(document, assets, bounds).masks, baseline);
+  mask.anchor = [150, 150, 1];
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /found 0/);
+  mask.anchor = [150, 150, 0];
   mask.receiverPoints = [
     [150, 150, 0],
     [45, 80, 0],
@@ -252,6 +256,7 @@ test("mask authoring rejects missing rules, references, geometry and competing s
     assert.throws(() => validateAssetGameplay(hut.gameplay, hut), /mask/i);
   }
   const { document, assets, hut } = maskAssetCompilerFixture();
-  hut.gameplay!.masks![0]!.anchor = [500, 500, 0];
+  // Projected coverage can bind a distant origin, but not an unmatched height.
+  hut.gameplay!.masks![0]!.anchor = [500, 500, 1];
   assert.throws(() => compileAssetGameplay(document, assets, bounds), /receiving anchor/);
 });
