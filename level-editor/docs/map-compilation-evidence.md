@@ -175,9 +175,12 @@ actor walks off a short ledge before flight and its height follows the ground.
 Upright clicks on the same lines pass. The original runs the upright and sword
 long-jump takeoffs through the same transition handler, playing the animation
 to its last frame before entering flight; the difference is the sword
-animation's displacement. This is probably faithful behavior on these ledges
-rather than an export defect, but the original jump coordinates have not been
-compared. Nottingham line 72 fails only its t=0 sword probe: the landing
+animation's displacement. Reading the original proto levels confirms parity:
+the failing Croisement03 pairs 2, 3, 5 and 8 and York pair 25 have identical
+jump-line coordinates in the original, and for all 23 failing probes the
+original's receiving faces for the source surface also do not cover the point
+where the sword takeoff leaves the ledge. These are faithful original
+behaviors, not export defects. Nottingham line 72 fails only its t=0 sword probe: the landing
 lies on the ridge between receiving faces 620 and 621 of sector 226/layer 40,
 whose planes differ by 0.13 units there. The actor keeps face 621 while the
 audit queries 620; the other four sword and all five click probes pass.
