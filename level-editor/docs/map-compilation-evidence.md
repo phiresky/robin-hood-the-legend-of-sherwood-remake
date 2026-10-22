@@ -141,6 +141,16 @@ Full hashes are in the batch's `diagnostics.json`. Leicester's archived
 scene, whose `size` is currently `null`, so its bounds are derived.
 This verifies packaging, rebaking and native loading, not visual correctness.
 
+Batch `browser-exports-KWKsxM` on the same snapshot covers the remaining maps:
+York (239 s; 3136×2318, 1,237 sight obstacles, 257 door projections; ZIP
+`65a5c718…`), Croisement03 (48 s; 1408×960, 1,547 sight obstacles; `1ad9b287…`)
+and Lincoln (1,002 s; 2944×2176, 620 sight obstacles, 88 door projections;
+`44709917…`). All three exact archives load natively without a base datadir.
+York's archived `asset_geometry` is deep-equal to the published
+`saved-map-exports-XbXNbL` (720/720 offset clicks, 715/720 sword jumps). All ten
+maps now have browser round trips and native archive loads on the current
+compiler and library.
+
 ## Cross-map jump audit classification
 
 The sword audit required combat to survive every jump. Only the long jump has

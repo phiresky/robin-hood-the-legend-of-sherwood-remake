@@ -56,6 +56,10 @@ Eligible changing sectors in eight maps additionally pass 1,032 independent-stat
 and 426 combined-state sampled routes against live collision connectivity.
 See [fresh scene sweep](map-compilation-evidence.md#fresh-map-only-scene-sweep).
 
+On 2026-10-22 all ten maps passed fresh browser round trips and native archive
+loading from a clean-HEAD snapshot of the current compiler and library
+(`browser-exports-3JizPs`, `browser-exports-KWKsxM`); see
+[current round trips](map-compilation-evidence.md#browser-round-trips-on-the-current-compiler-2026-10-22).
 All ten saved maps, including Wychford, have now passed map-only browser ZIP
 export/reopen/rebakes across the recorded compiler snapshots: gameplay, warnings
 and rendered color/depth match exactly, and all ten exact archives
