@@ -142,6 +142,16 @@ also has no receiver in the original. All split-floor warnings disappear.
 The editor suite passes 197/198 files (`workspace.test.ts` fails only on the
 working-tree Croisement02 scene).
 
+Snapshot `browser-build-*` on port 5188 at `2bca64524` re-ran the four maps
+whose geometry changed (`browser-exports-zcCSnq`): York (371 s), Derby (81 s),
+Lincoln (1,776 s) and Nottingham (666 s) all pass export, reopen and rebake.
+Each exact archive loads natively without a base datadir, and its
+`asset_geometry` is deep-equal to the audited `saved-map-exports-natj65` (York)
+or `saved-map-exports-P6hqSN` (Derby, Lincoln, Nottingham). ZIP SHA-256:
+York `2f3c8bf3…`, Derby `04a7d7cb…`, Lincoln `f7cc8558…`, Nottingham
+`bf89aca7…`; full hashes are in the batch's `diagnostics.json`. The other six
+maps' geometry is unchanged by this commit; Wychford's warning text differs.
+
 ## Browser round trips on the current compiler (2026-10-22)
 
 Frozen snapshot `browser-build-2jcp4Q` (port 5187) is built from a clean HEAD
