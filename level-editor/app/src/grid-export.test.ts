@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { assertSameData } from "../../shared/test-fixtures/assert-same-data.ts";
 import { readFile } from "node:fs/promises";
 import { gridTerrainCompilerFixture } from "../../shared/test-fixtures/grid-terrain.ts";
 import { compileMap } from "./map-compile.ts";
@@ -17,7 +18,7 @@ test("edited terrain and river export matches the native elevation and traversal
       "utf8",
     ),
   );
-  assert.deepEqual(JSON.parse(JSON.stringify(compiled.descriptor)), expected);
+  assertSameData(JSON.parse(JSON.stringify(compiled.descriptor)), expected);
   assert.deepEqual(document, before);
   assert.ok(document.terrain!.vertices.some((v) => v.position[0] > 220));
   for (const area of compiled.descriptor.asset_geometry!.motion_data.layers.flat())

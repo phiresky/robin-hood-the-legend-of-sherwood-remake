@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { assertSameData } from "../../shared/test-fixtures/assert-same-data.ts";
 import { readFile } from "node:fs/promises";
 import { parseLevel3D, parseProjectionAssetDescriptor } from "../../shared/src/validation.ts";
 import { compileMap } from "./map-compile.ts";
@@ -26,7 +27,7 @@ test("rotated copied roofs retain continuous native landing receivers", async ()
       "utf8",
     ),
   );
-  assert.deepEqual(compiled.descriptor, expected);
+  assertSameData(compiled.descriptor, expected);
   assert.equal(compiled.descriptor.asset_geometry!.jump_line_pairs!.length, 2);
   assert.ok(
     !compiled.warnings.some((warning) => /triangulated|collapsed to zero area/.test(warning)),

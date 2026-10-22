@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { assertSameData } from "../../shared/test-fixtures/assert-same-data.ts";
 import { wallDisconnectedSoundFixture } from "../../shared/test-fixtures/wall-spline.ts";
 import { decode } from "fast-png";
 import { unzipSync, strFromU8 } from "fflate";
@@ -88,7 +89,7 @@ test("alternating posture openings survive native descriptor packaging", async (
       "utf8",
     ),
   );
-  assert.deepEqual(compiled.descriptor, expected);
+  assertSameData(compiled.descriptor, expected);
   const files = unzipSync(
     await packageCompiledMap(compiled, {
       color: new Uint8Array(2000 * 2000 * 4),
@@ -118,7 +119,7 @@ test("initially closed posture connections export independent opening conditions
       "utf8",
     ),
   );
-  assert.deepEqual(compiled.descriptor, expected);
+  assertSameData(compiled.descriptor, expected);
   const files = unzipSync(
     await packageCompiledMap(compiled, {
       color: new Uint8Array(2000 * 2000 * 4),
@@ -143,7 +144,7 @@ test("interior passage states affect only their own outdoor entrance", async () 
       "utf8",
     ),
   );
-  assert.deepEqual(compiled.descriptor, expected);
+  assertSameData(compiled.descriptor, expected);
   const files = unzipSync(
     await packageCompiledMap(compiled, {
       color: new Uint8Array(2000 * 2000 * 4),
@@ -352,7 +353,7 @@ test("permanent ordinary passage collisions warn and export an unavailable corri
       "utf8",
     ),
   );
-  assert.deepEqual(compiled.descriptor, expected);
+  assertSameData(compiled.descriptor, expected);
 });
 
 test("ordinary passage collision cuts retain authored solid clearances", () => {
@@ -403,7 +404,7 @@ test("ordinary passage export retains independent native obstacle-state bindings
       "utf8",
     ),
   );
-  assert.deepEqual(compiled.descriptor, expected);
+  assertSameData(compiled.descriptor, expected);
   const bytes = await packageCompiledMap(compiled, {
     color: new Uint8Array(2000 * 2000 * 4),
     depth: new Uint16Array(2000 * 2000),
@@ -426,7 +427,7 @@ test("rotated scenery exports the boundary checked by native display ordering", 
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, expected);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, expected);
 });
 
 test("joined asset switches match the native multi-part apply/reset fixture", async () => {
@@ -440,7 +441,7 @@ test("joined asset switches match the native multi-part apply/reset fixture", as
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, expected);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, expected);
 });
 
 test("preserved state boundary export matches native apply/reset geometry", async () => {
@@ -454,7 +455,7 @@ test("preserved state boundary export matches native apply/reset geometry", asyn
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("anchored receiver export preserves native shared ground navigation", async () => {
@@ -468,7 +469,7 @@ test("anchored receiver export preserves native shared ground navigation", async
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("receiving island export preserves native area and material ownership", async () => {
@@ -482,7 +483,7 @@ test("receiving island export preserves native area and material ownership", asy
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("merged platform export preserves the opening checked by native receiving queries", async () => {
@@ -496,7 +497,7 @@ test("merged platform export preserves the opening checked by native receiving q
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("disconnected lift retains collision, landings and another lift in the same asset", async () => {
@@ -512,7 +513,7 @@ test("disconnected lift retains collision, landings and another lift in the same
       "utf8",
     ),
   );
-  assert.deepEqual(compiled.descriptor, fixture);
+  assertSameData(compiled.descriptor, fixture);
 });
 
 test("permanently inactive obstacles retain full jump spans", async () => {
@@ -533,7 +534,7 @@ test("permanently inactive obstacles retain full jump spans", async () => {
       "utf8",
     ),
   );
-  assert.deepEqual(compiled.descriptor, fixture);
+  assertSameData(compiled.descriptor, fixture);
 });
 
 test("switchable inactive obstacles still constrain jumps that cannot change with the switch", () => {
@@ -589,7 +590,7 @@ test("unavailable sight control preserves inactive receiving geometry", async ()
       "utf8",
     ),
   );
-  assert.deepEqual(compiled.descriptor, fixture);
+  assertSameData(compiled.descriptor, fixture);
 });
 
 test("unavailable sight and movement control retains the closed obstacle only", () => {
@@ -627,7 +628,7 @@ test("unavailable mask control keeps the initial mask and reindexes the remainin
       "utf8",
     ),
   );
-  assert.deepEqual(compiled.descriptor, fixture);
+  assertSameData(compiled.descriptor, fixture);
 });
 
 test("asset mask geometry exports the native state fixture and survives ZIP packaging", async () => {
@@ -638,7 +639,7 @@ test("asset mask geometry exports the native state fixture and survives ZIP pack
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
   const compiled = compileMap(document, [0, 0, 512, 512], assets);
   const bytes = await packageCompiledMap(compiled, {
     color: new Uint8Array(512 * 512 * 4),
@@ -664,7 +665,7 @@ test("door receiving anchors export the native endpoint fixture", async () => {
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("door transition export matches the native door wiring fixture", async () => {
@@ -678,7 +679,7 @@ test("door transition export matches the native door wiring fixture", async () =
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("cross-asset jumps export the geometry verified by the native traversal fixture", async () => {
@@ -709,7 +710,7 @@ test("rearranged geometric jumps export the native traversal fixture", async () 
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("obstructed jumps export the clearance checked by native animation", async () => {
@@ -723,7 +724,7 @@ test("obstructed jumps export the clearance checked by native animation", async 
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("movement-only assets trim generated approaches and reconnect when moved away", async () => {
@@ -824,7 +825,7 @@ test("new surface-derived courtyard exports native jump destinations", async () 
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("detached jump export keeps the complete copy with compact native zone references", async () => {
@@ -838,7 +839,7 @@ test("detached jump export keeps the complete copy with compact native zone refe
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("non-rendering gameplay export matches the native collision fixture", async () => {
@@ -852,7 +853,7 @@ test("non-rendering gameplay export matches the native collision fixture", async
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("preserved boundary export matches the native thin corridor fixture", async () => {
@@ -866,7 +867,7 @@ test("preserved boundary export matches the native thin corridor fixture", async
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("preserved contour export matches the native overlap fixture", async () => {
@@ -880,7 +881,7 @@ test("preserved contour export matches the native overlap fixture", async () => 
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("sloped terrain socket exports match the native actor traversal cases", async () => {
@@ -915,9 +916,9 @@ test("ordinary multi-plane export matches the native traversal fixture", async (
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
   const joined = joinedNavigationCompilerFixture();
-  assert.deepEqual(
+  assertSameData(
     compileMap(joined.document, [0, 0, 2000, 2000], joined.assets).descriptor,
     fixture,
   );
@@ -934,7 +935,7 @@ test("compound lift export matches the native multi-plane traversal fixture", as
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("navigation partition export matches the native gate fixture", async () => {
@@ -948,7 +949,7 @@ test("navigation partition export matches the native gate fixture", async () => 
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("jump export matches the native traversal fixture", async () => {
@@ -959,7 +960,7 @@ test("jump export matches the native traversal fixture", async () => {
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("traversal light export matches the native ambience fixture", async () => {
@@ -973,7 +974,7 @@ test("traversal light export matches the native ambience fixture", async () => {
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("light region export matches the native ambience and interior fixture", async () => {
@@ -987,7 +988,7 @@ test("light region export matches the native ambience and interior fixture", asy
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("sight transition export matches native apply/reset fixture", async () => {
@@ -1001,7 +1002,7 @@ test("sight transition export matches native apply/reset fixture", async () => {
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("appearance-only export matches native apply/reset without fabricated gameplay changes", async () => {
@@ -1016,7 +1017,7 @@ test("appearance-only export matches native apply/reset without fabricated gamep
     ),
   );
   const compiled = compileMap(document, [0, 0, 2000, 2000], assets);
-  assert.deepEqual(compiled.descriptor, fixture);
+  assertSameData(compiled.descriptor, fixture);
   const transition = compiled.descriptor.asset_geometry!.movement_transitions![0]!;
   assert.equal(transition.has_appearance, true);
   assert.deepEqual(transition.motion_changes, []);
@@ -1041,7 +1042,7 @@ test("terrain transition export matches native slope and upper-floor fixture", a
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("unavailable terrain control exports loadable initial barriers without orphan state bits", async () => {
@@ -1055,7 +1056,7 @@ test("unavailable terrain control exports loadable initial barriers without orph
       "utf8",
     ),
   );
-  assert.deepEqual(
+  assertSameData(
     compileMap(document, [0, 0, 2000, 2000], assets, { bestEffort: true }).descriptor,
     fixture,
   );
@@ -1072,7 +1073,7 @@ test("movement transition export matches native apply/reset fixture", async () =
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("map ZIP includes paired appearance resources bound to compiled patch indices", async () => {
@@ -1116,7 +1117,7 @@ test("cropped sound fragments export as one native emitter per repetition", asyn
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, bounds, assets).descriptor, fixture);
+  assertSameData(compileMap(document, bounds, assets).descriptor, fixture);
 });
 
 test("asset environmental sound export matches the native source fixture", async () => {
@@ -1130,7 +1131,7 @@ test("asset environmental sound export matches the native source fixture", async
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("receiving volume export matches the native state fixture", async () => {
@@ -1144,7 +1145,7 @@ test("receiving volume export matches the native state fixture", async () => {
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("receiving material export matches the native lookup fixture", async () => {
@@ -1158,7 +1159,7 @@ test("receiving material export matches the native lookup fixture", async () => 
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("asset material export matches the native lookup fixture", async () => {
@@ -1172,7 +1173,7 @@ test("asset material export matches the native lookup fixture", async () => {
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("asset-local movement clearance export matches the native navigation fixture", async () => {
@@ -1186,7 +1187,7 @@ test("asset-local movement clearance export matches the native navigation fixtur
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 export function bakeFixture(): Level3D {
@@ -1427,7 +1428,7 @@ test("asset export retains a reopenable pinned scene and matches the Rust runtim
       "utf8",
     ),
   );
-  assert.deepEqual(runtimeFixture.descriptor, fixture);
+  assertSameData(runtimeFixture.descriptor, fixture);
   const expected = structuredClone(document);
   const compiled = compileMap(document, [0, 0, 512, 512], assets);
   const bytes = await packageCompiledMap(compiled, {
@@ -1493,7 +1494,7 @@ test("sloped asset export matches the native elevation/navigation fixture", asyn
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("changing lift exports match native placed traversal fixtures", async () => {
@@ -1509,7 +1510,7 @@ test("changing lift exports match native placed traversal fixtures", async () =>
   for (const [index, rotation] of [0, 90, 180, 270].entries()) {
     const { document, assets } = changingLiftCompilerFixture();
     document.groups[0]!.transform = { dx: 900, dy: 900, dz: 20, rot_deg: rotation };
-    assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixtures[index]);
+    assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixtures[index]);
   }
 });
 
@@ -1521,7 +1522,7 @@ test("lift asset export matches the native traversal fixture", async () => {
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("physical stair landings retain fractional receiving boundaries at zero height", () => {
@@ -1592,7 +1593,7 @@ test("fractional ladder exit fixture preserves the physical seam and platform op
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 3000, 3000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 3000, 3000], assets).descriptor, fixture);
 });
 
 test("changing climb exports match native placed traversal fixtures", async () => {
@@ -1614,7 +1615,7 @@ test("changing climb exports match native placed traversal fixtures", async () =
     for (const rotation of [0, 90, 180, 270]) {
       const { document, assets } = changingClimbCompilerFixture(type, high);
       document.groups[0]!.transform = { dx: 900, dy: 900, dz: 20, rot_deg: rotation };
-      assert.deepEqual(
+      assertSameData(
         compileMap(document, [0, 0, 2000, 2000], assets).descriptor,
         fixtures[index++],
       );
@@ -1642,7 +1643,7 @@ test("climb entrance barriers are exported with current approaches and graphs", 
       for (const rotation of [0, 90, 180, 270]) {
         const { document, assets } = entranceBarrierClimbCompilerFixture(type, high, end);
         document.groups[0]!.transform = { dx: 900, dy: 900, dz: 20, rot_deg: rotation };
-        assert.deepEqual(
+        assertSameData(
           compileMap(document, [0, 0, 2000, 2000], assets).descriptor,
           fixtures[index++],
         );
@@ -1662,7 +1663,7 @@ test("copied changing stairs export matches the native isolation fixture", async
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("copied changing climbs export independent native state bindings", async () => {
@@ -1701,7 +1702,7 @@ test("interior asset export matches the native building fixture", async () => {
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
 });
 
 test("joined and separated asset interiors match native fixtures", async () => {
@@ -1718,7 +1719,7 @@ test("joined and separated asset interiors match native fixtures", async () => {
         "utf8",
       ),
     );
-    assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
+    assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, fixture);
   }
 });
 
@@ -1735,7 +1736,7 @@ test("editor-connected rooms match the moved native fixture and remain in the ed
       "utf8",
     ),
   );
-  assert.deepEqual(compiled.descriptor, expected);
+  assertSameData(compiled.descriptor, expected);
   const files = unzipSync(
     await packageCompiledMap(compiled, {
       color: new Uint8Array(1000 * 1000 * 4),

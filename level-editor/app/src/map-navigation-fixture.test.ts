@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { assertSameData } from "../../shared/test-fixtures/assert-same-data.ts";
 import { readFile } from "node:fs/promises";
 import { IDENTITY_TRANSFORM } from "@rle/shared";
 import {
@@ -22,7 +23,7 @@ test("terrain-bound passage endpoints match the native gate fixture", async () =
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, expected);
+  assertSameData(compileMap(document, [0, 0, 2000, 2000], assets).descriptor, expected);
 });
 
 test("terrain-bound physical receivers match the native fixture", async () => {
@@ -36,7 +37,7 @@ test("terrain-bound physical receivers match the native fixture", async () => {
       "utf8",
     ),
   );
-  assert.deepEqual(
+  assertSameData(
     JSON.parse(JSON.stringify(compileMap(document, [0, 0, 2000, 2000], assets).descriptor)),
     expected,
   );
@@ -53,7 +54,7 @@ test("terrain-bound interior approaches match the native fixture", async () => {
       "utf8",
     ),
   );
-  assert.deepEqual(
+  assertSameData(
     JSON.parse(JSON.stringify(compileMap(document, [0, 0, 2000, 2000], assets).descriptor)),
     expected,
   );
@@ -83,7 +84,7 @@ test("independently placed walkway copies match the native pathfinding fixture",
       "utf8",
     ),
   );
-  assert.deepEqual(descriptor, expected);
+  assertSameData(descriptor, expected);
 });
 
 test("different walkway widths join along their placed overlap and detach when moved away", async () => {

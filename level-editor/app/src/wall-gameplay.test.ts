@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { assertSameData } from "../../shared/test-fixtures/assert-same-data.ts";
 import { BoxGeometry, Group, Mesh, MeshBasicMaterial, Vector3 } from "three";
 import {
   wallSplineFixture,
@@ -118,7 +119,7 @@ test("wall export matches the fixture exercised by native routing and sight", as
       "utf8",
     ),
   );
-  assert.deepEqual(
+  assertSameData(
     compileMap(f.document, f.bounds, f.assets, { onProgress: (stage) => stages.push(stage) })
       .descriptor,
     expected,
@@ -152,7 +153,7 @@ test("cropped point masks preserve owned floors through native fixtures and ZIP 
     const f = wallPointMaskFloorFixture(curved, rise);
     const compiled = compileMap(f.document, f.bounds, f.assets);
     const descriptor = JSON.parse(JSON.stringify(compiled.descriptor));
-    if (rise === 0) assert.deepEqual(descriptor, expected[index]);
+    if (rise === 0) assertSameData(descriptor, expected[index]);
     assert.equal(compiled.descriptor.asset_geometry!.masks!.length, 3);
     const files = unzipSync(
       await packageCompiledMap(compiled, {
@@ -170,7 +171,7 @@ test("cropped point masks preserve owned floors through native fixtures and ZIP 
       JSON.parse(strFromU8(files[report.editor_document]!)),
       f.assets,
     );
-    assert.deepEqual(compileMap(reopened, f.bounds, f.assets).descriptor, compiled.descriptor);
+    assertSameData(compileMap(reopened, f.bounds, f.assets).descriptor, compiled.descriptor);
   }
 });
 
@@ -185,11 +186,11 @@ test("wall materials match the fixture exercised by native material queries", as
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(f.document, f.bounds, f.assets).descriptor, expected);
+  assertSameData(compileMap(f.document, f.bounds, f.assets).descriptor, expected);
   const split = wallDisconnectedMaskFixture();
-  assert.deepEqual(compileMap(split.document, split.bounds, split.assets).descriptor, expected);
+  assertSameData(compileMap(split.document, split.bounds, split.assets).descriptor, expected);
   const lighting = wallDisconnectedLightFixture();
-  assert.deepEqual(
+  assertSameData(
     compileMap(lighting.document, lighting.bounds, lighting.assets).descriptor,
     expected,
   );
@@ -209,7 +210,7 @@ test("split wall mask applications match the native query fixture", async () => 
   const compiled = compileMap(f.document, f.bounds, f.assets);
   assert.deepEqual(compiled.descriptor.asset_geometry!.masks, expected);
   const reopened = parseStoredMap(compiled.editorDocument, f.assets);
-  assert.deepEqual(compileMap(reopened, f.bounds, f.assets).descriptor, compiled.descriptor);
+  assertSameData(compileMap(reopened, f.bounds, f.assets).descriptor, compiled.descriptor);
   const base = wallMaterialFixture();
   const baseline = compileMap(base.document, base.bounds, base.assets).descriptor;
   assert.deepEqual(
@@ -238,7 +239,7 @@ test("closed wall mask islands survive native export and editor reopening", asyn
   const compiled = compileMap(f.document, f.bounds, f.assets);
   assert.deepEqual(compiled.descriptor.asset_geometry!.masks, expected);
   const reopened = parseStoredMap(compiled.editorDocument, f.assets);
-  assert.deepEqual(compileMap(reopened, f.bounds, f.assets).descriptor, compiled.descriptor);
+  assertSameData(compileMap(reopened, f.bounds, f.assets).descriptor, compiled.descriptor);
   const base = wallMaterialFixture();
   const baseline = compileMap(base.document, base.bounds, base.assets).descriptor;
   assert.deepEqual(
@@ -264,7 +265,7 @@ test("automatic curved wall lighting matches the native elevated shadow fixture"
       "utf8",
     ),
   );
-  assert.deepEqual(compileMap(f.document, f.bounds, f.assets).descriptor, expected);
+  assertSameData(compileMap(f.document, f.bounds, f.assets).descriptor, expected);
 });
 
 test("curved, trimmed, sloping and flipped wall collision covers the corresponding rendered wall", () => {
@@ -422,7 +423,7 @@ test("rotated wall export reopens with the original asset pins and recalibrates 
   assert.deepEqual(reopened.assetSources, document.assetSources);
   const next = prepareWallGameplayAssets(reopened, assets, sources);
   assert.deepEqual(next.warnings, []);
-  assert.deepEqual(compileMap(reopened, bounds, next.assets).descriptor, compiled.descriptor);
+  assertSameData(compileMap(reopened, bounds, next.assets).descriptor, compiled.descriptor);
   assert.equal(compiled.descriptor.spawn_points.length, 0);
   mesh.geometry.dispose();
   (mesh.material as MeshBasicMaterial).dispose();
