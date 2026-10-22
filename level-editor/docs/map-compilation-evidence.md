@@ -140,6 +140,12 @@ The three other doorway failures were locked entrances: York doors at
 both the original and the export, so refusing the route is correct. Entrance
 probes now carry `expected_authorized: !locked_pc`; `saved-map-entrances-QLBZvN`
 passes 93/95, leaving only the two overlapping-receiver doorways.
+
+Regions whose overlapping parts can be reconnected keep the deliberate
+loop partition with generated passages (user decision 2026-10-22), even where
+the original keeps them in one sector. Nottingham line 62 (upper green house)
+therefore needs hidden-floor selection for its lower roof face; ordinary clicks
+select the upper face.
 Derby, Lincoln and Nottingham (`saved-map-exports-P6hqSN` against `BZhLwR`)
 keep all climbs and stairs, gain five jump clicks (Nottingham line 75) with no
 regressions, and lose two sword probes on Nottingham line 29, whose drop point
