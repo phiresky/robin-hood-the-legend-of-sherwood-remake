@@ -105,8 +105,17 @@ Full York with the two-unit stage (`staged-map-export-Iy9GQj`) and the six-unit
 stage (`staged-map-export-6CWoNR`) each pass 720/720 offset clicks against
 715/720 for the fresh baseline `saved-map-exports-mGz3v1` (five fixes, no
 regressions); sword results are identical (625/720, failures on other lines).
-The two-unit stage is the smallest inset reaching 120/120, but it adds small
-upright contacts and raises the maximum sword penetration; it is not published.
+The two-unit stage is the smallest inset reaching 120/120. It adds small
+upright contacts and raises the maximum sword penetration; the user accepted
+that trade-off and it is now published. Descriptor SHA-256: red house
+`eb96d447dc806dae16799b3f8a5583e1aebb78b0cccb3fcef9b150297b2fcad7`, rear house
+`616878649a5c1819aed48ab98370e4070ec327e66486fc76067bd32c930f6ae5`. The embedded
+editor payloads are refreshed (only those two entries change) and all 1,293
+library assets validate. The York scene pins change only these two lines.
+Fresh indexed-library export `saved-map-exports-XbXNbL` has asset geometry
+deep-equal to the tested `staged-map-export-Iy9GQj`. The publication manifest
+and prior descriptors are in `york-red-inset2-rear-zone-yZsAMi`. Flight clearance
+for sword jumps on this connection remains open.
 
 ## Editor test suite memory and stale fixtures
 

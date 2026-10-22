@@ -304,14 +304,14 @@
       "model": "3d-assets/york/york-central-south-rear-timber-house/model.glb",
       "model_sha256": "2995705cd04a3029c5efab28fe4b5c198431dc318eaa6313ec91bf82ed2fece2",
       "descriptor": "3d-assets/york/york-central-south-rear-timber-house/asset.json",
-      "descriptor_sha256": "2faa33a36cf115ca7177fc8e52ba31d09965218a695ee5cd196b95795e0f93e3",
+      "descriptor_sha256": "616878649a5c1819aed48ab98370e4070ec327e66486fc76067bd32c930f6ae5",
       "id": "york-central-south-rear-timber-house"
     },
     {
       "model": "3d-assets/york/york-central-south-red-timber-house/model.glb",
       "model_sha256": "2cb7b0e64d26cccb095d9fecaec0dd193054b6361cf753d7fd0b7d409976a3a7",
       "descriptor": "3d-assets/york/york-central-south-red-timber-house/asset.json",
-      "descriptor_sha256": "de95915223532123eb48d3f1fb1964703128d7a4fe1ab34b3252abaff723c5ff",
+      "descriptor_sha256": "eb96d447dc806dae16799b3f8a5583e1aebb78b0cccb3fcef9b150297b2fcad7",
       "id": "york-central-south-red-timber-house"
     },
     {
