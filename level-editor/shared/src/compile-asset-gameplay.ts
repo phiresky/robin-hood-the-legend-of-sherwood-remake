@@ -2057,6 +2057,20 @@ function compileAssetGameplayAttempt(
           reached.add(passage.to);
         }
     }
+    // Editor terrain is one continuous heightfield; its overlaps are folds at
+    // steep banks, not separate floors. Splitting it at an unavailable seam
+    // discards river holes and disconnects the banks, so keep one sector and
+    // let layer ordering report the overlap.
+    // TODO: export folded terrain faces as collision instead of overlap.
+    if (
+      reached.size !== planned.regions.length &&
+      region.pieces.every((piece) => piece.navigationRegion?.startsWith("authored-terrain/"))
+    ) {
+      warnings.push(
+        `Navigation ${region.pieces[0]!.navigationRegion}: folded terrain overlaps itself without character-sized seams between its parts; one sector is retained.`,
+      );
+      return [region];
+    }
     // An unavailable seam must not merge different receiving heights back into
     // one sector. Retain each valid floor and every usable connection; report
     // the disconnected components for authoring repair.
