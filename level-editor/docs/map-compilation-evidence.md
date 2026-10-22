@@ -117,6 +117,34 @@ deep-equal to the tested `staged-map-export-Iy9GQj`. The publication manifest
 and prior descriptors are in `york-red-inset2-rear-zone-yZsAMi`. Flight clearance
 for sword jumps on this connection remains open.
 
+## Cross-map jump audit classification
+
+The sword audit required combat to survive every jump. Only the long jump has
+a sword flight; vertical jumps start from upright, crouched or carried
+postures, so combat ends first. The audit now skips the combat check for
+vertical pairs while still requiring their vertical flight. Separately,
+unassisted actors refused by helper-required landings are recorded as
+`helper-required-rejects-unassisted` (the audit still fails if one is
+accepted); shoulder audits cover the assisted routes.
+
+With these corrections, published York `saved-map-exports-XbXNbL` passes
+720/720 offset clicks and 715/720 sword jumps. The nine-map sweep
+`saved-map-exports-BZhLwR` has 995 traversals plus 25 helper rejections in each
+mode: ordinary clicks pass 981/995 and all 14 remaining clicks (Leicester line
+8; Nottingham lines 62 and 75) pass with hidden-floor selection. Sword jumps
+pass 976/995. Croisement01, Croisement03 (clicks), Lincoln, Sherwood and Derby
+have no unexplained failures.
+
+The remaining sword failures (York line 50; Croisement03 lines 4, 6, 11 and
+16–18) lose their receiver during `TransitionWaitingSwordJumpingLongSword`: the
+actor walks off a short ledge before flight and its height follows the ground.
+Upright clicks on the same lines pass. The original runs the upright and sword
+long-jump takeoffs through the same transition handler, playing the animation
+to its last frame before entering flight; the difference is the sword
+animation's displacement. This is probably faithful behavior on these ledges
+rather than an export defect, but the original jump coordinates have not been
+compared. Nottingham line 72 has one sword receiver mismatch to investigate.
+
 ## Editor test suite memory and stale fixtures
 
 Node's `assert.deepEqual` diff of a mismatching multi-megabyte descriptor grew
