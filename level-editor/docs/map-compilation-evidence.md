@@ -143,7 +143,10 @@ long-jump takeoffs through the same transition handler, playing the animation
 to its last frame before entering flight; the difference is the sword
 animation's displacement. This is probably faithful behavior on these ledges
 rather than an export defect, but the original jump coordinates have not been
-compared. Nottingham line 72 has one sword receiver mismatch to investigate.
+compared. Nottingham line 72 fails only its t=0 sword probe: the landing
+lies on the ridge between receiving faces 620 and 621 of sector 226/layer 40,
+whose planes differ by 0.13 units there. The actor keeps face 621 while the
+audit queries 620; the other four sword and all five click probes pass.
 
 ## Editor test suite memory and stale fixtures
 
