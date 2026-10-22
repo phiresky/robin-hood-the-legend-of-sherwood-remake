@@ -53,6 +53,7 @@ import {
 } from "./jump-clearance.ts";
 import { auditCompiledJump } from "./audit-compiled-jump.ts";
 import { createJumpReceiverSupportAudit } from "./audit-jump-receiver-support.ts";
+import { omitUnsupportedJumps } from "./omit-unsupported-jumps.ts";
 import { partitionJumpReceivers } from "./partition-jump-receivers.ts";
 import { orientCompiledJump } from "./orient-compiled-jump.ts";
 import { createJumpDepartureSupportAudit } from "./audit-jump-departure-support.ts";
@@ -2962,7 +2963,14 @@ function compileAssetGameplayAttempt(
     }
     auditContacts = undefined;
   }
-  const partitionedJumps = partitionJumpReceivers(compiledJumpPairs, compiledJumpZones, sight);
+  const partitionedReceivers = partitionJumpReceivers(compiledJumpPairs, compiledJumpZones, sight);
+  warnings.push(...partitionedReceivers.warnings);
+  const partitionedJumps = omitUnsupportedJumps(
+    partitionedReceivers.pairs,
+    partitionedReceivers.zones,
+    sight,
+    (sourceIndex) => jumpPairs[sourceIndex]!.id,
+  );
   warnings.push(...partitionedJumps.warnings);
   const auditReceiverSupport = createJumpReceiverSupportAudit(sight, partitionedJumps.zones);
   const auditDepartureSupport = createJumpDepartureSupportAudit(sight, partitionedJumps.zones);
