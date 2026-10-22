@@ -838,6 +838,14 @@ fn audit_jump_dispatch_with_precision(
                         .filter(|_| case_stance == JumpStance::Shoulders),
                     None,
                 );
+                if outcome.as_ref().err().map(String::as_str) == Some(HELPER_REQUIRED_REJECTS_UNASSISTED) {
+                    results.push(serde_json::json!({
+                        "file": file, "line": index, "t": t, "passed": true,
+                        "outcome": HELPER_REQUIRED_REJECTS_UNASSISTED,
+                        "approach_depth": approach_depth, "arrival": null, "error": null,
+                    }));
+                    continue;
+                }
                 results.push(serde_json::json!({
                     "file": file, "line": index, "t": t,
                     "outcome": "traversal",
@@ -856,7 +864,11 @@ fn audit_jump_dispatch_with_precision(
         .iter()
         .filter(|result| result["outcome"] == "traversal")
         .count();
-    let occlusions = results.len() - traversals;
+    let helper_rejections = results
+        .iter()
+        .filter(|result| result["outcome"] == HELPER_REQUIRED_REJECTS_UNASSISTED)
+        .count();
+    let occlusions = results.len() - traversals - helper_rejections;
     let report = serde_json::json!({
         "diagnostic_endpoint_override": precise_endpoints,
         "stance": match stance { JumpStance::Sword => "sword", JumpStance::Shoulders => "shoulders", JumpStance::Upright => "upright", JumpStance::Vertical => "assisted-ascent-upright-descent" },
@@ -870,7 +882,8 @@ fn audit_jump_dispatch_with_precision(
             JumpDispatch::Isolated => "sprite-dispatch-and-landing-not-click-approach-or-rendering",
         } },
         "complete": traversals > 0 && failed == 0,
-        "traversal_cases": traversals, "occlusion_cases": occlusions, "results": results,
+        "traversal_cases": traversals, "occlusion_cases": occlusions,
+        "helper_required_rejections": helper_rejections, "results": results,
     });
     let path = directory.join(if precise_endpoints {
         "actor-jump-precise-diagnostic-report.json"
@@ -905,6 +918,9 @@ fn audit_jump_dispatch_with_precision(
         path.display()
     );
 }
+
+/// Unassisted actors must not take jumps whose landing requires a helper.
+const HELPER_REQUIRED_REJECTS_UNASSISTED: &str = "helper-required-rejects-unassisted";
 
 fn dispatch_jump(
     mut engine: EngineInner,
@@ -1062,6 +1078,11 @@ fn dispatch_jump(
         carrier
     });
     if !engine.is_jumpable(index as u32, owner, true) {
+        // The check above already rejected an unassisted actor accepted by
+        // a helper-required destination; this refusal is the expected one.
+        if destination.helper_needed && carrier.is_none() {
+            return Err(HELPER_REQUIRED_REJECTS_UNASSISTED.into());
+        }
         return Err("prepared connection rejects its required actor posture".into());
     }
     let mut jump = SequenceElement::new_generic(1, Command::JumpCmd, Some(owner));
