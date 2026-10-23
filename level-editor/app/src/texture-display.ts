@@ -1,4 +1,13 @@
 import * as THREE from "three";
+import {
+  AMBIANCE_FIELD_PROGRAM_KEY,
+  ambianceFieldUniforms,
+  injectAmbianceField,
+  isAmbianceNativeMaterial,
+  setAmbianceFieldUniforms,
+  supportsAmbianceField,
+  type AmbianceColorField,
+} from "./fog-field.ts";
 
 const variants = new WeakMap<THREE.Mesh, readonly THREE.Material[]>();
 /** Include inactive appearance frames in the same display policy as their receiving mesh. */
@@ -39,6 +48,12 @@ export function hasQualifiedSourceDisplayShader(material: THREE.Material): boole
 export class TextureDisplay {
   smooth = true;
   readonly synthesized = { value: true };
+  /** Native ambiance colour field of the open mission (Fog), shared by every hooked material. */
+  readonly ambiance = ambianceFieldUniforms();
+  private ambianceField: AmbianceColorField | null = null;
+  /** Only this renderer draws the field; offline bake renderers reuse hooks but keep Day colours. */
+  private ambianceRenderer: THREE.WebGLRenderer | null = null;
+  private readonly ambianceConfigured = new WeakSet<THREE.Material>();
   private readonly configured = new WeakSet<THREE.Material>();
   private readonly samplingConfigured = new WeakSet<THREE.Material>();
   private readonly nearestRequired = new WeakSet<THREE.Texture>();
@@ -112,6 +127,37 @@ export class TextureDisplay {
     material.needsUpdate = true;
   }
 
+  /** Recolour Day-painted textures with a native field (null restores the source colours).
+   * Hooks are installed lazily on first use, so sessions that never open a Fog mission keep the
+   * unmodified standard shaders; afterwards a null field only disables the uniform. */
+  setAmbianceField(field: AmbianceColorField | null, renderer: THREE.WebGLRenderer | null) {
+    this.ambianceField = field;
+    this.ambianceRenderer = renderer;
+    setAmbianceFieldUniforms(this.ambiance, field);
+  }
+
+  private ambianceMaterial(material: THREE.Material) {
+    const field = this.ambianceField;
+    if (!field || this.ambianceConfigured.has(material)) return;
+    if (!supportsAmbianceField(material) || isAmbianceNativeMaterial(material, field)) return;
+    this.ambianceConfigured.add(material);
+    const qualifiedShader = hasQualifiedSourceDisplayShader(material);
+    const previous = material.onBeforeCompile.bind(material);
+    material.onBeforeCompile = (shader, renderer) => {
+      previous(shader, renderer);
+      if (renderer === this.ambianceRenderer) injectAmbianceField(shader, this.ambiance);
+    };
+    const previousKey = material.customProgramCacheKey();
+    material.customProgramCacheKey = () => `${previousKey}:${AMBIANCE_FIELD_PROGRAM_KEY}`;
+    // The field is a display-only colour transform like the ownership display hook above.
+    if (qualifiedShader)
+      sourceDisplayHooks.set(material, {
+        compile: material.onBeforeCompile,
+        key: material.customProgramCacheKey,
+      });
+    material.needsUpdate = true;
+  }
+
   apply(root: THREE.Object3D, maxAnisotropy = 1) {
     // Authored room floors sit just above retained floor shells. Their narrow
     // separation can lose the depth test in the editor's full-map projection.
@@ -146,6 +192,7 @@ export class TextureDisplay {
             `Foliage mesh ${object.name} is missing its separate ownership COLOR_0 attribute`,
           );
         this.material(material);
+        this.ambianceMaterial(material);
         if (
           material.userData.export_rgb_sampling === "nearest-required" &&
           material.userData.export_complementary_binary_ownership !== true

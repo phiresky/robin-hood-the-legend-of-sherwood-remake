@@ -50,7 +50,8 @@ import { prepareMapCandidate } from "./map-candidate";
 import { EditorViewport } from "./editor-viewport";
 import { disposeObjectResources } from "./resources";
 import { listFiles, subdir, writeText } from "./fs";
-import { MissionEntities, readMission } from "./mission";
+import { MissionEntities, missionAmbiance, readMission, type MissionData } from "./mission";
+import { loadAmbianceColorField, type AmbianceColorField } from "./fog-field.ts";
 import { loadEditableMission, remainingMissionPreview } from "./import-mission.ts";
 import type { DatadirIndex } from "./datadir";
 import { missionsForMap } from "./mission-catalog.ts";
@@ -628,6 +629,23 @@ export default function Editor3D(props: EditorProps) {
     const generation = session.beginLoad();
     const current = () =>
       !disposed && attempt === openAttempt && props.index() === idx && props.library() === lib;
+    // A Fog mission recolours the Day-painted map with its native field; Day leaves it untouched.
+    const ambianceField = async (
+      mission: MissionData | null,
+      warnings: string[] | undefined,
+    ): Promise<AmbianceColorField | null> => {
+      if (!mission) return null;
+      const ambiance = missionAmbiance(mission);
+      if (ambiance !== "Fog") return null;
+      const field = await loadAmbianceColorField(lib.handle, mission.map.toLowerCase(), ambiance);
+      if (!field) {
+        const warning = `No native ${ambiance} colour field for ${mission.map}; map textures show their Day painting.`;
+        if (warnings) warnings.push(warning);
+        else console.warn(warning);
+      }
+      return field;
+    };
+    let preparedAmbianceField: AmbianceColorField | null = null;
     let preparedAsset: THREE.Object3D | null = null;
     let preparedEntities: MissionEntities | null = null;
     let importedMission: Level3D["mission"];
@@ -678,6 +696,7 @@ export default function Editor3D(props: EditorProps) {
             return null;
           });
         } else if (mission) throw new Error("Mission import requires its source level data");
+        preparedAmbianceField = await ambianceField(mission, importedMission?.importWarnings);
 
         if (
           disposed ||
@@ -696,6 +715,7 @@ export default function Editor3D(props: EditorProps) {
           pushHistory(mapOnly);
         }
         viewport.replaceEntities(preparedEntities);
+        viewport.setAmbianceField(preparedAmbianceField);
         viewport.setEntitiesVisible(showEntities());
         setMissionName(mission?.name ?? "");
         setMissionInfo(
@@ -744,6 +764,7 @@ export default function Editor3D(props: EditorProps) {
           return null;
         });
       }
+      preparedAmbianceField = await ambianceField(mission, importedMission?.importWarnings);
       const {
         document: baseDocument,
         directory: dir,
@@ -787,6 +808,7 @@ export default function Editor3D(props: EditorProps) {
       viewport.replaceMap(preparedAsset, nextGround, nextSources, d.assetSources);
       preparedAsset = null;
       viewport.replaceEntities(preparedEntities);
+      viewport.setAmbianceField(preparedAmbianceField);
       viewport.setEntitiesVisible(showEntities());
       setMissionName(mission?.name ?? d.mission?.importedFrom ?? "");
       setMissionInfo(
@@ -846,6 +868,7 @@ export default function Editor3D(props: EditorProps) {
       openAttempt++;
       session.beginLoad();
       viewport.replaceEntities(null);
+      viewport.setAmbianceField(null);
       setMissionName("");
       setMissionInfo("");
     },

@@ -102,6 +102,7 @@ import type { Selection } from "./document-commands.ts";
 import { disposeObjectResources } from "./resources.ts";
 import { prepareGpuTextures } from "./prepare-gpu-textures.ts";
 import { TextureDisplay } from "./texture-display.ts";
+import type { AmbianceColorField } from "./fog-field.ts";
 import { PatchDisplay, applyPlacementPatches } from "./patch-display.ts";
 import { setViewportRay, visibleSurface } from "./viewport-picking.ts";
 import {
@@ -313,6 +314,25 @@ export class EditorViewport {
   }
   private readonly textureDisplay = new TextureDisplay();
   private textureDisplayVersion = 0;
+  private ambianceField: AmbianceColorField | null = null;
+  /** Native colour field of the open mission's ambiance; null shows the Day-painted textures. */
+  setAmbianceField(field: AmbianceColorField | null) {
+    if (field === this.ambianceField) return;
+    this.ambianceField = field;
+    this.textureDisplayVersion++;
+    this.textureDisplay.setAmbianceField(field, this.renderer);
+    this.refreshTextureDisplay();
+  }
+  ambianceFieldState() {
+    const field = this.ambianceField;
+    return field
+      ? {
+          map: field.map,
+          ambiance: field.ambiance,
+          enabled: this.textureDisplay.ambiance.fogFieldEnabled.value,
+        }
+      : null;
+  }
   setTextureDisplay(smooth: boolean, synthesized: boolean) {
     this.textureDisplayVersion++;
     this.textureDisplay.smooth = smooth;
@@ -1892,6 +1912,7 @@ export class EditorViewport {
     this.loopClocks.dispose();
     this.nativeArt.dispose();
     this.stateDelivery.dispose();
+    this.textureDisplay.setAmbianceField(null, null);
     for (const control of this.controls.reverse()) control.dispose();
     this.controls = [];
     disposeObjectResources([
@@ -1922,6 +1943,7 @@ export class EditorViewport {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.shadowMap.autoUpdate = false;
+    this.textureDisplay.setAmbianceField(this.ambianceField, this.renderer);
     this.refreshTextureDisplay();
     el.appendChild(this.renderer.domElement);
     this.camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -100000, 100000);

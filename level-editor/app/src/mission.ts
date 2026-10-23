@@ -54,6 +54,24 @@ export interface MissionData {
   map: string;
   data: RecordData;
 }
+/** Ambiance directory name of a mission (Day, Fog, Night, ...) from its header bit. */
+export function missionAmbiance(mission: MissionData): string {
+  const value = record(mission.data.header, "mission header").ambiance;
+  const ambiance = (
+    {
+      1: "Day",
+      2: "Fog",
+      4: "Night",
+      8: "Attack",
+      16: "Custom1",
+      32: "Custom2",
+      64: "Custom3",
+      128: "Custom4",
+    } as Record<number, string>
+  )[number(value, "mission ambiance")];
+  if (!ambiance) throw new Error(`Unknown mission ambiance ${value}`);
+  return ambiance;
+}
 export async function readMission(index: DatadirIndex, name: string): Promise<MissionData> {
   const data = record(await readJson(index.levelsDir, `${name}.rhm.json`), name);
   const header = record(data.header, `${name}.header`);
@@ -415,20 +433,7 @@ export class MissionEntities {
     if (!config) throw new Error("Data/Configuration missing");
     const profiles = record(await readJson(config, "profile.cpf.json"), "profiles");
     const cache = new Map<string, Map<number, SpriteFrame>>();
-    const ambianceValue = record(mission.data.header, "mission header").ambiance;
-    const ambiance = (
-      {
-        1: "Day",
-        2: "Fog",
-        4: "Night",
-        8: "Attack",
-        16: "Custom1",
-        32: "Custom2",
-        64: "Custom3",
-        128: "Custom4",
-      } as Record<number, string>
-    )[number(ambianceValue, "mission ambiance")];
-    if (!ambiance) throw new Error(`Unknown mission ambiance ${ambianceValue}`);
+    const ambiance = missionAmbiance(mission);
     const position = (entity: RecordData) => {
       const anchor = entity.editor_anchor;
       if (anchor !== undefined && (!Array.isArray(anchor) || anchor.length !== 2))
