@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import {
+  ambianceFieldSlopeTexture,
   ambianceFieldTexture,
   ambianceFieldUniforms,
   applyAmbianceField,
@@ -41,7 +42,9 @@ test("field validation rejects grids that do not tile the map and out-of-range c
   assert.throws(() => validateAmbianceColorField(field({ grid: [3, 1] })), /tile/);
   assert.throws(() => validateAmbianceColorField(field({ slope: [0, 1] })), /slope/);
   assert.throws(() => validateAmbianceColorField(field({ offset: [0, 0, 0] })), /offset/);
-  assert.throws(() => validateAmbianceColorField({ ...field(), ambiance: "Night" }), /Fog/);
+  assert.throws(() => validateAmbianceColorField({ ...field(), ambiance: "Attack" } as never), /Fog, Night/);
+  // A Night field must name the Night painting it was fitted on.
+  assert.throws(() => validateAmbianceColorField({ ...field(), ambiance: "Night" }), /source\.night/);
 });
 
 test("CPU reference interpolates between tile centres and clamps at the map border", () => {
@@ -172,4 +175,94 @@ test("library loader: no catalog means no field; a pinned row must match its byt
   assert.equal(await loadAmbianceColorField(ok, "derby", "Fog"), null);
   const changed = memoryRoot({ "ambiance/index.json": await catalog("0".repeat(64)), "ambiance/york.json": body });
   await assert.rejects(loadAmbianceColorField(changed, "york", "Fog"), /changed/);
+});
+
+const NIGHT = "f1cdd57e62c620b765a43e5f41e66791671cd97018e00e7579a05b86b1d05043";
+function nightField(overrides: Partial<AmbianceColorField> = {}): AmbianceColorField {
+  return field({
+    ambiance: "Night",
+    source: {
+      day: { path: "Data/Levels/Day/york.map.png", sha256: "a".repeat(64) },
+      night: { path: "Data/Levels/Night/york.map.png", sha256: NIGHT },
+    },
+    slope_channels: 3,
+    // Left tile: R 0.5, G 0.25, B 1; right tile: identity.
+    slope: [0.5, 0.25, 1, 1, 1, 1],
+    offset: [0, 0.2, 0, 0, 0, 0],
+    ...overrides,
+  });
+}
+
+test("Night fields carry one slope per channel and validate their slope count", () => {
+  assert.equal(validateAmbianceColorField(nightField()).ambiance, "Night");
+  assert.throws(() => validateAmbianceColorField(nightField({ slope: [0.5, 1] })), /slope/);
+  assert.throws(() => validateAmbianceColorField(nightField({ slope_channels: 2 as never })), /slope_channels/);
+  // Shared-slope Night fields remain valid (slope_channels defaults to 1).
+  assert.equal(validateAmbianceColorField(nightField({ slope_channels: undefined, slope: [0.5, 1] })).slope.length, 2);
+});
+
+test("per-channel CPU reference applies each channel's own slope", () => {
+  // Left tile centre: R 100*0.5 = 50, G 100*0.25 + 0.2*255 = 76, B unchanged.
+  assert.deepEqual(applyAmbianceField(nightField(), 32, 32, [100, 100, 100]), [50, 76, 100]);
+  assert.deepEqual(applyAmbianceField(nightField(), 96, 32, [100, 100, 100]), [100, 100, 100]);
+});
+
+test("per-channel fields upload a slope texture; shared fields keep slope in alpha", () => {
+  const f = nightField();
+  const offset = ambianceFieldTexture(f).image.data as Uint16Array,
+    slope = ambianceFieldSlopeTexture(f)!.image.data as Uint16Array;
+  assert.equal(THREE.DataUtils.fromHalfFloat(offset[3]!), 1);
+  assert.deepEqual([0, 1, 2].map((c) => THREE.DataUtils.fromHalfFloat(slope[c]!)), [0.5, 0.25, 1]);
+  assert.equal(ambianceFieldSlopeTexture(field()), null);
+  const uniforms = ambianceFieldUniforms();
+  setAmbianceFieldUniforms(uniforms, f);
+  assert.equal(uniforms.fogFieldRgbSlope.value, true);
+  setAmbianceFieldUniforms(uniforms, field());
+  assert.equal(uniforms.fogFieldRgbSlope.value, false);
+  assert.equal(uniforms.fogFieldSlopeMap.value, null);
+  setAmbianceFieldUniforms(uniforms, null);
+  assert.equal(uniforms.fogFieldEnabled.value, false);
+});
+
+test("Night-painted textures are exempt from the Night field, Fog-painted ones are not", () => {
+  const f = nightField();
+  const night = new THREE.MeshBasicMaterial();
+  night.userData.reprojection_source_sha256 = NIGHT;
+  const tagged = new THREE.MeshBasicMaterial();
+  tagged.userData.source_ambiance = "Night";
+  const fog = new THREE.MeshBasicMaterial();
+  fog.userData.source_ambiance = "Fog";
+  assert.equal(isAmbianceNativeMaterial(night, f), true);
+  assert.equal(isAmbianceNativeMaterial(tagged, f), true);
+  assert.equal(isAmbianceNativeMaterial(fog, f), false);
+});
+
+test("the shader selects the per-channel slope texture with a uniform", () => {
+  const shader = {
+    uniforms: {},
+    vertexShader: THREE.ShaderLib.basic.vertexShader,
+    fragmentShader: THREE.ShaderLib.basic.fragmentShader,
+  } as unknown as THREE.WebGLProgramParametersWithUniforms;
+  const uniforms = ambianceFieldUniforms();
+  injectAmbianceField(shader, uniforms);
+  assert.match(shader.fragmentShader, /fogFieldRgbSlope \? texture2D\( fogFieldSlopeMap, fogFieldUv \)\.rgb : vec3\( fogField\.a \)/);
+  assert.equal(shader.uniforms.fogFieldSlopeMap, uniforms.fogFieldSlopeMap);
+});
+
+test("library loader returns the row of the requested ambiance", async () => {
+  const fogBody = JSON.stringify(field()),
+    nightBody = JSON.stringify(nightField());
+  const root = memoryRoot({
+    "ambiance/index.json": JSON.stringify({
+      version: 1,
+      entries: [
+        { map: "york", ambiance: "Fog", field: { path: "ambiance/fog.json", sha256: await digest(fogBody) } },
+        { map: "york", ambiance: "Night", field: { path: "ambiance/night.json", sha256: await digest(nightBody) } },
+      ],
+    }),
+    "ambiance/fog.json": fogBody,
+    "ambiance/night.json": nightBody,
+  });
+  assert.equal((await loadAmbianceColorField(root, "york", "Night"))?.slope_channels, 3);
+  assert.equal((await loadAmbianceColorField(root, "york", "Fog"))?.ambiance, "Fog");
 });

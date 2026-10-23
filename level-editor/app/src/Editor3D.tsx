@@ -51,7 +51,7 @@ import { EditorViewport } from "./editor-viewport";
 import { disposeObjectResources } from "./resources";
 import { listFiles, subdir, writeText } from "./fs";
 import { MissionEntities, missionAmbiance, readMission, type MissionData } from "./mission";
-import { loadAmbianceColorField, type AmbianceColorField } from "./fog-field.ts";
+import { FIELD_AMBIANCES, loadAmbianceColorField, type AmbianceColorField } from "./fog-field.ts";
 import { loadEditableMission, remainingMissionPreview } from "./import-mission.ts";
 import type { DatadirIndex } from "./datadir";
 import { missionsForMap } from "./mission-catalog.ts";
@@ -629,14 +629,14 @@ export default function Editor3D(props: EditorProps) {
     const generation = session.beginLoad();
     const current = () =>
       !disposed && attempt === openAttempt && props.index() === idx && props.library() === lib;
-    // A Fog mission recolours the Day-painted map with its native field; Day leaves it untouched.
+    // Fog and Night missions recolour the Day-painted map with their native field; Day leaves it untouched.
     const ambianceField = async (
       mission: MissionData | null,
       warnings: string[] | undefined,
     ): Promise<AmbianceColorField | null> => {
       if (!mission) return null;
       const ambiance = missionAmbiance(mission);
-      if (ambiance !== "Fog") return null;
+      if (!FIELD_AMBIANCES.some((name) => name === ambiance)) return null;
       const field = await loadAmbianceColorField(lib.handle, mission.map.toLowerCase(), ambiance);
       if (!field) {
         const warning = `No native ${ambiance} colour field for ${mission.map}; map textures show their Day painting.`;

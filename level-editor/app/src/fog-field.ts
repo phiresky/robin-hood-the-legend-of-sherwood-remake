@@ -2,22 +2,31 @@ import * as THREE from "three";
 import { safeLibraryPath } from "@rle/shared";
 import { isNotFound, readJson, subdir } from "./fs.ts";
 
-/** A native ambiance colour field fitted from the original Day and Fog paintings of one map.
- * Per tile, Fog ≈ slope · Day + offset in 8-bit sRGB (normalized), bilinearly interpolated
- * between tile centres. Day-painted textures are recoloured with it while a Fog mission is open;
- * textures already projected from the Fog painting are left unchanged. */
+/** Ambiances whose native painting has a colour field relation to the Day painting. */
+export const FIELD_AMBIANCES = ["Fog", "Night"] as const;
+export type FieldAmbiance = (typeof FIELD_AMBIANCES)[number];
+type Pin = { path: string; sha256: string };
+
+/** A native ambiance colour field fitted from the original Day painting and the Fog or Night
+ * painting of one map. Per tile, Ambiance ≈ slope · Day + offset in 8-bit sRGB (normalized),
+ * bilinearly interpolated between tile centres; the slope is shared by the channels or given per
+ * channel. Day-painted textures are recoloured with it while a mission of that ambiance is open;
+ * textures already projected from that ambiance's painting are left unchanged. */
 export interface AmbianceColorField {
   version: 1;
   kind: "native-ambiance-color-field";
   map: string;
-  ambiance: "Fog";
+  ambiance: FieldAmbiance;
   camera_elevation_deg: number;
-  source: { day: { path: string; sha256: string }; fog: { path: string; sha256: string } };
+  /** `day` plus the painting of this ambiance, keyed by its lower-case name (`fog`, `night`). */
+  source: { day: Pin; fog?: Pin; night?: Pin };
   map_size: [number, number];
   grid: [number, number];
   block: number;
   space: "srgb-unorm";
-  /** Row-major from the top tile row: grid[0] * grid[1] contrast values. */
+  /** 1 (default): one contrast per tile; 3: R, G and B contrasts per tile. */
+  slope_channels?: 1 | 3;
+  /** Row-major from the top tile row: slope_channels * grid[0] * grid[1] contrast values. */
   slope: number[];
   /** Row-major from the top tile row: 3 * grid[0] * grid[1] RGB offsets in 0..1. */
   offset: number[];
@@ -30,6 +39,8 @@ interface CatalogEntry {
 }
 
 const sha = /^[a-f0-9]{64}$/;
+const paintingKey = (ambiance: FieldAmbiance) => ambiance.toLowerCase() as "fog" | "night";
+const slopeChannels = (field: Pick<AmbianceColorField, "slope_channels">) => field.slope_channels ?? 1;
 export function validateAmbianceColorField(value: unknown): AmbianceColorField {
   const fail = (why: string): never => {
     throw new Error(`Invalid ambiance colour field: ${why}`);
@@ -38,11 +49,11 @@ export function validateAmbianceColorField(value: unknown): AmbianceColorField {
   const f = value as AmbianceColorField;
   if (f.version !== 1 || f.kind !== "native-ambiance-color-field") fail("version/kind");
   if (typeof f.map !== "string" || !f.map) fail("map");
-  if (f.ambiance !== "Fog") fail("only Fog fields are defined");
+  if (!FIELD_AMBIANCES.includes(f.ambiance)) fail(`ambiance must be one of ${FIELD_AMBIANCES.join(", ")}`);
   if (f.space !== "srgb-unorm") fail("colour space");
   if (!Number.isFinite(f.camera_elevation_deg) || f.camera_elevation_deg <= 0 || f.camera_elevation_deg >= 90)
     fail("camera elevation");
-  for (const key of ["day", "fog"] as const) {
+  for (const key of ["day", paintingKey(f.ambiance)] as const) {
     const s = f.source?.[key];
     if (!s || typeof s.path !== "string" || !s.path || typeof s.sha256 !== "string" || !sha.test(s.sha256))
       fail(`source.${key}`);
@@ -54,7 +65,8 @@ export function validateAmbianceColorField(value: unknown): AmbianceColorField {
   if (f.grid[0] !== Math.ceil(f.map_size[0] / f.block) || f.grid[1] !== Math.ceil(f.map_size[1] / f.block))
     fail("grid does not tile the map");
   const cells = f.grid[0] * f.grid[1];
-  if (!Array.isArray(f.slope) || f.slope.length !== cells || !f.slope.every((v) => Number.isFinite(v) && v > 0 && v <= 2))
+  if (f.slope_channels !== undefined && f.slope_channels !== 1 && f.slope_channels !== 3) fail("slope_channels");
+  if (!Array.isArray(f.slope) || f.slope.length !== slopeChannels(f) * cells || !f.slope.every((v) => Number.isFinite(v) && v > 0 && v <= 2))
     fail("slope");
   if (!Array.isArray(f.offset) || f.offset.length !== 3 * cells || !f.offset.every((v) => Number.isFinite(v) && v >= -1 && v <= 1))
     fail("offset");
@@ -105,14 +117,32 @@ export async function loadAmbianceColorField(
   return field;
 }
 
-/** RGB = offset, A = slope; texel (0, 0) is the top-left tile, sampled with v = map_y / height. */
+/** RGB = offset, A = shared slope (1 for per-channel fields); texel (0, 0) is the top-left tile,
+ * sampled with v = map_y / height. */
 export function ambianceFieldTexture(field: AmbianceColorField): THREE.DataTexture {
-  const [gx, gy] = field.grid;
+  const [gx, gy] = field.grid,
+    shared = slopeChannels(field) === 1;
   const data = new Uint16Array(gx * gy * 4);
   for (let i = 0; i < gx * gy; i++) {
     for (let c = 0; c < 3; c++) data[i * 4 + c] = THREE.DataUtils.toHalfFloat(field.offset[i * 3 + c]!);
-    data[i * 4 + 3] = THREE.DataUtils.toHalfFloat(field.slope[i]!);
+    data[i * 4 + 3] = THREE.DataUtils.toHalfFloat(shared ? field.slope[i]! : 1);
   }
+  return fieldTexture(data, gx, gy);
+}
+
+/** Per-channel fields only: RGB = slopes, A = 1, same layout and sampling as the offset texture. */
+export function ambianceFieldSlopeTexture(field: AmbianceColorField): THREE.DataTexture | null {
+  if (slopeChannels(field) === 1) return null;
+  const [gx, gy] = field.grid;
+  const data = new Uint16Array(gx * gy * 4);
+  for (let i = 0; i < gx * gy; i++) {
+    for (let c = 0; c < 3; c++) data[i * 4 + c] = THREE.DataUtils.toHalfFloat(field.slope[i * 3 + c]!);
+    data[i * 4 + 3] = THREE.DataUtils.toHalfFloat(1);
+  }
+  return fieldTexture(data, gx, gy);
+}
+
+function fieldTexture(data: Uint16Array, gx: number, gy: number) {
   const texture = new THREE.DataTexture(data, gx, gy, THREE.RGBAFormat, THREE.HalfFloatType);
   texture.colorSpace = THREE.NoColorSpace;
   texture.flipY = false;
@@ -141,21 +171,26 @@ export function applyAmbianceField(field: AmbianceColorField, mapX: number, mapY
     const v = (x: number, y: number) => values[(y * gx + x) * stride + k]!;
     return (v(x0, y0) * (1 - tx) + v(x1, y0) * tx) * (1 - ty) + (v(x0, y1) * (1 - tx) + v(x1, y1) * tx) * ty;
   };
-  const s = at(field.slope, 1, 0);
-  return rgb.map((v, c) => Math.round(THREE.MathUtils.clamp((v / 255) * s + at(field.offset, 3, c), 0, 1) * 255));
+  const channels = slopeChannels(field);
+  return rgb.map((v, c) => {
+    const s = at(field.slope, channels, channels === 1 ? 0 : c);
+    return Math.round(THREE.MathUtils.clamp((v / 255) * s + at(field.offset, 3, c), 0, 1) * 255);
+  });
 }
 
-/** Materials whose texels already come from the Fog painting keep their colours. */
+/** Materials whose texels already come from this ambiance's painting keep their colours. */
 export function isAmbianceNativeMaterial(material: THREE.Material, field: AmbianceColorField) {
   return (
     material.userData.source_ambiance === field.ambiance ||
-    material.userData.reprojection_source_sha256 === field.source.fog.sha256
+    material.userData.reprojection_source_sha256 === field.source[paintingKey(field.ambiance)]!.sha256
   );
 }
 
 export interface AmbianceFieldUniforms {
   fogFieldEnabled: { value: boolean };
   fogFieldMap: { value: THREE.Texture | null };
+  fogFieldRgbSlope: { value: boolean };
+  fogFieldSlopeMap: { value: THREE.Texture | null };
   fogFieldMapSize: { value: THREE.Vector2 };
   fogFieldElevation: { value: THREE.Vector2 };
 }
@@ -163,6 +198,8 @@ export function ambianceFieldUniforms(): AmbianceFieldUniforms {
   return {
     fogFieldEnabled: { value: false },
     fogFieldMap: { value: null },
+    fogFieldRgbSlope: { value: false },
+    fogFieldSlopeMap: { value: null },
     fogFieldMapSize: { value: new THREE.Vector2(1, 1) },
     fogFieldElevation: { value: new THREE.Vector2(0, 1) },
   };
@@ -170,6 +207,9 @@ export function ambianceFieldUniforms(): AmbianceFieldUniforms {
 export function setAmbianceFieldUniforms(uniforms: AmbianceFieldUniforms, field: AmbianceColorField | null) {
   uniforms.fogFieldMap.value?.dispose();
   uniforms.fogFieldMap.value = field ? ambianceFieldTexture(field) : null;
+  uniforms.fogFieldSlopeMap.value?.dispose();
+  uniforms.fogFieldSlopeMap.value = field ? ambianceFieldSlopeTexture(field) : null;
+  uniforms.fogFieldRgbSlope.value = !!uniforms.fogFieldSlopeMap.value;
   uniforms.fogFieldEnabled.value = !!field;
   if (!field) return;
   const elevation = THREE.MathUtils.degToRad(field.camera_elevation_deg);
@@ -209,14 +249,15 @@ export function injectAmbianceField(shader: THREE.WebGLProgramParametersWithUnif
        vFogFieldWorld = ( modelMatrix * fogFieldWorld ).xyz;`,
     );
   shader.fragmentShader =
-    "varying vec3 vFogFieldWorld;\nuniform bool fogFieldEnabled;\nuniform sampler2D fogFieldMap;\nuniform vec2 fogFieldMapSize;\nuniform vec2 fogFieldElevation;\n" +
+    "varying vec3 vFogFieldWorld;\nuniform bool fogFieldEnabled;\nuniform sampler2D fogFieldMap;\nuniform bool fogFieldRgbSlope;\nuniform sampler2D fogFieldSlopeMap;\nuniform vec2 fogFieldMapSize;\nuniform vec2 fogFieldElevation;\n" +
     shader.fragmentShader.replace(
       "#include <opaque_fragment>",
       `if ( fogFieldEnabled ) {
          vec2 fogFieldUv = vec2( vFogFieldWorld.x, vFogFieldWorld.z * fogFieldElevation.x - vFogFieldWorld.y * fogFieldElevation.y ) / fogFieldMapSize;
          vec4 fogField = texture2D( fogFieldMap, fogFieldUv );
+         vec3 fogFieldSlope = fogFieldRgbSlope ? texture2D( fogFieldSlopeMap, fogFieldUv ).rgb : vec3( fogField.a );
          vec3 fogFieldSrgb = sRGBTransferOETF( vec4( outgoingLight, 1.0 ) ).rgb;
-         outgoingLight = sRGBTransferEOTF( vec4( clamp( fogFieldSrgb * fogField.a + fogField.rgb, 0.0, 1.0 ), 1.0 ) ).rgb;
+         outgoingLight = sRGBTransferEOTF( vec4( clamp( fogFieldSrgb * fogFieldSlope + fogField.rgb, 0.0, 1.0 ), 1.0 ) ).rgb;
        }
        #include <opaque_fragment>`,
     );
