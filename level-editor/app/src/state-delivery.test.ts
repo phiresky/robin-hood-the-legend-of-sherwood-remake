@@ -1204,3 +1204,119 @@ test("patch clips retain independent applied clocks, reset, and reject missing c
   await assert.rejects(bad.set(f.contract, f.source, f.library, f.read), /clip identity/);
   bad.dispose();
 });
+
+async function remainderFixture() {
+  const f = await fixture();
+  const png = async (width: number, channels: 1 | 4, data: number[]) => {
+    const bytes = encode({ width, height: 1, channels, data: new Uint8Array(data) });
+    const sha256 = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))),
+      (n) => n.toString(16).padStart(2, "0"),
+    ).join("");
+    return { bytes, sha256 };
+  };
+  const background = await png(3, 4, [9, 9, 9, 255, 9, 9, 9, 255, 9, 9, 9, 255]);
+  const sprite = await png(3, 4, [200, 0, 0, 255, 0, 0, 200, 255, 0, 0, 0, 0]);
+  const mask = await png(3, 1, [2, 1, 0]);
+  const files = new Map([
+    ["background.png", background],
+    ["sprite.png", sprite],
+    ["mask.png", mask],
+  ]);
+  const image = (path: string) => ({ path, sha256: files.get(path)!.sha256, width: 3, height: 1 });
+  const frame = { ...image("sprite.png"), offset: [0, 0] as [number, number], delay: 2 };
+  f.contract.native.background = { ...image("background.png"), offset: [0, 0], delay: 0 };
+  f.contract.native.elements[0]!.frames = [frame, frame];
+  const withRemainder = structuredClone(f.contract);
+  withRemainder.families[0]!.native_remainder = [
+    {
+      element_id: "body",
+      encoding: "source-domain-v1",
+      drawn_values: [2],
+      priority: "remainder-over-physical",
+      frames: [null, { mask: image("mask.png"), physical: "applied" }],
+    },
+  ];
+  const read = async (resource: { path: string }) => {
+    const file = files.get(resource.path);
+    if (!file) throw new Error("missing " + resource.path);
+    return new Uint8Array(file.bytes);
+  };
+  const loader = () => ({ load: async () => f.template, dispose: () => {} });
+  return { ...f, withRemainder, read, loader, files, png };
+}
+
+test("native remainder keeps listed source pixels over the applied model at the same source frame", async () => {
+  const f = await remainderFixture();
+  const delivery = new StateDelivery(f.loader);
+  assert.equal(await delivery.set(f.withRemainder, f.source, f.library, f.read), true);
+  const plain = new StateDelivery(f.loader);
+  assert.equal(await plain.set(f.contract, f.source, f.library, f.read), true);
+  delivery.activate("trap");
+  plain.activate("trap");
+  assert.deepEqual(delivery.native.pixels(), plain.native.pixels());
+  delivery.selectMode("native-remainder");
+  assert.equal(delivery.physical.visible, false);
+  // Frame 0 is unbound: the whole native frame is drawn and no physical layer is requested.
+  assert.equal(delivery.remainderPhysicalRoots().size, 0);
+  assert.deepEqual(delivery.native.remainderPixels(new Map()).data, plain.native.pixels().data);
+  delivery.native.seek(3);
+  plain.native.seek(3);
+  delivery.native.setElementState("body", true, 3);
+  plain.native.setElementState("body", true, 3);
+  const roots = delivery.remainderPhysicalRoots();
+  assert.deepEqual([...roots.keys()], ["body"]);
+  assert.equal(roots.get("body"), delivery.physical.children[1]);
+  const layer = {
+    width: 3,
+    height: 1,
+    data: new Uint8Array([0, 250, 0, 255, 0, 250, 0, 255, 0, 0, 0, 0]),
+  };
+  const hybrid = delivery.native.remainderPixels(new Map([["body", layer]]));
+  assert.deepEqual(
+    [...hybrid.data],
+    [200, 0, 0, 255, 0, 250, 0, 255, 9, 9, 9, 255],
+    "kept native pixel wins, cart pixel shows the model, transparent source keeps the receiver",
+  );
+  assert.deepEqual(
+    [...delivery.native.pixels().data],
+    [...plain.native.pixels().data],
+    "native-art composition is unchanged by a remainder binding",
+  );
+  assert.throws(() => delivery.native.remainderPixels(new Map()), /physical layers differ/);
+  assert.throws(
+    () => delivery.native.remainderPixels(new Map([["body", { ...layer, width: 2 }]])),
+    /physical layers differ/,
+  );
+  assert.throws(() => plain.selectMode("native-remainder"), /no reviewed native remainder/);
+  delivery.selectMode("physical-endpoint");
+  assert.throws(() => delivery.remainderPhysicalRoots(), /not selected/);
+  delivery.dispose();
+  plain.dispose();
+});
+
+test("native remainder masks are hash pinned grey source-domain maps matching source coverage", async () => {
+  const f = await remainderFixture();
+  const changed = structuredClone(f.withRemainder);
+  changed.families[0]!.native_remainder![0]!.frames[1]!.mask.sha256 = "b".repeat(64);
+  const a = new StateDelivery(f.loader);
+  await assert.rejects(a.set(changed, f.source, f.library, f.read), /remainder mask changed/);
+  assert.equal(a.ready, false);
+  for (const [channels, data, pattern] of [
+    [1, [2, 1, 1], /differs from source coverage/],
+    [1, [0, 1, 0], /differs from source coverage/],
+    [1, [4, 1, 0], /differs from source coverage/],
+    [4, [2, 2, 2, 255, 1, 1, 1, 255, 0, 0, 0, 0], /Unsupported native remainder mask/],
+  ] as const) {
+    const mask = await f.png(3, channels, [...data]);
+    f.files.set("mask.png", mask);
+    const contract = structuredClone(f.withRemainder);
+    contract.families[0]!.native_remainder![0]!.frames[1]!.mask.sha256 = mask.sha256;
+    const layer = new StateDelivery(f.loader);
+    await assert.rejects(layer.set(contract, f.source, f.library, f.read), pattern);
+    assert.equal(layer.ready, false);
+    assert.equal(layer.native.ready, false);
+    layer.dispose();
+  }
+  a.dispose();
+});

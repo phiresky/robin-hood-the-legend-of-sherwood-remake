@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import * as THREE from "three";
 import {
   nativeEffectCamera,
+  renderNativeRemainderLayer,
   renderPhysicalEffect,
   validateNativeEffectMaterial,
 } from "./native-physical-effect-preview.ts";
@@ -393,4 +394,69 @@ test("opaque source-only emission accepts the sign material without allowing lig
     alter(material);
     assert.throws(() => validateNativeEffectMaterial(material), /unsupported source-emissive/);
   }
+});
+
+test("remainder layer renders a hidden applied root in the complete source frame without changing it", () => {
+  const f = rendererFixture();
+  let rendered: THREE.Scene | undefined, camera: THREE.OrthographicCamera | undefined;
+  f.renderer.render = ((scene: THREE.Scene, view: THREE.OrthographicCamera) => {
+    rendered = scene;
+    camera = view;
+    f.events.push("render");
+  }) as unknown as () => number;
+  const parent = new THREE.Group();
+  parent.position.set(4, 0, 0);
+  const root = new THREE.Group();
+  root.visible = false;
+  root.add(new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial()));
+  parent.add(root);
+  const pixels = renderNativeRemainderLayer(
+    f.renderer as unknown as THREE.WebGLRenderer,
+    root,
+    { origin: [64, 128], width: 1, height: 2 },
+    35,
+  );
+  assert.deepEqual(Array.from(pixels.data), [20, 30, 40, 255, 50, 25, 0, 255]);
+  assert.equal(root.visible, false);
+  assert.equal(root.parent, parent);
+  const clone = rendered!.children[0]!;
+  assert.equal(clone.visible, true);
+  assert.equal(new THREE.Vector3().setFromMatrixPosition(clone.matrixWorld).x, 4);
+  const corner = new THREE.Vector3(64, 0, 128 / Math.sin((35 * Math.PI) / 180)).project(camera!);
+  assert.ok(Math.abs(corner.x + 1) < 1e-8 && Math.abs(corner.y - 1) < 1e-8);
+  f.restored();
+  const lit = new THREE.Group();
+  lit.add(new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial()));
+  assert.throws(
+    () =>
+      renderNativeRemainderLayer(
+        f.renderer as unknown as THREE.WebGLRenderer,
+        lit,
+        { origin: [0, 0], width: 1, height: 2 },
+        35,
+      ),
+    /unsupported source-emissive material/,
+  );
+  const lamp = root.clone();
+  lamp.add(new THREE.PointLight());
+  assert.throws(
+    () =>
+      renderNativeRemainderLayer(
+        f.renderer as unknown as THREE.WebGLRenderer,
+        lamp,
+        { origin: [0, 0], width: 1, height: 2 },
+        35,
+      ),
+    /light-free/,
+  );
+  assert.throws(
+    () =>
+      renderNativeRemainderLayer(
+        f.renderer as unknown as THREE.WebGLRenderer,
+        new THREE.Group(),
+        { origin: [0, 0], width: 1, height: 2 },
+        35,
+      ),
+    /no visible model/,
+  );
 });

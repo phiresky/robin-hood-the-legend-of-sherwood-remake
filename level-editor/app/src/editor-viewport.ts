@@ -1,6 +1,7 @@
 import type { StateClockBatch } from "../../shared/src/state-event-clocks.ts";
 import {
   NativePhysicalEffectPreview,
+  renderNativeRemainderLayer,
   renderNativeStaticReceiver,
 } from "./native-physical-effect-preview.ts";
 import {
@@ -48,6 +49,7 @@ import {
   NativeStatePresentation,
   NativeArtworkSurface,
   nativeLibraryReader,
+  type NativePixels,
 } from "./native-state-presentation.ts";
 import { SceneryLayer } from "./scenery-layer.ts";
 import { CHARACTER_DRAG_TYPE } from "./mission-character-catalog.ts";
@@ -729,7 +731,34 @@ export class EditorViewport {
       throw error;
     }
   }
+  /** Kept native pixels over the physical model, both sampled at the source frame's tick. */
+  private deliveredRemainderPixels() {
+    if (!this.renderer) throw new Error("Native remainder renderer is not ready");
+    const native = this.stateDelivery.native;
+    const background = native.remainderFrame();
+    const layers = new Map<string, NativePixels>();
+    try {
+      for (const [id, root] of this.stateDelivery.remainderPhysicalRoots())
+        layers.set(
+          id,
+          renderNativeRemainderLayer(this.renderer, root, background, background.elevation),
+        );
+    } catch (error) {
+      // A failed layer render must not stop the animation loop: report it and show the original art.
+      this.stateDelivery.selectMode("native-art");
+      this.bindings.onError?.(`Native remainder preview failed: ${String(error)}`);
+      return native.pixels();
+    }
+    return native.remainderPixels(layers);
+  }
+  private deliveredNativePixels() {
+    return this.stateDelivery.mode === "native-remainder"
+      ? this.deliveredRemainderPixels()
+      : this.stateDelivery.native.pixels();
+  }
   nativePreviewPixels() {
+    if (this.stateDelivery.ready && this.stateDelivery.mode === "native-remainder")
+      return this.deliveredRemainderPixels();
     let snapshot = this.currentNativeArt.loopDrawSnapshot.bind(this.currentNativeArt);
     if (this.physicalNativeEffectsEnabled) {
       if (!this.renderer || !this.physicalNativeEffects)
@@ -1130,13 +1159,16 @@ export class EditorViewport {
   }
   setDeliveredStateMode(mode: StateDeliveryMode) {
     if (!this.stateDelivery.ready) throw new Error("State delivery is not ready");
-    this.setStatePresentationMode(mode === "native-art" ? "native-art" : "physical");
+    const physical = mode === "physical-endpoint" || mode === "physical-motion";
+    this.setStatePresentationMode(physical ? "physical" : "native-art");
     this.stateDelivery.selectMode(mode);
     this.syncDeliveredMotionPose();
-    this.deliveryEndpointActive = mode !== "native-art";
+    this.deliveryEndpointActive = physical;
     this.stateDelivery.physical.visible =
       this.deliveryEndpointActive && this.deliveryEntitiesVisible;
     this.syncRefinedMissionTargets();
+    // Native-art keeps the existing surface, so redraw it when leaving the remainder composite.
+    if (!physical) this.nativeSurface?.update(this.deliveredNativePixels());
     this.clippingBoundsDirty = true;
   }
   selectDeliveredEndpoint(family: string, endpoint: "initial" | "applied") {
@@ -1151,12 +1183,12 @@ export class EditorViewport {
   sampleDeliveredSourceState(batch: StateClockBatch) {
     this.stateDelivery.sampleSourceState(batch);
     this.syncDeliveredMotionPose();
-    this.nativeSurface?.update(this.stateDelivery.native.pixels());
+    this.nativeSurface?.update(this.deliveredNativePixels());
   }
   seekDeliveredState(family: string, tick: number) {
     this.stateDelivery.seekFamily(family, tick);
     this.syncDeliveredMotionPose();
-    this.nativeSurface?.update(this.stateDelivery.native.pixels());
+    this.nativeSurface?.update(this.deliveredNativePixels());
   }
   resetDeliveredState(family: string) {
     this.stateDelivery.reset(family);
@@ -1164,7 +1196,7 @@ export class EditorViewport {
     if (this.aperturePreview?.handles(family))
       this.aperturePreview.selectEndpoint(family, "initial");
     this.syncRefinedMissionTargets();
-    this.nativeSurface?.update(this.stateDelivery.native.pixels());
+    this.nativeSurface?.update(this.deliveredNativePixels());
   }
   private syncDeliveredMotionPose() {
     const endpoint = this.stateDelivery.motionEndpoint;

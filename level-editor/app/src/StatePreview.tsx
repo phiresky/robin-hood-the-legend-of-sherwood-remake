@@ -19,6 +19,8 @@ import {
   type MissionStateCatalogEntry,
 } from "./mission-state-catalog.ts";
 
+type StatePreviewView = "art" | "hybrid" | "initial" | "applied" | "motion";
+
 export default function StatePreview(props: {
   document(): Level3D | null;
   library?(): FileSystemDirectoryHandle | null;
@@ -34,7 +36,7 @@ export default function StatePreview(props: {
     [patchStarted, setPatchStarted] = createSignal(false),
     [family, setFamily] = createSignal(""),
     [status, setStatus] = createSignal(""),
-    [mode, setMode] = createSignal<"art" | "initial" | "applied" | "motion">("art"),
+    [mode, setMode] = createSignal<StatePreviewView>("art"),
     [tick, setTick] = createSignal(0),
     [playing, setPlaying] = createSignal(false);
   const [actorSource, setActorSource] = createSignal<MissionStateSource | null>(null),
@@ -256,9 +258,11 @@ export default function StatePreview(props: {
       ),
     );
   };
-  function applyMode(view: "art" | "initial" | "applied" | "motion", familyId: string) {
+  function applyMode(view: StatePreviewView, familyId: string) {
     if (recorded()) {
-      props.viewport.setDeliveredStateMode(view === "art" ? "native-art" : "physical-motion");
+      props.viewport.setDeliveredStateMode(
+        view === "art" ? "native-art" : view === "hybrid" ? "native-remainder" : "physical-motion",
+      );
       return;
     }
     if (loopContract() || patchContract())
@@ -268,6 +272,7 @@ export default function StatePreview(props: {
           : "native-art",
       );
     else if (view === "art") props.viewport.setDeliveredStateMode("native-art");
+    else if (view === "hybrid") props.viewport.setDeliveredStateMode("native-remainder");
     else {
       props.viewport.setDeliveredStateMode("physical-endpoint");
       props.viewport.selectDeliveredEndpoint(familyId, view === "applied" ? "applied" : "initial");
@@ -657,10 +662,10 @@ export default function StatePreview(props: {
                 value={family()}
                 onChange={(event) => {
                   props.viewport.setDeliveredStatePlaying(false);
+                  const next = contract()?.families.find((f) => f.id === event.currentTarget.value);
                   if (
-                    mode() === "motion" &&
-                    !contract()?.families.find((f) => f.id === event.currentTarget.value)?.physical
-                      .motion
+                    (mode() === "motion" && !next?.physical.motion) ||
+                    (mode() === "hybrid" && !next?.native_remainder)
                   )
                     setMode("art");
                   setFamily(event.currentTarget.value);
@@ -745,10 +750,13 @@ export default function StatePreview(props: {
               value={mode()}
               onChange={(event) => {
                 if (!loopContract()) props.viewport.setDeliveredStatePlaying(false);
-                setMode(event.currentTarget.value as "art" | "initial" | "applied" | "motion");
+                setMode(event.currentTarget.value as StatePreviewView);
               }}
             >
               <option value="art">Original artwork</option>
+              <Show when={current()?.native_remainder}>
+                <option value="hybrid">Original actors + 3D model</option>
+              </Show>
               <Show when={loopContract()?.physical || actorSource()}>
                 <option value="initial">
                   {loopContract()?.physical ? "3D animation" : "3D scene"}
@@ -768,6 +776,7 @@ export default function StatePreview(props: {
           <Show
             when={
               mode() !== "art" &&
+              mode() !== "hybrid" &&
               mode() !== "motion" &&
               !!current() &&
               !Array.isArray(current()!.physical[mode() === "initial" ? "initial" : "applied"])
@@ -778,6 +787,7 @@ export default function StatePreview(props: {
           <Show
             when={
               mode() === "art" ||
+              mode() === "hybrid" ||
               mode() === "motion" ||
               !!loopContract()?.physical ||
               !!actorSource()

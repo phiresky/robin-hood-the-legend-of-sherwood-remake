@@ -254,6 +254,43 @@ export class NativePhysicalEffectPreview {
   }
 }
 
+/** Render one physical root in the complete source frame for a native remainder.
+ * The root may be hidden in the 3D view; only its own subtree is drawn, with its world placement.
+ */
+export function renderNativeRemainderLayer(
+  renderer: THREE.WebGLRenderer,
+  root: THREE.Object3D,
+  frame: { origin: readonly [number, number]; width: number; height: number },
+  elevation: number,
+): NativePixels {
+  root.updateWorldMatrix(true, true);
+  const clone = root.clone(true);
+  clone.visible = true;
+  clone.matrixAutoUpdate = false;
+  clone.matrix.copy(root.matrixWorld);
+  let meshes = 0;
+  clone.traverseVisible((node) => {
+    if (node instanceof THREE.Light)
+      throw new Error("Native remainder physical layer requires a light-free model");
+    if (!(node instanceof THREE.Mesh)) return;
+    if (node instanceof THREE.SkinnedMesh)
+      throw new Error("Native remainder physical layer requires unskinned models");
+    for (const material of Array.isArray(node.material) ? node.material : [node.material])
+      validateNativeEffectMaterial(material);
+    meshes++;
+  });
+  if (!meshes) throw new Error("Native remainder physical layer has no visible model");
+  const scene = new THREE.Scene();
+  scene.add(clone);
+  scene.updateMatrixWorld(true);
+  const { camera, width, height } = nativeEffectCamera(
+    new THREE.Box3().setFromObject(clone),
+    elevation,
+    { x: frame.origin[0], y: frame.origin[1], width: frame.width, height: frame.height },
+  );
+  return renderPhysicalEffect(renderer, scene, camera, width, height);
+}
+
 export function renderPhysicalEffect(
   renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,

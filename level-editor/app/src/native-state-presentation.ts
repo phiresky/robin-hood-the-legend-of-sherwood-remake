@@ -19,6 +19,7 @@ import {
   type NativeStatePresentationContract,
   type NativeBackgroundPhase,
 } from "../../shared/src/native-state-presentation.ts";
+import type { NativeRemainderBinding } from "../../shared/src/state-delivery.ts";
 import { missionStateDataHash, type MissionStateSource } from "./mission-state-layer.ts";
 import { subdir } from "./fs.ts";
 
@@ -97,6 +98,59 @@ export async function decodeNativeResource(
   }
   return { width: image.width, height: image.height, data };
 }
+
+/** Decode one hash-pinned grey source-domain mask against its decoded source frame.
+ * Value 0 must mark exactly the transparent source pixels; values above 3 are rejected.
+ */
+export async function decodeNativeRemainderMask(
+  resource: NativeImageResource,
+  read: NativeResourceReader,
+  source: NativePixels,
+): Promise<Uint8Array> {
+  const bytes = await read(resource);
+  const digest = Array.from(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))),
+    (n) => n.toString(16).padStart(2, "0"),
+  ).join("");
+  if (digest !== resource.sha256)
+    throw new Error(`Native remainder mask changed: ${resource.path}`);
+  const image = decode(bytes, { checkCrc: true });
+  if (
+    image.width !== resource.width ||
+    image.height !== resource.height ||
+    image.width !== source.width ||
+    image.height !== source.height ||
+    image.depth !== 8 ||
+    image.channels !== 1 ||
+    image.palette
+  )
+    throw new Error(`Unsupported native remainder mask: ${resource.path}`);
+  const values = new Uint8Array(image.width * image.height);
+  for (let pixel = 0; pixel < values.length; pixel++) {
+    const value = image.data[pixel]!;
+    if (value > 3 || (value === 0) !== (source.data[pixel * 4 + 3] === 0))
+      throw new Error(`Native remainder mask differs from source coverage: ${resource.path}`);
+    values[pixel] = value;
+  }
+  return values;
+}
+
+/** Clear every source pixel whose reviewed mask value is not kept. */
+export function maskNativeRemainder(
+  source: NativePixels,
+  mask: Uint8Array,
+  drawn: readonly number[],
+): NativePixels {
+  if (mask.length !== source.width * source.height)
+    throw new Error("Native remainder mask size differs");
+  const data = new Uint8Array(source.data);
+  for (let pixel = 0; pixel < mask.length; pixel++)
+    if (!drawn.includes(mask[pixel]!)) data.fill(0, pixel * 4, pixel * 4 + 4);
+  return { width: source.width, height: source.height, data };
+}
+
+/** A physical layer rendered in the background frame for one remainder element. */
+export type NativeRemainderLayers = ReadonlyMap<string, NativePixels>;
 
 /** Keep resource order independent of I/O completion order, with four jobs at most. */
 async function decodeNativeResources(
@@ -415,6 +469,7 @@ export class NativeStatePresentation {
   private playing = false;
   private revision = 0;
   private cached: { revision: number; pixels: NativePixels } | undefined;
+  private remainders = new Map<string, (NativePixels | undefined)[]>();
   get ready() {
     return !!this.contract;
   }
@@ -450,6 +505,7 @@ export class NativeStatePresentation {
     this.seconds = 0;
     this.playing = false;
     this.cached = undefined;
+    this.remainders.clear();
     this.revision++;
   }
   async set(
@@ -616,6 +672,65 @@ export class NativeStatePresentation {
     this.images = images;
     this.revision++;
     return true;
+  }
+  /** Load reviewed per-frame remainders after the artwork; unbound frames stay whole. */
+  async setRemainders(bindings: readonly NativeRemainderBinding[], read: NativeResourceReader) {
+    const contract = this.contract;
+    if (!contract) throw new Error("Native artwork preview is not loaded");
+    if (this.initialContext) throw new Error("Immutable source initial context has no remainder");
+    const epoch = this.epoch;
+    const loaded = new Map<string, (NativePixels | undefined)[]>();
+    for (const binding of bindings) {
+      const element = contract.elements.find((e) => e.id === binding.element_id);
+      if (
+        !element ||
+        loaded.has(element.id) ||
+        element.loop ||
+        binding.frames.length !== element.frames.length
+      )
+        throw new Error(`Invalid native remainder element: ${binding.element_id}`);
+      const frames: (NativePixels | undefined)[] = [];
+      for (const [index, frame] of binding.frames.entries()) {
+        if (!frame) {
+          frames.push(undefined);
+          continue;
+        }
+        const source = this.images.get(element.frames[index]!.path)!;
+        const mask = await decodeNativeRemainderMask(frame.mask, read, source);
+        if (this.disposed || epoch !== this.epoch) return false;
+        frames.push(maskNativeRemainder(source, mask, binding.drawn_values));
+      }
+      loaded.set(element.id, frames);
+    }
+    this.remainders = loaded;
+    this.revision++;
+    return true;
+  }
+  /** The complete source frame every remainder physical layer is rendered into. */
+  remainderFrame() {
+    if (!this.contract) throw new Error("Native artwork preview is not loaded");
+    const background = this.currentBackground();
+    return {
+      origin: [...this.contract.origin] as [number, number],
+      width: background.width,
+      height: background.height,
+      elevation: this.contract.camera_elevation_deg,
+    };
+  }
+  /** Remainder elements whose currently selected source frame is bound. */
+  remainderSelection(): { element_id: string; frame: number; tick: number }[] {
+    const contract = this.contract;
+    if (!contract) throw new Error("Native artwork preview is not loaded");
+    const selected: { element_id: string; frame: number; tick: number }[] = [];
+    for (const [id, frames] of this.remainders) {
+      const element = contract.elements.find((e) => e.id === id)!;
+      if (this.visibleElements.get(id) === false) continue;
+      if (!(this.activeElements.get(id) ?? element.active)) continue;
+      const tick = Math.max(0, this.currentTick + (this.offsets.get(id) ?? 0));
+      const frame = nativePresentationFrame(element, tick);
+      if (frame >= 0 && frames[frame]) selected.push({ element_id: id, frame, tick });
+    }
+    return selected;
   }
   coverArtworkBindings() {
     return this.contract?.cover_artwork?.bindings ?? [];
@@ -883,14 +998,35 @@ export class NativeStatePresentation {
     }
     return pixels;
   }
+  /** Bound remainder frames draw their physical layer, then the kept native pixels on top. */
+  remainderPixels(layers: NativeRemainderLayers): NativePixels {
+    if (!this.contract) throw new Error("Native artwork preview is not loaded");
+    if (!this.remainders.size) throw new Error("Native artwork has no reviewed remainder");
+    const expected = this.remainderSelection().map((s) => s.element_id);
+    if (
+      layers.size !== expected.length ||
+      expected.some((id) => {
+        const layer = layers.get(id);
+        return (
+          !layer ||
+          layer.width !== this.currentBackground().width ||
+          layer.height !== this.currentBackground().height
+        );
+      })
+    )
+      throw new Error("Native remainder physical layers differ from bound frames");
+    return this.compose(layers);
+  }
   pixels(): NativePixels {
     if (!this.contract) throw new Error("Native artwork preview is not loaded");
     if (this.cached?.revision === this.revision) return this.cached.pixels;
-    if (this.initialContext) {
-      const pixels = this.composeLoopSnapshot(this.loopDrawSnapshot());
-      this.cached = { revision: this.revision, pixels };
-      return pixels;
-    }
+    const pixels = this.compose();
+    this.cached = { revision: this.revision, pixels };
+    return pixels;
+  }
+  private compose(layers?: NativeRemainderLayers): NativePixels {
+    if (!this.contract) throw new Error("Native artwork preview is not loaded");
+    if (this.initialContext) return this.composeLoopSnapshot(this.loopDrawSnapshot());
     const background = this.currentBackground();
     const pixels = {
       width: background.width,
@@ -966,6 +1102,22 @@ export class NativeStatePresentation {
       );
       if (index < 0) continue;
       const frame = element.frames[index]!;
+      const original = this.contract.elements.find((e) => e.id === element.id);
+      const remainder =
+        layers && original?.frames === element.frames
+          ? this.remainders.get(element.id)?.[index]
+          : undefined;
+      if (remainder) {
+        compositeNativePixels(pixels, layers!.get(element.id)!, 0, 0);
+        compositeNativePixels(
+          pixels,
+          remainder,
+          element.display_position[0] + frame.offset[0] - this.contract.origin[0],
+          element.display_position[1] + frame.offset[1] - this.contract.origin[1],
+          frame.shadow_key,
+        );
+        continue;
+      }
       compositeNativePixels(
         pixels,
         this.images.get(frame.path)!,
@@ -974,7 +1126,6 @@ export class NativeStatePresentation {
         frame.shadow_key,
       );
     }
-    this.cached = { revision: this.revision, pixels };
     return pixels;
   }
   dispose() {

@@ -10,6 +10,7 @@ import {
   validateNativeStatePresentation,
   nativePresentationFrame,
   type NativeStatePresentationContract,
+  type NativeImageResource,
   type NativeInitialContextMode,
   type NativePresentationFrame,
 } from "./native-state-presentation.ts";
@@ -113,6 +114,35 @@ export interface PhysicalPatchClips {
   final: PhysicalPatchClip | { kind: "absent" };
 }
 
+/** Pixel values of a reviewed source-domain mask, one 8-bit grey PNG per source frame. */
+export const NATIVE_REMAINDER_MASK_VALUES = {
+  transparent: 0,
+  physical: 1,
+  native: 2,
+  ambiguous: 3,
+} as const;
+
+/** One reviewed source frame split between kept native pixels and a physical model. */
+export interface NativeRemainderFrame {
+  mask: NativeImageResource;
+  /** The physical representation drawn with the kept pixels at the same source tick. */
+  physical: "applied";
+}
+
+/** Kept native pixels of one target track, drawn with the family's physical model.
+ * Pixels whose mask value is not listed in drawn_values are cleared after frame selection.
+ */
+export interface NativeRemainderBinding {
+  element_id: string;
+  encoding: "source-domain-v1";
+  /** Must keep native-owned pixels; ambiguous pixels are kept only when listed. */
+  drawn_values: (2 | 3)[];
+  /** Kept native pixels win every overlap with the physical model. */
+  priority: "remainder-over-physical";
+  /** One entry per source frame. Null keeps the whole native frame and draws no physical model. */
+  frames: (NativeRemainderFrame | null)[];
+}
+
 /** Exact artwork transitions and independently reviewed physical endpoints. */
 export interface StateDeliveryContract {
   version: 1;
@@ -138,6 +168,7 @@ export interface StateDeliveryContract {
         | PhysicalElementStagePoses;
     };
     static_replacements?: { initial: StaticStateReplacement[]; applied: StaticStateReplacement[] };
+    native_remainder?: NativeRemainderBinding[];
   }[];
 }
 export function validateStateDelivery(value: unknown): asserts value is StateDeliveryContract {
@@ -431,6 +462,7 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
           fail("invalid reviewed patch model frames");
       } else fail("unknown reviewed physical motion");
     }
+    if (family.native_remainder !== undefined) validateNativeRemainder(c, family);
     if (family.static_replacements !== undefined) {
       for (const rows of Object.values(family.static_replacements))
         validateStaticReplacementRows(rows);
@@ -497,6 +529,90 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
         fail("terminal model frame differs from applied bindings");
     }
   }
+}
+
+function validateNativeRemainder(
+  contract: StateDeliveryContract,
+  family: StateDeliveryContract["families"][number],
+) {
+  const fail = (message: string): never => {
+    throw new Error(`State delivery: ${message}`);
+  };
+  const hash = (v: unknown) => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
+  const exactKeys = (value: object, keys: string[]) =>
+    JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
+  const bindings = family.native_remainder;
+  if (!Array.isArray(bindings) || !bindings.length) fail("invalid native remainder");
+  // TODO: remainder frames paired with reviewed physical motion need a per-frame pose rule.
+  if (family.physical.motion !== undefined)
+    fail("native remainder requires a static physical pairing");
+  const bound = new Set<string>();
+  for (const binding of bindings!) {
+    if (
+      !binding ||
+      typeof binding !== "object" ||
+      !exactKeys(binding, ["element_id", "encoding", "drawn_values", "priority", "frames"]) ||
+      typeof binding.element_id !== "string" ||
+      !family.element_ids.includes(binding.element_id) ||
+      bound.has(binding.element_id) ||
+      binding.encoding !== "source-domain-v1" ||
+      binding.priority !== "remainder-over-physical" ||
+      !Array.isArray(binding.drawn_values) ||
+      !binding.drawn_values.includes(NATIVE_REMAINDER_MASK_VALUES.native) ||
+      binding.drawn_values.some(
+        (v, i) =>
+          (v !== NATIVE_REMAINDER_MASK_VALUES.native &&
+            v !== NATIVE_REMAINDER_MASK_VALUES.ambiguous) ||
+          (i > 0 && v <= binding.drawn_values[i - 1]!),
+      )
+    )
+      fail("invalid native remainder binding");
+    bound.add(binding.element_id);
+    const element = contract.native.elements.find((e) => e.id === binding.element_id)!;
+    if (
+      !Array.isArray(binding.frames) ||
+      binding.frames.length !== element.frames.length ||
+      !binding.frames.some((frame) => frame !== null)
+    )
+      fail("native remainder frames differ from source frames");
+    const paths = new Set<string>();
+    for (const [index, frame] of binding.frames.entries()) {
+      if (frame === null) continue;
+      const source = element.frames[index]!;
+      const mask = frame?.mask;
+      if (
+        !frame ||
+        typeof frame !== "object" ||
+        !exactKeys(frame, ["mask", "physical"]) ||
+        !mask ||
+        !exactKeys(mask, ["path", "sha256", "width", "height"]) ||
+        !safeLibraryPath(mask.path) ||
+        !hash(mask.sha256) ||
+        mask.width !== source.width ||
+        mask.height !== source.height ||
+        paths.has(mask.path)
+      )
+        fail("invalid native remainder mask");
+      paths.add(mask.path);
+      if (
+        frame.physical !== "applied" ||
+        !Array.isArray(family.physical.applied) ||
+        !family.physical.applied.length
+      )
+        fail("native remainder frame lacks a physical pairing");
+    }
+  }
+}
+
+/** The reviewed remainder frame for one source frame, or undefined for whole native artwork. */
+export function nativeRemainderFrame(
+  family: StateDeliveryContract["families"][number],
+  elementId: string,
+  frame: number,
+): (NativeRemainderFrame & { binding: NativeRemainderBinding }) | undefined {
+  const binding = family.native_remainder?.find((b) => b.element_id === elementId);
+  const selected = binding?.frames[frame];
+  return binding && selected ? { ...selected, binding } : undefined;
 }
 
 /** Every independently loaded physical phase, including discrete transition models. */

@@ -6,6 +6,7 @@ import {
   physicalEndpointSources,
   validateNativeLoopPreview,
   nativeLoopPreviewPeriod,
+  nativeRemainderFrame,
   type StateDeliveryContract,
 } from "./state-delivery.ts";
 
@@ -522,4 +523,92 @@ test("patch clip contracts pin every phase and preserve separate clocks", async 
   f.physical.motion.final = { kind: "absent" };
   validateStateDelivery(c);
   assert.equal(physicalPatchClipPose(c, f.id, "applied", 0).visible, false);
+});
+
+test("native remainder binds every source frame of one family element to a pinned mask or null", () => {
+  const c = deliveryFixture();
+  const mask = { path: "mask.png", sha256: "b".repeat(64), width: 1, height: 1 };
+  const family = c.families[0]!;
+  family.native_remainder = [
+    {
+      element_id: "body",
+      encoding: "source-domain-v1",
+      drawn_values: [2, 3],
+      priority: "remainder-over-physical",
+      frames: [null, { mask, physical: "applied" }],
+    },
+  ];
+  validateStateDelivery(c);
+  const variant = (edit: (r: NonNullable<typeof family.native_remainder>[number]) => void) => {
+    const bad = structuredClone(c);
+    edit(bad.families[0]!.native_remainder![0]!);
+    return bad;
+  };
+  const rejects = [
+    variant((r) => (r.element_id = "missing")),
+    variant((r) => (r.drawn_values = [3])),
+    variant((r) => (r.drawn_values = [1, 2] as unknown as (2 | 3)[])),
+    variant((r) => (r.drawn_values = [3, 2])),
+    variant((r) => (r.drawn_values = [2, 2])),
+    variant((r) => (r.priority = "physical-over-remainder" as "remainder-over-physical")),
+    variant((r) => (r.encoding = "other" as "source-domain-v1")),
+    variant((r) => Object.assign(r, { extra: true })),
+  ];
+  for (const bad of rejects)
+    assert.throws(() => validateStateDelivery(bad), /native remainder binding/);
+  for (const bad of [variant((r) => r.frames.pop()), variant((r) => (r.frames = [null, null]))])
+    assert.throws(() => validateStateDelivery(bad), /remainder frames differ/);
+  for (const bad of [
+    variant((r) => (r.frames[1]!.mask.width = 2)),
+    variant((r) => (r.frames[1]!.mask.sha256 = "B".repeat(64))),
+    variant((r) => (r.frames[1]!.mask.path = "../mask.png")),
+    variant((r) => (r.frames[0] = { mask, physical: "applied" })),
+    variant((r) => Object.assign(r.frames[1]!, { tint: 1 })),
+  ])
+    assert.throws(() => validateStateDelivery(bad), /remainder mask/);
+  const unpaired = variant((r) => (r.frames[1]!.physical = "initial" as "applied"));
+  assert.throws(() => validateStateDelivery(unpaired), /physical pairing/);
+  const absent = structuredClone(c);
+  absent.families[0]!.physical.applied = { kind: "absent" };
+  assert.throws(() => validateStateDelivery(absent), /physical pairing/);
+  const duplicate = structuredClone(c);
+  duplicate.families[0]!.native_remainder!.push(
+    structuredClone(duplicate.families[0]!.native_remainder![0]!),
+  );
+  assert.throws(() => validateStateDelivery(duplicate), /native remainder binding/);
+  const empty = structuredClone(c);
+  empty.families[0]!.native_remainder = [];
+  assert.throws(() => validateStateDelivery(empty), /invalid native remainder/);
+  const moving = structuredClone(c);
+  moving.families[0]!.physical.motion = {
+    kind: "native-element-node-poses",
+    element_id: "body",
+    source_motion_sha256: "a".repeat(64),
+    node_frames: [0, 1].map(() => [
+      { node: "lid", matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
+    ]),
+  };
+  const stationary = structuredClone(moving);
+  delete stationary.families[0]!.native_remainder;
+  validateStateDelivery(stationary);
+  assert.throws(() => validateStateDelivery(moving), /static physical pairing/);
+});
+
+test("native remainder selection returns only bound source frames", () => {
+  const c = deliveryFixture();
+  const mask = { path: "mask.png", sha256: "b".repeat(64), width: 1, height: 1 };
+  c.families[0]!.native_remainder = [
+    {
+      element_id: "body",
+      encoding: "source-domain-v1",
+      drawn_values: [2],
+      priority: "remainder-over-physical",
+      frames: [null, { mask, physical: "applied" }],
+    },
+  ];
+  assert.equal(nativeRemainderFrame(c.families[0]!, "body", 0), undefined);
+  assert.equal(nativeRemainderFrame(c.families[0]!, "other", 1), undefined);
+  assert.deepEqual(nativeRemainderFrame(c.families[0]!, "body", 1)?.mask, mask);
+  delete c.families[0]!.native_remainder;
+  assert.equal(nativeRemainderFrame(c.families[0]!, "body", 1), undefined);
 });

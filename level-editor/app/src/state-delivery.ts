@@ -8,6 +8,7 @@ import {
   physicalEndpointSources,
   physicalFamilyEndpoints,
   physicalPatchPose,
+  nativeRemainderFrame,
   type StateDeliveryContract,
 } from "../../shared/src/state-delivery.ts";
 import { NativeStatePresentation, type NativeResourceReader } from "./native-state-presentation.ts";
@@ -15,7 +16,11 @@ import type { MissionStateSource } from "./mission-state-layer.ts";
 import { SceneAssetLoader, captureLoadedStateAppearance } from "./scene-assets.ts";
 import { disposeObjectResources } from "./resources.ts";
 
-export type StateDeliveryMode = "native-art" | "physical-endpoint" | "physical-motion";
+export type StateDeliveryMode =
+  | "native-art"
+  | "native-remainder"
+  | "physical-endpoint"
+  | "physical-motion";
 type FamilyRoots = { initial: THREE.Group; applied: THREE.Group; frames: THREE.Group[] };
 type Family = StateDeliveryContract["families"][number];
 /** One containing renderer owns the clock. Only explicitly reviewed patch poses support physical motion. */
@@ -89,6 +94,9 @@ export class StateDelivery {
     const current = () => !this.disposed && this.epoch === epoch;
     if (!(await this.native.set(frozen.native, source, read)) || !current()) return false;
     try {
+      const remainders = frozen.families.flatMap((family) => family.native_remainder ?? []);
+      if (remainders.length && (!(await this.native.setRemainders(remainders, read)) || !current()))
+        return false;
       for (const family of frozen.families) {
         const motion = family.physical.motion;
         if (motion?.kind === "native-patch-clips" && motion.transparent_initial_frames)
@@ -240,13 +248,18 @@ export class StateDelivery {
     return family;
   }
   selectMode(mode: StateDeliveryMode) {
-    if (!this.ready || !["native-art", "physical-endpoint", "physical-motion"].includes(mode))
+    if (
+      !this.ready ||
+      !["native-art", "native-remainder", "physical-endpoint", "physical-motion"].includes(mode)
+    )
       throw new Error("State delivery mode is unavailable");
+    if (mode === "native-remainder" && !this.family(this.selectedFamily!).native_remainder)
+      throw new Error("Selected family has no reviewed native remainder");
     if (mode === "physical-motion" && !this.family(this.selectedFamily!).physical.motion)
       throw new Error("Selected family has no reviewed physical motion");
     const previousPose = this.motionEndpoint;
     this.currentMode = mode;
-    this.physical.visible = mode !== "native-art";
+    this.physical.visible = mode === "physical-endpoint" || mode === "physical-motion";
     if (mode === "physical-motion") this.sampleMotion();
     else if (previousPose && this.selectedFamily)
       this.selectEndpoint(this.selectedFamily, previousPose);
@@ -377,6 +390,21 @@ export class StateDelivery {
       pair.applied.visible = false;
       for (const frame of pair.frames) frame.visible = false;
     }
+  }
+  /** Physical roots drawn with each currently bound remainder frame, keyed by element. */
+  remainderPhysicalRoots(): Map<string, THREE.Object3D> {
+    if (this.mode !== "native-remainder" || !this.selectedFamily)
+      throw new Error("Native remainder mode is not selected");
+    const roots = new Map<string, THREE.Object3D>();
+    for (const selected of this.native.remainderSelection()) {
+      const family = this.contract!.families.find((f) =>
+        f.element_ids.includes(selected.element_id),
+      )!;
+      const frame = nativeRemainderFrame(family, selected.element_id, selected.frame);
+      if (frame?.physical !== "applied") throw new Error("Native remainder frame binding missing");
+      roots.set(selected.element_id, this.roots.get(family.id)!.applied);
+    }
+    return roots;
   }
   get motionEndpoint(): "initial" | "applied" | undefined {
     if (this.mode !== "physical-motion" || !this.selectedFamily) return undefined;
