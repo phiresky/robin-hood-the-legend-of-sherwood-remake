@@ -89,7 +89,10 @@ export function nativeElementFrameStartTick(frames: readonly { delay: number }[]
 /** Compiled placed movement-transition ids are `<placement id>/<transition id>`. */
 const GAMEPLAY_TRANSITION_ID = /^[^/]+(\/[^/]+)+$/;
 
-/** One retained assembly handed between independently clocked source target stages. */
+/** One retained assembly, optionally spanning separately pinned model bindings, handed
+ * between independently clocked source target stages. Pose mesh names must be unique
+ * across those bindings; the loader rejects missing or ambiguous mesh identities.
+ */
 export interface PhysicalElementStagePoses {
   kind: "native-element-stage-poses";
   source_motion_sha256: string;
@@ -150,7 +153,7 @@ export const NATIVE_REMAINDER_MASK_VALUES = {
 export interface NativeRemainderFrame {
   mask: NativeImageResource;
   /** The physical representation drawn with the kept pixels at the same source tick. */
-  physical: "applied";
+  physical: "applied" | { kind: "source-frame-node-pose"; element_id: string; frame: number };
 }
 
 /** Kept native pixels of one target track, drawn with the family's physical model.
@@ -411,7 +414,7 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
         family.patch_ids?.length ||
         family.hidden_initial_element_ids?.length ||
         !Array.isArray(family.physical.applied) ||
-        family.physical.applied.length !== 1 ||
+        !family.physical.applied.length ||
         motion.stages.length !== family.element_ids.length ||
         new Set(motion.stages.map((stage) => stage.element_id)).size !== motion.stages.length
       )
@@ -651,9 +654,13 @@ function validateNativeRemainder(
     JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
   const bindings = family.native_remainder;
   if (!Array.isArray(bindings) || !bindings.length) fail("invalid native remainder");
-  // TODO: remainder frames paired with reviewed physical motion need a per-frame pose rule.
-  if (family.physical.motion !== undefined)
-    fail("native remainder requires a static physical pairing");
+  const motion = family.physical.motion;
+  if (
+    motion &&
+    motion.kind !== "native-element-node-poses" &&
+    motion.kind !== "native-element-stage-poses"
+  )
+    fail("unsupported native remainder physical pairing");
   const bound = new Set<string>();
   for (const binding of bindings!) {
     if (
@@ -702,14 +709,55 @@ function validateNativeRemainder(
       )
         fail("invalid native remainder mask");
       paths.add(mask.path);
-      if (
-        frame.physical !== "applied" ||
-        !Array.isArray(family.physical.applied) ||
-        !family.physical.applied.length
-      )
+      if (!Array.isArray(family.physical.applied) || !family.physical.applied.length)
         fail("native remainder frame lacks a physical pairing");
+      nativeRemainderNodeFrame(family, binding.element_id, index, frame.physical);
     }
   }
+}
+
+/** Resolve a reviewed pose from the selected source frame, never a family or receiver clock. */
+export function nativeRemainderNodeFrame(
+  family: StateDeliveryContract["families"][number],
+  elementId: string,
+  frame: number,
+  pairing: NativeRemainderFrame["physical"],
+): number | undefined {
+  const motion = family.physical.motion;
+  const fail = (): never => {
+    throw new Error("State delivery: invalid native remainder physical pairing");
+  };
+  if (pairing === "applied") {
+    if (motion !== undefined) fail();
+    return undefined;
+  }
+  if (
+    !pairing ||
+    typeof pairing !== "object" ||
+    JSON.stringify(Object.keys(pairing).sort()) !==
+      JSON.stringify(["element_id", "frame", "kind"]) ||
+    pairing.kind !== "source-frame-node-pose" ||
+    pairing.element_id !== elementId ||
+    pairing.frame !== frame ||
+    !Number.isSafeInteger(frame) ||
+    frame < 0
+  )
+    return fail();
+  if (motion?.kind === "native-element-node-poses") {
+    if (motion.element_id !== elementId || !motion.node_frames[frame]) return fail();
+    return frame;
+  }
+  if (motion?.kind === "native-element-stage-poses") {
+    let offset = 0;
+    for (const stage of motion.stages) {
+      if (stage.element_id === elementId) {
+        if (!stage.node_frames[frame]) return fail();
+        return offset + stage.node_frames.slice(0, frame).filter((pose) => pose !== null).length;
+      }
+      offset += stage.node_frames.filter((pose) => pose !== null).length;
+    }
+  }
+  return fail();
 }
 
 /** The reviewed remainder frame for one source frame, or undefined for whole native artwork. */

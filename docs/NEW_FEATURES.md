@@ -1,5 +1,12 @@
 # Post-port Features
 
+- **Moving physical models with retained native pixels.** Reviewed source-frame
+  masks can pair retained artwork with the exact node pose of a target frame,
+  including independently clocked assembly stages. Staged assemblies retain
+  separate pinned model bindings; pose mesh names must be unambiguous across
+  them. Overlapping assembly owners are rejected. Receiver and gameplay clocks
+  remain independent; each asset still requires reviewed masks and pose tables.
+
 - **Source-bound observation bridge.** The editor can consume an ordered local
   observation feed through its existing state clock adapter. Set
   `EDITOR_RUNTIME_OBSERVATIONS` to an explicitly prepared producer spool before

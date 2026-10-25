@@ -7,6 +7,7 @@ import {
   validateNativeLoopPreview,
   nativeLoopPreviewPeriod,
   nativeRemainderFrame,
+  nativeRemainderNodeFrame,
   physicalPatchPose,
   physicalFamilyEndpoints,
   nativeElementFrameStartTick,
@@ -595,7 +596,7 @@ test("native remainder binds every source frame of one family element to a pinne
   const stationary = structuredClone(moving);
   delete stationary.families[0]!.native_remainder;
   validateStateDelivery(stationary);
-  assert.throws(() => validateStateDelivery(moving), /static physical pairing/);
+  assert.throws(() => validateStateDelivery(moving), /physical pairing/);
 });
 
 test("native remainder selection returns only bound source frames", () => {
@@ -719,7 +720,7 @@ test("target clip validation is exact about keys, start frame, timing, placement
           frames: [null, null, null, null],
         },
       ]),
-    /static physical pairing/,
+    /physical pairing/,
   );
 });
 
@@ -871,4 +872,59 @@ test("contracts without the new fields keep their validation and poses unchanged
       { endpoint: "applied", translation: [0, 0, 0] },
     ],
   );
+});
+
+test("moving remainders bind the exact source owner and pose, including flattened staged frames", () => {
+  const c = deliveryFixture();
+  const f = c.families[0]!;
+  const identity = [{ node: "body", matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] }];
+  f.physical.motion = {
+    kind: "native-element-node-poses",
+    element_id: "body",
+    source_motion_sha256: "c".repeat(64),
+    node_frames: [identity, identity],
+  };
+  const pairing = { kind: "source-frame-node-pose" as const, element_id: "body", frame: 1 };
+  f.native_remainder = [
+    {
+      element_id: "body",
+      encoding: "source-domain-v1",
+      drawn_values: [2, 3],
+      priority: "remainder-over-physical",
+      frames: [
+        null,
+        {
+          mask: { path: "mask.png", sha256: "b".repeat(64), width: 1, height: 1 },
+          physical: pairing,
+        },
+      ],
+    },
+  ];
+  validateStateDelivery(c);
+  assert.equal(nativeRemainderNodeFrame(f, "body", 1, pairing), 1);
+  for (const wrong of [
+    { ...pairing, frame: 0 },
+    { ...pairing, element_id: "other" },
+    { ...pairing, extra: true },
+    "applied" as const,
+  ]) {
+    const bad = structuredClone(c);
+    bad.families[0]!.native_remainder![0]!.frames[1]!.physical = wrong;
+    assert.throws(() => validateStateDelivery(bad), /physical pairing/);
+  }
+  f.physical.motion = {
+    kind: "native-element-stage-poses",
+    source_motion_sha256: "c".repeat(64),
+    stages: [
+      { element_id: "early", node_frames: [identity, null, identity] },
+      { element_id: "body", node_frames: [null, identity] },
+    ],
+  };
+  assert.equal(nativeRemainderNodeFrame(f, "body", 1, pairing), 2);
+  assert.throws(
+    () => nativeRemainderNodeFrame(f, "body", 0, { ...pairing, frame: 0 }),
+    /physical pairing/,
+  );
+  delete f.physical.motion;
+  assert.throws(() => nativeRemainderNodeFrame(f, "body", 1, pairing), /physical pairing/);
 });

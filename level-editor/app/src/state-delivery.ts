@@ -9,6 +9,7 @@ import {
   physicalFamilyEndpoints,
   physicalPatchPose,
   nativeRemainderFrame,
+  nativeRemainderNodeFrame,
   type StateDeliveryContract,
 } from "../../shared/src/state-delivery.ts";
 
@@ -470,13 +471,31 @@ export class StateDelivery {
     if (this.mode !== "native-remainder" || !this.selectedFamily)
       throw new Error("Native remainder mode is not selected");
     const roots = new Map<string, THREE.Object3D>();
+    const pending: { element: string; family: string; nodeFrame: number | undefined }[] = [];
     for (const selected of this.native.remainderSelection()) {
       const family = this.contract!.families.find((f) =>
         f.element_ids.includes(selected.element_id),
       )!;
       const frame = nativeRemainderFrame(family, selected.element_id, selected.frame);
-      if (frame?.physical !== "applied") throw new Error("Native remainder frame binding missing");
-      roots.set(selected.element_id, this.roots.get(family.id)!.applied);
+      if (!frame) throw new Error("Native remainder frame binding missing");
+      const nodeFrame = nativeRemainderNodeFrame(
+        family,
+        selected.element_id,
+        selected.frame,
+        frame.physical,
+      );
+      if (family.physical.motion && pending.some((p) => p.family === family.id))
+        throw new Error("Overlapping native remainder assembly owners");
+      pending.push({ element: selected.element_id, family: family.id, nodeFrame });
+    }
+    // Validate the entire selection before changing any shared assembly pose.
+    for (const item of pending) {
+      if (item.nodeFrame !== undefined) {
+        const poses = this.nodePoses.get(item.family);
+        if (!poses) throw new Error("Reviewed remainder node pose binding missing");
+        poses.apply(item.nodeFrame);
+      }
+      roots.set(item.element, this.roots.get(item.family)!.applied);
     }
     return roots;
   }

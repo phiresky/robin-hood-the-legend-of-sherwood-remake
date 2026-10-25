@@ -1466,3 +1466,190 @@ test("target clip loading rejects a renamed, stretched or drifting clip before a
   renamed.children[0]!.name = "other";
   await rejects(f.delivery(f.clipModel(), renamed), /meshes differ/);
 });
+
+test("moving remainder samples only its selected source frame and keeps native-owned pixels", async () => {
+  const f = await remainderFixture();
+  const family = f.withRemainder.families[0]!;
+  f.template.children[0]!.name = "cart";
+  family.physical.motion = {
+    kind: "native-element-node-poses",
+    element_id: "body",
+    source_motion_sha256: "c".repeat(64),
+    node_frames: [
+      [{ node: "cart", matrix: new THREE.Matrix4().makeTranslation(17, 0, 0).toArray() }],
+      [{ node: "cart", matrix: new THREE.Matrix4().identity().toArray() }],
+    ],
+  };
+  const remainder = family.native_remainder![0]!;
+  const last = remainder.frames[1]!;
+  f.files.set("mask0.png", f.files.get("mask.png")!);
+  remainder.frames = [0, 1].map((frame) => ({
+    mask: { ...last.mask, path: frame ? "mask.png" : "mask0.png" },
+    physical: { kind: "source-frame-node-pose", element_id: "body", frame },
+  }));
+  const p = new StateDelivery(f.loader);
+  await p.set(f.withRemainder, f.source, f.library, f.read);
+  p.selectMode("native-remainder");
+  p.activate("trap");
+  const x = () =>
+    p.remainderPhysicalRoots().get("body")!.getObjectByName("cart")!.matrix.elements[12];
+  assert.equal(x(), 17);
+  p.native.seek(200);
+  p.native.setElementState("body", true, 2);
+  assert.equal(x(), 17, "frame delay is owned by native target, not global time");
+  p.native.setElementState("body", true, 3);
+  assert.equal(x(), 0, "delay+1 advances to the exact terminal pose");
+  const layer = {
+    width: 3,
+    height: 1,
+    data: new Uint8Array([0, 250, 0, 255, 0, 250, 0, 255, 0, 0, 0, 0]),
+  };
+  assert.deepEqual(
+    [...p.native.remainderPixels(new Map([["body", layer]])).data],
+    [200, 0, 0, 255, 0, 250, 0, 255, 9, 9, 9, 255],
+  );
+  p.native.setElementState("body", false);
+  assert.equal(p.remainderPhysicalRoots().size, 0);
+  p.selectMode("physical-endpoint");
+  p.selectEndpoint("trap", "applied");
+  assert.equal(p.physical.children[1]!.getObjectByName("cart")!.matrix.elements[12], 0);
+  p.dispose();
+});
+
+test("staged remainders use independent owners and reject overlap before mutating shared poses", async () => {
+  const f = await remainderFixture();
+  f.source.data.targets.push(structuredClone(f.source.data.targets[0]!));
+  f.withRemainder.native.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  const original = f.withRemainder.native.elements[0]!;
+  const second = {
+    ...structuredClone(original),
+    id: "late",
+    creation_order: 1,
+    source: { ...original.source, index: 1 },
+  };
+  f.withRemainder.native.elements.push(second);
+  const family = f.withRemainder.families[0]!;
+  family.element_ids.push("late");
+  f.template.children[0]!.name = "cart";
+  family.physical.motion = {
+    kind: "native-element-stage-poses",
+    source_motion_sha256: "c".repeat(64),
+    stages: [
+      {
+        element_id: "body",
+        node_frames: [
+          [{ node: "cart", matrix: new THREE.Matrix4().makeTranslation(17, 0, 0).toArray() }],
+          null,
+        ],
+      },
+      {
+        element_id: "late",
+        node_frames: [null, [{ node: "cart", matrix: new THREE.Matrix4().identity().toArray() }]],
+      },
+    ],
+  };
+  const mask = family.native_remainder![0]!.frames[1]!.mask;
+  family.native_remainder = ["body", "late"].map((element_id, i) => ({
+    element_id,
+    encoding: "source-domain-v1",
+    drawn_values: [2],
+    priority: "remainder-over-physical",
+    frames: [0, 1].map((frame) =>
+      frame === i
+        ? { mask, physical: { kind: "source-frame-node-pose", element_id, frame } }
+        : null,
+    ),
+  }));
+  const p = new StateDelivery(f.loader);
+  await p.set(f.withRemainder, f.source, f.library, f.read);
+  p.selectMode("native-remainder");
+  p.native.setElementState("body", true, 0);
+  p.native.setElementState("late", true, 0);
+  const root = p.remainderPhysicalRoots().get("body")!;
+  const x = () => root.getObjectByName("cart")!.matrix.elements[12];
+  assert.equal(x(), 17);
+  p.native.setElementState("late", true, 3);
+  assert.throws(() => p.remainderPhysicalRoots(), /Overlapping native remainder assembly owners/);
+  assert.equal(x(), 17, "rejected overlap does not replace the last valid pose");
+  p.native.setElementState("body", false);
+  assert.deepEqual([...p.remainderPhysicalRoots().keys()], ["late"]);
+  assert.equal(x(), 0);
+  p.native.setElementState("late", false);
+  assert.equal(p.remainderPhysicalRoots().size, 0);
+  p.dispose();
+});
+
+test("staged assembly retains three separately pinned bindings and rejects ambiguous mesh owners", async () => {
+  const f = await stagedAssemblyFixture();
+  const family = f.contract.families[0]!;
+  const source = (
+    family.physical.applied as import("../../shared/src/state-delivery.ts").PhysicalStateBinding[]
+  )[0]!;
+  family.physical.applied = ["body", "wheel", "weight"].map((id, i) => ({
+    ...source,
+    id,
+    model: `${id}.glb`,
+    position: [i * 10, 0, 0],
+  }));
+  const motion = family.physical.motion!;
+  assert.equal(motion.kind, "native-element-stage-poses");
+  if (motion.kind !== "native-element-stage-poses") throw Error("fixture");
+  for (const stage of motion.stages)
+    stage.node_frames = stage.node_frames.map(
+      (frame) => frame && ["body", "wheel", "weight"].map((node) => ({ ...frame[0]!, node })),
+    );
+  const loaded: string[] = [];
+  const p = new StateDelivery(() => ({
+    load: async (binding) => {
+      loaded.push(binding.id);
+      const g = f.template.clone(true);
+      g.children[0]!.name = binding.id;
+      return g;
+    },
+    dispose() {},
+  }));
+  await p.set(f.contract, f.source, f.library, f.read);
+  assert.deepEqual(loaded, ["initial", "body", "wheel", "weight"]);
+  const applied = p.physical.children[1]!;
+  assert.equal(applied.children.length, 3);
+  assert.deepEqual(
+    applied.children.map((c) => c.position.x),
+    [0, 10, 20],
+  );
+  p.selectMode("physical-motion");
+  p.sampleSourceState({
+    mission: f.contract.native.mission,
+    mission_data_sha256: f.contract.native.mission_data_sha256,
+    level_data_sha256: f.contract.native.level_data_sha256,
+    sequence: 0,
+    simulation_tick: 0,
+    samples: f.contract.native.elements.map((e) => ({
+      kind: "element",
+      id: e.id,
+      source: e.source,
+      active: true,
+      tick: 0,
+    })),
+  });
+  assert.deepEqual(
+    ["body", "wheel", "weight"].map((name) => applied.getObjectByName(name)!.matrix.elements[12]),
+    [1, 1, 1],
+  );
+  p.selectMode("physical-endpoint");
+  p.selectEndpoint("trap", "applied");
+  assert.deepEqual(
+    ["body", "wheel", "weight"].map((name) => applied.getObjectByName(name)!.matrix.elements[12]),
+    [0, 0, 0],
+  );
+  p.dispose();
+  const bad = new StateDelivery(() => ({
+    load: async () => {
+      const g = f.template.clone(true);
+      g.children[0]!.name = "body";
+      return g;
+    },
+    dispose() {},
+  }));
+  await assert.rejects(bad.set(f.contract, f.source, f.library, f.read), /missing or ambiguous/);
+  bad.dispose();
+});
