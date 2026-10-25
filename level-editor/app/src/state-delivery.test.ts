@@ -630,6 +630,36 @@ test("discrete saved models retain all four poses on native timing without inter
   assert.equal(p.physical.children.length, 0);
 });
 
+test("discrete transient models disappear at terminal and restore on reset without a placeholder", async () => {
+  const f = await discreteFixture();
+  f.contract.families[0]!.physical.applied = { kind: "absent" };
+  const loaded: string[] = [];
+  const p = new StateDelivery(() => ({
+    load: async (binding) => {
+      loaded.push(binding.model);
+      return f.template;
+    },
+    dispose() {},
+  }));
+  await p.set(f.contract, f.source, f.library, f.read);
+  assert.equal(loaded.length, 4);
+  const drawn = () => p.physical.children.filter((g) => g.visible && g.children.length);
+  p.selectMode("physical-motion");
+  assert.equal(drawn().length, 1);
+  p.activate("trap");
+  for (let tick = 0; tick < 8; tick++) {
+    p.seekFamily("trap", tick);
+    assert.equal(drawn().length, tick < 5 ? 1 : 0);
+  }
+  p.seekFamily("trap", 4);
+  assert.equal(drawn().length, 1);
+  p.reset("trap");
+  assert.equal(drawn().length, 1);
+  assert.equal(p.motionEndpoint, "initial");
+  p.dispose();
+  assert.equal(p.physical.children.length, 0);
+});
+
 test("discrete model frames reject missing phases and unsafe transition bindings before loading", async () => {
   for (const fault of ["count", "empty", "path", "hash", "position"] as const) {
     const f = await discreteFixture();

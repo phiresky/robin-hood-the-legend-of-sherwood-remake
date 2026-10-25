@@ -373,6 +373,60 @@ test("discrete patch frames preserve complete multi-model endpoints and independ
     if (phase === "forward") assert.equal(pose.model_frame, 0);
     else assert.equal(pose.endpoint, phase === "applied" ? "applied" : "initial");
   }
+  // A transient effect may disappear after its last authored transition frame.
+  const absent = structuredClone(c);
+  absent.families[0]!.physical.applied = { kind: "absent" };
+  validateStateDelivery(absent);
+  assert.deepEqual(physicalPatchPose(absent, f.id, 0), {
+    endpoint: "initial",
+    translation: [0, 0, 0],
+    model_frame: 0,
+  });
+  const terminal = physicalPatchPose(absent, f.id, f.body_terminal_tick);
+  assert.equal(terminal.endpoint, "applied");
+  assert.equal(terminal.model_frame, undefined);
+  assert.deepEqual(physicalEndpointSources(absent.families[0]!.physical.applied), []);
+  const absentClocks = new StateEventClocks(absent);
+  for (const [sequence, phase] of (["forward", "applied", "initial"] as const).entries()) {
+    absentClocks.apply({
+      mission: absent.native.mission,
+      mission_data_sha256: absent.native.mission_data_sha256,
+      level_data_sha256: absent.native.level_data_sha256,
+      sequence,
+      simulation_tick: sequence * 100,
+      samples: [
+        {
+          kind: "patch",
+          id: "fence",
+          source: absent.native.patch_states![0]!.source,
+          phase,
+          tick: 0,
+        },
+      ],
+    });
+    const pose = absentClocks.physicalPose(f.id);
+    if (phase === "forward") assert.equal(pose.model_frame, 0);
+    else {
+      assert.equal(pose.endpoint, phase === "applied" ? "applied" : "initial");
+      assert.equal(pose.model_frame, undefined);
+    }
+  }
+  for (const endpoint of [[], { kind: "absent", extra: true }, null]) {
+    const malformed = structuredClone(absent);
+    malformed.families[0]!.physical.applied = endpoint as never;
+    assert.throws(() => validateStateDelivery(malformed), /physical endpoint|patch motion binding/);
+  }
+  const absentTranslation = structuredClone(absent);
+  absentTranslation.families[0]!.physical.motion = {
+    kind: "native-patch-translation",
+    patch_id: "fence",
+    source_motion_sha256: "d".repeat(64),
+    translation_frames: [[0, 0, 0]],
+  };
+  assert.throws(
+    () => validateStateDelivery(absentTranslation),
+    /invalid reviewed patch motion binding/,
+  );
   const missingGround = structuredClone(c);
   if (missingGround.families[0]!.physical.motion!.kind !== "native-patch-model-frames")
     throw Error("fixture");

@@ -490,8 +490,9 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
         family.hidden_initial_element_ids?.length ||
         !patch?.definitive ||
         !patch.transition.length ||
-        !Array.isArray(family.physical.applied) ||
-        (motion.kind !== "native-patch-model-frames" && family.physical.applied.length !== 1)
+        (motion.kind === "native-patch-model-frames"
+          ? !Array.isArray(family.physical.applied) && family.physical.applied?.kind !== "absent"
+          : !Array.isArray(family.physical.applied) || family.physical.applied.length !== 1)
       )
         fail("invalid reviewed patch motion binding");
       if (motion.kind === "native-patch-translation") {
@@ -592,8 +593,8 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
           ]),
         );
       if (
-        signature(motion.model_frames.at(-1)!) !==
-        signature(physicalEndpointSources(family.physical.applied))
+        Array.isArray(family.physical.applied) &&
+        signature(motion.model_frames.at(-1)!) !== signature(family.physical.applied)
       )
         fail("terminal model frame differs from applied bindings");
     }
