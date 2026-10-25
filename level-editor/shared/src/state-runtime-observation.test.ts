@@ -122,3 +122,33 @@ test("duplicate binding is rejected but background and patch may observe one nat
   ]);
   assert.equal(result.patches.length, 1);
 });
+
+test("target observation retains the progression discriminator without inventing one for FX", async () => {
+  const f = synthetic();
+  const sprite = f.engine.world.entities[1]!.Fx!.element.sprite;
+  const target = { Target: { element: { active: true, sprite }, target: { progression: 8 } } };
+  const engine = { ...f.engine, world: { entities: [target] } };
+  const b: StateRuntimeBinding = {
+    kind: "element",
+    id: "body",
+    source: { kind: "mission-target", index: 31, sha256: "d".repeat(64) },
+    runtime_index: 0,
+    initial_action: "Same",
+    action: "Same",
+    initial_row: 1,
+    action_row: 1,
+    progression: { initial: 0, action: 8 },
+  };
+  const p = packet(engine, f.assets);
+  assert.equal(
+    (await decodeRuntimeCapture(p.e, p.a, p.manifest, source, [b])).owners[0]!.sprite
+      .target_progression,
+    8,
+  );
+  target.Target.target.progression = -1;
+  const bad = packet(engine, f.assets);
+  await assert.rejects(
+    decodeRuntimeCapture(bad.e, bad.a, bad.manifest, source, [b]),
+    /Invalid target progression/,
+  );
+});

@@ -6,6 +6,7 @@ import {
 } from "./native-state-presentation.ts";
 import {
   physicalElementStagePose,
+  physicalElementComponentPose,
   physicalPatchPose,
   physicalPatchClipPose,
   type StateDeliveryContract,
@@ -152,7 +153,10 @@ export class StateEventClocks {
       candidate.set(`${s.kind}:${s.id}`, s);
     }
     for (const family of this.contract.families)
-      if (family.physical.motion?.kind === "native-element-stage-poses")
+      if (
+        family.physical.motion?.kind === "native-element-stage-poses" ||
+        family.physical.motion?.kind === "native-element-component-poses"
+      )
         this.stagedPose(family.id, candidate);
     this.clocks = candidate;
     this.sequence = batch.sequence;
@@ -169,7 +173,10 @@ export class StateEventClocks {
     const family = this.contract.families.find((f) => f.id === familyId);
     if (!family) throw new Error(`Unknown state family: ${familyId}`);
     const motion = family.physical.motion;
-    if (motion?.kind === "native-element-stage-poses")
+    if (
+      motion?.kind === "native-element-stage-poses" ||
+      motion?.kind === "native-element-component-poses"
+    )
       return this.stagedPose(familyId, this.clocks).visible !== false;
     if (motion?.kind !== "native-element-node-poses" && motion?.kind !== "native-element-clip")
       return true;
@@ -181,7 +188,11 @@ export class StateEventClocks {
 
   private stagedPose(familyId: string, clocks: Map<string, StateClockSample>) {
     const family = this.contract.families.find((f) => f.id === familyId)!;
-    return physicalElementStagePose(
+    const samplePose =
+      family.physical.motion?.kind === "native-element-component-poses"
+        ? physicalElementComponentPose
+        : physicalElementStagePose;
+    return samplePose(
       this.contract,
       familyId,
       family.element_ids.flatMap((element_id) => {
@@ -211,7 +222,10 @@ export class StateEventClocks {
 
   physicalPose(familyId: string): ReturnType<typeof physicalPatchPose> {
     const family = this.contract.families.find((f) => f.id === familyId);
-    if (family?.physical.motion?.kind === "native-element-stage-poses")
+    if (
+      family?.physical.motion?.kind === "native-element-stage-poses" ||
+      family?.physical.motion?.kind === "native-element-component-poses"
+    )
       return this.stagedPose(familyId, this.clocks);
     if (family?.physical.motion?.kind === "native-patch-clips") {
       const sample = this.sample("patch", family.physical.motion.patch_id);
@@ -226,7 +240,11 @@ export class StateEventClocks {
   physicalTick(familyId: string): number | undefined {
     const f = this.contract.families.find((f) => f.id === familyId);
     if (!f) throw new Error(`Unknown state family: ${familyId}`);
-    if (!f.physical.motion || f.physical.motion.kind === "native-element-stage-poses")
+    if (
+      !f.physical.motion ||
+      f.physical.motion.kind === "native-element-stage-poses" ||
+      f.physical.motion.kind === "native-element-component-poses"
+    )
       return undefined;
     if (
       f.physical.motion.kind === "native-element-node-poses" ||

@@ -1,6 +1,7 @@
 import { StateMaterialFrames } from "./state-material-frames.ts";
 import { StateEventClocks, type StateClockBatch } from "../../shared/src/state-event-clocks.ts";
 import { StateAppearancePlayer } from "./state-appearance-player.ts";
+import { ComponentNodePoses } from "./component-node-poses.ts";
 import { ReviewedNodePoses } from "./reviewed-node-poses.ts";
 import * as THREE from "three";
 import {
@@ -10,6 +11,7 @@ import {
   physicalPatchPose,
   nativeRemainderFrame,
   nativeRemainderNodeFrame,
+  nativeRemainderComponentFrames,
   type StateDeliveryContract,
 } from "../../shared/src/state-delivery.ts";
 
@@ -68,6 +70,7 @@ export class StateDelivery {
   private roots = new Map<string, FamilyRoots>();
   private starts = new Map<string, number>();
   private sourceClocks: StateEventClocks | undefined;
+  private componentPoses = new Map<string, ComponentNodePoses>();
   private nodePoses = new Map<string, ReviewedNodePoses>();
   private clips = new Map<string, Partial<Record<"transition" | "final", StateAppearancePlayer>>>();
   private materialFrames = new Map<StateAppearancePlayer, StateMaterialFrames>();
@@ -102,7 +105,9 @@ export class StateDelivery {
     this.native.clear();
     this.physical.clear();
     this.physical.visible = false;
+    for (const poses of this.componentPoses.values()) poses.reset();
     for (const poses of this.nodePoses.values()) poses.reset();
+    this.componentPoses.clear();
     this.nodePoses.clear();
     for (const frames of this.materialFrames.values()) frames.dispose();
     this.materialFrames.clear();
@@ -298,6 +303,11 @@ export class StateDelivery {
               ),
             ),
           );
+        if (family.physical.motion?.kind === "native-element-component-poses") {
+          const components = new ComponentNodePoses(pair.applied, family.physical.motion);
+          this.componentPoses.set(family.id, components);
+          pair.frames.push(...components.roots.values());
+        }
         roots.set(family.id, pair);
       }
       if (!current()) return false;
@@ -346,6 +356,7 @@ export class StateDelivery {
     if (!["initial", "applied"].includes(endpoint)) throw new Error("Unknown physical endpoint");
     this.selectedFamily = id;
     this.selectedEndpoint = endpoint;
+    for (const poses of this.componentPoses.values()) poses.reset();
     for (const poses of this.nodePoses.values()) poses.reset();
     for (const phases of this.clips.values())
       for (const player of Object.values(phases)) {
@@ -385,7 +396,10 @@ export class StateDelivery {
     if (this.sourceClocks)
       throw new Error("Source events own state clocks; reload to use preview playback");
     const family = this.family(id);
-    if (family.physical.motion?.kind === "native-element-stage-poses")
+    if (
+      family.physical.motion?.kind === "native-element-stage-poses" ||
+      family.physical.motion?.kind === "native-element-component-poses"
+    )
       throw new Error("Staged motion requires independent source clocks");
     if (!Number.isSafeInteger(tick) || tick < 0) throw new Error("Invalid state delivery tick");
     this.starts.set(id, this.native.tick - tick);
@@ -425,7 +439,9 @@ export class StateDelivery {
     if (
       playing &&
       this.selectedFamily &&
-      this.family(this.selectedFamily).physical.motion?.kind === "native-element-stage-poses"
+      ["native-element-stage-poses", "native-element-component-poses"].includes(
+        this.family(this.selectedFamily).physical.motion?.kind ?? "",
+      )
     )
       throw new Error("Staged motion requires independent source clocks");
     this.native.setPlaying(playing);
@@ -436,6 +452,13 @@ export class StateDelivery {
       this.sourceClocks?.physicalPose(this.selectedFamily) ??
       physicalPatchPose(this.contract!, this.selectedFamily, this.familyTick(this.selectedFamily));
     const pair = this.roots.get(this.selectedFamily)!;
+    const components = this.componentPoses.get(this.selectedFamily);
+    if (components) {
+      components.apply(pose.component_frames ?? []);
+      pair.initial.visible = pose.endpoint === "initial" && pose.visible !== false;
+      pair.applied.visible = false;
+      return;
+    }
     if (pose.clip_phase !== undefined) {
       const player = this.clips.get(this.selectedFamily)?.[pose.clip_phase];
       if (!player || pose.clip_tick === undefined) throw new Error("Patch clip player missing");
@@ -472,12 +495,34 @@ export class StateDelivery {
       throw new Error("Native remainder mode is not selected");
     const roots = new Map<string, THREE.Object3D>();
     const pending: { element: string; family: string; nodeFrame: number | undefined }[] = [];
+    const componentSelections = new Map<
+      string,
+      { component_id: string; element_id: string; node_frame: number }[]
+    >();
     for (const selected of this.native.remainderSelection()) {
       const family = this.contract!.families.find((f) =>
         f.element_ids.includes(selected.element_id),
       )!;
       const frame = nativeRemainderFrame(family, selected.element_id, selected.frame);
       if (!frame) throw new Error("Native remainder frame binding missing");
+      if (family.physical.motion?.kind === "native-element-component-poses") {
+        const selections = componentSelections.get(family.id) ?? [];
+        const current = nativeRemainderComponentFrames(
+          family,
+          selected.element_id,
+          selected.frame,
+          frame.physical,
+        );
+        if (current.some((c) => selections.some((s) => s.component_id === c.component_id)))
+          throw new Error("Overlapping native remainder component owners");
+        selections.push(...current);
+        componentSelections.set(family.id, selections);
+        roots.set(
+          selected.element_id,
+          this.componentPoses.get(family.id)!.roots.get(selected.element_id)!,
+        );
+        continue;
+      }
       const nodeFrame = nativeRemainderNodeFrame(
         family,
         selected.element_id,
@@ -489,6 +534,7 @@ export class StateDelivery {
       pending.push({ element: selected.element_id, family: family.id, nodeFrame });
     }
     // Validate the entire selection before changing any shared assembly pose.
+    for (const [id, poses] of this.componentPoses) poses.apply(componentSelections.get(id) ?? []);
     for (const item of pending) {
       if (item.nodeFrame !== undefined) {
         const poses = this.nodePoses.get(item.family);

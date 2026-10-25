@@ -19,6 +19,10 @@ export type StateRuntimeBinding = {
       initial_row: number;
       action: string;
       action_row: number;
+      /** Reviewed leading presentation frames absent from the runtime action row. */
+      action_frame_offset?: number;
+      /** Required when the initial and triggered actions share the same row/action. */
+      progression?: { initial: number; action: number };
     }
   | {
       kind: "patch" | "background";
@@ -29,6 +33,7 @@ export interface RuntimeSpriteObservation extends SourceSpriteClock {
   active: boolean;
   row: number;
   last_action: string;
+  target_progression?: number;
 }
 export interface RuntimeStateObservation {
   mission: string;
@@ -86,13 +91,32 @@ export class StateRuntimeAdapter {
         if (
           !b.action ||
           !b.initial_action ||
-          b.action === b.initial_action ||
+          (b.action === b.initial_action && b.progression === undefined) ||
           !Number.isSafeInteger(b.initial_row) ||
           b.initial_row < 0 ||
           !Number.isSafeInteger(b.action_row) ||
           b.action_row < 0
         )
           throw new Error("Missing prepared target action row");
+        if (
+          b.progression !== undefined &&
+          (!b.progression ||
+            Object.keys(b.progression).sort().join(",") !== "action,initial" ||
+            !Number.isSafeInteger(b.progression.initial) ||
+            b.progression.initial < 0 ||
+            !Number.isSafeInteger(b.progression.action) ||
+            b.progression.action < 0 ||
+            b.progression.initial === b.progression.action)
+        )
+          throw new Error("Invalid prepared target progression");
+        if (
+          b.action_frame_offset !== undefined &&
+          (!Number.isSafeInteger(b.action_frame_offset) ||
+            b.action_frame_offset < 0 ||
+            !("frames" in row) ||
+            b.action_frame_offset >= row.frames.length)
+        )
+          throw new Error("Invalid prepared target frame offset");
       } else if (Object.values(b.phase_rows).some((n) => !Number.isSafeInteger(n) || n < 0))
         throw new Error("Invalid prepared patch phase row");
       seen.add(key);
@@ -115,12 +139,27 @@ export class StateRuntimeAdapter {
           throw new Error(`Missing runtime owner ${b.runtime_index}`);
         if (raw.last_action !== b.action && raw.last_action !== b.initial_action)
           throw new Error("Unbound runtime owner action");
-        const active = raw.last_action === b.action;
+        let active = raw.last_action === b.action;
+        if (b.progression) {
+          if (
+            raw.target_progression !== b.progression.initial &&
+            raw.target_progression !== b.progression.action
+          )
+            throw new Error("Unbound runtime target progression");
+          active = raw.target_progression === b.progression.action;
+          if (raw.last_action !== (active ? b.action : b.initial_action))
+            throw new Error("Runtime target action differs from its progression");
+        }
         if (raw.row !== (active ? b.action_row : b.initial_row))
           throw new Error("Runtime owner action row differs");
         const e = this.contract.native.elements.find((e) => e.id === b.id)!;
         // Hidden initial-only artwork has no action-frame clock to sample.
-        const tick = active && e.frames.length ? sourceSpriteTick(e.frames, raw) : 0;
+        const offset = b.action_frame_offset ?? 0;
+        const tick =
+          active && e.frames.length
+            ? e.frames.slice(0, offset).reduce((sum, frame) => sum + frame.delay + 1, 0) +
+              sourceSpriteTick(e.frames.slice(offset), raw)
+            : 0;
         return { kind: "element", id: b.id, source: b.source, active, visible: raw.active, tick };
       }
       const raw = observed.patches.find((p) => p.index === b.runtime_index);

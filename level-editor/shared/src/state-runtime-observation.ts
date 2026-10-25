@@ -57,6 +57,14 @@ function spriteFromEntity(value: unknown, kind: "Fx" | "Target"): RuntimeSpriteO
     frame: integer(sprite.current_frame, "sprite frame", 65535),
     count: integer(sprite.frame_count, "sprite counter", 65535),
     last_action: sprite.last_action,
+    ...(kind === "Target" && object(entity[kind], kind).target !== undefined
+      ? {
+          target_progression: integer(
+            object(object(entity[kind], kind).target, "target").progression,
+            "target progression",
+          ),
+        }
+      : {}),
   };
 }
 async function sha256(bytes: Uint8Array): Promise<string> {

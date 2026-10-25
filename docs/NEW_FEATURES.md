@@ -1,11 +1,19 @@
 # Post-port Features
 
 - **Moving physical models with retained native pixels.** Reviewed source-frame
-  masks can pair retained artwork with the exact node pose of a target frame,
-  including independently clocked assembly stages. Staged assemblies retain
-  separate pinned model bindings; pose mesh names must be unambiguous across
-  them. Overlapping assembly owners are rejected. Receiver and gameplay clocks
-  remain independent; each asset still requires reviewed masks and pose tables.
+  masks can pair retained artwork with exact rigid node poses. Disjoint physical
+  components can coexist while each transfers between independently clocked
+  target owners; frozen owners remain visible and explicit gaps remain absent.
+  The renderer keeps source layer order through separate component roots and
+  rejects ambiguous mesh ownership. Models retain their pinned resources and
+  placement. This supports rigid component motion; topology-changing geometry
+  still requires separately reviewed resources and presentation support.
+
+- **Prepared startup target clocks.** Runtime bindings can explicitly distinguish
+  a trigger by its progression when its animation was already selected at load.
+  A reviewed frame offset maps native action frames past synthetic presentation
+  prefixes without waiting those delays again. These options preserve observed
+  source counters and independent receiver/gameplay clocks.
 
 - **Source-bound observation bridge.** The editor can consume an ordered local
   observation feed through its existing state clock adapter. Set

@@ -103,6 +103,18 @@ export interface PhysicalElementStagePoses {
   }[];
 }
 
+/** Disjoint physical components may coexist while each hands off between target owners.
+ * Null poses preserve source gaps; clocks are never retired merely because another starts.
+ */
+export interface PhysicalElementComponentPoses {
+  kind: "native-element-component-poses";
+  source_motion_sha256: string;
+  components: {
+    id: string;
+    stages: { element_id: string; node_frames: (ReviewedNodePose[] | null)[] }[];
+  }[];
+}
+
 /** Reviewed discrete models retain the last transition model as their applied state. */
 export interface PhysicalPatchModelFrames {
   kind: "native-patch-model-frames";
@@ -153,7 +165,10 @@ export const NATIVE_REMAINDER_MASK_VALUES = {
 export interface NativeRemainderFrame {
   mask: NativeImageResource;
   /** The physical representation drawn with the kept pixels at the same source tick. */
-  physical: "applied" | { kind: "source-frame-node-pose"; element_id: string; frame: number };
+  physical:
+    | "applied"
+    | { kind: "source-frame-node-pose"; element_id: string; frame: number }
+    | { kind: "source-frame-components"; element_id: string; frame: number; components: string[] };
 }
 
 /** Kept native pixels of one target track, drawn with the family's physical model.
@@ -198,6 +213,7 @@ export interface StateDeliveryContract {
         | PhysicalPatchModelFrames
         | PhysicalElementNodePoses
         | PhysicalElementStagePoses
+        | PhysicalElementComponentPoses
         | PhysicalElementClip;
     };
     static_replacements?: { initial: StaticStateReplacement[]; applied: StaticStateReplacement[] };
@@ -406,6 +422,8 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
         if (JSON.stringify(family.physical.applied) !== JSON.stringify([motion.final.binding]))
           fail("final clip differs from applied model binding");
       }
+    } else if (motion?.kind === "native-element-component-poses") {
+      validateComponentPoses(c, family, motion);
     } else if (motion?.kind === "native-element-stage-poses") {
       if (
         !hash(motion.source_motion_sha256) ||
@@ -642,6 +660,171 @@ function validateElementClip(
     fail("target clip placement differs from applied model binding");
 }
 
+function validateComponentPoses(
+  contract: StateDeliveryContract,
+  family: StateDeliveryContract["families"][number],
+  motion: PhysicalElementComponentPoses,
+) {
+  const fail = (): never => {
+    throw new Error("State delivery: invalid reviewed component ownership");
+  };
+  if (
+    !/^[a-f0-9]{64}$/.test(motion.source_motion_sha256) ||
+    !Array.isArray(motion.components) ||
+    !motion.components.length ||
+    family.patch_ids?.length ||
+    family.hidden_initial_element_ids?.length ||
+    !Array.isArray(family.physical.applied) ||
+    !family.physical.applied.length
+  )
+    fail();
+  const ids = new Set<string>(),
+    nodes = new Set<string>();
+  for (const component of motion.components) {
+    if (
+      !component ||
+      typeof component.id !== "string" ||
+      !component.id ||
+      ids.has(component.id) ||
+      !Array.isArray(component.stages) ||
+      !component.stages.length
+    )
+      fail();
+    ids.add(component.id);
+    const owners = new Set<string>();
+    for (const stage of component.stages) {
+      const element = contract.native.elements.find((e) => e.id === stage.element_id);
+      if (
+        !element ||
+        element.loop ||
+        !family.element_ids.includes(stage.element_id) ||
+        owners.has(stage.element_id) ||
+        !Array.isArray(stage.node_frames) ||
+        stage.node_frames.length !== element.frames.length ||
+        !stage.node_frames.some((frame) => frame !== null)
+      )
+        fail();
+      owners.add(stage.element_id);
+    }
+    const frames = component.stages.flatMap((stage) =>
+      stage.node_frames.filter((frame) => frame !== null),
+    );
+    validateReviewedNodePoses(frames);
+    for (const { node } of frames[0]!) {
+      if (nodes.has(node)) fail();
+      nodes.add(node);
+    }
+    const last = component.stages.at(-1)!.node_frames.at(-1);
+    if (!last || last.some(({ matrix }) => matrix.some((v, i) => v !== (i % 5 === 0 ? 1 : 0))))
+      fail();
+  }
+}
+
+/** Exact component poses declared at a remainder's selected source frame, in contract order. */
+export function nativeRemainderComponentFrames(
+  family: StateDeliveryContract["families"][number],
+  elementId: string,
+  frame: number,
+  pairing: NativeRemainderFrame["physical"],
+): { component_id: string; element_id: string; node_frame: number }[] {
+  const fail = (): never => {
+    throw new Error("State delivery: invalid native remainder component pairing");
+  };
+  const motion = family.physical.motion;
+  if (
+    motion?.kind !== "native-element-component-poses" ||
+    !pairing ||
+    typeof pairing !== "object" ||
+    pairing.kind !== "source-frame-components" ||
+    JSON.stringify(Object.keys(pairing).sort()) !==
+      JSON.stringify(["components", "element_id", "frame", "kind"]) ||
+    pairing.element_id !== elementId ||
+    pairing.frame !== frame ||
+    !Number.isSafeInteger(frame) ||
+    frame < 0 ||
+    !Array.isArray(pairing.components)
+  )
+    return fail();
+  const selected: { component_id: string; element_id: string; node_frame: number }[] = [];
+  for (const component of motion.components) {
+    let offset = 0;
+    for (const stage of component.stages) {
+      if (stage.element_id === elementId && stage.node_frames[frame]) {
+        selected.push({
+          component_id: component.id,
+          element_id: elementId,
+          node_frame: offset + stage.node_frames.slice(0, frame).filter((p) => p !== null).length,
+        });
+      }
+      offset += stage.node_frames.filter((p) => p !== null).length;
+    }
+  }
+  if (
+    !selected.length ||
+    JSON.stringify(pairing.components) !== JSON.stringify(selected.map((p) => p.component_id))
+  )
+    return fail();
+  return selected;
+}
+
+/** Coexisting components retain their independently observed owners and explicit handoff gaps. */
+export function physicalElementComponentPose(
+  contract: StateDeliveryContract,
+  familyId: string,
+  samples: readonly PhysicalStageClock[],
+): ReturnType<typeof physicalPatchPose> {
+  const family = contract.families.find((f) => f.id === familyId);
+  const motion = family?.physical.motion;
+  if (motion?.kind !== "native-element-component-poses")
+    throw new Error("Missing component target motion");
+  if (
+    new Set(samples.map((s) => s.element_id)).size !== samples.length ||
+    samples.some(
+      (s) =>
+        !family!.element_ids.includes(s.element_id) ||
+        typeof s.active !== "boolean" ||
+        (s.visible !== undefined && typeof s.visible !== "boolean") ||
+        !Number.isSafeInteger(s.tick) ||
+        s.tick < 0,
+    )
+  )
+    throw new Error("Invalid component owner clocks");
+  const selected: { component_id: string; element_id: string; node_frame: number }[] = [];
+  for (const component of motion.components) {
+    let offset = 0,
+      owner = false;
+    for (const stage of component.stages) {
+      const sample = samples.find((s) => s.element_id === stage.element_id);
+      if (sample?.active && sample.visible !== false) {
+        const element = contract.native.elements.find((e) => e.id === stage.element_id)!;
+        const frame = nativePresentationFrame(element, sample.tick);
+        if (stage.node_frames[frame]) {
+          if (owner) throw new Error(`Overlapping component owners: ${component.id}`);
+          owner = true;
+          selected.push({
+            component_id: component.id,
+            element_id: stage.element_id,
+            node_frame: offset + stage.node_frames.slice(0, frame).filter((p) => p !== null).length,
+          });
+        }
+      }
+      offset += stage.node_frames.filter((p) => p !== null).length;
+    }
+  }
+  if (!samples.some((s) => s.active))
+    return {
+      endpoint: "initial",
+      translation: [0, 0, 0],
+      visible: samples.some((s) => s.visible !== false) || !samples.length,
+    };
+  return {
+    endpoint: "applied",
+    translation: [0, 0, 0],
+    component_frames: selected,
+    visible: !!selected.length,
+  };
+}
+
 function validateNativeRemainder(
   contract: StateDeliveryContract,
   family: StateDeliveryContract["families"][number],
@@ -658,7 +841,8 @@ function validateNativeRemainder(
   if (
     motion &&
     motion.kind !== "native-element-node-poses" &&
-    motion.kind !== "native-element-stage-poses"
+    motion.kind !== "native-element-stage-poses" &&
+    motion.kind !== "native-element-component-poses"
   )
     fail("unsupported native remainder physical pairing");
   const bound = new Set<string>();
@@ -711,7 +895,9 @@ function validateNativeRemainder(
       paths.add(mask.path);
       if (!Array.isArray(family.physical.applied) || !family.physical.applied.length)
         fail("native remainder frame lacks a physical pairing");
-      nativeRemainderNodeFrame(family, binding.element_id, index, frame.physical);
+      if (family.physical.motion?.kind === "native-element-component-poses")
+        nativeRemainderComponentFrames(family, binding.element_id, index, frame.physical);
+      else nativeRemainderNodeFrame(family, binding.element_id, index, frame.physical);
     }
   }
 }
@@ -794,6 +980,7 @@ export function physicalPatchPose(
   endpoint: "initial" | "applied";
   translation: [number, number, number];
   node_frame?: number;
+  component_frames?: { component_id: string; element_id: string; node_frame: number }[];
   model_frame?: number;
   visible?: boolean;
   clip_phase?: "transition" | "final";
@@ -808,7 +995,10 @@ export function physicalPatchPose(
     throw new Error("Invalid physical motion tick");
   if (tick === undefined)
     return { endpoint: "initial" as const, translation: [0, 0, 0] as [number, number, number] };
-  if (motion.kind === "native-element-stage-poses")
+  if (
+    motion.kind === "native-element-stage-poses" ||
+    motion.kind === "native-element-component-poses"
+  )
     throw new Error("Staged motion requires independent source clocks");
   if (motion.kind === "native-patch-clips")
     return physicalPatchClipPose(contract, id, "forward", tick);

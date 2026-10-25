@@ -184,3 +184,50 @@ test("final reset has a new phase clock even when engine elapsed time is large",
   assert.equal(batch.samples[2].tick, 0);
   assert.equal((batch.samples[2] as { phase: string }).phase, "applied");
 });
+
+test("prepared progression distinguishes a startup action already selected before freeze", () => {
+  const f = fixture();
+  const binding = f.bindings[0]!;
+  if (binding.kind !== "element") throw Error("fixture");
+  binding.initial_action = binding.action;
+  binding.initial_row = binding.action_row;
+  binding.progression = { initial: 0, action: 8 };
+  const sprite = f.observed.owners[0]!.sprite;
+  Object.assign(sprite, { row: 1, last_action: binding.action, target_progression: 0 });
+  const a = new StateRuntimeAdapter(f.contract, f.bindings);
+  assert.equal((a.sample(f.observed).samples[0] as { active: boolean }).active, false);
+  f.observed.engine_frame = 1;
+  Object.assign(sprite, { target_progression: 8, count: 65535 });
+  const started = a.sample(f.observed).samples[0]!;
+  assert.deepEqual([started.kind === "element" && started.active, started.tick], [true, 0]);
+  f.observed.engine_frame = 2;
+  Object.assign(sprite, { target_progression: 7 });
+  assert.throws(() => a.sample(f.observed), /Unbound runtime target progression/);
+  Object.assign(sprite, { target_progression: 8, count: 0 });
+  assert.equal(a.sample(f.observed).sequence, 2, "rejection does not consume sequence");
+});
+
+test("prepared frame offsets map native action frame zero past synthetic prefixes without waiting again", () => {
+  const f = fixture();
+  const binding = f.bindings[0]!;
+  if (binding.kind !== "element") throw Error("fixture");
+  binding.action_frame_offset = 1;
+  f.contract.native.elements[0]!.frames.unshift({
+    ...f.contract.native.elements[0]!.frames[0]!,
+    delay: 99,
+  });
+  const sprite = f.observed.owners[0]!.sprite;
+  Object.assign(sprite, { row: 1, last_action: binding.action, frame: 0, count: 65535 });
+  const a = new StateRuntimeAdapter(f.contract, f.bindings);
+  assert.equal(a.sample(f.observed).samples[0]!.tick, 100);
+  f.observed.engine_frame = 1;
+  Object.assign(sprite, { frame: 1, count: 2 });
+  assert.equal(a.sample(f.observed).samples[0]!.tick, 105);
+  f.observed.engine_frame = 2;
+  Object.assign(sprite, { frame: 2, count: 0 });
+  assert.throws(() => a.sample(f.observed), /Invalid source sprite clock/);
+  for (const offset of [-1, 0.5, 3]) {
+    binding.action_frame_offset = offset;
+    assert.throws(() => new StateRuntimeAdapter(f.contract, f.bindings), /frame offset/);
+  }
+});

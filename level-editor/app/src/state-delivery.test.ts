@@ -1653,3 +1653,259 @@ test("staged assembly retains three separately pinned bindings and rejects ambig
   await assert.rejects(bad.set(f.contract, f.source, f.library, f.read), /missing or ambiguous/);
   bad.dispose();
 });
+
+async function componentAssemblyFixture() {
+  const f = await remainderFixture();
+  const c = f.withRemainder;
+  f.source.data.targets = Array.from({ length: 3 }, () =>
+    structuredClone(f.source.data.targets[0]!),
+  );
+  c.native.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  const original = c.native.elements[0]!;
+  const delays = [
+    [0, 0, 0, 0],
+    [2, 0, 0],
+    [4, 0],
+  ];
+  c.native.elements = delays.map((ds, i) => ({
+    ...structuredClone(original),
+    id: `owner${i}`,
+    source: { ...original.source, index: i },
+    creation_order: i,
+    frames: ds.map((delay) => ({ ...original.frames[0]!, delay })),
+  }));
+  const family = c.families[0]!;
+  family.element_ids = c.native.elements.map((e) => e.id);
+  family.body_terminal_tick = 5;
+  const applied = (
+    family.physical.applied as import("../../shared/src/state-delivery.ts").PhysicalStateBinding[]
+  )[0]!;
+  family.physical.applied = ["body", "wheel", "weight"].map((id, i) => ({
+    ...applied,
+    id,
+    model: `${id}.glb`,
+    position: [i * 10, 0, 0],
+  }));
+  const pose = (node: string, x: number) => [
+    { node, matrix: new THREE.Matrix4().makeTranslation(x, 0, 0).toArray() },
+  ];
+  family.physical.motion = {
+    kind: "native-element-component-poses",
+    source_motion_sha256: "c".repeat(64),
+    components: [
+      {
+        id: "body",
+        stages: [
+          {
+            element_id: "owner0",
+            node_frames: [pose("body", 1), pose("body", 2), pose("body", 3), pose("body", 0)],
+          },
+        ],
+      },
+      {
+        id: "wheel",
+        stages: [
+          { element_id: "owner0", node_frames: [pose("wheel", 10), pose("wheel", 11), null, null] },
+          { element_id: "owner1", node_frames: [null, pose("wheel", 20), pose("wheel", 0)] },
+        ],
+      },
+      {
+        id: "weight",
+        stages: [
+          {
+            element_id: "owner0",
+            node_frames: [pose("weight", 30), pose("weight", 31), null, null],
+          },
+          { element_id: "owner1", node_frames: [null, pose("weight", 40), null] },
+          { element_id: "owner2", node_frames: [null, pose("weight", 0)] },
+        ],
+      },
+    ],
+  };
+  const motion = family.physical.motion;
+  const mask = family.native_remainder![0]!.frames[1]!.mask;
+  family.native_remainder = c.native.elements.map((element) => ({
+    element_id: element.id,
+    encoding: "source-domain-v1",
+    drawn_values: [2],
+    priority: "remainder-over-physical",
+    frames: element.frames.map((_, frame) => {
+      const components = motion.components
+        .filter(
+          (component) =>
+            component.stages.find((stage) => stage.element_id === element.id)?.node_frames[frame],
+        )
+        .map((component) => component.id);
+      if (!components.length) return null;
+      const path = `${element.id}-${frame}.png`;
+      f.files.set(path, f.files.get("mask.png")!);
+      return {
+        mask: { ...mask, path },
+        physical: { kind: "source-frame-components", element_id: element.id, frame, components },
+      };
+    }),
+  }));
+  const loader = () => ({
+    load: async (binding: import("../../shared/src/state-delivery.ts").PhysicalStateBinding) => {
+      const g = f.template.clone(true);
+      g.children[0]!.name = binding.id;
+      return g;
+    },
+    dispose() {},
+  });
+  const batch = (sequence: number, ticks: number[], active = true) => ({
+    mission: c.native.mission,
+    mission_data_sha256: c.native.mission_data_sha256,
+    level_data_sha256: c.native.level_data_sha256,
+    sequence,
+    simulation_tick: sequence,
+    samples: c.native.elements.map((e, i) => ({
+      kind: "element" as const,
+      id: e.id,
+      source: e.source,
+      active,
+      visible: true,
+      tick: ticks[i]!,
+    })),
+  });
+  return { ...f, c, family, loader, batch };
+}
+
+test("frozen body coexists with wheel and weight transfers without retiring any source clock", async () => {
+  const f = await componentAssemblyFixture();
+  const p = new StateDelivery(f.loader);
+  await p.set(f.c, f.source, f.library, f.read);
+  p.selectMode("native-remainder");
+  p.sampleSourceState(f.batch(0, [0, 0, 0], false));
+  assert.equal(p.remainderPhysicalRoots().size, 0);
+  const selected = () =>
+    [...p.remainderPhysicalRoots()].map(([owner, root]) => ({
+      owner,
+      meshes: ["body", "wheel", "weight"].filter((name) => root.getObjectByName(name)!.visible),
+      x: ["body", "wheel", "weight"].map((name) => root.getObjectByName(name)!.matrix.elements[12]),
+    }));
+  p.sampleSourceState(f.batch(1, [0, 0, 0]));
+  assert.deepEqual(
+    selected().map((s) => [s.owner, s.meshes]),
+    [["owner0", ["body", "wheel", "weight"]]],
+  );
+  p.sampleSourceState(f.batch(2, [2, 2, 2]));
+  assert.deepEqual(
+    selected().map((s) => [s.owner, s.meshes]),
+    [["owner0", ["body"]]],
+    "explicit source handoff gap does not hold wheel or weight",
+  );
+  p.sampleSourceState(f.batch(3, [99, 3, 3]));
+  assert.deepEqual(
+    selected().map((s) => [s.owner, s.meshes]),
+    [
+      ["owner0", ["body"]],
+      ["owner1", ["wheel", "weight"]],
+    ],
+  );
+  assert.equal(selected()[0]!.x[0], 0, "body remains terminal while the later owner moves");
+  assert.equal(selected()[1]!.x[1], 20);
+  assert.equal(selected()[1]!.x[2], 40);
+  p.sampleSourceState(f.batch(4, [99, 4, 4]));
+  assert.deepEqual(
+    selected().map((s) => [s.owner, s.meshes]),
+    [
+      ["owner0", ["body"]],
+      ["owner1", ["wheel"]],
+    ],
+    "second source gap excludes weight",
+  );
+  p.sampleSourceState(f.batch(5, [99, 99, 5]));
+  assert.deepEqual(
+    selected().map((s) => [s.owner, s.meshes]),
+    [
+      ["owner0", ["body"]],
+      ["owner1", ["wheel"]],
+      ["owner2", ["weight"]],
+    ],
+  );
+  assert.ok(
+    selected().every((s) => s.x.every((x) => x === 0)),
+    "all three separately pinned terminal resources survive",
+  );
+  p.selectMode("physical-motion");
+  assert.equal(p.physical.children.filter((g) => g.visible).length, 3);
+  assert.equal(p.familyTick("trap"), undefined);
+  assert.equal(p.advance(10), false);
+  p.selectMode("physical-endpoint");
+  p.selectEndpoint("trap", "applied");
+  assert.equal(p.physical.children.filter((g) => g.visible).length, 1);
+  assert.equal(p.physical.children[1]!.children.length, 3);
+  p.dispose();
+});
+
+test("component owner overlap rejects atomically; independent omitted clocks and visibility survive", async () => {
+  const f = await componentAssemblyFixture();
+  const p = new StateDelivery(f.loader);
+  await p.set(f.c, f.source, f.library, f.read);
+  p.selectMode("physical-motion");
+  assert.throws(() => p.seekFamily("trap", 3), /independent source clocks/);
+  p.sampleSourceState(f.batch(0, [0, 0, 0]));
+  const snapshot = () =>
+    p.physical.children.map((root) => ({
+      visible: root.visible,
+      matrices: root.children.map((c) => c.children.map((m) => m.matrix.toArray())),
+    }));
+  const before = snapshot();
+  assert.throws(() => p.sampleSourceState(f.batch(1, [0, 3, 0])), /Overlapping component owners/);
+  assert.deepEqual(snapshot(), before);
+  p.sampleSourceState(f.batch(1, [99, 3, 0]));
+  const omitted = f.batch(2, [99, 4, 0]);
+  omitted.samples = omitted.samples.filter((s) => s.id === "owner1");
+  p.sampleSourceState(omitted);
+  p.selectMode("native-remainder");
+  assert.deepEqual([...p.remainderPhysicalRoots().keys()], ["owner0", "owner1"]);
+  const hide = f.batch(3, [99, 4, 0]);
+  hide.samples = hide.samples.filter((s) => s.id === "owner0");
+  hide.samples[0]!.visible = false;
+  p.sampleSourceState(hide);
+  assert.deepEqual([...p.remainderPhysicalRoots().keys()], ["owner1"]);
+  p.dispose();
+});
+
+test("component loading rejects unowned and ambiguous geometry; contracts reject changed ownership", async () => {
+  const f = await componentAssemblyFixture();
+  for (const mutate of [
+    (c: StateDeliveryContract) => {
+      const m = c.families[0]!.physical.motion!;
+      if (m.kind === "native-element-component-poses")
+        m.components[1]!.stages[0]!.node_frames[0]![0]!.node = "body";
+    },
+    (c: StateDeliveryContract) => {
+      const pairing = c.families[0]!.native_remainder![0]!.frames[0]!.physical;
+      if (typeof pairing === "object" && pairing.kind === "source-frame-components")
+        pairing.components.pop();
+    },
+    (c: StateDeliveryContract) => {
+      const pairing = c.families[0]!.native_remainder![0]!.frames[0]!.physical;
+      if (typeof pairing === "object") pairing.frame = 1;
+    },
+  ]) {
+    const c = structuredClone(f.c);
+    mutate(c);
+    const p = new StateDelivery(f.loader);
+    await assert.rejects(
+      p.set(c, f.source, f.library, f.read),
+      /identities|ownership|component pairing/,
+    );
+    p.dispose();
+  }
+  const p = new StateDelivery(() => ({
+    load: async (binding) => {
+      const g = f.template.clone(true);
+      g.children[0]!.name = binding.id;
+      const extra = g.children[0]!.clone();
+      extra.name = "unowned";
+      g.add(extra);
+      return g;
+    },
+    dispose() {},
+  }));
+  await assert.rejects(p.set(f.c, f.source, f.library, f.read), /Unowned physical component mesh/);
+  p.dispose();
+});
