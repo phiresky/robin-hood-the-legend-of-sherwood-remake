@@ -11,6 +11,42 @@ import {
   nativeRemainderFrame,
   type StateDeliveryContract,
 } from "../../shared/src/state-delivery.ts";
+
+/** A target clip's terminal pose must reproduce the pinned applied model mesh for mesh. */
+export function assertClipTerminalMatchesApplied(applied: THREE.Object3D, clip: THREE.Object3D) {
+  const meshes = (root: THREE.Object3D) => {
+    root.updateMatrixWorld(true);
+    const rows = new Map<string, THREE.Mesh>();
+    root.traverse((node) => {
+      if (!(node instanceof THREE.Mesh)) return;
+      if (!node.name || rows.has(node.name))
+        throw new Error("Target clip consistency requires uniquely named meshes");
+      rows.set(node.name, node);
+    });
+    return rows;
+  };
+  const a = meshes(applied),
+    b = meshes(clip);
+  if (!a.size || a.size !== b.size || [...a.keys()].some((name) => !b.has(name)))
+    throw new Error("Target clip meshes differ from the applied model");
+  for (const [name, mesh] of a) {
+    const other = b.get(name)!;
+    const scale = Math.max(1, ...mesh.matrixWorld.elements.map(Math.abs));
+    if (
+      mesh.matrixWorld.elements.some(
+        (v, i) => Math.abs(v - other.matrixWorld.elements[i]!) > 1e-5 * scale,
+      )
+    )
+      throw new Error(`Target clip terminal pose differs from the applied model: ${name}`);
+    const p = mesh.geometry.getAttribute("position"),
+      q = other.geometry.getAttribute("position");
+    if (!p || !q || p.count !== q.count || p.itemSize !== q.itemSize)
+      throw new Error(`Target clip geometry differs from the applied model: ${name}`);
+    for (let i = 0; i < p.count * p.itemSize; i++)
+      if (p.array[i] !== q.array[i])
+        throw new Error(`Target clip geometry differs from the applied model: ${name}`);
+  }
+}
 import { NativeStatePresentation, type NativeResourceReader } from "./native-state-presentation.ts";
 import type { MissionStateSource } from "./mission-state-layer.ts";
 import { SceneAssetLoader, captureLoadedStateAppearance } from "./scene-assets.ts";
@@ -35,6 +71,7 @@ export class StateDelivery {
   private clips = new Map<string, Partial<Record<"transition" | "final", StateAppearancePlayer>>>();
   private materialFrames = new Map<StateAppearancePlayer, StateMaterialFrames>();
   private selectedFamily: string | undefined;
+  private selectedEndpoint: "initial" | "applied" = "initial";
   private epoch = 0;
   private disposed = false;
   private cleanup: (() => void) | undefined;
@@ -75,6 +112,7 @@ export class StateDelivery {
     this.starts.clear();
     this.sourceClocks = undefined;
     this.selectedFamily = undefined;
+    this.selectedEndpoint = "initial";
     this.contract = undefined;
     this.currentMode = "native-art";
     this.cleanup?.();
@@ -139,6 +177,41 @@ export class StateDelivery {
           const state = index === 0 ? "initial" : index === 1 ? "applied" : `frame-${index - 2}`;
           for (const binding of physicalEndpointSources(endpoint)) {
             const motion = family.physical.motion;
+            if (motion?.kind === "native-element-clip" && index === 2) {
+              const asset = await loader.load(binding);
+              owned.add(asset);
+              if (!current()) return false;
+              const appearance = captureLoadedStateAppearance(asset);
+              if (!appearance) throw new Error("Target clip requires its pinned animated model");
+              if (appearance.clips.length !== 1 || appearance.clips[0]!.name !== motion.clip)
+                throw new Error("Target clip identity differs from model");
+              // Keys end exactly at the source terminal tick: the clip is never stretched or cut.
+              if (
+                appearance.clips[0]!.tracks.some(
+                  (track) => track.track.times.at(-1) !== family.body_terminal_tick,
+                )
+              )
+                throw new Error("Target clip keys differ from the source terminal tick");
+              const player = new StateAppearancePlayer(appearance, true);
+              this.clips.set(family.id, { transition: player });
+              player.select(motion.clip, {
+                mode: "clamp",
+                terminalTick: family.body_terminal_tick,
+              });
+              const clone = player.object;
+              if (binding.position) clone.position.add(new THREE.Vector3(...binding.position));
+              clone.userData = {
+                ...clone.userData,
+                family: family.id,
+                endpoint: state,
+                representation: "physical-endpoint",
+              };
+              groups[index]!.add(clone);
+              player.sampleExternalTick(family.body_terminal_tick);
+              assertClipTerminalMatchesApplied(groups[1]!, groups[index]!);
+              player.sampleExternalTick(0);
+              continue;
+            }
             const phase =
               motion?.kind === "native-patch-clips"
                 ? index === 2
@@ -271,6 +344,7 @@ export class StateDelivery {
       throw new Error("Selected family has no reviewed physical motion");
     if (!["initial", "applied"].includes(endpoint)) throw new Error("Unknown physical endpoint");
     this.selectedFamily = id;
+    this.selectedEndpoint = endpoint;
     for (const poses of this.nodePoses.values()) poses.reset();
     for (const phases of this.clips.values())
       for (const player of Object.values(phases)) {
@@ -405,6 +479,35 @@ export class StateDelivery {
       roots.set(selected.element_id, this.roots.get(family.id)!.applied);
     }
     return roots;
+  }
+  /** For a target clip family in 3D motion: "native" while its target still draws native frames. */
+  get elementClipPhase(): "native" | "physical" | undefined {
+    if (this.mode !== "physical-motion" || !this.selectedFamily) return undefined;
+    if (this.family(this.selectedFamily).physical.motion?.kind !== "native-element-clip")
+      return undefined;
+    const pose =
+      this.sourceClocks?.physicalPose(this.selectedFamily) ??
+      physicalPatchPose(this.contract!, this.selectedFamily, this.familyTick(this.selectedFamily));
+    return pose.native_element ? "native" : "physical";
+  }
+  /** Linked compiled transitions of the selected family and the endpoint shown in 3D, if any. */
+  get gameplayLink():
+    | { family: string; endpoint: "initial" | "applied" | "none"; transitions: string[] }
+    | undefined {
+    if (!this.contract || !this.selectedFamily) return undefined;
+    const family = this.family(this.selectedFamily);
+    return {
+      family: family.id,
+      endpoint:
+        this.mode === "physical-motion"
+          ? family.gameplay_transition_ids?.length
+            ? (this.sourceClocks?.gameplayEndpoint(family.id) ?? "none")
+            : this.motionEndpoint!
+          : this.mode === "physical-endpoint"
+            ? this.selectedEndpoint
+            : "none",
+      transitions: [...(family.gameplay_transition_ids ?? [])],
+    };
   }
   get motionEndpoint(): "initial" | "applied" | undefined {
     if (this.mode !== "physical-motion" || !this.selectedFamily) return undefined;

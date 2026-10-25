@@ -8,6 +8,7 @@ import {
   nativeLoopPreviewPeriod,
   nativePatchPreviewTerminal,
   nativePatchPreviewLoops,
+  nativeElementFrameStartTick,
   type NativePatchPreviewContract,
   stateDeliveryLoopsAfterTransition,
   type NativeLoopPreviewContract,
@@ -38,7 +39,13 @@ export default function StatePreview(props: {
     [status, setStatus] = createSignal(""),
     [mode, setMode] = createSignal<StatePreviewView>("art"),
     [tick, setTick] = createSignal(0),
-    [playing, setPlaying] = createSignal(false);
+    [playing, setPlaying] = createSignal(false),
+    [handoff, setHandoff] = createSignal<"native" | "physical" | "">(""),
+    [gameplay, setGameplay] = createSignal<ReturnType<EditorViewport["deliveredGameplayStatus"]>>({
+      transitions: [],
+      endpoint: "none",
+      verified: false,
+    });
   const [actorSource, setActorSource] = createSignal<MissionStateSource | null>(null),
     [actorId, setActorId] = createSignal(""),
     [actorEnabled, setActorEnabled] = createSignal(false),
@@ -240,6 +247,17 @@ export default function StatePreview(props: {
     lastMap = "",
     lastMission = "";
   const current = () => contract()?.families.find((f) => f.id === family());
+  /** The reviewed handoff of a target clip family: native frames before its first clip tick. */
+  const clipStart = () => {
+    const c = contract(),
+      motion = current()?.physical.motion;
+    if (!c || motion?.kind !== "native-element-clip") return undefined;
+    const element = c.native.elements.find((e) => e.id === motion.element_id)!;
+    return {
+      frame: motion.start_frame,
+      tick: nativeElementFrameStartTick(element.frames, motion.start_frame),
+    };
+  };
   const lastTick = () => {
     const patch = patchContract();
     if (patch) return nativePatchPreviewTerminal(patch);
@@ -422,6 +440,11 @@ export default function StatePreview(props: {
         ? props.viewport.nativeArtStatus()
         : props.viewport.deliveredStateStatus(family());
     if (!s.ready) return;
+    if (contract()) {
+      setHandoff(("handoff" in s ? s.handoff : undefined) ?? "");
+      const next = props.viewport.deliveredGameplayStatus();
+      if (JSON.stringify(next) !== JSON.stringify(gameplay())) setGameplay(next);
+    }
     setTick(loopContract() ? (s.tick ?? 0) % (lastTick() + 1) : Math.min(lastTick(), s.tick ?? 0));
     setPlaying(s.playing);
     if (
@@ -502,7 +525,13 @@ export default function StatePreview(props: {
   }
   return (
     <Show when={entries().length || status()}>
-      <section aria-label="State preview">
+      <section
+        aria-label="State preview"
+        data-state-handoff={handoff()}
+        data-gameplay-transitions={gameplay().transitions.join(" ")}
+        data-gameplay-endpoint={gameplay().endpoint}
+        data-gameplay-verified={String(gameplay().verified)}
+      >
         <h3>State preview</h3>
         <Show when={status()}>
           <p role="status">{status()}</p>
@@ -552,6 +581,16 @@ export default function StatePreview(props: {
               Snapshot inspection only; this does not connect live gameplay. Select
               runtime-capture.json and its files. Reload the state to return to manual playback.
             </p>
+            <Show when={gameplay().transitions.length}>
+              <p class="hint">
+                Gameplay link: {gameplay().transitions.join(", ")}.{" "}
+                {gameplay().verified
+                  ? gameplay().endpoint === "none"
+                    ? "Choose a 3D view to show its sight obstacles."
+                    : `Obstacles shows its ${gameplay().endpoint} sight obstacles.`
+                  : gameplay().error}
+              </p>
+            </Show>
             <Show when={recorded()}>
               <p class="hint">{captureAuthority()}</p>
               <p role="status">{captureStatus()}</p>
@@ -773,6 +812,12 @@ export default function StatePreview(props: {
               </Show>
             </select>
           </label>
+          <Show when={mode() === "motion" && clipStart()}>
+            <p class="hint">
+              Original artwork until frame {clipStart()!.frame} (tick {clipStart()!.tick}), then the
+              reviewed 3D motion.
+            </p>
+          </Show>
           <Show
             when={
               mode() !== "art" &&

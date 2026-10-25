@@ -33,6 +33,8 @@ import type { NativeStatePresentationContract } from "../../shared/src/native-st
 import {
   verifyStaticStateReplacements,
   verifyStaticReplacementRows,
+  verifyStateGameplayLinks,
+  type StateGameplayLink,
   type StaticStateReplacement,
   validateNativePatchPreview,
   validateNativeLoopPreview,
@@ -170,6 +172,7 @@ export class EditorViewport {
       bestEffort: true,
     });
     compiled.warnings.push(...prepared.warnings);
+    this.adoptCompiledGameplay(document, compiled);
     const transitions = compiled.descriptor.asset_geometry?.movement_transitions ?? [];
     bindBakeAppearances(root, document, assets ?? new Map(), transitions, (message) => {
       if (!compiled.warnings.includes(message)) compiled.warnings.push(message);
@@ -229,6 +232,7 @@ export class EditorViewport {
       : compileMap(document, bounds, assets ? prepared.assets : assets, { bestEffort: true });
     compiled.warnings.push(...prepared.warnings);
     checkCurrent();
+    this.adoptCompiledGameplay(document, compiled);
     const transitions = compiled.descriptor.asset_geometry?.movement_transitions ?? [];
     bindBakeAppearances(root, document, assets ?? new Map(), transitions, (message) => {
       if (!compiled.warnings.includes(message)) compiled.warnings.push(message);
@@ -939,6 +943,110 @@ export class EditorViewport {
   private deliveryStaticContract: StateDeliveryContract | undefined;
   private deliveryEntitiesVisible = true;
   private refinedMissionTargets = new Set<number>();
+  /** Gameplay of the last compiled export; links are verified only against the same document. */
+  private compiledGameplay:
+    | {
+        document: Level3D;
+        geometry: NonNullable<CompiledMap["descriptor"]["asset_geometry"]> | undefined;
+        warnings: string[];
+      }
+    | undefined;
+  private deliveredGameplayLinks: StateGameplayLink[] | undefined;
+  private deliveredGameplayError: string | undefined;
+  private gameplayOverlayKey = "";
+  private adoptCompiledGameplay(document: Level3D, compiled: CompiledMap) {
+    this.compiledGameplay = {
+      document,
+      geometry: compiled.descriptor.asset_geometry,
+      warnings: [...compiled.warnings],
+    };
+    this.verifyDeliveredGameplay();
+  }
+  private verifyDeliveredGameplay() {
+    this.deliveredGameplayLinks = undefined;
+    this.deliveredGameplayError = undefined;
+    const contract = this.deliveryStaticContract;
+    const compiled = this.compiledGameplay;
+    if (!contract?.families.some((f) => f.gameplay_transition_ids?.length)) {
+      // No linked family: nothing to verify.
+    } else if (!compiled || compiled.document !== this.bindings.document()) {
+      this.deliveredGameplayError =
+        "Gameplay link unverified: export the current map to compile its transitions";
+    } else {
+      try {
+        this.deliveredGameplayLinks = verifyStateGameplayLinks(
+          contract,
+          compiled.geometry,
+          compiled.warnings,
+        );
+      } catch (error) {
+        this.deliveredGameplayError = String(error);
+        this.bindings.onError?.(String(error));
+      }
+    }
+    this.syncGameplayOverlay();
+  }
+  /** Linked compiled transitions of the selected state family; verified only for the shown map. */
+  deliveredGameplayStatus(): {
+    transitions: string[];
+    endpoint: "initial" | "applied" | "none";
+    verified: boolean;
+    error?: string;
+  } {
+    const link = this.stateDelivery.ready ? this.stateDelivery.gameplayLink : undefined;
+    if (!link?.transitions.length) return { transitions: [], endpoint: "none", verified: false };
+    const verified =
+      !!this.deliveredGameplayLinks && this.compiledGameplay?.document === this.bindings.document();
+    return {
+      transitions: link.transitions,
+      endpoint: link.endpoint,
+      verified,
+      ...(verified
+        ? {}
+        : {
+            error:
+              this.deliveredGameplayError ??
+              "Gameplay link unverified: the map changed after its last export",
+          }),
+    };
+  }
+  private syncGameplayOverlay() {
+    const status = this.deliveredGameplayStatus();
+    const key = JSON.stringify([status, this.stateDelivery.gameplayLink?.family]);
+    if (key === this.gameplayOverlayKey) return;
+    this.gameplayOverlayKey = key;
+    if (this.bindings.showObstacles()) this.buildOverlays();
+  }
+  /** Compiled sight obstacles of the shown gameplay endpoint, drawn even for hidden parts. */
+  private gameplayOverlayPoints(d: Level3D): number[] {
+    const status = this.deliveredGameplayStatus();
+    const family = this.stateDelivery.ready ? this.stateDelivery.gameplayLink?.family : undefined;
+    const sight = this.compiledGameplay?.geometry?.sight_obstacles;
+    if (!status.verified || status.endpoint === "none" || !family || !sight) return [];
+    const pts: number[] = [];
+    for (const link of this.deliveredGameplayLinks!.filter((l) => l.family === family))
+      for (const index of link[status.endpoint === "initial" ? "initial_sight" : "applied_sight"]) {
+        const points = sight[index]!.points;
+        for (let i = 0; i < points.length; i++) {
+          const a = points[i]!,
+            b = points[(i + 1) % points.length]!;
+          for (const [p, q] of [
+            [gameToScene(d.camera, a.x, a.y, a.z_top), gameToScene(d.camera, b.x, b.y, b.z_top)],
+            [gameToScene(d.camera, a.x, a.y, a.z_bottom), gameToScene(d.camera, a.x, a.y, a.z_top)],
+          ] as [Vec3, Vec3][])
+            pts.push(p[0], p[1], p[2], q[0], q[1], q[2]);
+        }
+      }
+    return pts;
+  }
+  /** A target clip family in 3D motion draws native frames on the artwork surface until its clip starts. */
+  private syncDeliveredHandoff() {
+    if (!this.stateDelivery.ready || this.stateDelivery.mode !== "physical-motion") return;
+    const native = this.stateDelivery.elementClipPhase === "native";
+    if (native && !this.nativeSurface) this.openNativeSurface();
+    else if (!native && this.nativeSurface) this.closeNativeSurface();
+    this.nativeSurface?.update(this.deliveredNativePixels());
+  }
   private get currentNativeArt() {
     return this.stateDelivery.ready ? this.stateDelivery.native : this.nativeArt;
   }
@@ -953,7 +1061,9 @@ export class EditorViewport {
     if (
       this.entities.missionName === this.deliveryMission &&
       this.stateDelivery.physical.visible &&
-      this.deliveryFamily
+      this.deliveryFamily &&
+      // A target clip hides its source target only once the clip owns the target.
+      this.stateDelivery.elementClipPhase !== "native"
     )
       for (const index of this.deliveryFamilies.get(this.deliveryFamily) ?? []) indices.add(index);
     this.entities.setRefinedTargets(this.entities.missionName, indices);
@@ -1084,6 +1194,7 @@ export class EditorViewport {
       if (!loaded) return false;
       validatePlacements();
       this.deliveryStaticContract = frozen;
+      this.verifyDeliveredGameplay();
       this.deliveryEndpoint = "initial";
       this.deliveryMission = frozen.native.mission;
       this.deliveryFamilies = new Map(
@@ -1152,6 +1263,9 @@ export class EditorViewport {
     this.deliveryMission = "";
     this.deliveryFamilies.clear();
     this.deliveryStaticContract = undefined;
+    this.deliveredGameplayLinks = undefined;
+    this.deliveredGameplayError = undefined;
+    this.syncGameplayOverlay();
     this.deliveryEndpoint = "initial";
     this.deliveryFamily = undefined;
     this.syncRefinedMissionTargets();
@@ -1177,7 +1291,9 @@ export class EditorViewport {
     this.deliveryEndpoint = endpoint;
     if (this.aperturePreview?.handles(family))
       this.aperturePreview.selectEndpoint(family, endpoint);
+    this.syncDeliveredHandoff();
     this.syncRefinedMissionTargets();
+    this.syncGameplayOverlay();
     this.clippingBoundsDirty = true;
   }
   sampleDeliveredSourceState(batch: StateClockBatch) {
@@ -1199,6 +1315,8 @@ export class EditorViewport {
     this.nativeSurface?.update(this.deliveredNativePixels());
   }
   private syncDeliveredMotionPose() {
+    this.syncDeliveredHandoff();
+    this.syncGameplayOverlay();
     const endpoint = this.stateDelivery.motionEndpoint;
     if (!endpoint) return;
     this.deliveryEndpoint = endpoint;
@@ -1217,6 +1335,9 @@ export class EditorViewport {
       ready,
       tick: ready ? this.stateDelivery.familyTick(family) : undefined,
       playing: ready && this.stateDelivery.native.isPlaying,
+      ...(ready && this.stateDelivery.elementClipPhase
+        ? { handoff: this.stateDelivery.elementClipPhase }
+        : {}),
     };
   }
   private readonly loopClocks = new SourceContractClockBinding();
@@ -1405,13 +1526,7 @@ export class EditorViewport {
       this.stateDelivery.physical.visible = false;
       this.deliveryEndpointActive = false;
       this.syncRefinedMissionTargets();
-      this.nativeSurface?.dispose();
-      this.nativeSurface = undefined;
-      if (this.nativeControlState) {
-        if (this.orbit) this.orbit.enabled = this.nativeControlState.orbit;
-        if (this.gizmo) this.gizmo.enabled = this.nativeControlState.gizmo;
-        this.nativeControlState = undefined;
-      }
+      this.closeNativeSurface();
       return;
     }
     if (mode !== "native-art") throw new Error("Unknown state presentation mode");
@@ -1421,6 +1536,20 @@ export class EditorViewport {
     this.deliveryEndpointActive = false;
     this.syncRefinedMissionTargets();
     if (this.nativeSurface) return;
+    this.openNativeSurface();
+  }
+  private closeNativeSurface() {
+    this.nativeSurface?.dispose();
+    this.nativeSurface = undefined;
+    if (this.nativeControlState) {
+      if (this.orbit) this.orbit.enabled = this.nativeControlState.orbit;
+      if (this.gizmo) this.gizmo.enabled = this.nativeControlState.gizmo;
+      this.nativeControlState = undefined;
+    }
+  }
+  private openNativeSurface() {
+    if (this.disposed || !this.container || !this.currentNativeArt.ready)
+      throw new Error("Native artwork preview is not ready");
     this.cancelPointerGesture?.();
     this.cancelMissionDrag?.();
     this.nativeControlState = {
@@ -2109,6 +2238,16 @@ export class EditorViewport {
           this.clippingBoundsDirty = true;
           this.nativeSurface?.update(this.nativePreviewPixels());
         }
+      }
+      if (
+        this.nativeSurface &&
+        !this.actorPreview &&
+        this.stateDelivery.ready &&
+        this.stateDelivery.mode === "physical-motion"
+      ) {
+        // Target clip handoff: the source clock decides when the clip replaces native frames.
+        if (this.stateDelivery.advance(elapsed)) this.syncDeliveredMotionPose();
+        return;
       }
       const actorAdvanced =
         !!this.actorPreview && !this.loopClocks.ready && this.currentNativeArt.advance(elapsed);
@@ -3367,6 +3506,17 @@ export class EditorViewport {
           }),
         ),
       );
+      const linked = this.gameplayOverlayPoints(d);
+      if (linked.length) {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.Float32BufferAttribute(linked, 3));
+        const lines = new THREE.LineSegments(
+          geometry,
+          new THREE.LineBasicMaterial({ color: 0xffa030, depthTest: false }),
+        );
+        lines.name = "linked gameplay transition sight";
+        this.overlayRoot.add(lines);
+      }
     }
     const lvl = this.bindings.level();
     if (this.bindings.showElevation()) {

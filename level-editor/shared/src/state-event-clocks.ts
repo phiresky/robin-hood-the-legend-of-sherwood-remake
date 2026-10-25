@@ -171,9 +171,12 @@ export class StateEventClocks {
     const motion = family.physical.motion;
     if (motion?.kind === "native-element-stage-poses")
       return this.stagedPose(familyId, this.clocks).visible !== false;
-    if (motion?.kind !== "native-element-node-poses") return true;
+    if (motion?.kind !== "native-element-node-poses" && motion?.kind !== "native-element-clip")
+      return true;
     const owner = this.sample("element", motion.element_id);
-    return owner?.kind !== "element" || owner.visible !== false;
+    if (owner?.kind === "element" && owner.visible === false) return false;
+    // A target clip shows nothing physical while its owner still draws native frames.
+    return motion.kind !== "native-element-clip" || !this.physicalPose(familyId).native_element;
   }
 
   private stagedPose(familyId: string, clocks: Map<string, StateClockSample>) {
@@ -188,6 +191,22 @@ export class StateEventClocks {
           : [];
       }),
     );
+  }
+
+  /** Sight obstacles change on the receiver's applied event, independently of its visual target. */
+  gameplayEndpoint(familyId: string): "initial" | "applied" | undefined {
+    const family = this.contract.families.find((f) => f.id === familyId);
+    if (!family) throw new Error(`Unknown state family: ${familyId}`);
+    const receivers = [
+      ...family.background_ids.map((id) => this.sample("background", id)),
+      ...(family.patch_ids ?? []).map((id) => this.sample("patch", id)),
+    ];
+    if (!receivers.length || receivers.some((s) => !s || s.kind === "element")) return undefined;
+    const endpoints = receivers.map((s) => {
+      if (!s || s.kind === "element") throw new Error("Missing gameplay receiver clock");
+      return s.phase === "applied" || s.phase === "reverse" ? "applied" : "initial";
+    });
+    return endpoints.every((e) => e === endpoints[0]) ? endpoints[0] : undefined;
   }
 
   physicalPose(familyId: string): ReturnType<typeof physicalPatchPose> {
@@ -209,7 +228,10 @@ export class StateEventClocks {
     if (!f) throw new Error(`Unknown state family: ${familyId}`);
     if (!f.physical.motion || f.physical.motion.kind === "native-element-stage-poses")
       return undefined;
-    if (f.physical.motion.kind === "native-element-node-poses") {
+    if (
+      f.physical.motion.kind === "native-element-node-poses" ||
+      f.physical.motion.kind === "native-element-clip"
+    ) {
       const element = this.sample("element", f.physical.motion.element_id);
       return element?.kind === "element" && element.active ? element.tick : undefined;
     }

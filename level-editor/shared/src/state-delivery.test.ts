@@ -7,6 +7,10 @@ import {
   validateNativeLoopPreview,
   nativeLoopPreviewPeriod,
   nativeRemainderFrame,
+  physicalPatchPose,
+  physicalFamilyEndpoints,
+  nativeElementFrameStartTick,
+  verifyStateGameplayLinks,
   type StateDeliveryContract,
 } from "./state-delivery.ts";
 
@@ -611,4 +615,260 @@ test("native remainder selection returns only bound source frames", () => {
   assert.deepEqual(nativeRemainderFrame(c.families[0]!, "body", 1)?.mask, mask);
   delete c.families[0]!.native_remainder;
   assert.equal(nativeRemainderFrame(c.families[0]!, "body", 1), undefined);
+});
+
+/** One target with four 3-tick frames: native frames 0..1 (ticks 0..5), clip from frame 2 (tick 6). */
+export function elementClipFixture(): StateDeliveryContract {
+  const c = deliveryFixture();
+  const element = c.native.elements[0]!;
+  element.frames = [0, 1, 2, 3].map(() => ({ ...element.frames[0]! }));
+  const family = c.families[0]!;
+  family.body_terminal_tick = 9;
+  const applied = (family.physical.applied as { position?: number[] }[])[0]!;
+  applied.position = [1, 2, 3];
+  family.physical.motion = {
+    kind: "native-element-clip",
+    element_id: "body",
+    source_motion_sha256: "b".repeat(64),
+    start_frame: 2,
+    binding: {
+      id: "clip",
+      role: "objects",
+      model: "clip.glb",
+      model_sha256: "c".repeat(64),
+      resources: [],
+      position: [1, 2, 3],
+    },
+    clip: "fall",
+    duration_ticks: 3,
+  };
+  return c;
+}
+
+test("target clip keeps native frames until its start frame, then samples the clip on the target clock", () => {
+  const c = elementClipFixture();
+  validateStateDelivery(c);
+  assert.equal(nativeElementFrameStartTick(c.native.elements[0]!.frames, 2), 6);
+  const endpoints = physicalFamilyEndpoints(c.families[0]!);
+  assert.equal(endpoints.length, 3);
+  assert.deepEqual(
+    physicalEndpointSources(endpoints[2]!).map((s) => s.id),
+    ["clip"],
+  );
+  assert.deepEqual(physicalPatchPose(c, "trap"), { endpoint: "initial", translation: [0, 0, 0] });
+  for (const tick of [0, 3, 5])
+    assert.deepEqual(physicalPatchPose(c, "trap", tick), {
+      endpoint: "applied",
+      translation: [0, 0, 0],
+      visible: false,
+      native_element: true,
+    });
+  for (const tick of [6, 7, 8])
+    assert.deepEqual(physicalPatchPose(c, "trap", tick), {
+      endpoint: "applied",
+      translation: [0, 0, 0],
+      model_frame: 0,
+      clip_phase: "transition",
+      clip_tick: tick,
+    });
+  for (const tick of [9, 40])
+    assert.deepEqual(physicalPatchPose(c, "trap", tick), {
+      endpoint: "applied",
+      translation: [0, 0, 0],
+    });
+});
+
+test("target clip validation is exact about keys, start frame, timing, placement and owner", () => {
+  type Clip = Extract<
+    NonNullable<StateDeliveryContract["families"][number]["physical"]["motion"]>,
+    { kind: "native-element-clip" }
+  >;
+  const reject = (edit: (c: StateDeliveryContract, m: Clip) => void, message: RegExp) => {
+    const c = elementClipFixture();
+    edit(c, c.families[0]!.physical.motion as Clip);
+    assert.throws(() => validateStateDelivery(c), message);
+  };
+  reject((_, m) => Object.assign(m, { clip_start_tick: 6 }), /target clip binding/);
+  reject((_, m) => delete (m as Partial<Clip>).duration_ticks, /target clip binding/);
+  reject((_, m) => (m.source_motion_sha256 = "x"), /target clip binding/);
+  reject((_, m) => (m.element_id = "other"), /target clip binding/);
+  reject((c) => (c.families[0]!.patch_ids = ["p"]), /target clip binding|patch state/);
+  reject((c) => (c.native.elements[0]!.loop = true), /transition element/);
+  reject((c) => (c.families[0]!.physical.applied = { kind: "absent" }), /target clip binding/);
+  for (const start of [0, 4, 1.5, -1])
+    reject((c, m) => {
+      m.start_frame = start;
+      m.duration_ticks = 9 - 3 * Math.trunc(start);
+    }, /start frame/);
+  reject((_, m) => (m.duration_ticks = 4), /timing differs/);
+  reject((_, m) => (m.duration_ticks = 0), /timing differs/);
+  reject((_, m) => (m.clip = " "), /clip name/);
+  reject((_, m) => (m.binding.id = "applied"), /placement differs/);
+  reject((_, m) => (m.binding.position = [1, 2, 4]), /placement differs/);
+  reject((_, m) => delete m.binding.position, /placement differs/);
+  reject((_, m) => (m.binding.role = "ground"), /placement differs/);
+  reject((_, m) => (m.binding.model_sha256 = "short"), /physical source/);
+  reject(
+    (c) =>
+      (c.families[0]!.native_remainder = [
+        {
+          element_id: "body",
+          encoding: "source-domain-v1",
+          drawn_values: [2],
+          priority: "remainder-over-physical",
+          frames: [null, null, null, null],
+        },
+      ]),
+    /static physical pairing/,
+  );
+});
+
+function linkFixture() {
+  const c = deliveryFixture();
+  const frame = c.native.elements[0]!.frames[0]!;
+  c.native.background_states = [
+    {
+      id: "receiver",
+      source: { kind: "mission-patch", index: 0, sha256: "b".repeat(64) },
+      display_position: [0, 0],
+      restore_bounds: [0, 0, 1, 1],
+      definitive: true,
+      initial: [],
+      transition: [frame],
+      final: [],
+      initial_loop: false,
+      final_loop: false,
+    },
+  ];
+  c.families[0]!.background_ids = ["receiver"];
+  c.families[0]!.gameplay_transition_ids = ["west/west/movement-change-6"];
+  const compiled = {
+    movement_transitions: [
+      { id: "west/west/movement-change-6", definitive: true, initial_sight: [1] },
+      { id: "central/central/movement-change-5", definitive: true, initial_sight: [0] },
+    ],
+    sight_obstacles: [{}, {}],
+  };
+  return { c, compiled };
+}
+
+test("gameplay transition links are well formed, unique across families and bound to a state", () => {
+  const { c } = linkFixture();
+  validateStateDelivery(c);
+  const reject = (edit: (c: StateDeliveryContract) => void, message: RegExp) => {
+    const bad = structuredClone(c);
+    edit(bad);
+    assert.throws(() => validateStateDelivery(bad), message);
+  };
+  for (const ids of [[], [""], ["no-slash"], ["a/"], ["/a"], ["a//b"], ["a/b", "a/b"], [7]])
+    reject(
+      (bad) => (bad.families[0]!.gameplay_transition_ids = ids as string[]),
+      /invalid gameplay transition links/,
+    );
+  reject(
+    (bad) => (bad.families[0]!.gameplay_transition_ids = "a/b" as unknown as string[]),
+    /invalid gameplay transition links/,
+  );
+  reject((bad) => (bad.families[0]!.background_ids = []), /require a bound background/);
+  reject((bad) => {
+    const e = bad.native.elements[0]!;
+    bad.native.elements.push({
+      ...e,
+      id: "other",
+      source: { ...e.source, index: 1, sha256: "c".repeat(64) },
+      creation_order: 1,
+      display_order: 1,
+    });
+    const r = bad.native.background_states![0]!;
+    bad.native.background_states!.push({
+      ...r,
+      id: "r2",
+      source: { ...r.source, index: 1, sha256: "d".repeat(64) },
+      display_position: [5, 5],
+      restore_bounds: [5, 5, 1, 1],
+    });
+    bad.families.push({
+      ...structuredClone(bad.families[0]!),
+      id: "other",
+      element_ids: ["other"],
+      background_ids: ["r2"],
+    });
+  }, /linked by two families/);
+});
+
+test("gameplay links resolve to one compiled, retained transition of the same permanence", () => {
+  const { c, compiled } = linkFixture();
+  assert.deepEqual(verifyStateGameplayLinks(c, compiled, []), [
+    {
+      family: "trap",
+      transition_id: "west/west/movement-change-6",
+      definitive: true,
+      initial_sight: [1],
+      applied_sight: [],
+    },
+  ]);
+  assert.deepEqual(verifyStateGameplayLinks(deliveryFixture(), undefined, []), []);
+  assert.throws(() => verifyStateGameplayLinks(c, undefined, []), /requires compiled/);
+  assert.throws(
+    () => verifyStateGameplayLinks(c, { movement_transitions: compiled.movement_transitions }, []),
+    /requires compiled/,
+  );
+  assert.throws(
+    () => verifyStateGameplayLinks(c, { ...compiled, movement_transitions: [] }, []),
+    /does not resolve/,
+  );
+  const aliased = structuredClone(compiled);
+  aliased.movement_transitions.push({
+    id: "copy",
+    aliases: ["west/west/movement-change-6"],
+  } as never);
+  assert.throws(() => verifyStateGameplayLinks(c, aliased, []), /does not resolve/);
+  const renamed = structuredClone(compiled);
+  renamed.movement_transitions[0]!.id = "canonical/id";
+  Object.assign(renamed.movement_transitions[0]!, { aliases: ["west/west/movement-change-6"] });
+  assert.equal(verifyStateGameplayLinks(c, renamed, [])[0]!.transition_id, "canonical/id");
+  assert.throws(
+    () =>
+      verifyStateGameplayLinks(c, compiled, [
+        "Transition west/west/movement-change-6: control omitted; retained its initial state; x",
+      ]),
+    /omitted/,
+  );
+  const temporary = structuredClone(compiled);
+  temporary.movement_transitions[0]!.definitive = false;
+  assert.throws(() => verifyStateGameplayLinks(c, temporary, []), /permanence/);
+  const outside = structuredClone(compiled);
+  outside.movement_transitions[0]!.initial_sight = [2];
+  assert.throws(() => verifyStateGameplayLinks(c, outside, []), /outside the compiled map/);
+});
+
+test("contracts without the new fields keep their validation and poses unchanged", () => {
+  const plain = deliveryFixture();
+  const before = JSON.stringify(plain);
+  validateStateDelivery(plain);
+  assert.equal(JSON.stringify(plain), before);
+  assert.deepEqual(physicalFamilyEndpoints(plain.families[0]!).length, 2);
+  // Unknown family keys stay ignored exactly as before; only the declared new fields are checked.
+  const unknown = structuredClone(plain);
+  Object.assign(unknown.families[0]!, { gameplay_transition_id: "bogus" });
+  validateStateDelivery(unknown);
+  const nodes = deliveryFixture();
+  nodes.families[0]!.physical.motion = {
+    kind: "native-element-node-poses",
+    element_id: "body",
+    source_motion_sha256: "b".repeat(64),
+    node_frames: [0, 1].map(() => [
+      { node: "n", matrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
+    ]),
+  };
+  validateStateDelivery(nodes);
+  assert.deepEqual(
+    [undefined, 0, 2, 3].map((t) => physicalPatchPose(nodes, "trap", t)),
+    [
+      { endpoint: "initial", translation: [0, 0, 0] },
+      { endpoint: "applied", translation: [0, 0, 0], node_frame: 0 },
+      { endpoint: "applied", translation: [0, 0, 0], node_frame: 0 },
+      { endpoint: "applied", translation: [0, 0, 0] },
+    ],
+  );
 });

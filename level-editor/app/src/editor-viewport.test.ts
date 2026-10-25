@@ -2130,3 +2130,180 @@ test("candidate GPU preparation uses final display sampling and cancels on viewp
   asset.material.dispose();
   assert.equal(resourceDisposals, 1);
 });
+
+test("target clip motion shows native artwork until its start tick and links its gameplay transition", async () => {
+  const boulder = () => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+    mesh.name = "boulder";
+    return mesh;
+  };
+  const applied = new THREE.Group();
+  applied.add(boulder());
+  const animated = new THREE.Group();
+  animated.add(boulder());
+  animated.animations = [
+    new THREE.AnimationClip("fall", -1, [
+      new THREE.VectorKeyframeTrack("boulder.position", [0, 9 / 25], [5, 0, 0, 0, 0, 0]),
+    ]),
+  ];
+  const f = await deliveredFixture((async (binding: { id: string }) =>
+    binding.id === "clip" ? animated : applied) as unknown as () => Promise<THREE.Object3D>);
+  const { missionStateDataHash } = await import("./mission-state-layer.ts");
+  const native = f.contract.native;
+  const element = native.elements[0]!;
+  element.frames = [0, 1, 2, 3].map(() => ({ ...element.frames[0]! }));
+  const patchRow = {
+    integrate_in_background: true,
+    definitive: true,
+    start_animation_valid: false,
+    transition_animation_valid: true,
+    end_animation_valid: false,
+    element_fx: {
+      sprite: { position_x: 0, position_y: 0, elevation: 0, profile_name: "receiver" },
+      active: true,
+      display_polyline: [],
+    },
+  };
+  (f.source.data as { mission_patches?: unknown[] }).mission_patches = [patchRow];
+  native.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  native.background_states = [
+    {
+      id: "receiver",
+      source: { kind: "mission-patch", index: 0, sha256: await missionStateDataHash(patchRow) },
+      display_position: [0, 0],
+      restore_bounds: [0, 0, 1, 1],
+      definitive: true,
+      initial: [],
+      transition: [element.frames[0]!],
+      final: [],
+      initial_loop: false,
+      final_loop: false,
+    },
+  ];
+  const family = f.contract.families[0]!;
+  const link = "west/west/movement-change-6";
+  Object.assign(family, {
+    body_terminal_tick: 9,
+    background_ids: ["receiver"],
+    gameplay_transition_ids: [link],
+  });
+  family.physical.motion = {
+    kind: "native-element-clip",
+    element_id: "target",
+    source_motion_sha256: "b".repeat(64),
+    start_frame: 2,
+    binding: { ...(family.physical.applied as never[])[0]!, id: "clip", model: "clip.glb" },
+    clip: "fall",
+    duration_ticks: 3,
+  };
+  let opened = 0,
+    closed = 0;
+  const internal = f.viewport as unknown as {
+    nativeSurface: unknown;
+    openNativeSurface(): void;
+    adoptCompiledGameplay(document: unknown, compiled: unknown): void;
+  };
+  internal.openNativeSurface = () => {
+    opened++;
+    internal.nativeSurface = { update() {}, dispose: () => closed++, setActorPreview() {} };
+  };
+  assert.equal(await f.viewport.setStateDelivery(f.contract, f.library, f.source), true);
+  assert.deepEqual(f.viewport.deliveredGameplayStatus(), {
+    transitions: [link],
+    endpoint: "none",
+    verified: false,
+    error: "Gameplay link unverified: export the current map to compile its transitions",
+  });
+  f.viewport.setDeliveredStateMode("physical-motion");
+  assert.equal(opened, 0);
+  assert.equal(f.legacy.visible, false);
+  assert.equal(f.viewport.deliveredStateStatus("trap").handoff, "physical");
+  f.viewport.seekDeliveredState("trap", 3);
+  assert.equal(opened, 1);
+  assert.equal(f.viewport.deliveredStateStatus("trap").handoff, "native");
+  // The source target is not suppressed while it still draws its own frames.
+  assert.equal(f.legacy.visible, true);
+  f.viewport.seekDeliveredState("trap", 5);
+  assert.equal(opened, 1);
+  f.viewport.seekDeliveredState("trap", 6);
+  assert.equal(closed, 1);
+  assert.equal(f.viewport.deliveredStateStatus("trap").handoff, "physical");
+  assert.equal(f.legacy.visible, false);
+  assert.equal(f.delivery.physical.children[2]!.visible, true);
+  const compiled = (definitive: boolean, warnings: string[] = []) => ({
+    descriptor: {
+      asset_geometry: {
+        movement_transitions: [{ id: link, definitive, initial_sight: [0] }],
+        sight_obstacles: [{ points: [0, 1, 2].map((x) => ({ x, y: x, z_bottom: 0, z_top: 10 })) }],
+      },
+    },
+    warnings,
+  });
+  internal.adoptCompiledGameplay(null, compiled(true));
+  assert.deepEqual(f.viewport.deliveredGameplayStatus(), {
+    transitions: [link],
+    endpoint: "none",
+    verified: true,
+  });
+  // A visual seek has no authority to assert a receiver's obstacle state.
+  await f.viewport.setStateDelivery(f.contract, f.library, f.source);
+  f.viewport.setDeliveredStateMode("physical-motion");
+  let sequence = 0;
+  const sample = (samples: import("../../shared/src/state-event-clocks.ts").StateClockSample[]) =>
+    f.delivery.sampleSourceState({
+      mission: native.mission,
+      mission_data_sha256: native.mission_data_sha256,
+      level_data_sha256: native.level_data_sha256,
+      sequence: sequence++,
+      simulation_tick: sequence,
+      samples,
+    });
+  const receiver = (phase: "initial" | "forward" | "applied") =>
+    sample([
+      {
+        kind: "background",
+        id: "receiver",
+        source: native.background_states![0]!.source,
+        phase,
+        tick: 0,
+      },
+    ]);
+  const owner = (tick: number) =>
+    sample([
+      {
+        kind: "element",
+        id: element.id,
+        source: element.source,
+        active: true,
+        tick,
+      },
+    ]);
+  receiver("initial");
+  owner(3);
+  assert.equal(f.viewport.deliveredGameplayStatus().endpoint, "initial");
+  assert.equal(f.delivery.elementClipPhase, "native");
+  receiver("forward");
+  owner(7);
+  assert.equal(f.viewport.deliveredGameplayStatus().endpoint, "initial");
+  assert.equal(f.delivery.elementClipPhase, "physical");
+  receiver("applied");
+  assert.equal(f.viewport.deliveredGameplayStatus().endpoint, "applied");
+  owner(0);
+  assert.equal(f.viewport.deliveredGameplayStatus().endpoint, "applied");
+  receiver("initial");
+  assert.equal(f.viewport.deliveredGameplayStatus().endpoint, "initial");
+  internal.adoptCompiledGameplay(null, compiled(false));
+  assert.match(f.viewport.deliveredGameplayStatus().error!, /permanence/);
+  internal.adoptCompiledGameplay(
+    null,
+    compiled(true, [`Transition ${link}: control omitted; retained its initial state; x`]),
+  );
+  assert.match(f.viewport.deliveredGameplayStatus().error!, /omitted/);
+  f.viewport.clearStateDelivery();
+  assert.deepEqual(f.viewport.deliveredGameplayStatus(), {
+    transitions: [],
+    endpoint: "none",
+    verified: false,
+  });
+  f.viewport.dispose();
+});

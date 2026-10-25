@@ -1320,3 +1320,149 @@ test("native remainder masks are hash pinned grey source-domain maps matching so
   }
   a.dispose();
 });
+
+async function elementClipFixture() {
+  const f = await fixture();
+  const element = f.contract.native.elements[0]!;
+  element.frames = [0, 1, 2, 3].map(() => ({ ...element.frames[0]! }));
+  const family = f.contract.families[0]!;
+  family.body_terminal_tick = 9;
+  const applied = (family.physical.applied as { id: string; position?: number[] }[])[0]!;
+  applied.position = [10, 0, 0];
+  family.physical.motion = {
+    kind: "native-element-clip",
+    element_id: "body",
+    source_motion_sha256: "b".repeat(64),
+    start_frame: 2,
+    binding: { ...applied, id: "clip", model: "clip.glb" } as never,
+    clip: "fall",
+    duration_ticks: 3,
+  };
+  const mesh = () => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+    m.name = "boulder";
+    return m;
+  };
+  const appliedModel = new THREE.Group();
+  appliedModel.add(mesh());
+  appliedModel.children[0]!.position.set(2, 0, 0);
+  const clipModel = (end = 2, terminal = 9, name = "fall") => {
+    const root = new THREE.Group();
+    root.add(mesh());
+    root.animations = [
+      new THREE.AnimationClip(name, -1, [
+        new THREE.VectorKeyframeTrack(
+          "boulder.position",
+          [0, 6 / 25, terminal / 25],
+          [0, 0, 0, 1, 0, 0, end, 0, 0],
+        ),
+      ]),
+    ];
+    return root;
+  };
+  const delivery = (clip = clipModel(), appliedAsset: THREE.Object3D = appliedModel) =>
+    new StateDelivery(() => ({
+      load: async (binding: { id: string }) =>
+        binding.id === "clip" ? clip : binding.id === "applied" ? appliedAsset : f.template,
+      dispose() {},
+    }));
+  return { ...f, delivery, clipModel, appliedModel, mesh };
+}
+
+test("target clip shows native frames until the start tick, then the clip on the target clock", async () => {
+  const f = await elementClipFixture();
+  const p = f.delivery();
+  assert.equal(await p.set(f.contract, f.source, f.library, f.read), true);
+  const [initial, applied, clip] = p.physical.children as THREE.Group[];
+  const x = () => clip!.children[0]!.children[0]!.children[0]!.position.x;
+  const shown = () => [initial!.visible, applied!.visible, clip!.visible];
+  assert.equal(p.elementClipPhase, undefined);
+  p.selectMode("physical-motion");
+  assert.equal(p.elementClipPhase, "physical");
+  assert.deepEqual(shown(), [true, false, false]);
+  for (const tick of [0, 3, 5]) {
+    p.seekFamily("trap", tick);
+    assert.equal(p.elementClipPhase, "native");
+    assert.deepEqual(shown(), [false, false, false]);
+    assert.equal(p.motionEndpoint, "applied");
+  }
+  p.seekFamily("trap", 6);
+  assert.equal(p.elementClipPhase, "physical");
+  assert.deepEqual(shown(), [false, false, true]);
+  assert.ok(Math.abs(x() - 1) < 1e-6);
+  assert.equal(clip!.children[0]!.position.x, 10);
+  p.seekFamily("trap", 8);
+  assert.ok(Math.abs(x() - (1 + 2 / 3)) < 1e-6);
+  p.seekFamily("trap", 9);
+  assert.deepEqual(shown(), [false, true, false]);
+  p.reset("trap");
+  assert.deepEqual(shown(), [true, false, false]);
+  // Preview playback crosses the handoff exactly at the first clip tick.
+  p.activate("trap");
+  p.setPlaying(true);
+  p.advance(5 / 25);
+  assert.equal(p.familyTick("trap"), 5);
+  assert.equal(p.elementClipPhase, "native");
+  p.advance(1 / 25);
+  assert.equal(p.familyTick("trap"), 6);
+  assert.equal(p.elementClipPhase, "physical");
+  assert.deepEqual(shown(), [false, false, true]);
+  p.setPlaying(false);
+  // Endpoint views keep the static applied model and never expose the clip group.
+  p.selectMode("physical-endpoint");
+  p.selectEndpoint("trap", "applied");
+  assert.equal(p.elementClipPhase, undefined);
+  assert.deepEqual(shown(), [false, true, false]);
+  assert.deepEqual(p.gameplayLink, { family: "trap", endpoint: "applied", transitions: [] });
+  p.selectMode("native-art");
+  assert.deepEqual(p.gameplayLink, { family: "trap", endpoint: "none", transitions: [] });
+  p.dispose();
+});
+
+test("target clip source events keep native frames until the owner reaches the start tick", async () => {
+  const f = await elementClipFixture();
+  const p = f.delivery();
+  await p.set(f.contract, f.source, f.library, f.read);
+  p.selectMode("physical-motion");
+  const element = f.contract.native.elements[0]!;
+  const clip = p.physical.children[2]!;
+  let sequence = 0;
+  const owner = (tick: number) =>
+    p.sampleSourceState({
+      mission: f.contract.native.mission,
+      mission_data_sha256: f.contract.native.mission_data_sha256,
+      level_data_sha256: f.contract.native.level_data_sha256,
+      sequence: sequence++,
+      simulation_tick: sequence,
+      samples: [{ kind: "element", id: element.id, source: element.source, active: true, tick }],
+    });
+  owner(5);
+  assert.equal(p.elementClipPhase, "native");
+  assert.equal(clip.visible, false);
+  owner(7);
+  assert.equal(p.elementClipPhase, "physical");
+  assert.equal(clip.visible, true);
+  p.dispose();
+});
+
+test("target clip loading rejects a renamed, stretched or drifting clip before adoption", async () => {
+  const f = await elementClipFixture();
+  const rejects = async (delivery: StateDelivery, message: RegExp) => {
+    await assert.rejects(delivery.set(f.contract, f.source, f.library, f.read), message);
+    assert.equal(delivery.ready, false);
+    delivery.dispose();
+  };
+  await rejects(f.delivery(f.clipModel(2, 9, "other")), /identity differs/);
+  await rejects(f.delivery(f.clipModel(2, 10)), /terminal tick/);
+  await rejects(f.delivery(f.clipModel(2, 8)), /terminal tick/);
+  await rejects(f.delivery(f.clipModel(3)), /terminal pose differs/);
+  const plain = new THREE.Group();
+  plain.add(f.mesh());
+  await rejects(f.delivery(plain), /pinned animated model/);
+  const reshaped = f.appliedModel.clone(true);
+  (reshaped.children[0] as THREE.Mesh).geometry = new THREE.BoxGeometry(2, 1, 1);
+  await rejects(f.delivery(f.clipModel(), reshaped), /geometry differs/);
+  const renamed = f.appliedModel.clone(true);
+  renamed.children[0]!.name = "other";
+  await rejects(f.delivery(f.clipModel(), renamed), /meshes differ/);
+});

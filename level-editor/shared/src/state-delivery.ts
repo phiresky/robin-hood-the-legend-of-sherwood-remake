@@ -65,6 +65,30 @@ export interface PhysicalElementNodePoses {
   node_frames: ReviewedNodePose[][];
 }
 
+/** Native target frames until a reviewed start frame, then one pinned glTF clip on the target's own clock.
+ * The clip is sampled at the target's integer source tick without resampling. Its keys end at the
+ * family terminal tick, and its terminal pose must reproduce the separately pinned applied model.
+ */
+export interface PhysicalElementClip {
+  kind: "native-element-clip";
+  element_id: string;
+  source_motion_sha256: string;
+  /** First source frame drawn by the clip; every earlier frame keeps the native target artwork. */
+  start_frame: number;
+  binding: PhysicalStateBinding;
+  clip: string;
+  /** Ticks from the first tick of start_frame to body_terminal_tick. */
+  duration_ticks: number;
+}
+
+/** First source tick of a target frame: the summed frame durations before it. */
+export function nativeElementFrameStartTick(frames: readonly { delay: number }[], frame: number) {
+  return frames.slice(0, frame).reduce((ticks, f) => ticks + f.delay + 1, 0);
+}
+
+/** Compiled placed movement-transition ids are `<placement id>/<transition id>`. */
+const GAMEPLAY_TRANSITION_ID = /^[^/]+(\/[^/]+)+$/;
+
 /** One retained assembly handed between independently clocked source target stages. */
 export interface PhysicalElementStagePoses {
   kind: "native-element-stage-poses";
@@ -154,6 +178,11 @@ export interface StateDeliveryContract {
     background_ids: string[];
     patch_ids?: string[];
     hidden_initial_element_ids?: string[];
+    /** Compiled placed movement transitions that switch with this family: the initial endpoint is
+     * the not-applied transition state and the applied endpoint its applied state. Verified
+     * against a compiled map (verifyStateGameplayLinks), never inferred.
+     */
+    gameplay_transition_ids?: string[];
     /** Terminal entry of the last visible target; receiver completion retains its own clock. */
     body_terminal_tick: number;
     physical: {
@@ -165,7 +194,8 @@ export interface StateDeliveryContract {
         | PhysicalPatchNodePoses
         | PhysicalPatchModelFrames
         | PhysicalElementNodePoses
-        | PhysicalElementStagePoses;
+        | PhysicalElementStagePoses
+        | PhysicalElementClip;
     };
     static_replacements?: { initial: StaticStateReplacement[]; applied: StaticStateReplacement[] };
     native_remainder?: NativeRemainderBinding[];
@@ -186,7 +216,8 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
     fail("invalid contract");
   validateNativeStatePresentation(c.native);
   const families = new Set<string>(),
-    members = new Set<string>();
+    members = new Set<string>(),
+    links = new Set<string>();
   const hash = (v: unknown) => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
   for (const family of c.families) {
     if (
@@ -253,9 +284,26 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
         fail("invalid or shared background state");
       members.add(id);
     }
+    if (family.gameplay_transition_ids !== undefined) {
+      const ids = family.gameplay_transition_ids;
+      if (
+        !Array.isArray(ids) ||
+        !ids.length ||
+        ids.some((id) => typeof id !== "string" || !GAMEPLAY_TRANSITION_ID.test(id)) ||
+        new Set(ids).size !== ids.length
+      )
+        fail("invalid gameplay transition links");
+      if (!family.background_ids.length && !family.patch_ids?.length)
+        fail("gameplay transition links require a bound background or patch state");
+      for (const id of ids) {
+        if (links.has(id)) fail("gameplay transition linked by two families");
+        links.add(id);
+      }
+    }
     if (!family.physical) fail("missing physical endpoints");
     const motion = family.physical.motion;
-    if (motion?.kind === "native-patch-clips") {
+    if (motion?.kind === "native-element-clip") validateElementClip(c, family, motion);
+    else if (motion?.kind === "native-patch-clips") {
       const patch = c.native.patch_states?.find((p) => p.id === motion.patch_id);
       if (
         !hash(motion.source_motion_sha256) ||
@@ -531,6 +579,66 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
   }
 }
 
+function validateElementClip(
+  contract: StateDeliveryContract,
+  family: StateDeliveryContract["families"][number],
+  motion: PhysicalElementClip,
+) {
+  const fail = (message: string): never => {
+    throw new Error(`State delivery: ${message}`);
+  };
+  const hash = (v: unknown) => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
+  const exactKeys = (value: object, keys: string[]) =>
+    JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
+  const element = contract.native.elements.find((e) => e.id === motion.element_id);
+  const applied = family.physical.applied;
+  if (
+    !exactKeys(motion, [
+      "kind",
+      "element_id",
+      "source_motion_sha256",
+      "start_frame",
+      "binding",
+      "clip",
+      "duration_ticks",
+    ]) ||
+    !hash(motion.source_motion_sha256) ||
+    family.element_ids.length !== 1 ||
+    family.element_ids[0] !== motion.element_id ||
+    family.patch_ids?.length ||
+    family.hidden_initial_element_ids?.length ||
+    !element?.frames.length ||
+    element.loop ||
+    !Array.isArray(applied) ||
+    applied.length !== 1
+  )
+    fail("invalid reviewed target clip binding");
+  if (
+    !Number.isSafeInteger(motion.start_frame) ||
+    motion.start_frame <= 0 ||
+    motion.start_frame >= element!.frames.length
+  )
+    fail("target clip start frame is outside the source frames");
+  const start = nativeElementFrameStartTick(element!.frames, motion.start_frame);
+  if (
+    !Number.isSafeInteger(motion.duration_ticks) ||
+    motion.duration_ticks <= 0 ||
+    start + motion.duration_ticks !== family.body_terminal_tick
+  )
+    fail("target clip timing differs from source frames");
+  if (typeof motion.clip !== "string" || !motion.clip.trim()) fail("missing target clip name");
+  const binding = motion.binding,
+    endpoint = (applied as PhysicalStateBinding[])[0]!;
+  if (
+    !binding ||
+    typeof binding !== "object" ||
+    binding.id === endpoint.id ||
+    binding.role !== endpoint.role ||
+    JSON.stringify(binding.position ?? null) !== JSON.stringify(endpoint.position ?? null)
+  )
+    fail("target clip placement differs from applied model binding");
+}
+
 function validateNativeRemainder(
   contract: StateDeliveryContract,
   family: StateDeliveryContract["families"][number],
@@ -625,6 +733,7 @@ export function physicalFamilyEndpoints(
     applied,
     ...(motion?.kind === "native-patch-model-frames" ? motion.model_frames : []),
     ...(motion?.kind === "native-patch-clips" ? [[motion.transition.binding]] : []),
+    ...(motion?.kind === "native-element-clip" ? [[motion.binding]] : []),
   ];
 }
 
@@ -641,6 +750,8 @@ export function physicalPatchPose(
   visible?: boolean;
   clip_phase?: "transition" | "final";
   clip_tick?: number;
+  /** The family's target still draws its native frame; no physical model is shown. */
+  native_element?: boolean;
 } {
   const family = contract.families.find((f) => f.id === id);
   const motion = family?.physical.motion;
@@ -653,6 +764,19 @@ export function physicalPatchPose(
     throw new Error("Staged motion requires independent source clocks");
   if (motion.kind === "native-patch-clips")
     return physicalPatchClipPose(contract, id, "forward", tick);
+  if (motion.kind === "native-element-clip") {
+    const element = contract.native.elements.find((e) => e.id === motion.element_id)!;
+    if (tick < nativeElementFrameStartTick(element.frames, motion.start_frame))
+      return { endpoint: "applied", translation: [0, 0, 0], visible: false, native_element: true };
+    if (tick >= family.body_terminal_tick) return { endpoint: "applied", translation: [0, 0, 0] };
+    return {
+      endpoint: "applied",
+      translation: [0, 0, 0],
+      model_frame: 0,
+      clip_phase: "transition",
+      clip_tick: tick,
+    };
+  }
   if (tick >= family.body_terminal_tick)
     return { endpoint: "applied" as const, translation: [0, 0, 0] as [number, number, number] };
   const frames =
@@ -762,6 +886,84 @@ export function physicalElementStagePose(
     node_frame: selected,
     visible: selected !== undefined,
   };
+}
+
+/** Compiled movement transitions as emitted in a compiled map's asset geometry. */
+export interface CompiledGameplayTransitions {
+  movement_transitions?: readonly {
+    id: string;
+    aliases?: readonly string[];
+    definitive: boolean;
+    initial_sight?: readonly number[];
+    applied_sight?: readonly number[];
+  }[];
+  sight_obstacles?: readonly unknown[];
+}
+
+/** One verified state-to-gameplay link with the compiled sight obstacles of each endpoint. */
+export interface StateGameplayLink {
+  family: string;
+  transition_id: string;
+  definitive: boolean;
+  initial_sight: number[];
+  applied_sight: number[];
+}
+
+/** Resolve every linked transition in one compiled map. Missing compiled data is an error. */
+export function verifyStateGameplayLinks(
+  contract: StateDeliveryContract,
+  compiled: CompiledGameplayTransitions | undefined,
+  warnings: readonly string[],
+): StateGameplayLink[] {
+  validateStateDelivery(contract);
+  const linked = contract.families.filter((f) => f.gameplay_transition_ids?.length);
+  if (!linked.length) return [];
+  const transitions = compiled?.movement_transitions;
+  const sight = compiled?.sight_obstacles;
+  if (!Array.isArray(transitions) || !Array.isArray(sight) || !Array.isArray(warnings))
+    throw new Error("Gameplay link requires compiled movement transitions and sight obstacles");
+  const links: StateGameplayLink[] = [];
+  for (const family of linked) {
+    const states = [
+      ...(contract.native.background_states ?? []).filter((s) =>
+        family.background_ids.includes(s.id),
+      ),
+      ...(contract.native.patch_states ?? []).filter((s) => family.patch_ids?.includes(s.id)),
+    ];
+    for (const id of family.gameplay_transition_ids!) {
+      const matches = transitions.filter((t) => t.id === id || t.aliases?.includes(id));
+      if (matches.length !== 1)
+        throw new Error(`Gameplay link does not resolve to one compiled transition: ${id}`);
+      const transition = matches[0]!;
+      if (
+        warnings.some(
+          (w) =>
+            typeof w === "string" &&
+            [id, transition.id].some((t) => w.startsWith(`Transition ${t}: control omitted`)),
+        )
+      )
+        throw new Error(`Gameplay link names an omitted compiled transition: ${id}`);
+      if (
+        typeof transition.definitive !== "boolean" ||
+        states.some((s) => s.definitive !== transition.definitive)
+      )
+        throw new Error(`Gameplay link permanence differs from its bound state: ${id}`);
+      const indices = (v: readonly number[] | undefined) => {
+        const rows = [...(v ?? [])];
+        if (rows.some((i) => !Number.isSafeInteger(i) || i < 0 || i >= sight.length))
+          throw new Error(`Gameplay link sight obstacle is outside the compiled map: ${id}`);
+        return rows;
+      };
+      links.push({
+        family: family.id,
+        transition_id: transition.id,
+        definitive: transition.definitive,
+        initial_sight: indices(transition.initial_sight),
+        applied_sight: indices(transition.applied_sight),
+      });
+    }
+  }
+  return links;
 }
 
 /** Reject edited or unrelated placements before any visible node is suppressed. */

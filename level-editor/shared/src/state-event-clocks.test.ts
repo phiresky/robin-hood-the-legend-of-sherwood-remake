@@ -152,3 +152,127 @@ test("an omitted visibility field retains the owner's last visibility independen
   assert.equal(applied[0]!.kind, "element");
   assert.equal("visible" in applied[0]! && applied[0]!.visible, false);
 });
+
+test("a target clip follows its owner's source clock: native frames, then the clip, then hidden owner", () => {
+  const f = fixture();
+  // Owner frames 0..1 (ticks 0..3) stay native; frame 2 starts the clip at tick 4; terminal is 6.
+  f.body.frames = [{ delay: 1 }, { delay: 1 }, { delay: 1 }, { delay: 1 }] as typeof f.body.frames;
+  Object.assign(f.contract.families[0]!, {
+    element_ids: [f.body.id],
+    body_terminal_tick: 6,
+    physical: {
+      motion: { kind: "native-element-clip", element_id: f.body.id, start_frame: 2 },
+    },
+  });
+  const clocks = new StateEventClocks(f.contract);
+  const owner = (sequence: number, tick: number, active = true, visible?: boolean) =>
+    clocks.apply(
+      f.batch(sequence, sequence, [
+        {
+          kind: "element",
+          id: f.body.id,
+          source: f.body.source as StateClockSample["source"],
+          active,
+          tick,
+          ...(visible === undefined ? {} : { visible }),
+        },
+      ]),
+    );
+  assert.equal(clocks.physicalTick("rock"), undefined);
+  assert.equal(clocks.physicalPose("rock").endpoint, "initial");
+  assert.equal(clocks.physicalVisible("rock"), true);
+  owner(0, 3);
+  assert.equal(clocks.physicalTick("rock"), 3);
+  assert.equal(clocks.physicalPose("rock").native_element, true);
+  assert.equal(clocks.physicalVisible("rock"), false);
+  // An unrelated patch clock cannot start the clip.
+  clocks.apply(
+    f.batch(1, 1, [
+      {
+        kind: "patch",
+        id: f.patch.id,
+        source: f.patch.source as StateClockSample["source"],
+        phase: "applied",
+        tick: 50,
+      },
+    ]),
+  );
+  assert.equal(clocks.physicalVisible("rock"), false);
+  owner(2, 4);
+  assert.deepEqual(clocks.physicalPose("rock"), {
+    endpoint: "applied",
+    translation: [0, 0, 0],
+    model_frame: 0,
+    clip_phase: "transition",
+    clip_tick: 4,
+  });
+  assert.equal(clocks.physicalVisible("rock"), true);
+  owner(3, 5, true, false);
+  assert.equal(clocks.physicalVisible("rock"), false);
+  owner(4, 9, true, true);
+  assert.deepEqual(clocks.physicalPose("rock"), { endpoint: "applied", translation: [0, 0, 0] });
+  assert.equal(clocks.physicalVisible("rock"), true);
+  owner(5, 0, false);
+  assert.equal(clocks.physicalTick("rock"), undefined);
+});
+
+test("gameplay receiver holds initial obstacles while independent target starts, then applies and resets", () => {
+  const f = fixture();
+  Object.assign(f.contract.families[0]!, {
+    background_ids: [f.ground.id],
+    patch_ids: [],
+    physical: { motion: { kind: "native-element-clip", element_id: f.body.id, start_frame: 1 } },
+  });
+  let clocks = new StateEventClocks(f.contract);
+  let seq = 0;
+  const target = (tick: number) =>
+    clocks.apply(
+      f.batch(seq++, seq, [
+        { kind: "element", id: f.body.id, source: f.body.source as StateClockSample["source"], active: true, tick },
+      ]),
+    );
+  const receiver = (phase: "initial" | "forward" | "applied" | "reverse") =>
+    clocks.apply(
+      f.batch(seq++, seq, [
+        { kind: "background", id: f.ground.id, source: f.ground.source as StateClockSample["source"], phase, tick: 0 },
+      ]),
+    );
+  target(0);
+  assert.equal(clocks.gameplayEndpoint("rock"), undefined, "target cannot invent a receiver state");
+  receiver("initial");
+  assert.equal(clocks.gameplayEndpoint("rock"), "initial");
+  receiver("forward");
+  target(2);
+  assert.equal(
+    clocks.gameplayEndpoint("rock"),
+    "initial",
+    "visual handoff does not swap obstacles",
+  );
+  receiver("applied");
+  assert.equal(clocks.gameplayEndpoint("rock"), "applied");
+  target(0);
+  assert.equal(
+    clocks.gameplayEndpoint("rock"),
+    "applied",
+    "target reset does not reset permanent receiver",
+  );
+  assert.throws(() => receiver("reverse"), /Invalid source patch phase/);
+  assert.equal(clocks.gameplayEndpoint("rock"), "applied");
+  receiver("initial");
+  assert.equal(
+    clocks.gameplayEndpoint("rock"),
+    "initial",
+    "explicit receiver reset is authoritative",
+  );
+  f.ground.definitive = false;
+  clocks = new StateEventClocks(f.contract);
+  receiver("applied");
+  receiver("reverse");
+  assert.equal(
+    clocks.gameplayEndpoint("rock"),
+    "applied",
+    "reverse retains applied obstacles until completion",
+  );
+  receiver("initial");
+  assert.equal(clocks.gameplayEndpoint("rock"), "initial");
+});
