@@ -427,6 +427,17 @@ test("discrete patch frames preserve complete multi-model endpoints and independ
     () => validateStateDelivery(absentTranslation),
     /invalid reviewed patch motion binding/,
   );
+  const absentNodePose = structuredClone(absent);
+  absentNodePose.families[0]!.physical.motion = {
+    kind: "native-patch-node-poses",
+    patch_id: "fence",
+    source_motion_sha256: "d".repeat(64),
+    node_frames: [[]],
+  };
+  assert.throws(
+    () => validateStateDelivery(absentNodePose),
+    /invalid reviewed patch motion binding/,
+  );
   const missingGround = structuredClone(c);
   if (missingGround.families[0]!.physical.motion!.kind !== "native-patch-model-frames")
     throw Error("fixture");
