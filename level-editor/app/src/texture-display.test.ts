@@ -417,3 +417,118 @@ test("opaque nearest sampling rejects ambiguous ownership or physical transparen
   configured.opacity = 0.5;
   assert.throws(() => display.apply(mesh), /Required opaque RGB sampling/);
 });
+
+function nonmipmappedSourceAtlas(map: THREE.Texture) {
+  const material = new THREE.MeshBasicMaterial({ map });
+  material.userData = {
+    export_rgb_sampling: "linear-no-mipmap-required",
+    source_ownership_bake: true,
+    reprojection_source_sha256: "a".repeat(64),
+    source_ownership_fill: "neutral",
+  };
+  return material;
+}
+
+test("loaded packed atlases keep linear/nearest choice without mipmaps or shared-map changes", () => {
+  const pixels = new Uint8Array([240, 220, 160, 255, 60, 60, 60, 255]);
+  const shared = new THREE.DataTexture(pixels, 2, 1);
+  const authored = nonmipmappedSourceAtlas(shared);
+  const loaded = new THREE.MaterialLoader()
+    .setTextures({ [shared.uuid]: shared })
+    .parse(JSON.parse(JSON.stringify(authored.toJSON()))) as THREE.MeshBasicMaterial;
+  const unmarked = authored.clone();
+  delete unmarked.userData.export_rgb_sampling;
+  const root = new THREE.Group();
+  root.add(
+    new THREE.Mesh(new THREE.PlaneGeometry(), loaded),
+    new THREE.Mesh(new THREE.PlaneGeometry(), unmarked),
+  );
+  const display = new TextureDisplay();
+  display.apply(root, 8);
+  const isolated = loaded.map!;
+  assert.notEqual(isolated, shared);
+  assert.equal(isolated.source, shared.source);
+  for (const smooth of [true, false, true]) {
+    display.smooth = smooth;
+    display.apply(root, 8);
+    assert.equal(loaded.map, isolated);
+    assert.equal(isolated.magFilter, smooth ? THREE.LinearFilter : THREE.NearestFilter);
+    assert.equal(isolated.minFilter, smooth ? THREE.LinearFilter : THREE.NearestFilter);
+    assert.equal(isolated.generateMipmaps, false);
+    assert.equal(isolated.anisotropy, smooth ? 8 : 1);
+    assert.equal(unmarked.map, shared);
+    assert.equal(shared.minFilter, smooth ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter);
+    assert.equal(shared.generateMipmaps, smooth);
+    assert.equal(loaded.userData.source_ownership_fill, "neutral");
+    assert.deepEqual(pixels, new Uint8Array([240, 220, 160, 255, 60, 60, 60, 255]));
+  }
+});
+
+test("inactive nonmipmapped atlas materials are configured before their phase becomes visible", () => {
+  const shared = new THREE.Texture();
+  const first = nonmipmappedSourceAtlas(shared);
+  const later = nonmipmappedSourceAtlas(shared);
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(), first);
+  retainDisplayMaterialVariants(mesh, [first, later]);
+  const display = new TextureDisplay();
+  display.apply(mesh);
+  const laterMap = later.map;
+  assert.notEqual(laterMap, shared);
+  mesh.material = later;
+  display.smooth = false;
+  display.apply(mesh);
+  display.smooth = true;
+  display.apply(mesh);
+  assert.equal(later.map, laterMap);
+  assert.equal(later.map!.minFilter, THREE.LinearFilter);
+  assert.equal(later.map!.generateMipmaps, false);
+});
+
+test("nonmipmapped atlas marker rejects missing provenance and incompatible coverage", () => {
+  const alterations = [
+    (m: THREE.MeshBasicMaterial) => {
+      delete m.userData.source_ownership_bake;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.userData.reprojection_source_sha256 = "unbound";
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.transparent = true;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.opacity = 0.5;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.alphaTest = 0.5;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.alphaMap = new THREE.Texture();
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.map = null;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.map!.premultiplyAlpha = true;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.userData.export_complementary_binary_ownership = true;
+    },
+    (m: THREE.MeshBasicMaterial) => {
+      m.map = new THREE.CompressedTexture();
+    },
+  ];
+  for (const alter of alterations) {
+    const material = nonmipmappedSourceAtlas(new THREE.Texture());
+    alter(material);
+    assert.throws(
+      () => new TextureDisplay().apply(new THREE.Mesh(new THREE.PlaneGeometry(), material)),
+      /Required nonmipmapped atlas sampling/,
+    );
+  }
+  const lit = new THREE.MeshStandardMaterial({ map: new THREE.Texture() });
+  lit.userData = nonmipmappedSourceAtlas(new THREE.Texture()).userData;
+  assert.throws(
+    () => new TextureDisplay().apply(new THREE.Mesh(new THREE.PlaneGeometry(), lit)),
+    /Required nonmipmapped atlas sampling/,
+  );
+});

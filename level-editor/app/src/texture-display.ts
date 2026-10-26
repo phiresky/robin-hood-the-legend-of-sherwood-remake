@@ -57,6 +57,7 @@ export class TextureDisplay {
   private readonly configured = new WeakSet<THREE.Material>();
   private readonly samplingConfigured = new WeakSet<THREE.Material>();
   private readonly nearestRequired = new WeakSet<THREE.Texture>();
+  private readonly noMipmapsRequired = new WeakSet<THREE.Texture>();
 
   material(material: THREE.Material) {
     if (this.configured.has(material)) return;
@@ -226,6 +227,37 @@ export class TextureDisplay {
             this.samplingConfigured.add(material);
           }
         }
+        if (material.userData.export_rgb_sampling === "linear-no-mipmap-required") {
+          if (
+            !(material instanceof THREE.MeshBasicMaterial) ||
+            material.userData.source_ownership_bake !== true ||
+            !/^[a-f0-9]{64}$/.test(material.userData.reprojection_source_sha256 ?? "") ||
+            !(material.map instanceof THREE.Texture) ||
+            material.map instanceof THREE.CompressedTexture ||
+            material.map.premultiplyAlpha ||
+            material.opacity !== 1 ||
+            material.transparent ||
+            material.alphaTest !== 0 ||
+            material.alphaHash ||
+            material.alphaToCoverage ||
+            material.alphaMap ||
+            material.premultipliedAlpha ||
+            material.blending !== THREE.NormalBlending ||
+            material.userData.foliage_physical_opacity ||
+            material.userData.export_complementary_binary_ownership
+          ) {
+            throw new Error(
+              "Required nonmipmapped atlas sampling needs a pinned opaque unlit source atlas",
+            );
+          }
+          // Packed face islands cannot share reduced mip levels. Keep the user's
+          // linear/nearest choice and isolate the atlas from shared ordinary maps.
+          if (!this.samplingConfigured.has(material)) {
+            material.map = material.map.clone();
+            this.noMipmapsRequired.add(material.map);
+            this.samplingConfigured.add(material);
+          }
+        }
         if (
           material.userData.export_complementary_binary_ownership === true &&
           !this.samplingConfigured.has(material)
@@ -259,8 +291,9 @@ export class TextureDisplay {
       const smooth = this.smooth && !this.nearestRequired.has(texture);
       const compressed = texture instanceof THREE.CompressedTexture;
       // Compressed levels are authored offline; the GPU cannot generate them.
-      const generateMipmaps = smooth && !compressed;
-      const mipmapped = !compressed || texture.mipmaps.length > 1;
+      const noMipmaps = this.noMipmapsRequired.has(texture);
+      const generateMipmaps = smooth && !compressed && !noMipmaps;
+      const mipmapped = !noMipmaps && (!compressed || texture.mipmaps.length > 1);
       const mag = smooth ? THREE.LinearFilter : THREE.NearestFilter;
       const min = smooth
         ? mipmapped
