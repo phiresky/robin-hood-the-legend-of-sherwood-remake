@@ -1,3 +1,4 @@
+import { NativeRemainderOwnership } from "./native-remainder-ownership.ts";
 import {
   validateStateClockSamples,
   type StateClockBatch,
@@ -1095,6 +1096,9 @@ export class NativeStatePresentation {
       elements.filter((e) => !backgroundIds.has(e.id)),
       this.verifiedDisjointPair,
     );
+    const ownership = layers
+      ? new NativeRemainderOwnership(pixels.width, pixels.height)
+      : undefined;
     for (const element of [...backgroundEffects, ...ordered]) {
       const index = nativePresentationFrame(
         element,
@@ -1108,7 +1112,16 @@ export class NativeStatePresentation {
           ? this.remainders.get(element.id)?.[index]
           : undefined;
       if (remainder) {
-        compositeNativePixels(pixels, layers!.get(element.id)!, 0, 0);
+        const x = element.display_position[0] + frame.offset[0] - this.contract.origin[0],
+          y = element.display_position[1] + frame.offset[1] - this.contract.origin[1];
+        const physical = ownership!.physical(
+          layers!.get(element.id)!,
+          this.images.get(frame.path)!,
+          x,
+          y,
+          frame.shadow_key,
+        );
+        compositeNativePixels(pixels, physical, 0, 0);
         compositeNativePixels(
           pixels,
           remainder,
@@ -1116,8 +1129,16 @@ export class NativeStatePresentation {
           element.display_position[1] + frame.offset[1] - this.contract.origin[1],
           frame.shadow_key,
         );
+        ownership!.native(remainder, x, y, true, frame.shadow_key);
         continue;
       }
+      ownership?.native(
+        this.images.get(frame.path)!,
+        element.display_position[0] + frame.offset[0] - this.contract.origin[0],
+        element.display_position[1] + frame.offset[1] - this.contract.origin[1],
+        false,
+        frame.shadow_key,
+      );
       compositeNativePixels(
         pixels,
         this.images.get(frame.path)!,

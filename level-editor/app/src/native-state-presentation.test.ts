@@ -995,3 +995,68 @@ test("failed batch adopts nothing, stops further reads and observes late sibling
   assert.deepEqual(Array.from(player.pixels().data.slice(0, 3)), [200, 0, 0]);
   player.dispose();
 });
+
+test("ordered remainder composition protects earlier kept art only outside later source coverage", async () => {
+  const f = await fixture();
+  const first = f.contract.elements[0]!;
+  first.loop = false;
+  first.frames = [first.frames[0]!];
+  const target = structuredClone(f.source.data.targets[0]!);
+  f.source.data.targets.push(target);
+  f.contract.mission_data_sha256 = await missionStateDataHash(f.source.data);
+  async function resource(path: string, channels: 1 | 4, data: number[]) {
+    const bytes = encode({ width: 2, height: 2, channels, data: new Uint8Array(data) });
+    f.files.set(path, bytes);
+    const sha256 = Array.from(
+      new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes))),
+      (n) => n.toString(16).padStart(2, "0"),
+    ).join("");
+    return { path, sha256, width: 2, height: 2 };
+  }
+  const source = await resource(
+    "later.png",
+    4,
+    [0, 0, 0, 0, 0, 200, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0],
+  );
+  const second = structuredClone(first);
+  second.id = "later";
+  second.source = { kind: "mission-target", index: 1, sha256: await missionStateDataHash(target) };
+  second.creation_order = 1;
+  second.frames = [{ ...source, offset: [0, 0], delay: 0 }];
+  f.contract.elements.push(second);
+  const masks = [
+    await resource("kept-mask.png", 1, [2, 2, 2, 2]),
+    await resource("later-mask.png", 1, [0, 1, 0, 0]),
+  ];
+  const native = new NativeStatePresentation();
+  await native.set(f.contract, f.source, f.read);
+  await native.setRemainders(
+    [first, second].map((element, i) => ({
+      element_id: element.id,
+      drawn_values: [2, 3],
+      frames: [{ mask: masks[i]!, physical: "applied" as const }],
+    })),
+    f.read,
+  );
+  const empty = { width: 2, height: 2, data: new Uint8Array(16) };
+  const orange = {
+    width: 2,
+    height: 2,
+    data: new Uint8Array(Array(4).fill([233, 149, 72, 255]).flat()),
+  };
+  const output = native.remainderPixels(
+    new Map([
+      [first.id, empty],
+      [second.id, orange],
+    ]),
+  );
+  assert.deepEqual(
+    [...output.data],
+    [200, 0, 0, 255, 233, 149, 72, 255, 200, 0, 0, 255, 200, 0, 0, 255],
+  );
+  assert.deepEqual(
+    [...native.pixels().data],
+    [200, 0, 0, 255, 0, 200, 0, 255, 200, 0, 0, 255, 200, 0, 0, 255],
+  );
+  native.dispose();
+});
