@@ -2011,6 +2011,7 @@ test("component clips load a morphed hybrid at source frame zero, preserve nativ
   applied.add(end);
   clip.animations = [
     new THREE.AnimationClip("collapse", -1, [
+      new THREE.VectorKeyframeTrack("old.position", [0, 3 / 25], [0, 0, 0, 3, 0, 0]),
       new THREE.NumberKeyframeTrack(
         "wreck.morphTargetInfluences",
         [0, 3 / 25],
@@ -2065,7 +2066,16 @@ test("component clips load a morphed hybrid at source frame zero, preserve nativ
   assert.equal(delivery.remainderPhysicalRoots().size, 0);
   await delivery.set(contract, f.source, f.library, f.read);
   delivery.selectMode("physical-motion");
-  delivery.sampleSourceState(batch(0, 3));
+  delivery.sampleSourceState(batch(0, 1));
+  let movingOld: THREE.Object3D | undefined;
+  delivery.physical.traverse((o) => {
+    if (o.name === "old" && o.visible) movingOld = o;
+  });
+  assert.ok(movingOld, "physical rig is actually applied between native frame starts");
+  assert.ok(Math.abs(movingOld.position.x - 1) < 1e-6);
+  delivery.sampleSourceState(batch(1, 2));
+  assert.ok(Math.abs(movingOld.position.x - 2) < 1e-6);
+  delivery.sampleSourceState(batch(2, 3));
   assert.equal(delivery.motionEndpoint, "applied");
   assert.throws(() => delivery.seekFamily("trap", 0), /source|Source/);
   delivery.dispose();

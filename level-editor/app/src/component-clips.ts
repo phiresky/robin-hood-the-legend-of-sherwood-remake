@@ -294,12 +294,20 @@ export class ComponentClips {
     const seen = new Set<string>();
     for (const s of selections) {
       const r = this.rigs.get(s.element_id)?.get(s.component_id);
+      const stage = r?.component.stages.find((t) => t.element_id === s.element_id);
       if (
         !r ||
         seen.has(s.component_id) ||
-        !r.component.stages
-          .find((t) => t.element_id === s.element_id)
-          ?.frame_ticks.includes(s.clip_tick)
+        !Number.isSafeInteger(s.clip_tick) ||
+        !stage?.frame_ticks.some(
+          (start, frame, ticks) =>
+            start !== null &&
+            s.clip_tick >= start &&
+            s.clip_tick <= r.component.terminal.clip_tick &&
+            (frame === ticks.length - 1
+              ? s.clip_tick === start
+              : s.clip_tick < start + stage.source_frames[frame]!.delay + 1),
+        )
       )
         fail("invalid or overlapping selection");
       seen.add(s.component_id);

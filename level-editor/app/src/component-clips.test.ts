@@ -195,3 +195,45 @@ test("constant or already-retired channels may hold while the pinned clip reache
   assert.equal(clips.roots.get("cart")!.getObjectByName("old")!.visible, false);
   clips.dispose();
 });
+
+test("selection accepts active delayed intervals but rejects gaps and ticks beyond terminal", () => {
+  const f = fixture();
+  const stage = f.component.stages[0]!;
+  stage.frame_ticks[0] = null;
+  stage.first_source_frame = 1;
+  stage.clip_start_tick = 1;
+  stage.gaps = [
+    { frame: 0, source_sha256: stage.source_frames[0]!.sha256, reason: "component-absent" },
+  ];
+  const clips = new ComponentClips(f.applied, f.motion, [f.template]);
+  for (const tick of [1, 2, 3, 4])
+    assert.doesNotThrow(() =>
+      clips.apply([{ component_id: "body", element_id: "cart", clip_tick: tick }]),
+    );
+  for (const tick of [-1, 0, 5, 1.5, NaN])
+    assert.throws(
+      () => clips.apply([{ component_id: "body", element_id: "cart", clip_tick: tick }]),
+      /invalid or overlapping/,
+    );
+  clips.dispose();
+});
+
+test("a null source frame excludes its entire delayed interval", () => {
+  const f = fixture();
+  const stage = f.component.stages[0]!;
+  stage.frame_ticks[1] = null;
+  stage.gaps = [
+    { frame: 1, source_sha256: stage.source_frames[1]!.sha256, reason: "component-absent" },
+  ];
+  const clips = new ComponentClips(f.applied, f.motion, [f.template]);
+  for (const tick of [1, 2, 3])
+    assert.throws(
+      () => clips.apply([{ component_id: "body", element_id: "cart", clip_tick: tick }]),
+      /invalid or overlapping/,
+    );
+  for (const tick of [0, 4])
+    assert.doesNotThrow(() =>
+      clips.apply([{ component_id: "body", element_id: "cart", clip_tick: tick }]),
+    );
+  clips.dispose();
+});
