@@ -49,3 +49,16 @@ applied model exactly. Runtime checks do not replace visual approval.
 Image textures are compared through decoded pixels using `OffscreenCanvas`;
 typed image data is supported directly. Unreadable pixels fail explicitly.
 Skinning and material animation are outside this format.
+
+Full physical playback samples elapsed source ticks, including ticks within a
+held native image. Each owner's final source frame holds its mapped pose. Hybrid
+remainder playback deliberately samples the exact source-frame start, keeping
+physical surfaces aligned with retained pixels. These are separate sampling
+paths; delayed images must not quantize full physical animation.
+
+Asset export validation must also sample between authored transform keys,
+including fractional ticks, and compare evaluated surfaces against the editable
+animation. Key-pose agreement alone cannot detect interpolation excursions from
+world-origin pivot cancellation. Prefer local rigid pivots with stable parent
+transforms; inspect trajectory and bounds at quarter-key intervals before
+approving a cart clip. Runtime finite checks are not a geometric parity proof.

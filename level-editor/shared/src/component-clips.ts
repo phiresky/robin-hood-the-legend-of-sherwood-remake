@@ -276,11 +276,13 @@ export function physicalElementComponentClipPose(
   for (const s of samples) {
     if (!s.active || s.visible === false) continue;
     const e = contract.native.elements.find((e) => e.id === s.element_id)!;
+    const frame = nativePresentationFrame(e, s.tick);
+    const frameStart = e.frames.slice(0, frame).reduce((sum, f) => sum + f.delay + 1, 0);
+    // Physical playback advances within a held source image; the last image holds its pose.
+    const elapsed = frame === e.frames.length - 1 ? 0 : s.tick - frameStart;
     selected.push(
-      ...componentClipSelections(
-        m as PhysicalElementComponentClips,
-        s.element_id,
-        nativePresentationFrame(e, s.tick),
+      ...componentClipSelections(m as PhysicalElementComponentClips, s.element_id, frame).map(
+        (selection) => ({ ...selection, clip_tick: selection.clip_tick + elapsed }),
       ),
     );
   }

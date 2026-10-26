@@ -19,8 +19,8 @@ test("component clips bind frame zero, exact delays and explicit native passthro
   for (const [tick, want] of [
     [0, 0],
     [1, 1],
-    [2, 1],
-    [3, 1],
+    [2, 2],
+    [3, 3],
     [4, 4],
     [100, 4],
   ])
@@ -43,6 +43,32 @@ test("component clips bind frame zero, exact delays and explicit native passthro
     ]).endpoint,
     "initial",
     "native passthrough never activates physical endpoint",
+  );
+});
+test("physical ticks advance within delayed images while hybrid sampling stays source locked", () => {
+  const f = componentClipFixture();
+  const physical = physicalElementComponentClipPose(f.contract, "trap", [
+    { element_id: "cart", active: true, tick: 3 },
+  ]);
+  const hybrid = nativeRemainderComponentClips(f.family, "cart", 1, {
+    kind: "source-frame-components",
+    element_id: "cart",
+    frame: 1,
+    components: ["body"],
+  });
+  assert.equal(physical.component_clips[0]!.clip_tick, 3);
+  assert.equal(hybrid[0]!.clip_tick, 1);
+  const stage = f.component.stages[0]!;
+  stage.first_source_frame = 1;
+  stage.frame_ticks = [null, 0, 3];
+  stage.gaps = [
+    { frame: 0, source_sha256: stage.source_frames[0]!.sha256, reason: "component-absent" },
+  ];
+  assert.equal(
+    physicalElementComponentClipPose(f.contract, "trap", [
+      { element_id: "cart", active: true, tick: 3 },
+    ]).component_clips[0]!.clip_tick,
+    2,
   );
 });
 test("component clips reject source, gap, coverage and visibility mutations before loading", () => {
