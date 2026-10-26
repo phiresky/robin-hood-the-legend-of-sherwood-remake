@@ -1,3 +1,4 @@
+import { physicalElementComponentClipPose } from "./component-clips.ts";
 import {
   nativeBackgroundFrames,
   nativePatchBackgroundFrame,
@@ -155,7 +156,8 @@ export class StateEventClocks {
     for (const family of this.contract.families)
       if (
         family.physical.motion?.kind === "native-element-stage-poses" ||
-        family.physical.motion?.kind === "native-element-component-poses"
+        family.physical.motion?.kind === "native-element-component-poses" ||
+        family.physical.motion?.kind === "native-element-component-clips"
       )
         this.stagedPose(family.id, candidate);
     this.clocks = candidate;
@@ -175,7 +177,8 @@ export class StateEventClocks {
     const motion = family.physical.motion;
     if (
       motion?.kind === "native-element-stage-poses" ||
-      motion?.kind === "native-element-component-poses"
+      motion?.kind === "native-element-component-poses" ||
+      motion?.kind === "native-element-component-clips"
     )
       return this.stagedPose(familyId, this.clocks).visible !== false;
     if (motion?.kind !== "native-element-node-poses" && motion?.kind !== "native-element-clip")
@@ -189,9 +192,11 @@ export class StateEventClocks {
   private stagedPose(familyId: string, clocks: Map<string, StateClockSample>) {
     const family = this.contract.families.find((f) => f.id === familyId)!;
     const samplePose =
-      family.physical.motion?.kind === "native-element-component-poses"
-        ? physicalElementComponentPose
-        : physicalElementStagePose;
+      family.physical.motion?.kind === "native-element-component-clips"
+        ? physicalElementComponentClipPose
+        : family.physical.motion?.kind === "native-element-component-poses"
+          ? physicalElementComponentPose
+          : physicalElementStagePose;
     return samplePose(
       this.contract,
       familyId,
@@ -224,7 +229,8 @@ export class StateEventClocks {
     const family = this.contract.families.find((f) => f.id === familyId);
     if (
       family?.physical.motion?.kind === "native-element-stage-poses" ||
-      family?.physical.motion?.kind === "native-element-component-poses"
+      family?.physical.motion?.kind === "native-element-component-poses" ||
+      family?.physical.motion?.kind === "native-element-component-clips"
     )
       return this.stagedPose(familyId, this.clocks);
     if (family?.physical.motion?.kind === "native-patch-clips") {
@@ -243,7 +249,8 @@ export class StateEventClocks {
     if (
       !f.physical.motion ||
       f.physical.motion.kind === "native-element-stage-poses" ||
-      f.physical.motion.kind === "native-element-component-poses"
+      f.physical.motion.kind === "native-element-component-poses" ||
+      f.physical.motion.kind === "native-element-component-clips"
     )
       return undefined;
     if (

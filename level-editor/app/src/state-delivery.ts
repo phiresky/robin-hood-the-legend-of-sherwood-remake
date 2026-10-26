@@ -1,3 +1,9 @@
+import { ComponentClips } from "./component-clips.ts";
+import {
+  nativeRemainderComponentClips,
+  type ComponentClipSelection,
+} from "../../shared/src/component-clips.ts";
+import type { StateAppearanceTemplate } from "./state-appearance-player.ts";
 import { StateMaterialFrames } from "./state-material-frames.ts";
 import { StateEventClocks, type StateClockBatch } from "../../shared/src/state-event-clocks.ts";
 import { StateAppearancePlayer } from "./state-appearance-player.ts";
@@ -70,6 +76,7 @@ export class StateDelivery {
   private roots = new Map<string, FamilyRoots>();
   private starts = new Map<string, number>();
   private sourceClocks: StateEventClocks | undefined;
+  private componentClips = new Map<string, ComponentClips>();
   private componentPoses = new Map<string, ComponentNodePoses>();
   private nodePoses = new Map<string, ReviewedNodePoses>();
   private clips = new Map<string, Partial<Record<"transition" | "final", StateAppearancePlayer>>>();
@@ -106,8 +113,11 @@ export class StateDelivery {
     this.physical.clear();
     this.physical.visible = false;
     for (const poses of this.componentPoses.values()) poses.reset();
+    for (const clips of this.componentClips.values()) clips.reset();
     for (const poses of this.nodePoses.values()) poses.reset();
     this.componentPoses.clear();
+    for (const clips of this.componentClips.values()) clips.dispose();
+    this.componentClips.clear();
     this.nodePoses.clear();
     for (const frames of this.materialFrames.values()) frames.dispose();
     this.materialFrames.clear();
@@ -177,12 +187,22 @@ export class StateDelivery {
       const roots = new Map<string, FamilyRoots>();
       for (const family of frozen.families) {
         const endpoints = physicalFamilyEndpoints(family);
+        const componentTemplates: StateAppearanceTemplate[] = [];
         const groups = endpoints.map(() => new THREE.Group());
         const pair = { initial: groups[0]!, applied: groups[1]!, frames: groups.slice(2) };
         for (const [index, endpoint] of endpoints.entries()) {
           const state = index === 0 ? "initial" : index === 1 ? "applied" : `frame-${index - 2}`;
           for (const binding of physicalEndpointSources(endpoint)) {
             const motion = family.physical.motion;
+            if (motion?.kind === "native-element-component-clips" && index >= 2) {
+              const asset = await loader.load(binding);
+              owned.add(asset);
+              if (!current()) return false;
+              const template = captureLoadedStateAppearance(asset);
+              if (!template) throw new Error("Component clip requires pinned animated model");
+              componentTemplates.push(template);
+              continue;
+            }
             if (motion?.kind === "native-element-clip" && index === 2) {
               const asset = await loader.load(binding);
               owned.add(asset);
@@ -308,6 +328,15 @@ export class StateDelivery {
           this.componentPoses.set(family.id, components);
           pair.frames.push(...components.roots.values());
         }
+        if (family.physical.motion?.kind === "native-element-component-clips") {
+          const clips = new ComponentClips(
+            pair.applied,
+            family.physical.motion,
+            componentTemplates,
+          );
+          this.componentClips.set(family.id, clips);
+          pair.frames.push(...clips.roots.values());
+        }
         roots.set(family.id, pair);
       }
       if (!current()) return false;
@@ -357,6 +386,7 @@ export class StateDelivery {
     this.selectedFamily = id;
     this.selectedEndpoint = endpoint;
     for (const poses of this.componentPoses.values()) poses.reset();
+    for (const clips of this.componentClips.values()) clips.reset();
     for (const poses of this.nodePoses.values()) poses.reset();
     for (const phases of this.clips.values())
       for (const player of Object.values(phases)) {
@@ -398,7 +428,8 @@ export class StateDelivery {
     const family = this.family(id);
     if (
       family.physical.motion?.kind === "native-element-stage-poses" ||
-      family.physical.motion?.kind === "native-element-component-poses"
+      family.physical.motion?.kind === "native-element-component-poses" ||
+      family.physical.motion?.kind === "native-element-component-clips"
     )
       throw new Error("Staged motion requires independent source clocks");
     if (!Number.isSafeInteger(tick) || tick < 0) throw new Error("Invalid state delivery tick");
@@ -439,9 +470,11 @@ export class StateDelivery {
     if (
       playing &&
       this.selectedFamily &&
-      ["native-element-stage-poses", "native-element-component-poses"].includes(
-        this.family(this.selectedFamily).physical.motion?.kind ?? "",
-      )
+      [
+        "native-element-stage-poses",
+        "native-element-component-poses",
+        "native-element-component-clips",
+      ].includes(this.family(this.selectedFamily).physical.motion?.kind ?? "")
     )
       throw new Error("Staged motion requires independent source clocks");
     this.native.setPlaying(playing);
@@ -452,6 +485,13 @@ export class StateDelivery {
       this.sourceClocks?.physicalPose(this.selectedFamily) ??
       physicalPatchPose(this.contract!, this.selectedFamily, this.familyTick(this.selectedFamily));
     const pair = this.roots.get(this.selectedFamily)!;
+    const componentClips = this.componentClips.get(this.selectedFamily);
+    if (componentClips) {
+      componentClips.apply(pose.component_clips ?? []);
+      pair.initial.visible = pose.endpoint === "initial" && pose.visible !== false;
+      pair.applied.visible = false;
+      return;
+    }
     const components = this.componentPoses.get(this.selectedFamily);
     if (components) {
       components.apply(pose.component_frames ?? []);
@@ -495,6 +535,7 @@ export class StateDelivery {
       throw new Error("Native remainder mode is not selected");
     const roots = new Map<string, THREE.Object3D>();
     const pending: { element: string; family: string; nodeFrame: number | undefined }[] = [];
+    const clipSelections = new Map<string, ComponentClipSelection[]>();
     const componentSelections = new Map<
       string,
       { component_id: string; element_id: string; node_frame: number }[]
@@ -505,6 +546,24 @@ export class StateDelivery {
       )!;
       const frame = nativeRemainderFrame(family, selected.element_id, selected.frame);
       if (!frame) throw new Error("Native remainder frame binding missing");
+      if (family.physical.motion?.kind === "native-element-component-clips") {
+        const selections = clipSelections.get(family.id) ?? [];
+        const current = nativeRemainderComponentClips(
+          family,
+          selected.element_id,
+          selected.frame,
+          frame.physical,
+        );
+        if (current.some((c) => selections.some((s) => s.component_id === c.component_id)))
+          throw new Error("Overlapping native remainder clip owners");
+        selections.push(...current);
+        clipSelections.set(family.id, selections);
+        roots.set(
+          selected.element_id,
+          this.componentClips.get(family.id)!.roots.get(selected.element_id)!,
+        );
+        continue;
+      }
       if (family.physical.motion?.kind === "native-element-component-poses") {
         const selections = componentSelections.get(family.id) ?? [];
         const current = nativeRemainderComponentFrames(
@@ -534,6 +593,7 @@ export class StateDelivery {
       pending.push({ element: selected.element_id, family: family.id, nodeFrame });
     }
     // Validate the entire selection before changing any shared assembly pose.
+    for (const [id, clips] of this.componentClips) clips.apply(clipSelections.get(id) ?? []);
     for (const [id, poses] of this.componentPoses) poses.apply(componentSelections.get(id) ?? []);
     for (const item of pending) {
       if (item.nodeFrame !== undefined) {
@@ -544,6 +604,17 @@ export class StateDelivery {
       roots.set(item.element, this.roots.get(item.family)!.applied);
     }
     return roots;
+  }
+  /** Explicitly native targets are never suppressed by a component clip's physical preview. */
+  get nativePassthroughTargetIndices(): ReadonlySet<number> {
+    if (!this.contract || !this.selectedFamily) return new Set();
+    const motion = this.family(this.selectedFamily).physical.motion;
+    if (motion?.kind !== "native-element-component-clips") return new Set();
+    return new Set(
+      motion.native_passthrough_element_ids.map(
+        (id) => this.contract!.native.elements.find((e) => e.id === id)!.source.index,
+      ),
+    );
   }
   /** For a target clip family in 3D motion: "native" while its target still draws native frames. */
   get elementClipPhase(): "native" | "physical" | undefined {

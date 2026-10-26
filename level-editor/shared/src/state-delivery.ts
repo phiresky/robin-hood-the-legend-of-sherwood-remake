@@ -1,4 +1,11 @@
 import {
+  validateComponentClips,
+  nativeRemainderComponentClips,
+  type PhysicalElementComponentClips,
+  type ComponentClipSelection,
+} from "./component-clips.ts";
+export type { PhysicalElementComponentClips } from "./component-clips.ts";
+import {
   validateSourceCoverVisibility,
   type SourceCoverVisibility,
 } from "./source-cover-visibility.ts";
@@ -214,6 +221,7 @@ export interface StateDeliveryContract {
         | PhysicalElementNodePoses
         | PhysicalElementStagePoses
         | PhysicalElementComponentPoses
+        | PhysicalElementComponentClips
         | PhysicalElementClip;
     };
     static_replacements?: { initial: StaticStateReplacement[]; applied: StaticStateReplacement[] };
@@ -321,7 +329,9 @@ export function validateStateDelivery(value: unknown): asserts value is StateDel
     }
     if (!family.physical) fail("missing physical endpoints");
     const motion = family.physical.motion;
-    if (motion?.kind === "native-element-clip") validateElementClip(c, family, motion);
+    if (motion?.kind === "native-element-component-clips")
+      validateComponentClips(c, family, motion);
+    else if (motion?.kind === "native-element-clip") validateElementClip(c, family, motion);
     else if (motion?.kind === "native-patch-clips") {
       const patch = c.native.patch_states?.find((p) => p.id === motion.patch_id);
       if (
@@ -843,7 +853,8 @@ function validateNativeRemainder(
     motion &&
     motion.kind !== "native-element-node-poses" &&
     motion.kind !== "native-element-stage-poses" &&
-    motion.kind !== "native-element-component-poses"
+    motion.kind !== "native-element-component-poses" &&
+    motion.kind !== "native-element-component-clips"
   )
     fail("unsupported native remainder physical pairing");
   const bound = new Set<string>();
@@ -896,7 +907,9 @@ function validateNativeRemainder(
       paths.add(mask.path);
       if (!Array.isArray(family.physical.applied) || !family.physical.applied.length)
         fail("native remainder frame lacks a physical pairing");
-      if (family.physical.motion?.kind === "native-element-component-poses")
+      if (family.physical.motion?.kind === "native-element-component-clips")
+        nativeRemainderComponentClips(family, binding.element_id, index, frame.physical);
+      else if (family.physical.motion?.kind === "native-element-component-poses")
         nativeRemainderComponentFrames(family, binding.element_id, index, frame.physical);
       else nativeRemainderNodeFrame(family, binding.element_id, index, frame.physical);
     }
@@ -969,6 +982,9 @@ export function physicalFamilyEndpoints(
     ...(motion?.kind === "native-patch-model-frames" ? motion.model_frames : []),
     ...(motion?.kind === "native-patch-clips" ? [[motion.transition.binding]] : []),
     ...(motion?.kind === "native-element-clip" ? [[motion.binding]] : []),
+    ...(motion?.kind === "native-element-component-clips"
+      ? motion.components.map((c) => [c.binding])
+      : []),
   ];
 }
 
@@ -982,6 +998,7 @@ export function physicalPatchPose(
   translation: [number, number, number];
   node_frame?: number;
   component_frames?: { component_id: string; element_id: string; node_frame: number }[];
+  component_clips?: ComponentClipSelection[];
   model_frame?: number;
   visible?: boolean;
   clip_phase?: "transition" | "final";
@@ -998,7 +1015,8 @@ export function physicalPatchPose(
     return { endpoint: "initial" as const, translation: [0, 0, 0] as [number, number, number] };
   if (
     motion.kind === "native-element-stage-poses" ||
-    motion.kind === "native-element-component-poses"
+    motion.kind === "native-element-component-poses" ||
+    motion.kind === "native-element-component-clips"
   )
     throw new Error("Staged motion requires independent source clocks");
   if (motion.kind === "native-patch-clips")

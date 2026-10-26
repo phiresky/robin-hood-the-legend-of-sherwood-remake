@@ -1,5 +1,12 @@
 # Post-port Features
 
+- **Source-clock component clips with retained artwork.** A separate strict
+  preview contract supports independently clocked rigid parts, flexible-cover
+  morphs and explicit visibility phases. Source frame hashes, delays, gaps and
+  native-only targets are bound explicitly. Evaluated terminal geometry and
+  materials must match the pinned endpoint; retired meshes cannot conceal a
+  missing or extra visible part. Legacy motion contracts are unchanged.
+
 - **Moving physical models with retained native pixels.** Reviewed source-frame
   masks can pair retained artwork with exact rigid node poses. Disjoint physical
   components can coexist while each transfers between independently clocked

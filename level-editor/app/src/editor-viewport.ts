@@ -1065,7 +1065,8 @@ export class EditorViewport {
       // A target clip hides its source target only once the clip owns the target.
       this.stateDelivery.elementClipPhase !== "native"
     )
-      for (const index of this.deliveryFamilies.get(this.deliveryFamily) ?? []) indices.add(index);
+      for (const index of this.deliveryFamilies.get(this.deliveryFamily) ?? [])
+        if (!this.stateDelivery.nativePassthroughTargetIndices.has(index)) indices.add(index);
     this.entities.setRefinedTargets(this.entities.missionName, indices);
   }
   private syncDeliveredStaticPlacements(document = this.bindings.document()) {

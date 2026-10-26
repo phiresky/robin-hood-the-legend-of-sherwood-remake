@@ -1939,3 +1939,135 @@ test("component loading rejects unowned and ambiguous geometry; contracts reject
   await assert.rejects(p.set(f.c, f.source, f.library, f.read), /Unowned physical component mesh/);
   p.dispose();
 });
+
+test("component clips load a morphed hybrid at source frame zero, preserve native pixels, reset and reload", async () => {
+  const f = await remainderFixture();
+  const { componentClipFixture } = await import("../../shared/test-fixtures/component-clips.ts");
+  const { motion, component } = componentClipFixture();
+  const contract = f.withRemainder,
+    family = contract.families[0]!,
+    element = contract.native.elements[0]!;
+  motion.native_passthrough_element_ids = [];
+  component.stages = [
+    {
+      element_id: "body",
+      source_element_sha256: element.source.sha256,
+      source_frames: structuredClone(element.frames),
+      first_source_frame: 0,
+      clip_start_tick: 0,
+      frame_ticks: [0, 3],
+      gaps: [],
+    },
+  ];
+  component.terminal = {
+    stage_element_id: "body",
+    source_frame: 1,
+    clip_tick: 3,
+    active_nodes: ["wreck"],
+    retired_nodes: ["old"],
+  };
+  component.visibility_phases = [
+    { first_tick: 0, last_tick: 2, active_nodes: ["old"] },
+    { first_tick: 3, last_tick: 3, active_nodes: ["wreck"] },
+  ];
+  family.physical.initial = { kind: "absent" };
+  family.physical.motion = motion;
+  const existing = family.native_remainder![0]!.frames[1]!;
+  existing.physical = {
+    kind: "source-frame-components",
+    element_id: "body",
+    frame: 1,
+    components: ["body"],
+  };
+  family.native_remainder![0]!.frames[0] = {
+    mask: { ...existing.mask, path: "mask0.png" },
+    physical: {
+      kind: "source-frame-components",
+      element_id: "body",
+      frame: 0,
+      components: ["body"],
+    },
+  };
+  f.files.set("mask0.png", f.files.get(existing.mask.path)!);
+  const material = new THREE.MeshBasicMaterial(),
+    clip = new THREE.Group(),
+    applied = new THREE.Group();
+  const old = new THREE.Mesh(new THREE.BoxGeometry(), material);
+  old.name = "old";
+  clip.add(old);
+  const geom = new THREE.BoxGeometry();
+  geom.morphTargetsRelative = true;
+  geom.morphAttributes.position = [
+    new THREE.Float32BufferAttribute(
+      Array.from({ length: geom.getAttribute("position").count }, () => [0.5, 0, 0]).flat(),
+      3,
+    ),
+  ];
+  const wreck = new THREE.Mesh(geom, material);
+  wreck.name = "wreck";
+  clip.add(wreck);
+  const end = new THREE.Mesh(new THREE.BoxGeometry().translate(0.5, 0, 0), material);
+  end.name = "wreck";
+  applied.add(end);
+  clip.animations = [
+    new THREE.AnimationClip("collapse", -1, [
+      new THREE.NumberKeyframeTrack(
+        "wreck.morphTargetInfluences",
+        [0, 3 / 25],
+        [0, 1],
+        THREE.InterpolateDiscrete,
+      ),
+    ]),
+  ];
+  let disposed = 0;
+  const delivery = new StateDelivery(() => ({
+    load: async (binding) => (binding.id === "clip" ? clip : applied),
+    dispose: () => {
+      disposed++;
+    },
+  }));
+  const batch = (sequence: number, tick: number, active = true) => ({
+    mission: contract.native.mission,
+    mission_data_sha256: contract.native.mission_data_sha256,
+    level_data_sha256: contract.native.level_data_sha256,
+    sequence,
+    simulation_tick: sequence,
+    samples: [{ kind: "element" as const, id: "body", source: element.source, active, tick }],
+  });
+  await delivery.set(contract, f.source, f.library, f.read);
+  delivery.selectMode("native-remainder");
+  assert.equal(
+    delivery.remainderPhysicalRoots().size,
+    0,
+    "inactive source does not activate clip frame0",
+  );
+  delivery.sampleSourceState(batch(0, 0));
+  let root = delivery.remainderPhysicalRoots().get("body")!;
+  assert.equal(root.getObjectByName("old")!.visible, true);
+  assert.equal(root.getObjectByName("wreck")!.visible, false);
+  delivery.sampleSourceState(batch(1, 3));
+  root = delivery.remainderPhysicalRoots().get("body")!;
+  assert.equal(root.getObjectByName("old")!.visible, false);
+  assert.equal((root.getObjectByName("wreck") as THREE.Mesh).morphTargetInfluences![0], 1);
+  const layer = {
+    width: 3,
+    height: 1,
+    data: new Uint8Array([0, 250, 0, 255, 0, 250, 0, 255, 0, 0, 0, 0]),
+  };
+  assert.deepEqual(
+    [...delivery.native.remainderPixels(new Map([["body", layer]])).data],
+    [200, 0, 0, 255, 0, 250, 0, 255, 9, 9, 9, 255],
+  );
+  delivery.sampleSourceState(batch(2, 0));
+  root = delivery.remainderPhysicalRoots().get("body")!;
+  assert.equal(root.getObjectByName("old")!.visible, true);
+  delivery.sampleSourceState(batch(3, 0, false));
+  assert.equal(delivery.remainderPhysicalRoots().size, 0);
+  await delivery.set(contract, f.source, f.library, f.read);
+  delivery.selectMode("physical-motion");
+  delivery.sampleSourceState(batch(0, 3));
+  assert.equal(delivery.motionEndpoint, "applied");
+  assert.throws(() => delivery.seekFamily("trap", 0), /source|Source/);
+  delivery.dispose();
+  assert.equal(disposed, 2);
+});
