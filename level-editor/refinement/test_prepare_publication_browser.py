@@ -5,7 +5,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
-from prepare_publication_browser import prepare, preserved_ungrouped
+from prepare_publication_browser import prepare, preserved_ungrouped, validate_part_ownership
 from scene_manifest import import_document
 
 
@@ -38,6 +38,22 @@ def write_asset(root, model_bytes):
     (folder/'lossy.glb.receipt.json').write_text(json.dumps({'source': digest(model_bytes),
                                                              'output': digest(b'lossy ' + model_bytes)}))
     return folder
+
+
+class PartOwnershipTest(unittest.TestCase):
+    def test_identical_asset_local_parts_keep_distinct_group_ownership(self):
+        nodes = [{'name': 'scenery-navigation-frame'}, {'name': 'scenery-navigation-frame'},
+                 {'name': 'only-first'}]
+        groups = [{'extras': {'asset_group': 'boundary-001'}, 'children': [0, 2]},
+                  {'extras': {'asset_group': 'boundary-002'}, 'children': [1]}]
+        objects = [{'node': 'asset:boundary-001:scenery-navigation-frame', 'group': 'boundary-001'},
+                   {'node': 'asset:boundary-002:scenery-navigation-frame', 'group': 'boundary-002'}]
+        validate_part_ownership(nodes, groups, objects)
+        validate_part_ownership(nodes, list(reversed(groups)), objects)
+        with self.assertRaisesRegex(ValueError, 'ownership differs'):
+            validate_part_ownership(nodes, groups, [{'node': 'asset:boundary-001:only-first', 'group': 'boundary-002'}])
+        with self.assertRaisesRegex(ValueError, 'ownership differs'):
+            validate_part_ownership(nodes, groups, [{'node': 'asset:boundary-001:scenery-navigation-frame', 'group': 'missing'}])
 
 
 class FirstPublicationTest(unittest.TestCase):

@@ -56,6 +56,16 @@ def bound_patches(nodes, document):
     return (triggers - local) | {patch for mapping in mappings for patch in mapping.values()}
 
 
+def validate_part_ownership(nodes, groups, objects):
+    """Part names are local to their owning reusable group, not globally unique."""
+    owners = {(group['extras']['asset_group'], nodes[index]['name'])
+              for group in groups for index in group.get('children', [])}
+    for obj in objects:
+        local = obj['node'].split(':', 2)[-1] if obj['node'].startswith('asset:') else obj['node']
+        if (obj['group'], local) not in owners:
+            raise ValueError("Editor part ownership differs from staged canonical hierarchy")
+
+
 def prepare(stage, scope_path, output, *, map_name="leicester", live=False, migration_path=None, document_path=None):
     if document_path is not None and (live or migration_path is not None):
         raise ValueError("Explicit staged document cannot replace live or migration authority")
@@ -124,10 +134,7 @@ def prepare(stage, scope_path, output, *, map_name="leicester", live=False, migr
         raise ValueError("Canonical part identities changed; explicit editor document migration required")
     if {group["id"] for group in document["groups"]} != {group["extras"]["asset_group"] for group in groups}:
         raise ValueError("Canonical group identities changed; explicit editor document migration required")
-    part_groups = {nodes[index]["name"]: group["extras"]["asset_group"]
-                   for group in groups for index in group.get("children", [])}
-    if any(obj["group"] != part_groups[canonical(obj["node"])] for obj in grouped_objects):
-        raise ValueError("Editor part ownership differs from staged canonical hierarchy")
+    validate_part_ownership(nodes, groups, grouped_objects)
     document_path = live_document
     if not live:
         document["sceneAssets"] = staged_document["sceneAssets"]
