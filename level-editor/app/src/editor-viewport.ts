@@ -1451,8 +1451,9 @@ export class EditorViewport {
       if (frozen.physical!.targets.length)
         this.physicalNativeEffects = new NativePhysicalEffectPreview(
           frozen.native,
-          [...this.missionStates.players.values()].map(({ player, binding }) => ({
+          [...this.missionStates.players.values()].map(({ player, binding, extractionContext }) => ({
             object: player.object,
+            extractionContext,
             tick: () => player.tick,
             binding,
           })),

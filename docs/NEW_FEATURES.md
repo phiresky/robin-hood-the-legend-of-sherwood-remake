@@ -2847,3 +2847,56 @@ This supports private review contracts; publishing models and approving their
 appearance remain separate steps.
 
 - Texture source-framing audits use pinned geometry coverage rather than background color, preserving checks on black object pixels and supporting contrasting review backgrounds.
+
+### Physical effect extraction with explicit receiver context
+
+Optional native preview bindings can supply a verified extraction context for a
+single source family. The context pins the embedded model and complete node-role
+manifest, checks the native source identity, and renders only declared static
+receivers into depth before sampling the source-owned color. Alpha holes,
+sidedness, world placement, and animated poses are preserved. This prevents
+hidden physical surfaces from leaking into an isolated effect image without
+deleting geometry. Existing bindings and source draw order are unchanged.
+Context authority, saved appearance, and actual GPU fidelity require separate
+qualification; no scene-wide depth context is inferred.
+
+Pinned physical map-animation bindings can now declare an explicit extraction
+role manifest. The loader retains the complete embedded model's identity and
+rebinds its verified node roles to the complete placed copy. Retired loads,
+failed manifest reads, substituted geometry, and partial or lossy models fail
+before an extraction context is installed. Callers must await the context before
+registering the physical effect; ordinary bindings do not infer receiver roles.
+
+### Pinned native extraction sessions (opt-in)
+
+`createNativeExtractionSession` creates private geometry, materials, and texture
+pixels after strict source verification. It then updates only transforms,
+visibility, and morph weights from the live object. Source-array writes cannot
+change this pinned render snapshot. Supported geometry/material/texture edits
+must explicitly invalidate the session and create a newly verified session;
+hierarchy, resource identity, and binding changes reject sampling. Disposal is
+idempotent and releases only session-owned resources.
+
+This is an explicit snapshot contract, not a replacement for the strict
+`prepareNativeExtractionContext` API, which continues to reject in-place accessor
+mutations. The viewport does not enable sessions automatically. Browser fidelity
+and full-family performance must be verified before enabling that integration.
+
+Native physical previews also recognize the explicit complementary root export:
+black base, white UV0 emission at intensity one, UV1 base-alpha coverage with
+MASK cutoff 0.5, double-sided surfaces, and native/inferred ownership metadata.
+This qualification rejects alternate lighting, blending, coverage, shaders, maps,
+and UV channels; it does not replace validation of the paired ownership regions.
+
+Strict extraction handles can be explicitly retired after an independent pinned
+session is ready. Retirement releases their large verification snapshots and
+permanently rejects further strict preparation, including direct handle calls.
+Loader disposal retires its bound contexts; independent sessions retain their
+own resources until separately invalidated or disposed.
+
+Strict geometry checks share a privately owned GLB byte snapshot instead of
+expanding every accessor occurrence into Float64 storage. Comparisons still
+perform the exact component decoding and normalized Number arithmetic, and
+retain all identity, topology, morph, and mutation checks. GLB, manifest, and
+parser inputs are owned before asynchronous hashing to prevent caller aliases
+from changing verification authority.

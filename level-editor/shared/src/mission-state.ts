@@ -22,6 +22,8 @@ export interface MissionStateContract {
     /** Hash of JSON.stringify(the exact indexed source record). */
     target_sha256: string;
     source: SceneAssetSource;
+    /** Complete embedded-model node roles for source-owned color and receiver depth. */
+    extraction_context?: { path: string; sha256: string };
     /** glTF Y-up coordinate of the native physical anchor in the exported model. */
     model_origin: Vec3;
     representation: "physical" | "native-appearance";
@@ -84,6 +86,20 @@ export function validateMissionStateContract(
       (s.model_scene !== undefined && !text(s.model_scene))
     )
       fail("invalid model binding");
+    if (t.extraction_context !== undefined) {
+      const context = t.extraction_context;
+      if (
+        !context ||
+        !safeLibraryPath(context.path) ||
+        !hash(context.sha256) ||
+        t.source_kind !== "map-animation" ||
+        t.representation !== "physical" ||
+        !s.model.endsWith(".glb") ||
+        s.model_scene !== undefined ||
+        s.resources.length !== 0
+      )
+        fail("invalid extraction context");
+    }
     for (const r of s.resources)
       if (!r || !safeLibraryPath(r.path) || !hash(r.sha256)) fail("invalid resource binding");
     if (!Array.isArray(t.actions) || !t.actions.length) fail("missing actions");

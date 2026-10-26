@@ -1,3 +1,5 @@
+import { NativeExtractionLoader, type NativeExtractionPin } from "./native-extraction-loader.ts";
+import type { MissionStateContract } from "../../shared/src/mission-state.ts";
 import { retainPhaseMaterials, type LoadedPhaseMaterial } from "./state-material-frames.ts";
 import { disposeObjectResources, retainObjectMaterials } from "./resources.ts";
 import * as THREE from "three";
@@ -85,6 +87,8 @@ export class SceneAssetLoader {
   private materials = new Map<string, Promise<THREE.Material>>();
   private finalMaterials = new Map<string, THREE.Material>();
   private root: FileSystemDirectoryHandle;
+  private extraction: NativeExtractionLoader;
+  private extractionPins = new WeakMap<THREE.Object3D, NativeExtractionPin>();
   private lossyModels: ReadonlyMap<string, string>;
   /** `lossyModels` maps pinned model paths to derived lossy models (see lossy-models.ts). */
   constructor(
@@ -92,6 +96,9 @@ export class SceneAssetLoader {
     lossyModels: ReadonlyMap<string, string> = new Map(),
   ) {
     this.root = root;
+    this.extraction = new NativeExtractionLoader(
+      async (path) => new Uint8Array(await (await read(root, path)).arrayBuffer()),
+    );
     this.lossyModels = lossyModels;
   }
   lossyFor(model: string): string | undefined {
@@ -102,7 +109,17 @@ export class SceneAssetLoader {
     reference: SceneAssetSource,
     verifiedLossy?: ArrayBuffer,
     materialIndices: readonly number[] = [],
+    extractionPin?: NativeExtractionPin,
   ): Promise<THREE.Group> {
+    if (
+      extractionPin &&
+      (verifiedLossy ||
+        this.lossyModels.has(reference.model) ||
+        reference.model_scene ||
+        reference.resources.length ||
+        !reference.model.endsWith(".glb"))
+    )
+      throw new Error("Native extraction requires the complete pinned embedded GLB");
     const applies = lossyApplies(reference.model);
     if (verifiedLossy && !applies)
       throw new Error(`Lossy model cannot replace a glTF JSON model: ${reference.model}`);
@@ -254,6 +271,19 @@ export class SceneAssetLoader {
         [...materials.values()].map((m) => m.material),
       );
     }
+    if (extractionPin) {
+      this.extraction.retain({
+        object: result.scene,
+        modelBytes: new Uint8Array(bytes),
+        parserJson: result.parser.json,
+        associations: new Map(
+          [...result.parser.associations].flatMap(([node, association]) =>
+            node instanceof THREE.Object3D ? [[node, association] as const] : [],
+          ),
+        ),
+      });
+      this.extractionPins.set(result.scene, { ...extractionPin });
+    }
     retainSceneAnimations(result.scene, result.animations, result.scenes);
     result.scene.traverse((node) => {
       const index = result.parser?.associations.get(node)?.nodes;
@@ -262,7 +292,24 @@ export class SceneAssetLoader {
     });
     return result.scene;
   }
+  /** Bind only after the complete placed content exists, before registering its effect. */
+  bindNativeExtraction(
+    source: THREE.Object3D,
+    placed: THREE.Object3D,
+    binding: MissionStateContract["targets"][number],
+    isCurrent: () => boolean,
+    displayRoot: THREE.Object3D = placed,
+  ) {
+    const pin = this.extractionPins.get(source);
+    const requested = binding.extraction_context;
+    if (!requested && !pin) return Promise.resolve(undefined);
+    if (!requested || !pin || requested.path !== pin.path || requested.sha256 !== pin.sha256)
+      throw new Error("Native extraction requested context was not retained");
+    return this.extraction.bind(source, placed, binding, pin, isCurrent, displayRoot);
+  }
   dispose() {
+    this.extraction.dispose();
+    this.extractionPins = new WeakMap();
     for (const url of this.urls) URL.revokeObjectURL(url);
     this.urls = [];
     this.resources.clear();

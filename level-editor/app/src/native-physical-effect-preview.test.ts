@@ -460,3 +460,101 @@ test("remainder layer renders a hidden applied root in the complete source frame
     /no visible model/,
   );
 });
+
+test("receiver depth prepass runs before source color without clearing depth again", () => {
+  const f = rendererFixture(),
+    owner = new THREE.Scene(),
+    receiver = new THREE.Scene();
+  f.renderer.render = ((scene: THREE.Scene) =>
+    f.events.push(
+      scene === receiver ? "receiver-depth" : "owner-color",
+    )) as typeof f.renderer.render;
+  renderPhysicalEffect(
+    f.renderer as unknown as THREE.WebGLRenderer,
+    owner,
+    new THREE.Camera(),
+    1,
+    2,
+    false,
+    receiver,
+  );
+  assert.deepEqual(f.events, ["clear", "receiver-depth", "owner-color"]);
+  f.restored();
+});
+test("receiver prepass failure restores renderer state and never draws owner", () => {
+  const f = rendererFixture();
+  f.renderer.render = () => {
+    throw Error("receiver failure");
+  };
+  assert.throws(
+    () =>
+      renderPhysicalEffect(
+        f.renderer as unknown as THREE.WebGLRenderer,
+        new THREE.Scene(),
+        new THREE.Camera(),
+        1,
+        2,
+        false,
+        new THREE.Scene(),
+      ),
+    /receiver failure/,
+  );
+  f.restored();
+});
+
+
+test("required extraction context cannot fall back to cloning, including after binding changes", async () => {
+  const { NativePhysicalEffectPreview } = await import("./native-physical-effect-preview.ts");
+  const hash = "a".repeat(64);
+  const element = { id: "required", source: { kind: "map-animation", index: 5, sha256: hash } };
+  const native = { mission: "S03", camera_elevation_deg: 35, elements: [element] } as unknown as import("../../shared/src/native-state-presentation.ts").NativeStatePresentationContract;
+  const binding = { source_kind: "map-animation", target_index: 5, target_sha256: hash } as import("../../shared/src/mission-state.ts").MissionStateContract["targets"][number];
+  const required = { path: "components.json", sha256: hash };
+  const row = { object: new THREE.Group(), tick: () => 0, binding };
+  assert.throws(() => new NativePhysicalEffectPreview(native, [{ ...row, binding: { ...binding, extraction_context: required } }]), /requires verified extraction context/);
+  const preview = new NativePhysicalEffectPreview(native, [row]);
+  binding.extraction_context = required;
+  const snapshot = { mission: "S03", draws: [{ element }] } as unknown as import("./native-state-presentation.ts").NativeLoopDrawSnapshot;
+  // This must reject before accessing the renderer, timing, or cloning geometry.
+  assert.throws(() => preview.sample({} as THREE.WebGLRenderer, snapshot), /requires verified extraction context/);
+});
+
+test("complementary roots accept only the explicit two-UV binary emission contract", () => {
+  const create = (role: "native" | "inferred" = "native") => {
+    const map = new THREE.DataTexture(new Uint8Array([255, 255, 255, 0]), 1, 1);
+    map.channel = 1;
+    const emissiveMap = new THREE.DataTexture(new Uint8Array([23, 45, 67, 255]), 1, 1);
+    const material = new THREE.MeshStandardMaterial({ color: 0, emissive: 0xffffff,
+      map, emissiveMap, metalness: 0, roughness: 1, alphaTest: 0.5, side: THREE.DoubleSide });
+    material.userData = { export_complementary_binary_ownership: true, export_composite_role: role };
+    return material;
+  };
+  for (const role of ["native", "inferred"] as const) assert.doesNotThrow(() => validateNativeEffectMaterial(create(role)));
+  const mutations: Record<string, (m: THREE.MeshStandardMaterial) => void> = {
+    metadata: m => { delete m.userData.export_complementary_binary_ownership; },
+    role: m => { m.userData.export_composite_role = "anything"; },
+    base: m => { m.color.r = 0.01; }, emission: m => { m.emissive.g = 0.99; },
+    intensity: m => { m.emissiveIntensity = 0.5; },
+    alphaUV: m => { m.map!.channel = 0; }, colorUV: m => { m.emissiveMap!.channel = 1; },
+    noAlpha: m => { m.map = null; }, noColor: m => { m.emissiveMap = null; },
+    metal: m => { m.metalness = 0.1; }, rough: m => { m.roughness = 0.5; },
+    vertexColors: m => { m.vertexColors = true; }, side: m => { m.side = THREE.FrontSide; },
+    opacity: m => { m.opacity = 0.9; }, blend: m => { m.transparent = true; },
+    cutoff: m => { m.alphaTest = 0.4; }, hash: m => { m.alphaHash = true; },
+    coverage: m => { m.alphaToCoverage = true; }, premultiplied: m => { m.premultipliedAlpha = true; },
+    blending: m => { m.blending = THREE.AdditiveBlending; },
+    depthTest: m => { m.depthTest = false; }, depthWrite: m => { m.depthWrite = false; },
+    stencil: m => { m.stencilWrite = true; }, offset: m => { m.polygonOffset = true; },
+    hook: m => { m.onBeforeCompile = () => {}; }, cacheHook: m => { m.customProgramCacheKey = () => "foreign"; },
+    wireframe: m => { m.wireframe = true; }, flat: m => { m.flatShading = true; },
+    clip: m => { m.clippingPlanes = [new THREE.Plane()]; }, defines: m => { m.defines = { FOREIGN: 1 }; },
+    foliage: m => { m.userData.foliage_physical_opacity = true; },
+    ownership: m => { m.userData.source_ownership_fill = "synthesized"; },
+  };
+  for (const property of ["alphaMap", "envMap", "lightMap", "aoMap", "normalMap", "bumpMap", "displacementMap", "metalnessMap", "roughnessMap"] as const)
+    mutations[property] = m => { m[property] = new THREE.Texture(); };
+  for (const [name, mutate] of Object.entries(mutations)) {
+    const material = create(); mutate(material);
+    assert.throws(() => validateNativeEffectMaterial(material), /rejected unsupported/, name);
+  }
+});

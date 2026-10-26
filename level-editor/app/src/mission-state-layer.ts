@@ -1,3 +1,4 @@
+import type { NativeExtractionContext } from "./native-extraction-context.ts";
 import * as THREE from "three";
 import { gameToScene, type MapCamera, type ProtoLevel } from "@rle/shared";
 import {
@@ -97,6 +98,7 @@ export async function resolveMissionStateTargets(
 type PlayerEntry = {
   player: StateAppearancePlayer;
   binding: MissionStateContract["targets"][number];
+  extractionContext?: NativeExtractionContext;
 };
 /** Mission-scoped preview instances. The viewport owns the only elapsed-time clock. */
 export class MissionStateLayer {
@@ -112,7 +114,9 @@ export class MissionStateLayer {
     privateError: (message: string) => void = () => {},
     privateLoader: (
       root: FileSystemDirectoryHandle,
-    ) => Pick<SceneAssetLoader, "load" | "dispose"> = (root) => new SceneAssetLoader(root),
+    ) => Pick<SceneAssetLoader, "load" | "dispose"> &
+      Partial<Pick<SceneAssetLoader, "bindNativeExtraction">> = (root) =>
+      new SceneAssetLoader(root),
   ) {
     this.changed = privateChanged;
     this.error = privateError;
@@ -122,7 +126,8 @@ export class MissionStateLayer {
   private readonly error: (message: string) => void;
   private readonly loader: (
     root: FileSystemDirectoryHandle,
-  ) => Pick<SceneAssetLoader, "load" | "dispose">;
+  ) => Pick<SceneAssetLoader, "load" | "dispose"> &
+    Partial<Pick<SceneAssetLoader, "bindNativeExtraction">>;
   readonly loadErrors = new Map<string, string>();
   get replacedTargets(): ReadonlySet<number> {
     return this.replaced;
@@ -184,7 +189,12 @@ export class MissionStateLayer {
           const token = clocks?.physicalToken(row.binding.id);
           let player: StateAppearancePlayer | undefined;
           try {
-            const asset = await loader.load(row.binding.source);
+            const asset = await loader.load(
+              row.binding.source,
+              undefined,
+              [],
+              row.binding.extraction_context,
+            );
             owned.push(asset);
             if (!current()) return;
             const template = captureLoadedStateAppearance(asset);
@@ -204,6 +214,23 @@ export class MissionStateLayer {
               actionPosition: row.actionPosition,
               representation: row.binding.representation,
             };
+            let extractionContext: NativeExtractionContext | undefined;
+            if (row.binding.extraction_context) {
+              if (!loader.bindNativeExtraction)
+                throw new Error("Loader cannot bind required extraction context");
+              extractionContext = await loader.bindNativeExtraction(
+                asset,
+                player.content,
+                row.binding,
+                current,
+                player.object,
+              );
+              if (!extractionContext) throw new Error("Required extraction context did not load");
+              if (!current()) {
+                player.dispose();
+                return;
+              }
+            }
             if (clocks && token) {
               const consumer = player;
               clocks.attachPhysical(
@@ -218,7 +245,7 @@ export class MissionStateLayer {
                 token,
               );
             }
-            this.players.set(row.binding.id, { player, binding: row.binding });
+            this.players.set(row.binding.id, { player, binding: row.binding, extractionContext });
             this.root.add(player.object);
             if (row.binding.source_kind !== "map-animation")
               this.replaced.add(row.binding.target_index);

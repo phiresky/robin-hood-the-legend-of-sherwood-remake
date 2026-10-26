@@ -218,3 +218,56 @@ test("map animation binding uses exact source slot and does not alias a mission 
   wrong.targets[2]!.target_sha256 = contract.targets[0]!.target_sha256;
   await assert.rejects(resolveMissionStateTargets(wrong, source), /target changed/);
 });
+
+test("required extraction context is awaited before installation and a retired preload installs nothing", async () => {
+  const { source, contract } = await fixture();
+  const animation = { sprite: { position_x: 625, position_y: 693, elevation: 150 }, active: true };
+  source.level.animations = [animation] as unknown as ProtoLevel["animations"];
+  contract.level_data_sha256 = await missionStateDataHash(source.level);
+  const binding = contract.targets[0]!;
+  binding.source_kind = "map-animation";
+  binding.target_sha256 = await missionStateDataHash(animation);
+  binding.actions.splice(1);
+  binding.extraction_context = { path: "roles.json", sha256: "c".repeat(64) };
+  contract.targets.splice(1);
+  let started!: () => void, reject!: (error: Error) => void;
+  const ready = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let capturedPin: unknown;
+  const layer = new MissionStateLayer(
+    () => {},
+    () => {},
+    () => ({
+      load: async (_source, _lossy, _materials, pin) => {
+        capturedPin = pin;
+        return asset().root;
+      },
+      bindNativeExtraction: async (_source, content, _binding, _current, displayRoot) => {
+        assert.equal(content.parent, displayRoot);
+        started();
+        return new Promise((_resolve, fail) => {
+          reject = fail;
+        });
+      },
+      dispose() {},
+    }),
+  );
+  const pending = layer.set(contract, {} as FileSystemDirectoryHandle, source);
+  await ready;
+  assert.deepEqual(capturedPin, binding.extraction_context);
+  assert.equal(layer.players.size, 0);
+  layer.clear();
+  reject(new Error("retired manifest read"));
+  await pending;
+  assert.equal(layer.players.size, 0);
+  assert.equal(layer.loadErrors.size, 0);
+  const unsupported = new MissionStateLayer(
+    () => {},
+    () => {},
+    () => ({ load: async () => asset().root, dispose() {} }),
+  );
+  await unsupported.set(contract, {} as FileSystemDirectoryHandle, source);
+  assert.equal(unsupported.players.size, 0);
+  assert.match([...unsupported.loadErrors.values()][0]!, /cannot bind required extraction context/);
+});

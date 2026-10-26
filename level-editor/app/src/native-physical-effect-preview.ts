@@ -1,3 +1,7 @@
+import {
+  prepareNativeExtractionContext,
+  type NativeExtractionContext,
+} from "./native-extraction-context.ts";
 import * as THREE from "three";
 import { hasQualifiedSourceDisplayShader } from "./texture-display.ts";
 import type { NativeLoopDrawSnapshot, NativePixels } from "./native-state-presentation.ts";
@@ -56,6 +60,32 @@ export function validateNativeEffectMaterial(material: THREE.Material) {
     !material.userData.source_ownership_semantics &&
     (!material.defines || Object.keys(material.defines).every((key) => key === "STANDARD"));
   if (opaqueEmission) return;
+  // Complementary exports carry color in UV0 emission and binary coverage in
+  // UV1 base alpha. The exact black base contributes no reflected RGB.
+  const complementaryEmission =
+    material.userData.export_complementary_binary_ownership === true &&
+    ["native", "inferred"].includes(material.userData.export_composite_role) &&
+    material.onBeforeCompile === THREE.Material.prototype.onBeforeCompile &&
+    material.customProgramCacheKey === THREE.Material.prototype.customProgramCacheKey &&
+    material.color.equals(new THREE.Color(0, 0, 0)) &&
+    material.emissive.equals(new THREE.Color(1, 1, 1)) &&
+    material.emissiveIntensity === 1 &&
+    map instanceof THREE.Texture && map.channel === 1 &&
+    emissive instanceof THREE.Texture && emissive.channel === 0 &&
+    material.metalness === 0 && material.roughness === 1 &&
+    !material.vertexColors && material.side === THREE.DoubleSide &&
+    material.opacity === 1 && !material.transparent && material.alphaTest === 0.5 &&
+    !material.alphaHash && !material.alphaToCoverage &&
+    material.blending === THREE.NormalBlending && !material.premultipliedAlpha &&
+    material.depthTest && material.depthWrite && !material.stencilWrite && !material.polygonOffset &&
+    !material.alphaMap && !material.envMap && !material.lightMap && !material.aoMap &&
+    !material.normalMap && !material.bumpMap && !material.displacementMap &&
+    !material.metalnessMap && !material.roughnessMap &&
+    !material.wireframe && !material.flatShading && !material.clippingPlanes?.length &&
+    !material.userData.foliage_physical_opacity &&
+    !material.userData.source_ownership_semantics && !material.userData.source_ownership_fill &&
+    (!material.defines || Object.keys(material.defines).every((key) => key === "STANDARD"));
+  if (complementaryEmission) return;
   const sameTexture =
     map &&
     emissive &&
@@ -113,6 +143,7 @@ export function validateNativeEffectMaterial(material: THREE.Material) {
 
 export interface PhysicalEffectBinding {
   object: THREE.Object3D;
+  extractionContext?: NativeExtractionContext;
   tick(): number;
   binding: MissionStateContract["targets"][number];
 }
@@ -176,6 +207,8 @@ export class NativePhysicalEffectPreview {
         this.bound.has(element.id)
       )
         throw new Error("Physical effect source identity differs");
+      if (row.binding.extraction_context && !row.extractionContext)
+        throw new Error("Physical effect requires verified extraction context");
       this.bound.set(element.id, row);
     }
     if (!this.bound.size) throw new Error("No source-bound physical effects");
@@ -191,6 +224,8 @@ export class NativePhysicalEffectPreview {
       draws: snapshot.draws.map((draw) => {
         const bound = this.bound.get(draw.element.id);
         if (!bound) return draw;
+        if (bound.binding.extraction_context && !bound.extractionContext)
+          throw new Error("Physical effect requires verified extraction context");
         const root = bound.object;
         const expected = this.native.elements.find((e) => e.id === draw.element.id)!;
         if (
@@ -237,18 +272,43 @@ export class NativePhysicalEffectPreview {
           for (const material of Array.isArray(node.material) ? node.material : [node.material])
             validateNativeEffectMaterial(material);
         });
-        const clone = root.clone(true);
-        clone.matrixAutoUpdate = false;
-        clone.matrix.copy(root.matrixWorld);
-        const scene = new THREE.Scene();
-        scene.add(clone);
-        scene.updateMatrixWorld(true);
-        const view = nativeEffectCamera(
-          new THREE.Box3().setFromObject(clone),
-          this.native.camera_elevation_deg,
-        );
-        const pixels = renderPhysicalEffect(renderer, scene, view.camera, view.width, view.height);
-        return { ...draw, pixels, x: view.x - snapshot.origin[0], y: view.y - snapshot.origin[1] };
+        const context = bound.extractionContext
+          ? prepareNativeExtractionContext(bound.extractionContext, root, bound.binding)
+          : undefined;
+        try {
+          const clone = context?.owner ?? root.clone(true);
+          clone.matrixAutoUpdate = false;
+          clone.matrix.copy(root.matrixWorld);
+          const scene = new THREE.Scene();
+          scene.add(clone);
+          scene.updateMatrixWorld(true);
+          const depthScene = context ? new THREE.Scene() : undefined;
+          if (depthScene && context) {
+            depthScene.add(context.depth);
+            depthScene.updateMatrixWorld(true);
+          }
+          const view = nativeEffectCamera(
+            new THREE.Box3().setFromObject(clone),
+            this.native.camera_elevation_deg,
+          );
+          const pixels = renderPhysicalEffect(
+            renderer,
+            scene,
+            view.camera,
+            view.width,
+            view.height,
+            false,
+            depthScene,
+          );
+          return {
+            ...draw,
+            pixels,
+            x: view.x - snapshot.origin[0],
+            y: view.y - snapshot.origin[1],
+          };
+        } finally {
+          context?.dispose();
+        }
       }),
     };
   }
@@ -298,6 +358,7 @@ export function renderPhysicalEffect(
   width: number,
   height: number,
   preserveToneMapping = false,
+  depthContext?: THREE.Scene,
 ): NativePixels {
   if (renderer.xr.enabled || Math.max(width, height) > renderer.capabilities.maxTextureSize)
     throw new Error("Physical effect preview exceeds renderer limits");
@@ -328,6 +389,7 @@ export function renderPhysicalEffect(
     }
     renderer.setClearColor(0, 0);
     renderer.clear(true, true, false);
+    if (depthContext) renderer.render(depthContext, camera);
     renderer.render(scene, camera);
     const bytes = new Uint8Array(width * height * 4),
       data = new Uint8Array(bytes.length);
