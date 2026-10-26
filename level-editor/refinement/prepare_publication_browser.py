@@ -250,7 +250,7 @@ def prepare(stage, scope_path, output, *, map_name="leicester", live=False, migr
               "shared_module_url": "/@fs/" + str(Path(__file__).resolve().parents[1] / 'shared/src/index.ts'),
               "expected": {"groups": len(document["groups"]), "parts": len(document["objects"]),
                            "ungrouped_parts": ungrouped_count,
-                           "width": document["size"][0], "assets": expanded,
+                           "width": document["size"][0] if document.get("size") is not None else None, "assets": expanded,
                            "base_asset_ids": sorted(expected_ids), "new_asset_ids": scope["asset_ids"],
                            "generated_materials": generated, "required_patches": required},
               "stage": str(stage), "protected_live_files": protected}

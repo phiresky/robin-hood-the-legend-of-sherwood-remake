@@ -92,6 +92,20 @@ class FirstPublicationTest(unittest.TestCase):
             finally:
                 os.chdir(previous)
 
+    def test_unbounded_map_keeps_null_size_in_browser_configuration(self):
+        previous = Path.cwd()
+        with tempfile.TemporaryDirectory() as temporary:
+            try:
+                os.chdir(temporary)
+                stage, library, document = stage_fixture()
+                document['size'] = None
+                Path('document.json').write_text(json.dumps(document))
+                Path('scope.json').write_text('{"asset_ids":[],"already_published":[]}')
+                prepare(stage, 'scope.json', 'audit/config.json', map_name='york', document_path='document.json')
+                self.assertIsNone(json.loads(Path('audit/config.json').read_text())['expected']['width'])
+            finally:
+                os.chdir(previous)
+
     def test_staged_catalog_derivatives_replace_live_ones(self):
         # A changed asset keeps live lossy files bound to the old model; the audit must use the
         # staged catalog's refreshed derivatives, not the raw standalone export plus live files.
